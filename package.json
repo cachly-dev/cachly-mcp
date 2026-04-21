@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.5.18",
+  "version": "0.5.20",
   "description": "Persistent AI memory for Claude Code, Cursor, GitHub Copilot & Windsurf \u2014 38 MCP tools for sessions, lessons learned, semantic search, and team brain.",
   "type": "module",
   "bin": {
@@ -32,7 +32,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cachly-dev/mcp-server"
+    "url": "https://github.com/cachly-dev/cachly-mcp"
   },
   "publishConfig": {
     "access": "public",
