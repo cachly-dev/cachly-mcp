@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.5.20",
+  "version": "0.5.23",
   "description": "Persistent AI memory for Claude Code, Cursor, GitHub Copilot & Windsurf \u2014 38 MCP tools for sessions, lessons learned, semantic search, and team brain.",
   "type": "module",
   "bin": {
