@@ -1,7 +1,7 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.2.0",
-  "description": "MCP server – manage cachly.dev instances from any AI assistant (Copilot, Claude, Cursor, Windsurf)",
+  "version": "0.5.18",
+  "description": "Persistent AI memory for Claude Code, Cursor, GitHub Copilot & Windsurf \u2014 38 MCP tools for sessions, lessons learned, semantic search, and team brain.",
   "type": "module",
   "bin": {
     "cachly-mcp": "./dist/index.js"
@@ -29,7 +29,7 @@
   "engines": {
     "node": ">=20"
   },
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "https://github.com/cachly-dev/mcp-server"
