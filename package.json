@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.5.30",
+  "version": "0.5.31",
   "mcpName": "io.github.cachly-dev/mcp-server",
   "description": "AI memory brain for Claude Code, Cursor, Copilot & Windsurf — persistent sessions, lessons learned, semantic search, team brain. 51 MCP tools.",
   "type": "module",
@@ -42,11 +42,31 @@
   },
   "keywords": [
     "mcp",
+    "model-context-protocol",
+    "claude",
+    "claude-code",
+    "cursor",
+    "copilot",
+    "github-copilot",
+    "windsurf",
+    "continue",
+    "ai-memory",
+    "brain",
+    "sessions",
+    "lessons-learned",
+    "semantic-cache",
+    "team-knowledge",
+    "ambient-git",
+    "memory-crystals",
     "cachly",
     "redis",
     "valkey",
     "cache",
     "ai",
     "llm"
-  ]
+  ],
+  "homepage": "https://cachly.dev/docs/mcp",
+  "bugs": {
+    "url": "https://github.com/cachly-dev/cachly-mcp/issues"
+  }
 }
