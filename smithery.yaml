@@ -1,0 +1,31 @@
+startCommand:
+  type: stdio
+  configSchema:
+    type: object
+    properties:
+      CACHLY_JWT:
+        type: string
+        title: "API Key (JWT)"
+        description: "Your Cachly API key from cachly.dev/dashboard → API Keys"
+      CACHLY_BRAIN_INSTANCE_ID:
+        type: string
+        title: "Brain Instance ID"
+        description: "UUID of your Cachly Brain instance (e.g. 9d4077aa-bfa2-468b-89cd-0a8d8f3ec483)"
+      CACHLY_API_URL:
+        type: string
+        title: "API URL"
+        description: "Cachly API endpoint — leave as default"
+        default: "https://api.cachly.dev"
+    required:
+      - CACHLY_JWT
+      - CACHLY_BRAIN_INSTANCE_ID
+  commandFunction: |-
+    (config) => ({
+      command: "npx",
+      args: ["-y", "@cachly-dev/mcp-server@latest"],
+      env: {
+        CACHLY_JWT: config.CACHLY_JWT,
+        CACHLY_BRAIN_INSTANCE_ID: config.CACHLY_BRAIN_INSTANCE_ID,
+        CACHLY_API_URL: config.CACHLY_API_URL ?? "https://api.cachly.dev",
+      }
+    })
