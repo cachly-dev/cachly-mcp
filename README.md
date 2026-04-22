@@ -68,7 +68,7 @@ The interactive wizard:
     "cachly": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@cachly-dev/mcp-server"],
+      "args": ["-y", "@cachly-dev/mcp-server@latest"],
       "env": {
         "CACHLY_JWT": "your-jwt-token",
         "CACHLY_INSTANCE_ID": "your-instance-id"
@@ -88,7 +88,7 @@ The interactive wizard:
     "cachly": {
       "type": "stdio",
       "command": "npx",
-      "args": ["-y", "@cachly-dev/mcp-server"],
+      "args": ["-y", "@cachly-dev/mcp-server@latest"],
       "env": {
         "CACHLY_JWT": "your-jwt-token",
         "CACHLY_INSTANCE_ID": "your-instance-id"
@@ -122,19 +122,35 @@ The interactive wizard:
 
 ---
 
-## 38 MCP Tools
+## 51 MCP Tools
 
 ### 🧠 Session & Memory (most used)
 
 | Tool | What it does |
 |------|-------------|
 | **`session_start`** | Full briefing: last session summary, open failures, recent lessons, brain health |
-| **`session_end`** | Save what you built, auto-extract lessons from summary |
+| **`session_end`** | Save what you built, auto-extract lessons from summary + ambient git log |
+| **`session_handoff`** | Hand off remaining tasks to next window, with context |
+| **`auto_learn_session`** | Batch-learn from a list of observations |
+| **`sync_file_changes`** | Sync changed files into brain index |
 | **`learn_from_attempts`** | Store structured lessons after any fix, deploy, or discovery |
 | **`recall_best_solution`** | Best known solution for a topic — with success/failure history |
+| **`recall_at`** | Recall a lesson at a specific point in time |
 | **`remember_context`** | Cache architecture findings, decisions, file summaries |
+| **`recall_context`** | Get exact context by key (supports glob) |
+| **`list_remembered`** | See all cached context entries |
+| **`forget_context`** | Remove stale context |
 | **`smart_recall`** | BM25+ full-text search across all brain data |
-| **`session_handoff`** | Hand off remaining tasks to next window, with context |
+| **`setup_ai_memory`** | Interactive wizard to configure AI memory |
+
+### 💡 Legendary Brain Features
+
+| Feature | How it works |
+|---------|-------------|
+| **Team Telepathy** | Multi-dev Brain: the `author` param on `learn_from_attempts` shares fixes across the whole team. Every `session_start` shows colleagues' lessons. |
+| **Ambient Git Learning** | Pass `workspace_path` to `session_end` — it auto-reads `git log`, stores recent commits as Brain lessons. Zero extra calls. |
+| **Memory Crystals** | `memory_crystalize` distills all lessons into a compact Crystal injected at every `session_start`. AI arrives pre-loaded with team knowledge. |
+| **IQ Boost** | `brain_doctor` reports `iq_boost_pct` — how much smarter your AI gets vs. baseline from cached lessons. |
 
 ### ⚙️ Instance Management
 
@@ -168,9 +184,14 @@ The interactive wizard:
 | Tool | What it does |
 |------|-------------|
 | `team_learn` / `team_recall` | Share lessons across the team |
+| `team_synthesize` | Consolidate multiple lessons into one authoritative version |
+| `memory_crystalize` | Distill all lessons into a Crystal snapshot for instant team context |
+| `brain_doctor` | Health check: lesson count, IQ boost %, open failures, quality score |
 | `global_learn` / `global_recall` | Cross-project universal lessons |
+| `publish_lesson` / `import_public_brain` | Share/import community knowledge |
+| `trace_dependency` | Causal chain — find lessons affected by a dependency change |
 | `list_orgs` / `create_org` | Manage team organizations |
-| `invite_member` | Invite a developer to your org by email |
+| `invite_member` / `get_org_plan` | Invite a developer to your org by email |
 
 ---
 
@@ -197,6 +218,17 @@ The interactive wizard:
 | `CACHLY_API_URL` | `https://api.cachly.dev` | Override for self-hosted |
 | `CACHLY_NO_TELEMETRY` | unset | Set to `1` to disable anonymous usage pings |
 | `CACHLY_NO_UPDATE_CHECK` | unset | Set to `1` to disable the version-check on startup |
+
+---
+
+## 🛠️ Ecosystem
+
+| Package | What it does |
+|---------|-------------|
+| **[`@cachly-dev/mcp-server`](https://www.npmjs.com/package/@cachly-dev/mcp-server)** | ← you are here — AI Brain MCP tools for Claude Code, Cursor, Copilot, Windsurf |
+| **[`@cachly-dev/init`](https://www.npmjs.com/package/@cachly-dev/init)** | One-command setup wizard: auto-detects all your editors and writes the correct MCP config — `npx @cachly-dev/init` |
+| **[`@cachly-dev/cli`](https://www.npmjs.com/package/@cachly-dev/cli)** | Terminal CLI — manage instances, cache data, brain lessons: `npm i -g @cachly-dev/cli` |
+| **[`@cachly-dev/sdk`](https://www.npmjs.com/package/@cachly-dev/sdk)** | Node.js/TypeScript SDK — use managed Redis, semantic cache & AI memory directly in your app |
 
 ---
 
