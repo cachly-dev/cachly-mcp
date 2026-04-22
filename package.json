@@ -1,7 +1,8 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.5.28",
-  "description": "Persistent AI memory for Claude Code, Cursor, GitHub Copilot & Windsurf — 51 MCP tools. Sessions, lessons learned, Team Telepathy, Ambient Git Learning, Memory Crystals, semantic search. Free tier, EU servers.",
+  "version": "0.5.30",
+  "mcpName": "io.github.cachly-dev/mcp-server",
+  "description": "AI memory brain for Claude Code, Cursor, Copilot & Windsurf — persistent sessions, lessons learned, semantic search, team brain. 51 MCP tools.",
   "type": "module",
   "bin": {
     "cachly-mcp": "./dist/index.js"
@@ -9,6 +10,7 @@
   "main": "./dist/index.js",
   "scripts": {
     "build": "tsc",
+    "postinstall": "node scripts/postinstall.js",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js",
     "test": "vitest run",
