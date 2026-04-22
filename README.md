@@ -226,6 +226,7 @@ The interactive wizard:
 | Package | What it does |
 |---------|-------------|
 | **[`@cachly-dev/mcp-server`](https://www.npmjs.com/package/@cachly-dev/mcp-server)** | ← you are here — AI Brain MCP tools for Claude Code, Cursor, Copilot, Windsurf |
+| **[`@cachly-dev/openclaw`](https://www.npmjs.com/package/@cachly-dev/openclaw)** | JS/TS SDK — cut LLM costs 60–90% with semantic cache + BM25 in your own app, 3 lines of code |
 | **[`@cachly-dev/init`](https://www.npmjs.com/package/@cachly-dev/init)** | One-command setup wizard: auto-detects all your editors and writes the correct MCP config — `npx @cachly-dev/init` |
 | **[`@cachly-dev/cli`](https://www.npmjs.com/package/@cachly-dev/cli)** | Terminal CLI — manage instances, cache data, brain lessons: `npm i -g @cachly-dev/cli` |
 | **[`@cachly-dev/sdk`](https://www.npmjs.com/package/@cachly-dev/sdk)** | Node.js/TypeScript SDK — use managed Redis, semantic cache & AI memory directly in your app |
