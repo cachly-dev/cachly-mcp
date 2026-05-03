@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, extname } from 'node:path';
 /**
- * cachly MCP Server v0.5.37
+ * cachly MCP Server v0.5.38
  *
  * Exposes cachly.dev as MCP tools so any AI assistant
  * (GitHub Copilot, Claude, Cursor, Windsurf, Continue.dev …) can:
@@ -1339,6 +1339,21 @@ const TOOLS = [
     },
   },
   {
+    name: 'forget_lesson',
+    description:
+      'Delete a stored lesson from the Brain. Use this when a lesson is wrong, outdated, or was learned incorrectly. ' +
+      'Removes both the best-solution entry and the attempt history for the topic. ' +
+      'Example: forget_lesson(topic="deploy:web") → deletes the wrong deployment lesson so a correct one can be stored.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        topic:       { type: 'string', description: 'Exact topic slug to delete, e.g. "deploy:web"' },
+      },
+      required: ['instance_id', 'topic'],
+    },
+  },
+  {
     name: 'smart_recall',
     description:
       'Semantically search cached context using natural language. ' +
@@ -1671,6 +1686,11 @@ function buildConnectionString(inst: Instance): string {
 }
 
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
+  // Default instance_id from env so tools work even if AI omits it
+  if (!args.instance_id && process.env.CACHLY_BRAIN_INSTANCE_ID) {
+    args = { ...args, instance_id: process.env.CACHLY_BRAIN_INSTANCE_ID };
+  }
+
   // Delegate v0.2 bulk/lock/stream tools first
   const bulkResult = await handleBulkLockStream(name, args);
   if (bulkResult !== null) return bulkResult;
@@ -2532,11 +2552,14 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       // Try exact best-solution key first
       const best = await redis.get(`cachly:lesson:best:${topic}`);
       if (best) {
-        const lesson = JSON.parse(best) as {
+        let lesson: {
           topic: string; outcome: string; what_worked: string; what_failed?: string;
           context?: string; ts: string; severity?: string; file_paths?: string[];
           commands?: string[]; tags?: string[]; recall_count?: number;
         };
+        try { lesson = JSON.parse(best); } catch {
+          return `⚠️ Lesson for \`${topic}\` could not be read (corrupted data). Use \`learn_from_attempts\` to overwrite it.`;
+        }
         // Increment recall_count
         const updatedLesson = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1 };
         await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
@@ -2593,7 +2616,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         const histKey = `cachly:lessons:${topic}`;
         const all = await redis.lrange(histKey, -3, -1);
         if (all.length > 0) {
-          const parsed = all.map(e => JSON.parse(e) as { outcome: string; what_worked: string; ts: string });
+          const parsed = all.flatMap(e => { try { return [JSON.parse(e) as { outcome: string; what_worked: string; ts: string }]; } catch { return []; } });
           const lines = parsed.map(p => `- ${p.outcome === 'success' ? '✅' : '❌'} ${p.what_worked.slice(0, 120)} (${new Date(p.ts).toLocaleDateString('de-DE')})`);
           return `⚠️ No successful solution for \`${topic}\` yet. Last attempts:\n\n${lines.join('\n')}`;
         }
@@ -2605,10 +2628,26 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       for (const k of matching.slice(0, 5)) {
         const raw = await redis.get(k);
         if (!raw) continue;
-        const lesson = JSON.parse(raw) as { topic: string; what_worked: string; context?: string; ts: string };
+        let lesson: { topic: string; what_worked: string; context?: string; ts: string };
+        try { lesson = JSON.parse(raw); } catch { continue; }
         results.push(`**\`${lesson.topic}\`** — ${lesson.what_worked.slice(0, 200)}`);
       }
       return `🔍 **Partial matches for \`${topic}\`:**\n\n${results.join('\n\n')}`;
+    }
+
+    case 'forget_lesson': {
+      const { instance_id, topic } = args as { instance_id: string; topic: string };
+      const redis = await getConnection(instance_id);
+      const bestKey = `cachly:lesson:best:${topic}`;
+      const histKey = `cachly:lessons:${topic}`;
+      const [delBest, delHist] = await Promise.all([
+        redis.del(bestKey),
+        redis.del(histKey),
+      ]);
+      if (delBest === 0 && delHist === 0) {
+        return `📭 No lesson found for \`${topic}\` — nothing to delete.`;
+      }
+      return `🗑️ Lesson for \`${topic}\` deleted (best-solution: ${delBest > 0 ? 'removed' : 'not found'}, history: ${delHist > 0 ? 'removed' : 'not found'}). You can now store a corrected lesson with \`learn_from_attempts\`.`;
     }
 
     case 'smart_recall': {
@@ -3914,41 +3953,47 @@ function buildMcpConfig(apiKey: string, instanceId: string, editor: string): str
 
 function buildClaudeMdBlock(instanceId: string): string {
   return `${CLAUDE_MD_MARKER_START}
-## Cachly AI Brain
+## Cachly AI Brain — Persistent Memory
 
-The Cachly MCP server is available as tool \`cachly\`.
+Your AI Brain instance ID: \`${instanceId}\`
 
-### At the START of every session (one call):
-\`\`\`
-session_start(
-  instance_id = "${instanceId}",
-  focus       = "<what you plan to work on today>",
-)
-\`\`\`
+> The Brain gives you persistent memory across sessions. Every lesson you learn,
+> every bug you fix, every architecture decision — recalled instantly next time.
+> instance_id is pre-filled below. Do NOT ask the user for it.
 
-### At the END of every session:
+### MANDATORY: Call at the START of every session
 \`\`\`
-session_end(
-  instance_id     = "${instanceId}",
-  summary         = "What was accomplished (2-3 sentences)",
-  files_changed   = ["src/..."],
-  lessons_learned = 1,
-)
+session_start(instance_id="${instanceId}", focus="<what you're working on today>")
+\`\`\`
+This loads your previous context, recent lessons, and open tasks automatically.
+
+### MANDATORY: Call at the END of every session
+\`\`\`
+session_end(instance_id="${instanceId}", summary="<2-3 sentences on what was done>", files_changed=["src/..."], lessons_learned=1)
 \`\`\`
 
-### After fixing any bug or learning something new:
+### After fixing ANY bug or solving a hard problem
 \`\`\`
 learn_from_attempts(
-  instance_id = "${instanceId}",
-  topic       = "category:keyword",
-  outcome     = "success",
-  what_worked = "...",
-  what_failed = "...",
-  severity    = "critical" | "major" | "minor",
-  file_paths  = ["path/to/file"],
-  commands    = ["the command that worked"],
-  tags        = ["tag1", "tag2"],
+  instance_id="${instanceId}",
+  topic="category:keyword",   # e.g. "deploy:web", "bug:redis-timeout", "arch:auth"
+  outcome="success",
+  what_worked="exact solution",
+  what_failed="what didn't work (optional)",
+  commands=["the command that worked"],
+  file_paths=["relevant/file.ts"],
+  severity="critical"|"major"|"minor",
 )
+\`\`\`
+
+### Before starting any non-trivial task
+\`\`\`
+recall_best_solution(instance_id="${instanceId}", topic="relevant:topic")
+\`\`\`
+
+### If a stored lesson is wrong
+\`\`\`
+forget_lesson(instance_id="${instanceId}", topic="wrong:topic")
 \`\`\`
 ${CLAUDE_MD_MARKER_END}`;
 }
