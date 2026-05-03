@@ -31,6 +31,7 @@ import { join, relative, extname } from 'node:path';
  *
  * Configuration (env vars):
  *   CACHLY_API_URL      – default https://api.cachly.dev
+ *   CACHLY_AUTH_URL     – default https://auth.cachly.dev (Keycloak base URL for health checks)
  *   CACHLY_JWT          – your JWT (Keycloak access token)
  *   CACHLY_EMBED_PROVIDER – embedding backend: openai (default), gemini, mistral, cohere, ollama, cachly (server fallback)
  *   CACHLY_EMBED_MODEL  – override embedding model (optional)
@@ -49,6 +50,7 @@ import { Redis } from 'ioredis';
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
+const AUTH_URL = process.env.CACHLY_AUTH_URL ?? 'https://auth.cachly.dev';
 const JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
 /**
@@ -775,6 +777,20 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     },
   });
   if (!res.ok) {
+    if (res.status === 401 || res.status === 403) {
+      throw new McpError(
+        ErrorCode.InvalidRequest,
+        `cachly API: authentication failed (${res.status}) — your JWT may be expired or invalid.\n` +
+        `Get a new API token at https://cachly.dev/settings or run \`get_api_status\` to check token expiry.`
+      );
+    }
+    if (res.status === 503 || res.status === 502) {
+      throw new McpError(
+        ErrorCode.InternalError,
+        `cachly API: auth service unavailable (${res.status}) — the authentication service may be temporarily down.\n` +
+        `Please try again in a moment or contact support@cachly.dev`
+      );
+    }
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new McpError(
       ErrorCode.InternalError,
@@ -1177,10 +1193,10 @@ const TOOLS = [
   {
     name: 'get_api_status',
     description:
-      'Check the cachly API health and your authentication status. ' +
-      'Returns whether the JWT is valid, your user ID (sub claim), ' +
-      'token expiry, and the auth provider (keycloak). ' +
-      'Use this to debug connection issues or verify your CACHLY_JWT is correct.',
+      'Check the cachly API health, auth service reachability, and your authentication status. ' +
+      'Returns API health, whether the Keycloak auth service is reachable, JWT validity, ' +
+      'user ID (sub claim), token expiry, and the auth provider. ' +
+      'Use this to debug connection issues, verify your CACHLY_JWT, or diagnose "Auth Service Unavailable" errors.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   // ── Thinking/Context Cache (for AI assistants) ────────────────────────────
@@ -2685,18 +2701,32 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
     // ── get_api_status ────────────────────────────────────────────────────────
     case 'get_api_status': {
-      // Check health
+      // Check API health and auth service in parallel
+      const [healthResult, authServiceResult] = await Promise.allSettled([
+        fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(5000) }),
+        fetch(`${AUTH_URL}/.well-known/openid-configuration`, { signal: AbortSignal.timeout(5000) }),
+      ]);
+
       let healthStatus = 'unknown';
-      try {
-        const healthRes = await fetch(`${API_URL}/health`);
+      if (healthResult.status === 'fulfilled') {
+        const healthRes = healthResult.value;
         if (healthRes.ok) {
-          const body = await healthRes.json() as { status?: string; db?: string };
-          healthStatus = `${body.status ?? 'ok'} (db: ${body.db ?? '?'})`;
+          const body = await healthRes.json().catch(() => ({})) as { status?: string; db?: string };
+          healthStatus = `✅ ${body.status ?? 'ok'}${body.db ? ` (db: ${body.db})` : ''}`;
         } else {
-          healthStatus = `HTTP ${healthRes.status}`;
+          healthStatus = `❌ HTTP ${healthRes.status}`;
         }
-      } catch (e) {
-        healthStatus = `unreachable: ${(e as Error).message}`;
+      } else {
+        healthStatus = `❌ unreachable: ${healthResult.reason?.message ?? 'timeout'}`;
+      }
+
+      let authSvcStatus = 'unknown';
+      if (authServiceResult.status === 'fulfilled') {
+        authSvcStatus = authServiceResult.value.ok
+          ? `✅ reachable (${AUTH_URL})`
+          : `❌ HTTP ${authServiceResult.value.status} — auth service may be down`;
+      } else {
+        authSvcStatus = `❌ unreachable: ${authServiceResult.reason?.message ?? 'timeout'} — auth service may be down`;
       }
 
       // Check JWT / auth
@@ -2704,16 +2734,18 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         return [
           `📡 **cachly API Status**`,
           ``,
-          `  🌐 API:      ${API_URL}`,
-          `  💓 Health:   ${healthStatus}`,
-          `  🔑 Auth:     ❌ CACHLY_JWT not set`,
+          `  🌐 API:          ${API_URL}`,
+          `  💓 API Health:   ${healthStatus}`,
+          `  🔐 Auth Service: ${authSvcStatus}`,
+          `  🔑 JWT:          ❌ CACHLY_JWT not set`,
           ``,
-          `💡 Get your API token at https://cachly.dev/instances → Settings → API Token`,
+          `💡 Get your API token at https://cachly.dev/settings`,
         ].join('\n');
       }
 
       // Decode JWT claims (inspection only, no verification)
       let authInfo = '❌ invalid JWT format';
+      let isExpired = false;
       try {
         const parts = JWT.split('.');
         if (parts.length === 3) {
@@ -2724,28 +2756,39 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
           const iss = payload.iss ?? '(unknown)';
           const provider = iss.includes('keycloak') ? 'Keycloak' : 'OIDC';
           const expTs = payload.exp ? new Date(payload.exp * 1000) : null;
-          const expired = expTs ? expTs < new Date() : false;
+          isExpired = expTs ? expTs < new Date() : false;
           authInfo = [
-            `✅ JWT decoded`,
+            `${isExpired ? '⚠️ ' : '✅'} JWT decoded`,
             `  Sub (user ID): ${sub}`,
             `  Provider:      ${provider}`,
             `  Issuer:        ${iss}`,
-            `  Expires:       ${expTs ? expTs.toISOString() : 'never'} ${expired ? '⚠️  EXPIRED – get a new token!' : '✅'}`,
+            `  Expires:       ${expTs ? expTs.toISOString() : 'never'} ${isExpired ? '⚠️  EXPIRED' : '✅'}`,
           ].join('\n');
         }
       } catch {
         authInfo = '❌ JWT decode failed – check CACHLY_JWT format';
       }
 
-      return [
+      const lines = [
         `📡 **cachly API Status**`,
         ``,
-        `  🌐 API:    ${API_URL}`,
-        `  💓 Health: ${healthStatus}`,
+        `  🌐 API:          ${API_URL}`,
+        `  💓 API Health:   ${healthStatus}`,
+        `  🔐 Auth Service: ${authSvcStatus}`,
         ``,
-        `🔑 **Auth:**`,
+        `🔑 **Auth (JWT):**`,
         authInfo,
-      ].join('\n');
+      ];
+
+      if (isExpired) {
+        lines.push(``, `⚠️  Your token is expired — get a new one at https://cachly.dev/settings`);
+      }
+      if (authSvcStatus.startsWith('❌')) {
+        lines.push(``, `⚠️  Auth service appears down. Registration and login on cachly.dev may be unavailable.`);
+        lines.push(`   Contact support@cachly.dev if this persists.`);
+      }
+
+      return lines.join('\n');
     }
 
     // ── session_start ─────────────────────────────────────────────────────────
