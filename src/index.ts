@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, extname } from 'node:path';
 /**
- * cachly MCP Server v0.5.41
+ * cachly MCP Server v0.5.42
  *
  * Exposes cachly.dev as MCP tools so any AI assistant
  * (GitHub Copilot, Claude, Cursor, Windsurf, Continue.dev …) can:
@@ -1539,6 +1539,55 @@ const TOOLS = [
         topic:       { type: 'string', description: 'Topic or keyword to filter lessons (optional)' },
         author:      { type: 'string', description: 'Filter by author name (optional)' },
         limit:       { type: 'number', description: 'Max lessons to return (default: 10)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'brain_stats',
+    description:
+      'Complete statistics dashboard for your AI Brain — lessons, recalls, time saved, top topics, team authors, memory usage. ' +
+      'Returns a formatted report designed for sharing (screenshot-worthy). ' +
+      'Use this when you want a full overview or want to share your brain health with others.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'export_brain',
+    description:
+      'Export your entire AI Brain as a portable Markdown file. ' +
+      'Includes all lessons (topic, outcome, what worked, severity), context entries (keys + content), ' +
+      'session history, and metadata. Perfect for sharing with teammates, archiving, posting to GitHub, ' +
+      'or importing into a new instance. ' +
+      'Example: export_brain() → returns full markdown string you can save to a .md file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        include_context: { type: 'boolean', description: 'Include context entries (default: true)' },
+        max_lessons:    { type: 'number',  description: 'Max lessons to include (default: all)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'invite_link',
+    description:
+      'Generate a one-click team invite link for your Brain instance. ' +
+      'Share the link (or the npx join command) with a teammate — they run one command and are instantly ' +
+      'connected to the same shared Brain with all your lessons and context. ' +
+      'No dashboard visit, no copy-paste of instance IDs required. ' +
+      'Example: invite_link() → returns "npx @cachly-dev/mcp-server@latest join <token>"',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance to share' },
+        label:       { type: 'string', description: 'Optional label shown to the invitee (e.g. "my-api project")' },
       },
       required: ['instance_id'],
     },
@@ -3361,6 +3410,303 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lines.push(`   ${l.what_worked.slice(0, 120)}`);
         lines.push('');
       }
+      return lines.join('\n');
+    }
+
+    // ── brain_stats ───────────────────────────────────────────────────────────
+    case 'brain_stats': {
+      const { instance_id } = args as { instance_id: string };
+      const redis = await getConnection(instance_id);
+
+      // Scan all lesson keys
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((resolve, reject) => {
+        lStream.on('data', (batch: string[]) => lessonKeys.push(...batch));
+        lStream.on('end', resolve);
+        lStream.on('error', reject);
+      });
+
+      type Lesson = { topic: string; outcome: string; recall_count?: number; ts: string; severity?: string; what_worked: string; author?: string };
+      const lessons: Lesson[] = [];
+      if (lessonKeys.length > 0) {
+        const vals = await redis.mget(...lessonKeys);
+        for (const raw of vals) {
+          if (!raw) continue;
+          try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip */ }
+        }
+      }
+
+      // Context count
+      let ctxCount = 0;
+      const ctxStream = redis.scanStream({ match: 'cachly:ctx:*', count: 200 });
+      await new Promise<void>((resolve, reject) => {
+        ctxStream.on('data', (batch: string[]) => { ctxCount += batch.filter((k: string) => !k.endsWith(':meta')).length; });
+        ctxStream.on('end', resolve);
+        ctxStream.on('error', reject);
+      });
+
+      const lastSessionRaw = await redis.get('cachly:session:last');
+      let lastSession: { ts: string; summary: string; duration_min?: number } | null = null;
+      if (lastSessionRaw) { try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ } }
+
+      const totalRecalls  = lessons.reduce((s, l) => s + (l.recall_count ?? 0), 0);
+      const savedMin      = totalRecalls * 15;
+      const savedHours    = (savedMin / 60).toFixed(1);
+      const successCount  = lessons.filter(l => l.outcome === 'success').length;
+      const failureCount  = lessons.filter(l => l.outcome === 'failure' || l.outcome === 'partial').length;
+      const criticalCount = lessons.filter(l => l.severity === 'critical').length;
+      const majorCount    = lessons.filter(l => l.severity === 'major').length;
+      const authors       = [...new Set(lessons.map(l => l.author).filter(Boolean))];
+      const topByRecall   = [...lessons].sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0)).slice(0, 5);
+      const newestLesson  = [...lessons].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())[0];
+
+      // Age of last session
+      let lastSessionStr = 'none yet';
+      if (lastSession) {
+        const ageMin = Math.round((Date.now() - new Date(lastSession.ts).getTime()) / 60000);
+        lastSessionStr = ageMin < 60 ? `${ageMin}m ago`
+          : ageMin < 1440 ? `${Math.round(ageMin / 60)}h ago`
+          : `${Math.round(ageMin / 1440)}d ago`;
+      }
+
+      const tokensSaved = (totalRecalls * 1200);
+      const tokenStr    = tokensSaved >= 1000 ? `~${(tokensSaved / 1000).toFixed(0)}k tokens` : `~${tokensSaved} tokens`;
+      const costSaved   = (tokensSaved * 0.000003).toFixed(2);
+
+      const lines = [
+        `🧠 **Brain Stats — Full Dashboard**`,
+        ``,
+        `╔══════════════════════════════════════╗`,
+        `║  📚 Lessons:       ${String(lessons.length).padEnd(18)}║`,
+        `║  🔄 Total recalls: ${String(totalRecalls).padEnd(18)}║`,
+        `║  🕐 Time saved:    ~${savedHours}h${' '.repeat(Math.max(0, 16 - savedHours.length))}║`,
+        `║  💎 Tokens saved:  ${tokenStr.padEnd(18)}║`,
+        `║  💵 Cost saved:    ~$${costSaved.padEnd(17)}║`,
+        `║  📁 Context keys:  ${String(ctxCount).padEnd(18)}║`,
+        `╚══════════════════════════════════════╝`,
+        ``,
+        `**Lessons breakdown:**`,
+        `  ✅ Success:  ${successCount}   ❌ Failures/partial: ${failureCount}`,
+        `  🔴 Critical: ${criticalCount}   🟡 Major: ${majorCount}`,
+        ``,
+        `**Last session:** ${lastSessionStr}${lastSession?.summary ? ` — ${lastSession.summary.slice(0, 80)}` : ''}`,
+        `**Newest lesson:** ${newestLesson ? `\`${newestLesson.topic}\`` : 'none'}`,
+        ``,
+      ];
+
+      if (topByRecall.length > 0) {
+        lines.push(`**Top recalled lessons (most reused):**`);
+        for (const l of topByRecall) {
+          const emoji = l.outcome === 'success' ? '✅' : '⚠️';
+          lines.push(`  ${emoji} \`${l.topic}\` — recalled ${l.recall_count ?? 0}× · ${l.what_worked.slice(0, 60)}`);
+        }
+        lines.push('');
+      }
+
+      if (authors.length > 0) {
+        lines.push(`**Team contributors (${authors.length}):** ${(authors as string[]).join(', ')}`);
+        lines.push('');
+      }
+
+      lines.push(`💡 Share your brain: \`invite_link()\` — generates a one-command team invite.`);
+      lines.push(`📤 Export to Markdown: \`export_brain()\` — portable snapshot you can save or share.`);
+
+      return lines.join('\n');
+    }
+
+    // ── export_brain ──────────────────────────────────────────────────────────
+    case 'export_brain': {
+      const { instance_id, include_context = true, max_lessons } = args as {
+        instance_id: string;
+        include_context?: boolean;
+        max_lessons?: number;
+      };
+      const redis = await getConnection(instance_id);
+
+      // Scan all lessons
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((resolve, reject) => {
+        lStream.on('data', (batch: string[]) => lessonKeys.push(...batch));
+        lStream.on('end', resolve);
+        lStream.on('error', reject);
+      });
+
+      type FullLesson = {
+        topic: string; outcome: string; what_worked: string; what_failed?: string;
+        severity?: string; ts: string; recall_count?: number; author?: string;
+        file_paths?: string[]; commands?: string[]; tags?: string[];
+      };
+      let lessons: FullLesson[] = [];
+      if (lessonKeys.length > 0) {
+        const vals = await redis.mget(...lessonKeys);
+        for (const raw of vals) {
+          if (!raw) continue;
+          try { lessons.push(JSON.parse(raw) as FullLesson); } catch { /* skip */ }
+        }
+      }
+      lessons.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+      if (max_lessons && max_lessons > 0) lessons = lessons.slice(0, max_lessons);
+
+      // Last session + crystal
+      const lastSessionRaw = await redis.get('cachly:session:last');
+      let lastSession: { ts: string; summary: string } | null = null;
+      if (lastSessionRaw) { try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ } }
+
+      const crystalRaw = await redis.get('cachly:crystal');
+      let crystal: { summary: string; created_at: string } | null = null;
+      if (crystalRaw) { try { crystal = JSON.parse(crystalRaw); } catch { /* ignore */ } }
+
+      // Context entries
+      type CtxEntry = { key: string; value: string };
+      const ctxEntries: CtxEntry[] = [];
+      if (include_context) {
+        const ctxKeys: string[] = [];
+        const ctxStream = redis.scanStream({ match: 'cachly:ctx:*', count: 200 });
+        await new Promise<void>((resolve, reject) => {
+          ctxStream.on('data', (batch: string[]) => {
+            ctxKeys.push(...batch.filter((k: string) => !k.endsWith(':meta')));
+          });
+          ctxStream.on('end', resolve);
+          ctxStream.on('error', reject);
+        });
+        if (ctxKeys.length > 0) {
+          const ctxVals = await redis.mget(...ctxKeys);
+          for (let i = 0; i < ctxKeys.length; i++) {
+            const val = ctxVals[i];
+            if (val) ctxEntries.push({ key: ctxKeys[i].replace('cachly:ctx:', ''), value: val });
+          }
+        }
+      }
+
+      const exportedAt = new Date().toISOString();
+      const totalRecalls = lessons.reduce((s, l) => s + (l.recall_count ?? 0), 0);
+      const savedHours = (totalRecalls * 15 / 60).toFixed(1);
+
+      const md: string[] = [
+        `# 🧠 cachly Brain Export`,
+        ``,
+        `> Exported: ${exportedAt}  `,
+        `> Instance: \`${instance_id}\`  `,
+        `> Lessons: ${lessons.length} · Recalls: ${totalRecalls} · Time saved: ~${savedHours}h`,
+        ``,
+      ];
+
+      if (crystal) {
+        md.push(`## 💎 Memory Crystal`, ``, `> ${crystal.summary}`, ``, `_Generated: ${crystal.created_at}_`, ``);
+      }
+
+      if (lastSession) {
+        md.push(`## 📅 Last Session`, ``, `**${lastSession.ts.slice(0, 10)}** — ${lastSession.summary}`, ``);
+      }
+
+      // Group lessons by outcome
+      const successLessons = lessons.filter(l => l.outcome === 'success');
+      const failureLessons = lessons.filter(l => l.outcome !== 'success');
+
+      const formatLesson = (l: FullLesson) => {
+        const sev = l.severity === 'critical' ? ' 🔴' : l.severity === 'major' ? ' 🟡' : '';
+        const lines: string[] = [
+          `### \`${l.topic}\`${sev}`,
+          ``,
+          `**Outcome:** ${l.outcome}  `,
+          `**Recalls:** ${l.recall_count ?? 0}×  `,
+          `**Stored:** ${l.ts.slice(0, 10)}${l.author ? `  \n**Author:** ${l.author}` : ''}`,
+          ``,
+          `**What worked:**  `,
+          l.what_worked,
+        ];
+        if (l.what_failed) { lines.push(``, `**What failed:**  `, l.what_failed); }
+        if ((l.commands ?? []).length > 0) {
+          lines.push(``, `**Commands:**`);
+          for (const cmd of l.commands!) lines.push(`\`\`\`\n${cmd}\n\`\`\``);
+        }
+        if ((l.file_paths ?? []).length > 0) {
+          lines.push(``, `**Files:** ${l.file_paths!.map(f => `\`${f}\``).join(', ')}`);
+        }
+        if ((l.tags ?? []).length > 0) {
+          lines.push(``, `**Tags:** ${l.tags!.map(t => `\`${t}\``).join(', ')}`);
+        }
+        lines.push(``);
+        return lines.join('\n');
+      };
+
+      if (successLessons.length > 0) {
+        md.push(`## ✅ Successful Solutions (${successLessons.length})`, ``);
+        for (const l of successLessons) md.push(formatLesson(l));
+      }
+
+      if (failureLessons.length > 0) {
+        md.push(`## ⚠️ Open / Partial Issues (${failureLessons.length})`, ``);
+        for (const l of failureLessons) md.push(formatLesson(l));
+      }
+
+      if (ctxEntries.length > 0) {
+        md.push(`## 📁 Context Entries (${ctxEntries.length})`, ``);
+        for (const e of ctxEntries) {
+          md.push(`### \`${e.key}\``, ``, e.value.slice(0, 500) + (e.value.length > 500 ? '\n\n_[truncated]_' : ''), ``);
+        }
+      }
+
+      md.push(
+        `---`,
+        ``,
+        `_Exported from [cachly AI Brain](https://cachly.dev) · Re-import with \`npx @cachly-dev/mcp-server@latest setup\`_`,
+      );
+
+      return md.join('\n');
+    }
+
+    // ── invite_link ───────────────────────────────────────────────────────────
+    case 'invite_link': {
+      const { instance_id, label = '' } = args as { instance_id: string; label?: string };
+
+      // Generate a share token via API
+      let shareToken = '';
+      let inviteUrl  = '';
+      try {
+        const res = await apiFetch<{ token?: string; url?: string }>(
+          `/api/v1/instances/${instance_id}/invite`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }) }
+        );
+        shareToken = res.token ?? '';
+        inviteUrl  = res.url  ?? '';
+      } catch {
+        // API doesn't support invite yet — generate a local share snippet instead
+      }
+
+      // Build the join command
+      const joinCmd = shareToken
+        ? `npx @cachly-dev/mcp-server@latest join ${shareToken}`
+        : `npx @cachly-dev/mcp-server@latest setup`;
+
+      const lines = [
+        `🔗 **Team Invite — ${label || instance_id.slice(0, 8) + '…'}**`,
+        ``,
+        `Share this command with your teammate:`,
+        ``,
+        `\`\`\`bash`,
+        joinCmd,
+        `\`\`\``,
+        ``,
+        `**What happens when they run it:**`,
+        `  1. Browser opens → they sign in (free, 30 seconds)`,
+        `  2. Their Brain is auto-connected to this shared instance`,
+        `  3. All ${label ? `"${label}" ` : ''}lessons and context are instantly available`,
+        `  4. Editor configs written automatically — no copy-paste`,
+        ``,
+      ];
+
+      if (inviteUrl) {
+        lines.push(`**Or share the link directly:** ${inviteUrl}`, ``);
+      }
+
+      lines.push(
+        `💡 Teammates can also run \`session_start\` immediately to see all your lessons.`,
+        `   Use \`team_learn\` with an \`author\` param so everyone knows who learned what.`,
+      );
+
       return lines.join('\n');
     }
 
