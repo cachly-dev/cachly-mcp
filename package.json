@@ -1,8 +1,8 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.5.40",
+  "version": "0.5.41",
   "mcpName": "io.github.cachly-dev/mcp-server",
-  "description": "AI memory brain for Claude Code, Cursor, Copilot & Windsurf — persistent sessions, lessons learned, semantic search, team brain. 51 MCP tools.",
+  "description": "Claude forgets. cachly doesn't. Persistent AI memory for Claude Code, Cursor & Copilot — one command setup, zero copy-paste.",
   "type": "module",
   "bin": {
     "cachly-mcp": "./dist/index.js"

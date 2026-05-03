@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, extname } from 'node:path';
 /**
- * cachly MCP Server v0.5.40
+ * cachly MCP Server v0.5.41
  *
  * Exposes cachly.dev as MCP tools so any AI assistant
  * (GitHub Copilot, Claude, Cursor, Windsurf, Continue.dev …) can:
@@ -3021,7 +3021,18 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lines.push(`After this session, call \`session_end\` to save a summary.`);
         lines.push('');
       } else {
-        lines.push(`📊 **Brain:** ${lessons.length} lessons · ${ctxCount} context entries`, '');
+        const totalRecalls = lessons.reduce((s, l) => s + (l.recall_count ?? 0), 0);
+        const savedMin = totalRecalls * 15;
+        const savedStr = savedMin >= 60
+          ? `~${(savedMin / 60).toFixed(1)}h saved`
+          : savedMin > 0 ? `~${savedMin}min saved` : '';
+        const statsLine = [
+          `${lessons.length} lessons`,
+          ctxCount > 0 ? `${ctxCount} context entries` : '',
+          totalRecalls > 0 ? `${totalRecalls} recalls` : '',
+          savedStr,
+        ].filter(Boolean).join(' · ');
+        lines.push(`📊 **Brain:** ${statsLine}`, '');
       }
 
       // Focus-relevant lessons
