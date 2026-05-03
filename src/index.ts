@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, extname } from 'node:path';
 /**
- * cachly MCP Server v0.5.33
+ * cachly MCP Server v0.5.35
  *
  * Exposes cachly.dev as MCP tools so any AI assistant
  * (GitHub Copilot, Claude, Cursor, Windsurf, Continue.dev …) can:
@@ -2541,6 +2541,18 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         const updatedLesson = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1 };
         await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
 
+        // Fire-and-forget: track Magic Moment in Plausible
+        fetch('https://analytics.cachly.dev/api/event', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'User-Agent': 'cachly-mcp/recall' },
+          body: JSON.stringify({
+            domain: 'cachly.dev',
+            name: 'Brain Recall Hit',
+            url: 'https://cachly.dev/mcp/recall',
+            props: { topic },
+          }),
+        }).catch(() => { /* non-critical */ });
+
         const sevEmoji = lesson.severity === 'critical' ? '🔴' : lesson.severity === 'major' ? '🟡' : lesson.severity ? '🟢' : '';
         const sessionAgeMs = Date.now() - new Date(lesson.ts).getTime();
         const sessionAgeDays = Math.round(sessionAgeMs / 86_400_000);
@@ -4013,16 +4025,108 @@ if (process.argv[2] === 'setup') {
   console.log('\n🧠  cachly AI Brain — Interactive Setup');
   console.log('────────────────────────────────────────\n');
 
-  // ── Step 1: API token ──────────────────────────────────────────────────────
+  // ── Step 1: Authenticate via OAuth Device Flow ────────────────────────────
   let token = process.env.CACHLY_JWT ?? '';
   if (token) {
     console.log('✓  Using token from CACHLY_JWT env var\n');
   } else {
-    console.log('Step 1: Get your API token at https://cachly.dev/setup-ai\n');
-    token = await ask('   Paste API token (cky_live_...): ');
-    if (!token) { console.error('\nToken is required. Aborting.\n'); rl.close(); process.exit(1); }
-    console.log('');
+    const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
+    const CLIENT_ID = 'cachly-cli';
+
+    console.log('Step 1: Sign in to cachly (free — no credit card required)\n');
+
+    let deviceCode = '', userCode = '', verifyUri = '', pollInterval = 5000;
+    try {
+      const deviceRes = await fetch(`${AUTH_BASE}/auth/device`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `client_id=${CLIENT_ID}&scope=openid`,
+      });
+      if (!deviceRes.ok) throw new Error(`HTTP ${deviceRes.status}`);
+      const data = await deviceRes.json() as {
+        device_code: string; user_code: string;
+        verification_uri_complete: string; interval: number;
+      };
+      deviceCode   = data.device_code;
+      userCode     = data.user_code;
+      verifyUri    = data.verification_uri_complete;
+      pollInterval = (data.interval ?? 5) * 1000;
+    } catch (e) {
+      console.error(`\nCould not reach auth service: ${(e as Error).message}`);
+      console.error('Fallback: sign in at https://cachly.dev and paste your API token.\n');
+      token = await ask('   Paste API token (cky_live_...): ');
+      if (!token) { console.error('\nToken required. Aborting.\n'); rl.close(); process.exit(1); }
+      deviceCode = '';
+    }
+
+    if (deviceCode) {
+      console.log(`   Code: \x1b[1;33m${userCode}\x1b[0m`);
+      console.log(`   URL:  ${verifyUri}\n`);
+      try {
+        const { execSync } = await import('node:child_process');
+        const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+        execSync(`${openCmd} "${verifyUri}"`, { stdio: 'ignore' });
+        console.log('   ✓  Browser opened — confirm the code above to continue...\n');
+      } catch {
+        console.log('   👉  Open the URL above in your browser and confirm the code.\n');
+      }
+
+      process.stdout.write('   Waiting for authorization');
+      const deadline = Date.now() + 10 * 60 * 1000;
+      while (Date.now() < deadline) {
+        await new Promise(r => setTimeout(r, pollInterval));
+        process.stdout.write('.');
+        try {
+          const tokenRes = await fetch(`${AUTH_BASE}/token`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: `client_id=${CLIENT_ID}&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${deviceCode}`,
+          });
+          const td = await tokenRes.json() as { access_token?: string; error?: string };
+          if (td.access_token) {
+            token = td.access_token;
+            console.log(' \x1b[32m✓ Authorized!\x1b[0m\n');
+            break;
+          }
+          if (td.error === 'slow_down') pollInterval = Math.min(pollInterval + 2000, 15000);
+          else if (td.error && td.error !== 'authorization_pending') {
+            console.error(`\nAuth error: ${td.error}. Aborting.\n`);
+            rl.close(); process.exit(1);
+          }
+        } catch { /* network hiccup — keep polling */ }
+      }
+      if (!token) { console.error('\nTimed out. Aborting.\n'); rl.close(); process.exit(1); }
+    }
+
+    // Exchange short-lived Keycloak JWT → long-lived cky_live_ API key
+    if (token.startsWith('eyJ')) {
+      process.stdout.write('⏳ Generating your API key...');
+      try {
+        const keyRes = await fetch(`${API_URL}/api/v1/api-keys`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ name: 'cachly-mcp-setup', scope: 'read_write' }),
+        });
+        if (!keyRes.ok) throw new Error(`HTTP ${keyRes.status}`);
+        const keyBody = await keyRes.json() as { key?: string };
+        if (keyBody.key) { token = keyBody.key; console.log(' ✓\n'); }
+        else throw new Error('no key in response');
+      } catch (e) {
+        console.log(` (skipped — JWT will be used directly)\n`);
+      }
+    }
   }
+
+  // ── Step 1b: Auto-provision a Brain instance if none exist ─────────────────
+  // POST /api/v1/instances/auto is idempotent — returns existing or creates free Brain
+  let autoProvisioned = false;
+  try {
+    const autoRes = await fetch(`${API_URL}/api/v1/instances/auto`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    });
+    if (autoRes.ok) autoProvisioned = true;
+  } catch { /* non-fatal */ }
 
   // ── Step 2: Fetch & pick instance ─────────────────────────────────────────
   process.stdout.write('⏳ Fetching your instances...');
@@ -4042,8 +4146,21 @@ if (process.argv[2] === 'setup') {
   console.log(` found ${instances.length}\n`);
 
   if (instances.length === 0) {
-    console.error('No running instances found. Create one at https://cachly.dev/instances\n');
-    rl.close(); process.exit(1);
+    if (autoProvisioned) {
+      // Auto-provisioning succeeded but instance may still be starting — retry once
+      await new Promise(r => setTimeout(r, 3000));
+      try {
+        const retry = await fetch(`${API_URL}/api/v1/instances`, { headers: { Authorization: `Bearer ${token}` } });
+        if (retry.ok) {
+          const b = await retry.json() as { data: typeof instances };
+          instances = (b.data ?? []).filter(i => i.status === 'running');
+        }
+      } catch { /* ignore */ }
+    }
+    if (instances.length === 0) {
+      console.error('No running instances found. A free Brain is being provisioned — run setup again in 30 seconds.\n');
+      rl.close(); process.exit(1);
+    }
   }
 
   let instance = instances[0];
