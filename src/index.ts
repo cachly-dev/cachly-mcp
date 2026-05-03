@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, extname } from 'node:path';
 /**
- * cachly MCP Server v0.5.42
+ * cachly MCP Server v0.5.43
  *
  * Exposes cachly.dev as MCP tools so any AI assistant
  * (GitHub Copilot, Claude, Cursor, Windsurf, Continue.dev …) can:
@@ -3737,13 +3737,15 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ctxStream.on('error', reject);
       });
 
-      // Load lessons for analysis
+      // Load lessons for analysis — batch fetch
       type Lesson = { topic: string; outcome: string; recall_count?: number; ts: string; severity?: string };
       const lessons: Lesson[] = [];
-      for (const k of lessonKeys) {
-        const raw = await redis.get(k);
-        if (!raw) continue;
-        try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip */ }
+      if (lessonKeys.length > 0) {
+        const vals = await redis.mget(...lessonKeys);
+        for (const raw of vals) {
+          if (!raw) continue;
+          try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip */ }
+        }
       }
 
       // Last session
@@ -4722,6 +4724,157 @@ if (process.argv[2] === 'setup') {
   rl.close();
   console.log(`\n🧠  Done! Restart your editor — the \`cachly\` MCP tools will appear.`);
   console.log(`    Your AI now has persistent memory across every session.\n`);
+  process.exit(0);
+}
+
+// ── CLI: cachly join <token> (team invite — zero friction) ────────────────────
+// Usage: npx @cachly-dev/mcp-server join <token>
+//
+// Connects the user to a shared Brain instance via an invite link.
+// Flow: resolve token → show instance info → Device Code auth → write configs.
+
+if (process.argv[2] === 'join') {
+  const { writeFile, mkdir } = await import('node:fs/promises');
+  const { existsSync } = await import('node:fs');
+  const { resolve, dirname } = await import('node:path');
+
+  const inviteToken = process.argv[3] ?? '';
+  if (!inviteToken) {
+    console.error('\n❌  Usage: npx @cachly-dev/mcp-server@latest join <token>\n');
+    console.error('   Get a token from a teammate: invite_link() in their AI assistant.\n');
+    process.exit(1);
+  }
+
+  console.log('\n🧠  cachly AI Brain — Team Join');
+  console.log('──────────────────────────────────\n');
+
+  // Step 1: Resolve the invite token (public, no auth)
+  process.stdout.write('⏳ Resolving invite...');
+  let instanceId = '', instanceName = '', instanceTier = '';
+  try {
+    const infoRes = await fetch(`${API_URL}/api/invite/${inviteToken}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!infoRes.ok) {
+      console.error(`\n\n❌  Invite not found or expired (HTTP ${infoRes.status}).`);
+      console.error('    Ask your teammate to generate a new one with: invite_link()\n');
+      process.exit(1);
+    }
+    const info = await infoRes.json() as { instance_id: string; instance_name: string; tier: string; label?: string };
+    instanceId   = info.instance_id;
+    instanceName = info.instance_name;
+    instanceTier = info.tier ?? 'free';
+    console.log(` ✓\n`);
+    const label = info.label ? ` ("${info.label}")` : '';
+    console.log(`   Brain instance: \x1b[1m${instanceName}\x1b[0m${label} [${instanceTier}]`);
+    console.log(`   Instance ID:    ${instanceId}\n`);
+  } catch (e) {
+    console.error(`\n\n❌  Could not reach API: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+
+  // Step 2: Authenticate via Device Code Flow
+  const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
+  const CLIENT_ID = 'cachly-cli';
+
+  console.log('Step 1: Sign in to cachly (your own account — free, no credit card)\n');
+
+  let token = process.env.CACHLY_JWT ?? '';
+  if (token) {
+    console.log('✓  Using token from CACHLY_JWT env var\n');
+  } else {
+    let deviceCode = '', userCode = '', verifyUri = '', pollInterval = 5000;
+    try {
+      const deviceRes = await fetch(`${AUTH_BASE}/auth/device`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `client_id=${CLIENT_ID}&scope=openid`,
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!deviceRes.ok) throw new Error(`HTTP ${deviceRes.status}`);
+      const data = await deviceRes.json() as {
+        device_code: string; user_code: string;
+        verification_uri_complete: string; interval: number;
+      };
+      deviceCode   = data.device_code;
+      userCode     = data.user_code;
+      verifyUri    = data.verification_uri_complete;
+      pollInterval = (data.interval ?? 5) * 1000;
+    } catch (e) {
+      console.error(`\n❌  Auth service unreachable: ${(e as Error).message}`);
+      process.exit(1);
+    }
+
+    console.log(`   Code: \x1b[1;33m${userCode}\x1b[0m`);
+    console.log(`   URL:  ${verifyUri}\n`);
+    try {
+      const { execSync } = await import('node:child_process');
+      const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+      execSync(`${openCmd} "${verifyUri}"`, { stdio: 'ignore' });
+      console.log('   ✓  Browser opened — confirm the code above to continue...\n');
+    } catch {
+      console.log('   👉  Open the URL above in your browser and confirm the code.\n');
+    }
+
+    process.stdout.write('   Waiting for authorization');
+    const deadline = Date.now() + 10 * 60 * 1000;
+    while (Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, pollInterval));
+      process.stdout.write('.');
+      try {
+        const td = await (await fetch(`${AUTH_BASE}/token`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `client_id=${CLIENT_ID}&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${deviceCode}`,
+        })).json() as { access_token?: string; error?: string };
+        if (td.access_token) { token = td.access_token; console.log(' \x1b[32m✓ Authorized!\x1b[0m\n'); break; }
+        if (td.error === 'slow_down') pollInterval = Math.min(pollInterval + 2000, 15000);
+        else if (td.error && td.error !== 'authorization_pending') {
+          console.error(`\n\n❌  Auth error: ${td.error}\n`); process.exit(1);
+        }
+      } catch { /* hiccup — keep polling */ }
+    }
+    if (!token) { console.error('\n\n❌  Timed out. Run the command again.\n'); process.exit(1); }
+
+    // Exchange Keycloak JWT → long-lived cky_live_ API key
+    if (token.startsWith('eyJ')) {
+      process.stdout.write('⏳ Generating your API key...');
+      try {
+        const keyBody = await (await fetch(`${API_URL}/api/v1/api-keys`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ name: 'cachly-mcp-join', scope: 'read_write' }),
+        })).json() as { key?: string };
+        if (keyBody.key) { token = keyBody.key; console.log(' ✓\n'); }
+        else throw new Error('no key in response');
+      } catch { console.log(' (skipped — JWT used directly)\n'); }
+    }
+  }
+
+  // Step 3: Detect editors and write configs
+  const cwd = process.cwd();
+  const detected: string[] = ['claude'];
+  if (existsSync(resolve(cwd, '.cursor')))   detected.push('cursor');
+  if (existsSync(resolve(cwd, '.windsurf'))) detected.push('windsurf');
+  if (existsSync(resolve(cwd, '.vscode')))   detected.push('copilot');
+  if (existsSync(resolve(cwd, '.continue'))) detected.push('continue');
+
+  console.log(`Step 2: Writing configs for: ${detected.join(', ')}\n`);
+
+  for (const editor of detected) {
+    const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
+    const configPath = resolve(cwd, configFile);
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(configPath, buildMcpConfig(token, instanceId, editor), 'utf-8');
+    console.log(`✅ Written: ${configFile}`);
+  }
+
+  const mdResult = await writeClaudeMd(cwd, instanceId);
+  const mdLabel = mdResult === 'updated' ? '✅ Updated' : mdResult === 'appended' ? '✅ Appended to' : '✅ Written';
+  console.log(`${mdLabel}: CLAUDE.md`);
+
+  console.log(`\n🧠  Joined! You're now connected to "${instanceName}".`);
+  console.log(`    Restart your editor — all ${instanceName} lessons are now available via session_start.\n`);
   process.exit(0);
 }
 
