@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, extname } from 'node:path';
 /**
- * cachly MCP Server v0.5.38
+ * cachly MCP Server v0.5.39
  *
  * Exposes cachly.dev as MCP tools so any AI assistant
  * (GitHub Copilot, Claude, Cursor, Windsurf, Continue.dev …) can:
@@ -770,11 +770,18 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   }
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
+    signal: AbortSignal.timeout(15000),
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${JWT}`,
       ...options.headers,
     },
+  }).catch((err: Error) => {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      throw new McpError(ErrorCode.InternalError,
+        `cachly API timed out after 15s — check your connection or try again.`);
+    }
+    throw new McpError(ErrorCode.InternalError, `cachly API unreachable: ${err.message}`);
   });
   if (!res.ok) {
     if (res.status === 401 || res.status === 403) {
@@ -1336,6 +1343,20 @@ const TOOLS = [
         topic:        { type: 'string', description: 'Topic slug to look up, e.g. "deploy:web". Supports partial match.' },
       },
       required: ['instance_id', 'topic'],
+    },
+  },
+  {
+    name: 'list_lessons',
+    description:
+      'List all topics stored in the Brain. Use this to see what the AI has learned, find topics to recall, or identify outdated lessons to delete with forget_lesson. ' +
+      'Returns topics sorted by most recently stored, with severity and recall count.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        filter:      { type: 'string', description: 'Optional substring filter, e.g. "deploy" returns only deploy-related topics' },
+      },
+      required: ['instance_id'],
     },
   },
   {
@@ -2635,6 +2656,48 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       return `🔍 **Partial matches for \`${topic}\`:**\n\n${results.join('\n\n')}`;
     }
 
+    case 'list_lessons': {
+      const { instance_id, filter = '' } = args as { instance_id: string; filter?: string };
+      const redis = await getConnection(instance_id);
+      const keys: string[] = [];
+      const stream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((resolve, reject) => {
+        stream.on('data', (batch: string[]) => keys.push(...batch));
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+      if (keys.length === 0) return `📭 No lessons stored yet. Use \`learn_from_attempts\` after solving any problem.`;
+
+      const values = await redis.mget(...keys);
+      type LessonMeta = { topic: string; ts: string; severity?: string; recall_count?: number; outcome?: string };
+      const lessons: LessonMeta[] = values.flatMap(raw => {
+        if (!raw) return [];
+        try { return [JSON.parse(raw) as LessonMeta]; } catch { return []; }
+      });
+
+      const filtered = filter
+        ? lessons.filter(l => l.topic.toLowerCase().includes(filter.toLowerCase()))
+        : lessons;
+
+      filtered.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
+
+      if (filtered.length === 0) return `📭 No lessons matching \`${filter}\`.`;
+
+      const sevEmoji = (s?: string) => s === 'critical' ? '🔴' : s === 'major' ? '🟡' : '🟢';
+      const lines = [
+        `🧠 **${filtered.length} lesson${filtered.length === 1 ? '' : 's'}${filter ? ` matching "${filter}"` : ''} in Brain:**`,
+        '',
+        ...filtered.slice(0, 30).map(l => {
+          const age = Math.round((Date.now() - new Date(l.ts).getTime()) / 86400000);
+          const ageStr = age === 0 ? 'today' : age === 1 ? 'yesterday' : `${age}d ago`;
+          const recalls = l.recall_count ? ` · recalled ${l.recall_count}×` : '';
+          return `${sevEmoji(l.severity)} \`${l.topic}\` — ${ageStr}${recalls}`;
+        }),
+        filtered.length > 30 ? `\n_…and ${filtered.length - 30} more. Use filter to narrow down._` : '',
+      ].filter(l => l !== '');
+      return lines.join('\n');
+    }
+
     case 'forget_lesson': {
       const { instance_id, topic } = args as { instance_id: string; topic: string };
       const redis = await getConnection(instance_id);
@@ -2874,10 +2937,13 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ts: string; severity?: string; recall_count?: number; tags?: string[];
       };
       const lessons: Lesson[] = [];
-      for (const k of lessonKeys) {
-        const raw = await redis.get(k);
-        if (!raw) continue;
-        try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip corrupt */ }
+      if (lessonKeys.length > 0) {
+        // Batch fetch all lesson values in one round-trip instead of N sequential gets
+        const values = await redis.mget(...lessonKeys);
+        for (const raw of values) {
+          if (!raw) continue;
+          try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip corrupt */ }
+        }
       }
       lessons.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
 
@@ -2931,8 +2997,15 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lines.push('');
       }
 
-      // Brain health
-      lines.push(`📊 **Brain:** ${lessons.length} lessons · ${ctxCount} context entries`, '');
+      // Brain health + first-time onboarding hint
+      if (lessons.length === 0 && !lastSession) {
+        lines.push(`🆕 **Brain is empty — first session!**`);
+        lines.push(`After solving anything, call \`learn_from_attempts\` to store the lesson.`);
+        lines.push(`After this session, call \`session_end\` to save a summary.`);
+        lines.push('');
+      } else {
+        lines.push(`📊 **Brain:** ${lessons.length} lessons · ${ctxCount} context entries`, '');
+      }
 
       // Focus-relevant lessons
       if (focusLessons.length > 0) {
@@ -3055,7 +3128,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         // Only overwrite if this is a success and existing is failure, or topic is new
         const existing = await redis.get(key);
         if (existing) {
-          const existingLesson = JSON.parse(existing) as { outcome: string };
+          let existingLesson: { outcome: string };
+          try { existingLesson = JSON.parse(existing); } catch { existingLesson = { outcome: 'failure' }; }
           if (existingLesson.outcome === 'success' && obs.outcome !== 'success') {
             skipped.push(topic);
             continue;
