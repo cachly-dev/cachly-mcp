@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, extname } from 'node:path';
 /**
- * cachly MCP Server v0.5.39
+ * cachly MCP Server v0.5.40
  *
  * Exposes cachly.dev as MCP tools so any AI assistant
  * (GitHub Copilot, Claude, Cursor, Windsurf, Continue.dev …) can:
@@ -696,11 +696,26 @@ interface SemanticSearchResponse {
 
 // ── Connection pool ───────────────────────────────────────────────────────────
 
-/** Reuse Redis connections across tool calls (keyed by instance_id). */
+/** Reuse Redis connections across tool calls (keyed by instance_id). Max 20 entries, LRU eviction. */
 const pool = new Map<string, Redis>();
+const POOL_MAX = 20;
 
 async function getConnection(instance_id: string): Promise<Redis> {
-  if (pool.has(instance_id)) return pool.get(instance_id)!;
+  if (pool.has(instance_id)) {
+    // Move to end (most-recently-used)
+    const conn = pool.get(instance_id)!;
+    pool.delete(instance_id);
+    pool.set(instance_id, conn);
+    return conn;
+  }
+  // Evict oldest entry when pool is full
+  if (pool.size >= POOL_MAX) {
+    const oldest = pool.keys().next().value;
+    if (oldest) {
+      pool.get(oldest)?.quit().catch(() => undefined);
+      pool.delete(oldest);
+    }
+  }
 
   const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
   if (inst.status !== 'running') {
@@ -2318,7 +2333,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         await redis.set(`${cacheKey}:meta`, meta);
       }
 
-      // Also index semantically for smart_recall (if vector available)
+      // Also index semantically for smart_recall (if vector available and embedding is configured)
+      if (EMBED_PROVIDER !== 'none') {
       const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
       if (inst.vector_token) {
         try {
@@ -2342,6 +2358,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
           // Embedding optional — continue silently
         }
       }
+      } // end EMBED_PROVIDER !== 'none'
 
       return [
         `🧠 **Context Saved**`,
@@ -3194,20 +3211,23 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
       type Lesson = { topic: string; what_worked: string; outcome: string; file_paths?: string[] };
       const relevant: string[] = [];
-      for (const k of lessonKeys) {
-        const raw = await redis.get(k);
-        if (!raw) continue;
-        const lesson = JSON.parse(raw) as Lesson;
-        // Match by file_paths stored in lesson OR by topic keywords matching file name
-        const topicWords = lesson.topic.toLowerCase().split(/[:\-_]/);
-        const fileMatches = changed_files.some(f => {
-          const fname = f.split('/').pop()?.replace(/\.[^.]+$/, '').toLowerCase() ?? '';
-          return topicWords.some(w => w.length > 3 && fname.includes(w))
-            || (lesson.file_paths ?? []).some(lf => f.includes(lf) || lf.includes(f));
-        });
-        if (fileMatches) {
-          const emoji = lesson.outcome === 'success' ? '✅' : '⚠️';
-          relevant.push(`  ${emoji} \`${lesson.topic}\` — ${lesson.what_worked.slice(0, 80)}`);
+      if (lessonKeys.length > 0) {
+        const values = await redis.mget(...lessonKeys);
+        for (const raw of values) {
+          if (!raw) continue;
+          let lesson: Lesson;
+          try { lesson = JSON.parse(raw) as Lesson; } catch { continue; }
+          // Match by file_paths stored in lesson OR by topic keywords matching file name
+          const topicWords = lesson.topic.toLowerCase().split(/[:\-_]/);
+          const fileMatches = changed_files.some(f => {
+            const fname = f.split('/').pop()?.replace(/\.[^.]+$/, '').toLowerCase() ?? '';
+            return topicWords.some(w => w.length > 3 && fname.includes(w))
+              || (lesson.file_paths ?? []).some(lf => f.includes(lf) || lf.includes(f));
+          });
+          if (fileMatches) {
+            const emoji = lesson.outcome === 'success' ? '✅' : '⚠️';
+            relevant.push(`  ${emoji} \`${lesson.topic}\` — ${lesson.what_worked.slice(0, 80)}`);
+          }
         }
       }
 
@@ -3248,7 +3268,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         file_paths: file_paths ?? [],
         commands: commands ?? [],
         tags: [...(tags ?? []), 'team'],
-        timestamp: new Date().toISOString(),
+        ts: new Date().toISOString(),
         recall_count: 0,
         version: 2,
       };
@@ -3287,10 +3307,12 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         author?: string; tags?: string[];
       };
       let lessons: TeamLesson[] = [];
-      for (const k of lessonKeys) {
-        const raw = await redis.get(k);
-        if (!raw) continue;
-        try { lessons.push(JSON.parse(raw) as TeamLesson); } catch { /* skip */ }
+      if (lessonKeys.length > 0) {
+        const values = await redis.mget(...lessonKeys);
+        for (const raw of values) {
+          if (!raw) continue;
+          try { lessons.push(JSON.parse(raw) as TeamLesson); } catch { /* skip */ }
+        }
       }
 
       // Filter
