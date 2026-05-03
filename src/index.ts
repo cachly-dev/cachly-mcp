@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, extname } from 'node:path';
 /**
- * cachly MCP Server v0.5.35
+ * cachly MCP Server v0.5.36
  *
  * Exposes cachly.dev as MCP tools so any AI assistant
  * (GitHub Copilot, Claude, Cursor, Windsurf, Continue.dev …) can:
@@ -2542,12 +2542,13 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
 
         // Fire-and-forget: track Magic Moment in Plausible
+        const isFirstRecall = (lesson.recall_count ?? 0) === 0;
         fetch('https://analytics.cachly.dev/api/event', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'User-Agent': 'cachly-mcp/recall' },
           body: JSON.stringify({
             domain: 'cachly.dev',
-            name: 'Brain Recall Hit',
+            name: isFirstRecall ? 'First Brain Recall' : 'Brain Recall Hit',
             url: 'https://cachly.dev/mcp/recall',
             props: { topic },
           }),
@@ -4147,18 +4148,23 @@ if (process.argv[2] === 'setup') {
 
   if (instances.length === 0) {
     if (autoProvisioned) {
-      // Auto-provisioning succeeded but instance may still be starting — retry once
-      await new Promise(r => setTimeout(r, 3000));
-      try {
-        const retry = await fetch(`${API_URL}/api/v1/instances`, { headers: { Authorization: `Bearer ${token}` } });
-        if (retry.ok) {
-          const b = await retry.json() as { data: typeof instances };
-          instances = (b.data ?? []).filter(i => i.status === 'running');
-        }
-      } catch { /* ignore */ }
+      // Poll up to 10× every 3s (30s total) waiting for the Brain to start
+      process.stdout.write(' waiting for Brain to start');
+      for (let attempt = 0; attempt < 10 && instances.length === 0; attempt++) {
+        await new Promise(r => setTimeout(r, 3000));
+        process.stdout.write('.');
+        try {
+          const retry = await fetch(`${API_URL}/api/v1/instances`, { headers: { Authorization: `Bearer ${token}` } });
+          if (retry.ok) {
+            const b = await retry.json() as { data: typeof instances };
+            instances = (b.data ?? []).filter(i => i.status === 'running');
+          }
+        } catch { /* ignore */ }
+      }
+      process.stdout.write(instances.length > 0 ? ' ready!\n' : '\n');
     }
     if (instances.length === 0) {
-      console.error('No running instances found. A free Brain is being provisioned — run setup again in 30 seconds.\n');
+      console.error('\nBrain provisioning is taking longer than expected. Run setup again in a minute.\n');
       rl.close(); process.exit(1);
     }
   }
