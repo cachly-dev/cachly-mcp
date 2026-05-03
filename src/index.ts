@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join, relative, extname } from 'node:path';
 /**
- * cachly MCP Server v0.5.36
+ * cachly MCP Server v0.5.37
  *
  * Exposes cachly.dev as MCP tools so any AI assistant
  * (GitHub Copilot, Claude, Cursor, Windsurf, Continue.dev …) can:
@@ -2541,18 +2541,24 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         const updatedLesson = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1 };
         await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
 
-        // Fire-and-forget: track Magic Moment in Plausible
+        // Fire-and-forget: track Magic Moment in Plausible + API engagement counter
         const isFirstRecall = (lesson.recall_count ?? 0) === 0;
+        const recallEvent = isFirstRecall ? 'First Brain Recall' : 'Brain Recall Hit';
         fetch('https://analytics.cachly.dev/api/event', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'User-Agent': 'cachly-mcp/recall' },
           body: JSON.stringify({
-            domain: 'cachly.dev',
-            name: isFirstRecall ? 'First Brain Recall' : 'Brain Recall Hit',
-            url: 'https://cachly.dev/mcp/recall',
-            props: { topic },
+            domain: 'cachly.dev', name: recallEvent,
+            url: 'https://cachly.dev/mcp/recall', props: { topic },
           }),
         }).catch(() => { /* non-critical */ });
+        if (JWT) {
+          fetch(`${API_URL}/api/v1/telemetry/mcp`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ event: isFirstRecall ? 'first_recall' : 'recall', api_key: JWT }),
+          }).catch(() => { /* non-critical */ });
+        }
 
         const sevEmoji = lesson.severity === 'critical' ? '🔴' : lesson.severity === 'major' ? '🟡' : lesson.severity ? '🟢' : '';
         const sessionAgeMs = Date.now() - new Date(lesson.ts).getTime();
