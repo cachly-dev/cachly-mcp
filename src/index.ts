@@ -2542,8 +2542,11 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
 
         const sevEmoji = lesson.severity === 'critical' ? '🔴' : lesson.severity === 'major' ? '🟡' : lesson.severity ? '🟢' : '';
+        const sessionAgeMs = Date.now() - new Date(lesson.ts).getTime();
+        const sessionAgeDays = Math.round(sessionAgeMs / 86_400_000);
+        const ageLabel = sessionAgeDays === 0 ? 'today' : sessionAgeDays === 1 ? 'yesterday' : `${sessionAgeDays} days ago`;
         return [
-          `✅ **Best solution for \`${topic}\`** ${sevEmoji}${lesson.severity ? ` (${lesson.severity})` : ''} · recalled ${updatedLesson.recall_count}× · ${new Date(lesson.ts).toLocaleDateString('de-DE')}`,
+          `✅ **Best solution for \`${topic}\`** ${sevEmoji}${lesson.severity ? ` (${lesson.severity})` : ''} · recalled ${updatedLesson.recall_count}× · stored ${ageLabel}`,
           ``,
           `**What worked:** ${lesson.what_worked}`,
           lesson.what_failed ? `**What failed (avoid this):** ${lesson.what_failed}` : '',
@@ -2551,6 +2554,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
           (lesson.file_paths ?? []).length > 0 ? `**Files:** ${(lesson.file_paths ?? []).map((f: string) => `\`${f}\``).join(', ')}` : '',
           (lesson.commands ?? []).length > 0 ? `**Commands:** ${(lesson.commands ?? []).map((c: string) => `\`${c}\``).join(', ')}` : '',
           (lesson.tags ?? []).length > 0 ? `**Tags:** ${(lesson.tags ?? []).map((t: string) => `#${t}`).join(' ')}` : '',
+          ``,
+          `> 🧠 *Your AI remembered this from ${ageLabel} — persistent memory by [cachly.dev](https://cachly.dev)*`,
         ].filter(l => l !== '').join('\n');
       }
 
