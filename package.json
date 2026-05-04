@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.5.43",
+  "version": "0.5.45",
   "mcpName": "io.github.cachly-dev/mcp-server",
   "description": "Claude forgets. cachly doesn't. Persistent AI memory for Claude Code, Cursor & Copilot — one command setup, zero copy-paste.",
   "type": "module",

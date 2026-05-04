@@ -1410,9 +1410,8 @@ const TOOLS = [
     name: 'session_start',
     description:
       'Single-call session briefing. Call this at the START of every session INSTEAD of multiple separate smart_recall/recall_best_solution calls. ' +
-      'Returns: last session summary, recent lessons sorted by recency, relevant lessons for your focus area, ' +
-      'open failures (topics with only failure outcomes), and brain health stats (lesson count, context count). ' +
-      'Also saves a session start marker so session_end can compute duration.',
+      'Returns: last session summary, open TODOs, checkpoint (if you switched providers), recent lessons, ' +
+      'open failures, and brain health stats. Also saves a session start marker so session_end can compute duration.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1420,6 +1419,14 @@ const TOOLS = [
         focus: {
           type: 'string',
           description: 'Keywords for what you plan to work on today (e.g. "deploy infra api"). Used to surface relevant lessons at the top.',
+        },
+        workspace_path: {
+          type: 'string',
+          description: 'Absolute path to the project root. If provided and no session_end was found, reconstructs context from git log.',
+        },
+        provider: {
+          type: 'string',
+          description: 'Current AI provider (claude-code, copilot, cursor, windsurf, continue). Used to detect cross-provider switches.',
         },
       },
       required: ['instance_id'],
@@ -1449,8 +1456,111 @@ const TOOLS = [
           type: 'number',
           description: 'Number of new lessons stored this session (optional)',
         },
+        project_dir: {
+          type: 'string',
+          description: 'Absolute project path. If provided, refreshes CLAUDE.md with the latest top lessons inline.',
+        },
       },
       required: ['instance_id', 'summary'],
+    },
+  },
+  {
+    name: 'session_ping',
+    description:
+      'Lightweight checkpoint — saves current task, files, and provider mid-session. ' +
+      'Enables seamless cross-provider handoff: if you switch from Claude Code to GitHub Copilot ' +
+      'or Cursor, session_start on the new provider shows exactly where you left off. ' +
+      'Call this every ~5 tool uses, when switching providers, or when approaching context limit. ' +
+      'Much lighter than session_end — does not end the session, just saves a breadcrumb.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        task:      { type: 'string', description: 'What you are currently working on (1 sentence)' },
+        provider:  { type: 'string', description: 'Current AI provider: claude-code, copilot, cursor, windsurf, continue (default: unknown)' },
+        files:     { type: 'array', items: { type: 'string' }, description: 'Files currently open or being edited' },
+        next_step: { type: 'string', description: 'What needs to happen next (optional — helps the next provider pick up)' },
+      },
+      required: ['instance_id', 'task'],
+    },
+  },
+  {
+    name: 'compact_recover',
+    description:
+      'Post-compaction recovery for Claude Code — call this IMMEDIATELY after context compaction. ' +
+      'Returns a dense briefing: last checkpoint (what you were doing), open TODOs, ' +
+      '3 most critical lessons, and files in progress. Single call to restore full working context. ' +
+      'Faster and more targeted than session_start — designed specifically for compaction recovery.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  // ── Brain TODOs — persistent task list across sessions ────────────────────
+  {
+    name: 'todo_add',
+    description:
+      'Add a TODO item to the Brain — persists across sessions, compaction, and provider switches. ' +
+      'session_start automatically shows open TODOs so you always have a clear work agenda. ' +
+      'Use this instead of keeping TODOs only in working memory.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        task: { type: 'string', description: 'The task description (1-2 sentences)' },
+        priority: {
+          type: 'string',
+          enum: ['high', 'medium', 'low'],
+          description: 'Priority level (default: medium)',
+        },
+        context: { type: 'string', description: 'Optional: file path, branch, or relevant context' },
+      },
+      required: ['instance_id', 'task'],
+    },
+  },
+  {
+    name: 'todo_done',
+    description: 'Mark a TODO as done. Removes it from the open TODO list shown in session_start.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        id: { type: 'string', description: 'TODO ID returned by todo_add or todo_list' },
+      },
+      required: ['instance_id', 'id'],
+    },
+  },
+  {
+    name: 'todo_list',
+    description: 'List all open (or recently completed) TODOs from the Brain.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id:   { type: 'string', description: 'UUID of the cache instance' },
+        include_done:  { type: 'boolean', description: 'Also show completed TODOs (default: false)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'refresh_claude_md',
+    description:
+      'Refreshes CLAUDE.md in the project with the top lessons from the Brain inline. ' +
+      'After this call, every AI session benefits from brain content even before calling session_start — ' +
+      'the top lessons are baked directly into the file context. ' +
+      'Call this at session_end (with project_dir) or any time you add important lessons. ' +
+      'Idempotent — safe to run multiple times.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        project_dir:  { type: 'string', description: 'Absolute path to project root containing CLAUDE.md' },
+        max_lessons:  { type: 'number', description: 'Max lessons to embed inline (default: 5)' },
+      },
+      required: ['instance_id', 'project_dir'],
     },
   },
   // ── AI Brain — Extended features ─────────────────────────────────────────
@@ -1671,6 +1781,29 @@ const TOOLS = [
         limit:       { type: 'number', description: 'Max lessons to import (default: 20)' },
       },
       required: ['instance_id', 'framework'],
+    },
+  },
+  {
+    name: 'brain_from_git',
+    description:
+      'Bootstrap your AI Brain from git history — no manual lesson writing required. ' +
+      'Scans commits, reverts, hotspot files, and PR messages to extract lessons automatically:\n' +
+      '  • fix/bug commits → success lessons ("this solved it")\n' +
+      '  • revert commits  → failure lessons ("this approach broke things")\n' +
+      '  • perf/refactor   → architecture lessons\n' +
+      '  • hotspot files   → context entry (most frequently changed = most fragile)\n\n' +
+      'One command turns 6 months of team git history into an instant AI knowledge base. ' +
+      'Perfect for onboarding new developers or AI assistants to an existing project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        repo_path:    { type: 'string', description: 'Absolute path to the git repository root (default: current directory)' },
+        days:         { type: 'number', description: 'How many days of history to scan (default: 180)' },
+        max_commits:  { type: 'number', description: 'Max commits to analyze (default: 500)' },
+        dry_run:      { type: 'boolean', description: 'Preview what would be imported without writing to brain (default: false)' },
+      },
+      required: ['instance_id'],
     },
   },
   // ── Legacy / Setup ────────────────────────────────────────────────────────
@@ -2985,7 +3118,9 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
     // ── session_start ─────────────────────────────────────────────────────────
     case 'session_start': {
-      const { instance_id, focus = '' } = args as { instance_id: string; focus?: string };
+      const { instance_id, focus = '', workspace_path = '', provider = '' } = args as {
+        instance_id: string; focus?: string; workspace_path?: string; provider?: string;
+      };
       const redis = await getConnection(instance_id);
 
       // 1. Scan all best-solution lessons
@@ -2997,14 +3132,13 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lStream.on('error', reject);
       });
 
-      // 2. Fetch all lesson values for recency sorting + focus matching
+      // 2. Fetch all lesson values in one round-trip
       type Lesson = {
         topic: string; outcome: string; what_worked: string; what_failed?: string;
         ts: string; severity?: string; recall_count?: number; tags?: string[];
       };
       const lessons: Lesson[] = [];
       if (lessonKeys.length > 0) {
-        // Batch fetch all lesson values in one round-trip instead of N sequential gets
         const values = await redis.mget(...lessonKeys);
         for (const raw of values) {
           if (!raw) continue;
@@ -3013,7 +3147,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       }
       lessons.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
 
-      // 3. Count context entries (filter :meta keys)
+      // 3. Count context entries
       let ctxCount = 0;
       const ctxStream = redis.scanStream({ match: 'cachly:ctx:*', count: 200 });
       await new Promise<void>((resolve, reject) => {
@@ -3024,11 +3158,29 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ctxStream.on('error', reject);
       });
 
-      // 4. Last session
-      const lastSessionRaw = await redis.get('cachly:session:last');
+      // 4. Last session + checkpoint + open TODOs (batch)
+      const [lastSessionRaw, checkpointRaw, todosRaw] = await redis.mget(
+        'cachly:session:last', 'cachly:session:checkpoint', 'cachly:todos'
+      );
       let lastSession: { summary: string; ts: string; files_changed?: string[]; duration_min?: number } | null = null;
-      if (lastSessionRaw) {
-        try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ }
+      if (lastSessionRaw) { try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ } }
+      let checkpoint: { task: string; provider?: string; files?: string[]; next_step?: string; ts: string } | null = null;
+      if (checkpointRaw) { try { checkpoint = JSON.parse(checkpointRaw); } catch { /* ignore */ } }
+      type TodoItem = { id: string; task: string; priority: string; context?: string; created: string };
+      let openTodos: TodoItem[] = [];
+      if (todosRaw) { try { openTodos = (JSON.parse(todosRaw) as TodoItem[]).filter(t => !(t as unknown as Record<string,unknown>).done); } catch { /* ignore */ } }
+
+      // 4b. Git reconstruction when no recent session_end but workspace_path provided
+      let gitLines: string[] = [];
+      if (workspace_path && !lastSession) {
+        try {
+          const { execSync } = await import('node:child_process');
+          const log = execSync(`git -C "${workspace_path}" log --oneline -8 2>/dev/null`, { timeout: 3000 }).toString().trim();
+          if (log) {
+            gitLines.push(`⚡ **Reconstructed from git** (no session_end found):`);
+            gitLines.push(`\`\`\`\n${log}\n\`\`\``);
+          }
+        } catch { /* no git */ }
       }
 
       // 5. Focus filtering
@@ -3046,7 +3198,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       await redis.set('cachly:session:current', JSON.stringify({
         started: new Date().toISOString(),
         focus,
-      }), 'EX', 86400); // auto-expire after 24h if session_end never called
+        ...(provider ? { provider } : {}),
+      }), 'EX', 86400);
 
       // ── Build briefing ──────────────────────────────────────────────────────
       const lines: string[] = ['🧠 **Session Briefing**', ''];
@@ -3063,7 +3216,33 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lines.push('');
       }
 
-      // Brain health + first-time onboarding hint
+      // Cross-provider checkpoint
+      if (checkpoint) {
+        const cMin = Math.round((Date.now() - new Date(checkpoint.ts).getTime()) / 60000);
+        const cAgo = cMin < 60 ? `${cMin}m ago` : cMin < 1440 ? `${Math.round(cMin / 60)}h ago` : `${Math.round(cMin / 1440)}d ago`;
+        lines.push(`⚡ **Checkpoint** (${cAgo}${checkpoint.provider ? `, ${checkpoint.provider}` : ''}): ${checkpoint.task}`);
+        if (checkpoint.next_step) lines.push(`   → Next: ${checkpoint.next_step}`);
+        if ((checkpoint.files ?? []).length > 0) lines.push(`   Files: ${(checkpoint.files ?? []).slice(0, 4).map((f: string) => `\`${f}\``).join(', ')}`);
+        lines.push('');
+      }
+
+      // Git reconstruction (when no session_end exists)
+      if (gitLines.length > 0) lines.push(...gitLines, '');
+
+      // Open TODOs
+      if (openTodos.length > 0) {
+        const hiPrio = openTodos.filter(t => t.priority === 'high');
+        const rest   = openTodos.filter(t => t.priority !== 'high');
+        lines.push(`📋 **Open TODOs** (${openTodos.length}):`);
+        for (const t of [...hiPrio, ...rest].slice(0, 5)) {
+          const p = t.priority === 'high' ? '🔴' : t.priority === 'low' ? '⚪' : '🟡';
+          lines.push(`  ${p} [${t.id}] ${t.task}${t.context ? ` _(${t.context})_` : ''}`);
+        }
+        if (openTodos.length > 5) lines.push(`  … and ${openTodos.length - 5} more (todo_list to see all)`);
+        lines.push('');
+      }
+
+      // Brain health + onboarding
       if (lessons.length === 0 && !lastSession) {
         lines.push(`🆕 **Brain is empty — first session!**`);
         lines.push(`After solving anything, call \`learn_from_attempts\` to store the lesson.`);
@@ -3072,9 +3251,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       } else {
         const totalRecalls = lessons.reduce((s, l) => s + (l.recall_count ?? 0), 0);
         const savedMin = totalRecalls * 15;
-        const savedStr = savedMin >= 60
-          ? `~${(savedMin / 60).toFixed(1)}h saved`
-          : savedMin > 0 ? `~${savedMin}min saved` : '';
+        const savedStr = savedMin >= 60 ? `~${(savedMin / 60).toFixed(1)}h saved` : savedMin > 0 ? `~${savedMin}min saved` : '';
         const statsLine = [
           `${lessons.length} lessons`,
           ctxCount > 0 ? `${ctxCount} context entries` : '',
@@ -3109,7 +3286,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lines.push('📭 No lessons yet. Use `learn_from_attempts` after solving tasks.', '');
       }
 
-      // Open failures (lessons whose best-key has outcome != success)
+      // Open failures
       const openFailures = lessons.filter(l => l.outcome === 'failure' || l.outcome === 'partial');
       if (openFailures.length > 0) {
         lines.push(`⚠️ **Unresolved** (${openFailures.length} topic${openFailures.length > 1 ? 's' : ''} with no success yet):`);
@@ -3124,22 +3301,14 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
     // ── session_end ───────────────────────────────────────────────────────────
     case 'session_end': {
-      const {
-        instance_id,
-        summary,
-        files_changed = [],
-        lessons_learned,
-      } = args as {
-        instance_id: string;
-        summary: string;
-        files_changed?: string[];
-        lessons_learned?: number;
+      const { instance_id, summary, files_changed = [], lessons_learned, project_dir } = args as {
+        instance_id: string; summary: string; files_changed?: string[];
+        lessons_learned?: number; project_dir?: string;
       };
 
       const redis = await getConnection(instance_id);
       const now = new Date();
 
-      // Calculate duration from session_start marker
       let durationMin: number | undefined;
       const currentRaw = await redis.get('cachly:session:current');
       if (currentRaw) {
@@ -3150,23 +3319,27 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       }
 
       const sessionRecord = {
-        ts: now.toISOString(),
-        summary,
-        files_changed,
+        ts: now.toISOString(), summary, files_changed,
         ...(lessons_learned !== undefined ? { lessons_learned } : {}),
         ...(durationMin !== undefined ? { duration_min: durationMin } : {}),
       };
 
-      // Save as "last session"
       await redis.set('cachly:session:last', JSON.stringify(sessionRecord));
-
-      // Append to history list (keep last 50 sessions, TTL 90 days)
       await redis.lpush('cachly:session:history', JSON.stringify(sessionRecord));
       await redis.ltrim('cachly:session:history', 0, 49);
       await redis.expire('cachly:session:history', 90 * 86400);
-
-      // Clean up current session marker
       await redis.del('cachly:session:current');
+      // Clear checkpoint — session ended cleanly
+      await redis.del('cachly:session:checkpoint');
+
+      // Auto-refresh CLAUDE.md when project_dir is provided
+      let claudeMdNote = '';
+      if (project_dir) {
+        try {
+          await handleTool('refresh_claude_md', { instance_id, project_dir, max_lessons: 5 });
+          claudeMdNote = '\n✅ CLAUDE.md refreshed with latest brain lessons.';
+        } catch { /* non-fatal */ }
+      }
 
       const durationStr = durationMin !== undefined ? ` · ${durationMin} min` : '';
       return [
@@ -3175,9 +3348,238 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         `📋 **Summary:** ${summary}`,
         files_changed.length > 0 ? `📁 **Files changed:** ${files_changed.map(f => `\`${f}\``).join(', ')}` : '',
         lessons_learned !== undefined ? `🧠 **Lessons stored:** ${lessons_learned}` : '',
+        claudeMdNote,
         ``,
         `💡 Next session: \`session_start(focus="...")\` to see this summary.`,
       ].filter(l => l !== '').join('\n');
+    }
+
+    // ── session_ping ──────────────────────────────────────────────────────────
+    case 'session_ping': {
+      const { instance_id, task, provider = 'unknown', files = [], next_step } = args as {
+        instance_id: string; task: string; provider?: string; files?: string[]; next_step?: string;
+      };
+      const redis = await getConnection(instance_id);
+      const checkpoint = {
+        ts: new Date().toISOString(), task, provider, files,
+        ...(next_step ? { next_step } : {}),
+      };
+      await redis.set('cachly:session:checkpoint', JSON.stringify(checkpoint), 'EX', 48 * 3600);
+      return [
+        `⚡ **Checkpoint saved**`, ``,
+        `📌 **Task:** ${task}`,
+        provider !== 'unknown' ? `🔀 **Provider:** ${provider}` : '',
+        files.length > 0 ? `📁 **Files:** ${files.slice(0, 5).map(f => `\`${f}\``).join(', ')}` : '',
+        next_step ? `➡️ **Next:** ${next_step}` : '',
+        ``,
+        `💡 Switch providers freely — \`session_start\` on any AI will resume from this checkpoint.`,
+      ].filter(l => l !== '').join('\n');
+    }
+
+    // ── compact_recover ───────────────────────────────────────────────────────
+    case 'compact_recover': {
+      const { instance_id } = args as { instance_id: string };
+      const redis = await getConnection(instance_id);
+
+      const [lastSessionRaw, checkpointRaw, todosRaw] = await redis.mget(
+        'cachly:session:last', 'cachly:session:checkpoint', 'cachly:todos'
+      );
+
+      // Top 3 critical/major lessons
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((res, rej) => {
+        lStream.on('data', (b: string[]) => lessonKeys.push(...b));
+        lStream.on('end', res); lStream.on('error', rej);
+      });
+      type Lesson = { topic: string; outcome: string; what_worked: string; severity?: string; ts: string };
+      const topLessons: Lesson[] = [];
+      if (lessonKeys.length > 0) {
+        const vals = await redis.mget(...lessonKeys);
+        for (const raw of vals) {
+          if (!raw) continue;
+          try { topLessons.push(JSON.parse(raw) as Lesson); } catch { /* skip */ }
+        }
+      }
+      topLessons.sort((a, b) => {
+        const sev = (s?: string) => s === 'critical' ? 3 : s === 'major' ? 2 : 1;
+        return sev(b.severity) - sev(a.severity) || new Date(b.ts).getTime() - new Date(a.ts).getTime();
+      });
+
+      const lines: string[] = ['⚡ **Compact Recovery**', ''];
+
+      // Checkpoint — what was being worked on
+      if (checkpointRaw) {
+        try {
+          const cp = JSON.parse(checkpointRaw) as { task: string; next_step?: string; files?: string[]; provider?: string };
+          lines.push(`📌 **Was working on:** ${cp.task}`);
+          if (cp.next_step) lines.push(`➡️ **Next step:** ${cp.next_step}`);
+          if ((cp.files ?? []).length > 0) lines.push(`📁 **Files:** ${(cp.files ?? []).slice(0, 4).map(f => `\`${f}\``).join(', ')}`);
+          lines.push('');
+        } catch { /* ignore */ }
+      } else if (lastSessionRaw) {
+        try {
+          const ls = JSON.parse(lastSessionRaw) as { summary: string; files_changed?: string[] };
+          lines.push(`📅 **Last session:** ${ls.summary}`);
+          if ((ls.files_changed ?? []).length > 0) lines.push(`📁 **Files:** ${(ls.files_changed ?? []).slice(0, 4).map(f => `\`${f}\``).join(', ')}`);
+          lines.push('');
+        } catch { /* ignore */ }
+      }
+
+      // Open TODOs
+      if (todosRaw) {
+        try {
+          type Todo = { id: string; task: string; priority: string; done?: boolean };
+          const todos = (JSON.parse(todosRaw) as Todo[]).filter(t => !t.done);
+          if (todos.length > 0) {
+            lines.push(`📋 **Open TODOs:** ${todos.slice(0, 3).map(t => t.task).join(' · ')}`);
+            lines.push('');
+          }
+        } catch { /* ignore */ }
+      }
+
+      // Critical lessons (top 3)
+      const crit = topLessons.filter(l => l.severity === 'critical' || l.severity === 'major').slice(0, 3);
+      if (crit.length > 0) {
+        lines.push(`🧠 **Critical lessons to keep in mind:**`);
+        for (const l of crit) {
+          const sev = l.severity === 'critical' ? '🔴' : '🟡';
+          lines.push(`  ${sev} \`${l.topic}\` — ${l.what_worked.slice(0, 90)}`);
+        }
+        lines.push('');
+      }
+
+      lines.push(`💡 Context restored. Continue where you left off.`);
+      return lines.join('\n');
+    }
+
+    // ── todo_add ──────────────────────────────────────────────────────────────
+    case 'todo_add': {
+      const { instance_id, task, priority = 'medium', context } = args as {
+        instance_id: string; task: string; priority?: string; context?: string;
+      };
+      const redis = await getConnection(instance_id);
+      const todosRaw = await redis.get('cachly:todos');
+      type Todo = { id: string; task: string; priority: string; context?: string; created: string; done?: boolean };
+      let todos: Todo[] = [];
+      if (todosRaw) { try { todos = JSON.parse(todosRaw) as Todo[]; } catch { /* ignore */ } }
+
+      const id = `t${Date.now().toString(36)}`;
+      todos.push({ id, task, priority, created: new Date().toISOString(), ...(context ? { context } : {}) });
+      await redis.set('cachly:todos', JSON.stringify(todos));
+
+      const prioEmoji = priority === 'high' ? '🔴' : priority === 'low' ? '⚪' : '🟡';
+      return `${prioEmoji} **TODO added** [${id}]: ${task}\n\n💡 \`session_start\` will show this at the top. Mark done with \`todo_done(id="${id}")\`.`;
+    }
+
+    // ── todo_done ─────────────────────────────────────────────────────────────
+    case 'todo_done': {
+      const { instance_id, id } = args as { instance_id: string; id: string };
+      const redis = await getConnection(instance_id);
+      const todosRaw = await redis.get('cachly:todos');
+      type Todo = { id: string; task: string; priority: string; done?: boolean };
+      let todos: Todo[] = [];
+      if (todosRaw) { try { todos = JSON.parse(todosRaw) as Todo[]; } catch { /* ignore */ } }
+
+      const todo = todos.find(t => t.id === id);
+      if (!todo) return `❌ TODO [${id}] not found. Use \`todo_list\` to see all IDs.`;
+      todo.done = true;
+      await redis.set('cachly:todos', JSON.stringify(todos));
+      return `✅ **Done:** ${todo.task}`;
+    }
+
+    // ── todo_list ─────────────────────────────────────────────────────────────
+    case 'todo_list': {
+      const { instance_id, include_done = false } = args as { instance_id: string; include_done?: boolean };
+      const redis = await getConnection(instance_id);
+      const todosRaw = await redis.get('cachly:todos');
+      type Todo = { id: string; task: string; priority: string; context?: string; created: string; done?: boolean };
+      let todos: Todo[] = [];
+      if (todosRaw) { try { todos = JSON.parse(todosRaw) as Todo[]; } catch { /* ignore */ } }
+
+      const visible = include_done ? todos : todos.filter(t => !t.done);
+      if (visible.length === 0) return include_done ? '📋 No TODOs yet.' : '📋 No open TODOs. ✅';
+
+      const lines = [`📋 **TODOs** (${visible.filter(t => !t.done).length} open)`, ''];
+      for (const t of visible) {
+        const p = t.done ? '✅' : t.priority === 'high' ? '🔴' : t.priority === 'low' ? '⚪' : '🟡';
+        lines.push(`${p} [${t.id}] ${t.task}${t.context ? ` _(${t.context})_` : ''}`);
+      }
+      return lines.join('\n');
+    }
+
+    // ── refresh_claude_md ─────────────────────────────────────────────────────
+    case 'refresh_claude_md': {
+      const { instance_id, project_dir, max_lessons = 5 } = args as {
+        instance_id: string; project_dir: string; max_lessons?: number;
+      };
+      const { writeFile, readFile } = await import('node:fs/promises');
+      const { existsSync } = await import('node:fs');
+      const { resolve } = await import('node:path');
+
+      const redis = await getConnection(instance_id);
+
+      // Fetch top lessons sorted by severity + recall
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((res, rej) => {
+        lStream.on('data', (b: string[]) => lessonKeys.push(...b));
+        lStream.on('end', res); lStream.on('error', rej);
+      });
+      type Lesson = { topic: string; outcome: string; what_worked: string; severity?: string; ts: string; recall_count?: number };
+      const lessons: Lesson[] = [];
+      if (lessonKeys.length > 0) {
+        const vals = await redis.mget(...lessonKeys);
+        for (const raw of vals) {
+          if (!raw) continue;
+          try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip */ }
+        }
+      }
+      lessons.sort((a, b) => {
+        const sev = (s?: string) => s === 'critical' ? 3 : s === 'major' ? 2 : 1;
+        return sev(b.severity) - sev(a.severity) || (b.recall_count ?? 0) - (a.recall_count ?? 0);
+      });
+      const top = lessons.slice(0, max_lessons);
+
+      const claudeMdPath = resolve(project_dir, 'CLAUDE.md');
+      if (!existsSync(claudeMdPath)) {
+        return `❌ CLAUDE.md not found at ${claudeMdPath}. Run \`setup\` first or provide the correct project_dir.`;
+      }
+
+      let content = await readFile(claudeMdPath, 'utf-8');
+
+      // Build the inline lessons section
+      const lessonsBlock = top.length > 0
+        ? `\n### Top lessons (auto-synced ${new Date().toLocaleDateString()}):\n` +
+          top.map(l => {
+            const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '⚪';
+            return `- ${sev} \`${l.topic}\`: ${l.what_worked.slice(0, 100)}`;
+          }).join('\n') + '\n'
+        : '';
+
+      // Replace only the lessons section inside the existing cachly block
+      const LESSONS_START = '<!-- cachly-lessons-start -->';
+      const LESSONS_END   = '<!-- cachly-lessons-end -->';
+      const lessonsWrapped = `${LESSONS_START}${lessonsBlock}${LESSONS_END}`;
+
+      if (content.includes(LESSONS_START)) {
+        content = content.replace(
+          new RegExp(`${LESSONS_START}[\\s\\S]*?${LESSONS_END}`),
+          lessonsWrapped
+        );
+      } else if (content.includes('<!-- cachly-brain-end -->')) {
+        content = content.replace(
+          '<!-- cachly-brain-end -->',
+          `${lessonsWrapped}\n<!-- cachly-brain-end -->`
+        );
+      } else {
+        return `❌ CLAUDE.md does not have a cachly brain block. Run \`setup\` to add one.`;
+      }
+
+      await writeFile(claudeMdPath, content, 'utf-8');
+      return top.length > 0
+        ? `✅ **CLAUDE.md refreshed** with ${top.length} top lessons.\n\nNow every AI session sees these lessons before calling any tools:\n${top.map(l => `- \`${l.topic}\`: ${l.what_worked.slice(0, 80)}`).join('\n')}`
+        : `✅ CLAUDE.md updated. No lessons in brain yet — use \`learn_from_attempts\` to store some.`;
     }
 
     // ── auto_learn_session ────────────────────────────────────────────────────
@@ -4052,6 +4454,280 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       return lines.join('\n');
     }
 
+    // ── brain_from_git ────────────────────────────────────────────────────────
+    case 'brain_from_git': {
+      const { instance_id, repo_path = process.cwd(), days = 180, max_commits = 500, dry_run = false } = args as {
+        instance_id: string; repo_path?: string; days?: number; max_commits?: number; dry_run?: boolean;
+      };
+
+      const { execSync } = await import('node:child_process');
+      const redis = dry_run ? null : await getConnection(instance_id);
+
+      // ── 1. Verify it's a git repo ──
+      try {
+        execSync(`git -C "${repo_path}" rev-parse --git-dir`, { timeout: 3000, stdio: 'pipe' });
+      } catch {
+        return `❌ No git repository found at ${repo_path}. Provide the correct repo_path.`;
+      }
+
+      const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+
+      // ── 2. Parse git log ──
+      let rawLog = '';
+      try {
+        rawLog = execSync(
+          `git -C "${repo_path}" log --format="%H|||%s|||%an|||%ad|||%b---END---" --date=short --since="${since}" -n ${max_commits}`,
+          { timeout: 15000, stdio: 'pipe' }
+        ).toString();
+      } catch {
+        return `❌ git log failed. Is the repo at ${repo_path}?`;
+      }
+
+      // ── 3. Find hotspot files (most frequently changed) ──
+      let hotspotRaw = '';
+      try {
+        hotspotRaw = execSync(
+          `git -C "${repo_path}" log --name-only --format="" --since="${since}" -n ${max_commits} | sort | uniq -c | sort -rn | head -20`,
+          { timeout: 10000, stdio: 'pipe' }
+        ).toString();
+      } catch { /* non-fatal */ }
+
+      // ── 4. Get per-commit file changes for path-aware topic extraction ──
+      let commitFiles: Map<string, string[]> = new Map();
+      try {
+        const filesLog = execSync(
+          `git -C "${repo_path}" log --name-only --format="COMMIT:%H" --since="${since}" -n ${max_commits}`,
+          { timeout: 15000, stdio: 'pipe' }
+        ).toString();
+        let currentHash = '';
+        for (const line of filesLog.split('\n')) {
+          if (line.startsWith('COMMIT:')) { currentHash = line.slice(7).trim(); commitFiles.set(currentHash, []); }
+          else if (line.trim() && currentHash) { commitFiles.get(currentHash)?.push(line.trim()); }
+        }
+      } catch { /* non-fatal — fall back to subject-only topics */ }
+
+      // ── 5. Parse CHANGELOG.md if present ──
+      type LessonCandidate = {
+        topic: string; outcome: 'success' | 'failure'; what_worked: string;
+        what_failed?: string; severity: 'critical' | 'major' | 'minor';
+        tags: string[]; author: string; date: string;
+      };
+      const seen = new Set<string>();
+      let changelogCandidates: LessonCandidate[] = [];
+      try {
+        const clPath = `${repo_path}/CHANGELOG.md`;
+        const clContent = execSync(`cat "${clPath}" 2>/dev/null`, { timeout: 3000, stdio: 'pipe' }).toString();
+        if (clContent) {
+          // Parse "### Fixed" and "### Breaking Changes" sections
+          const fixedMatches = clContent.matchAll(/###\s+Fixed\s*\n([\s\S]*?)(?=###|\n##\s|$)/g);
+          for (const m of fixedMatches) {
+            const items = m[1].split('\n').filter(l => l.match(/^[-*]\s+/)).slice(0, 5);
+            for (const item of items) {
+              const text = item.replace(/^[-*]\s+/, '').trim();
+              if (text.length < 10) continue;
+              const slug = text.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).slice(0, 4).join('-');
+              const topic = `changelog:${slug}`;
+              if (!seen.has(topic)) {
+                seen.add(topic);
+                changelogCandidates.push({ topic, outcome: 'success', what_worked: text, severity: 'major', tags: ['git-history', 'changelog'], author: 'changelog', date: '' });
+              }
+            }
+          }
+          const breakingMatches = clContent.matchAll(/###\s+Breaking\s+Changes?\s*\n([\s\S]*?)(?=###|\n##\s|$)/g);
+          for (const m of breakingMatches) {
+            const items = m[1].split('\n').filter(l => l.match(/^[-*]\s+/)).slice(0, 3);
+            for (const item of items) {
+              const text = item.replace(/^[-*]\s+/, '').trim();
+              if (text.length < 10) continue;
+              const slug = text.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).slice(0, 4).join('-');
+              const topic = `breaking:${slug}`;
+              if (!seen.has(topic)) {
+                seen.add(topic);
+                changelogCandidates.push({ topic, outcome: 'failure', what_worked: `Breaking change: ${text}`, what_failed: text, severity: 'critical', tags: ['git-history', 'changelog', 'breaking'], author: 'changelog', date: '' });
+              }
+            }
+          }
+        }
+      } catch { /* no CHANGELOG */ }
+
+      // ── 6. Parse commits into lesson candidates ──
+      const candidates: LessonCandidate[] = [];
+
+      // Helper: infer scope from changed file paths when commit has no conventional scope
+      function scopeFromFiles(files: string[]): string {
+        if (!files.length) return '';
+        // Find common path prefix component: src/auth/foo.ts, src/auth/bar.ts → "auth"
+        const parts = files
+          .map(f => f.split('/').filter(p => p && p !== 'src' && p !== 'lib' && p !== 'app' && p !== 'pkg' && p !== 'internal' && !p.includes('.')))
+          .flat();
+        if (!parts.length) return '';
+        const freq = new Map<string, number>();
+        for (const p of parts) freq.set(p, (freq.get(p) ?? 0) + 1);
+        const top = [...freq.entries()].sort((a, b) => b[1] - a[1])[0];
+        return top && top[1] >= 1 ? top[0].toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 20) : '';
+      }
+
+      const commits = rawLog.split('---END---').map(s => s.trim()).filter(Boolean);
+      for (const raw of commits) {
+        const [hash, subject = '', author = '', date = '', ...bodyParts] = raw.split('|||');
+        if (!hash || !subject) continue;
+        const body = bodyParts.join(' ').replace(/\n/g, ' ').trim();
+        const full = `${subject} ${body}`.toLowerCase();
+
+        // Skip pure merge commits that aren't reverts
+        const isMerge = /^merge (pull request|branch|remote)/i.test(subject);
+        const isRevert  = /^revert\b|^reverts?\s+"/.test(subject.toLowerCase());
+        const isFix     = /^fix[:(!\s]|^bug[:(!\s]|hotfix|patch/.test(subject.toLowerCase());
+        const isPerf    = /^perf[:(!\s]|^optim|performance/.test(subject.toLowerCase());
+        const isRefactor= /^refactor[:(!\s]|^cleanup|^chore:\s*(?:remove|delete|cleanup)/.test(subject.toLowerCase());
+        const isSecurity= /^security|^sec[:(!\s]|cve-|sql.inject|xss|csrf/.test(full);
+        const isBreaking= /breaking.change|breaking:|!:/.test(full);
+
+        if (isMerge && !isRevert) continue;
+        if (!isRevert && !isFix && !isPerf && !isRefactor && !isSecurity && !isBreaking) continue;
+
+        // Scope: prefer conventional commit scope, fall back to file-path inference
+        const scopeMatch = subject.match(/^[a-z]+\(([^)]+)\):/i);
+        const conventionalScope = scopeMatch?.[1]?.toLowerCase().replace(/[^a-z0-9]/g, '-') ?? '';
+        const files = commitFiles.get(hash.trim()) ?? [];
+        const scope = conventionalScope || scopeFromFiles(files);
+
+        const rest = subject.replace(/^[a-z]+(\([^)]+\))?:\s*/i, '').trim();
+        const slug = rest.toLowerCase()
+          .replace(/[^a-z0-9\s]/g, '')
+          .split(/\s+/).slice(0, 4).join('-')
+          .replace(/-+$/, '');
+
+        const category = isRevert ? 'revert' : isSecurity ? 'security' : isFix ? 'fix'
+          : isPerf ? 'perf' : isRefactor ? 'refactor' : 'breaking';
+        const topic = scope ? `${scope}:${slug}` : `${category}:${slug}`;
+
+        if (seen.has(topic)) continue;
+        seen.add(topic);
+
+        const severity: 'critical' | 'major' | 'minor' = isSecurity || isBreaking || isRevert ? 'critical'
+          : isFix ? 'major' : 'minor';
+
+        // Build context string including changed files
+        const fileCtx = files.length > 0 ? ` [${files.slice(0, 3).join(', ')}]` : '';
+
+        if (isRevert) {
+          const revertedSubject = subject.replace(/^revert\s+"?/i, '').replace(/"$/, '');
+          candidates.push({
+            topic, outcome: 'failure',
+            what_worked: `Reverted: "${revertedSubject}" — approach was rolled back${fileCtx}`,
+            what_failed: revertedSubject, severity,
+            tags: ['git-history', 'revert', ...(scope ? [scope] : [])],
+            author, date,
+          });
+        } else {
+          candidates.push({
+            topic, outcome: 'success',
+            what_worked: `${subject}${body.length > 20 ? ` — ${body.slice(0, 120)}` : ''}${fileCtx}`,
+            severity, tags: ['git-history', category, ...(scope ? [scope] : [])],
+            author, date,
+          });
+        }
+      }
+
+      // Merge changelog candidates (append, dedup already handled)
+      for (const c of changelogCandidates) {
+        if (!seen.has(c.topic)) { seen.add(c.topic); candidates.push(c); }
+      }
+
+      // ── 5. Hotspot files → context entry ──
+      const hotspots: string[] = [];
+      if (hotspotRaw) {
+        for (const line of hotspotRaw.split('\n').filter(Boolean)) {
+          const m = line.trim().match(/^\s*(\d+)\s+(.+)$/);
+          if (m && parseInt(m[1]) >= 5 && m[2].trim()) hotspots.push(`${m[2].trim()} (${m[1]} changes)`);
+        }
+      }
+
+      if (dry_run) {
+        const lines = [
+          `🔍 **Dry run — brain_from_git** (${repo_path})`,
+          `   Scanned: last ${days} days, ${commits.length} commits`,
+          `   Would import: ${candidates.length} lessons`,
+          `   Hotspot files: ${hotspots.length}`,
+          '',
+          `**Lesson preview:**`,
+          ...candidates.slice(0, 10).map(c => {
+            const sev = c.severity === 'critical' ? '🔴' : c.severity === 'major' ? '🟡' : '⚪';
+            const out = c.outcome === 'success' ? '✅' : '❌';
+            return `  ${out}${sev} \`${c.topic}\` — ${c.what_worked.slice(0, 80)}`;
+          }),
+          candidates.length > 10 ? `  … and ${candidates.length - 10} more` : '',
+          hotspots.length > 0 ? `\n**Top hotspot files:**\n${hotspots.slice(0, 5).map(h => `  📁 ${h}`).join('\n')}` : '',
+          '',
+          `Run without dry_run=true to import into brain.`,
+        ].filter(l => l !== '');
+        return lines.join('\n');
+      }
+
+      // ── 6. Write to brain ──
+      let stored = 0;
+      const pipeline = redis!.pipeline();
+      const now = new Date().toISOString();
+
+      for (const c of candidates) {
+        const key = `cachly:lesson:best:${c.topic}`;
+        const existing = await redis!.get(key);
+        if (existing) {
+          try {
+            const ex = JSON.parse(existing) as { tags?: string[] };
+            if ((ex.tags ?? []).includes('git-history')) continue; // already imported
+          } catch { /* overwrite */ }
+        }
+        const record = {
+          topic: c.topic, outcome: c.outcome, what_worked: c.what_worked,
+          ...(c.what_failed ? { what_failed: c.what_failed } : {}),
+          severity: c.severity, tags: c.tags,
+          ts: c.date ? new Date(c.date).toISOString() : now,
+          recall_count: 0, source: 'git-history', author: c.author,
+        };
+        pipeline.set(key, JSON.stringify(record));
+        stored++;
+      }
+
+      // Store hotspot context
+      if (hotspots.length > 0) {
+        pipeline.set(
+          'cachly:ctx:git-hotspots',
+          JSON.stringify({
+            key: 'git-hotspots', category: 'architecture',
+            content: `Most frequently changed files (fragile areas):\n${hotspots.slice(0, 10).join('\n')}`,
+            ts: now, source: 'git-history',
+          })
+        );
+      }
+
+      await pipeline.exec();
+
+      const byOutcome = { success: 0, failure: 0 };
+      for (const c of candidates) byOutcome[c.outcome]++;
+
+      return [
+        `🧠 **Brain bootstrapped from git history**`,
+        ``,
+        `📊 Scanned: ${commits.length} commits over last ${days} days`,
+        `✅ Success lessons: ${byOutcome.success}  ❌ Failure/revert lessons: ${byOutcome.failure}`,
+        `📁 Hotspot files tracked: ${hotspots.length}`,
+        `💾 Total stored: ${stored} new lessons`,
+        ``,
+        `**Top lessons extracted:**`,
+        ...candidates.slice(0, 6).map(c => {
+          const sev = c.severity === 'critical' ? '🔴' : c.severity === 'major' ? '🟡' : '⚪';
+          const out = c.outcome === 'success' ? '✅' : '❌';
+          return `  ${out}${sev} \`${c.topic}\` — ${c.what_worked.slice(0, 80)}`;
+        }),
+        candidates.length > 6 ? `  … and ${candidates.length - 6} more` : '',
+        ``,
+        `💡 Run \`session_start\` to see these lessons in your next briefing.`,
+        hotspots.length > 0 ? `💡 Hotspot files are saved as context — \`recall_context("git-hotspots")\` to see them.` : '',
+      ].filter(l => l !== '').join('\n');
+    }
+
     // ── setup_ai_memory ───────────────────────────────────────────────────────
     case 'setup_ai_memory': {
       const {
@@ -4412,43 +5088,49 @@ function buildClaudeMdBlock(instanceId: string): string {
 
 Your AI Brain instance ID: \`${instanceId}\`
 
-> The Brain gives you persistent memory across sessions. Every lesson you learn,
-> every bug you fix, every architecture decision — recalled instantly next time.
-> instance_id is pre-filled below. Do NOT ask the user for it.
+> The Brain gives you persistent memory across sessions, context compaction, and provider switches.
+> Every lesson, every bug fix, every decision — recalled instantly next time.
+> instance_id is pre-filled. Do NOT ask the user for it.
+
+<!-- cachly-lessons-start --><!-- cachly-lessons-end -->
 
 ### MANDATORY: Call at the START of every session
 \`\`\`
-session_start(instance_id="${instanceId}", focus="<what you're working on today>")
+session_start(instance_id="${instanceId}", focus="<what you're working on today>", workspace_path="$PWD", provider="claude-code")
 \`\`\`
-This loads your previous context, recent lessons, and open tasks automatically.
+Returns: last session summary, open TODOs, cross-provider checkpoint, and relevant lessons.
+
+### IMMEDIATELY after Claude Code context compaction
+\`\`\`
+compact_recover(instance_id="${instanceId}")
+\`\`\`
+Restores your working context in one call — checkpoint, open TODOs, critical lessons.
 
 ### MANDATORY: Call at the END of every session
 \`\`\`
-session_end(instance_id="${instanceId}", summary="<2-3 sentences on what was done>", files_changed=["src/..."], lessons_learned=1)
+session_end(instance_id="${instanceId}", summary="<2-3 sentences on what was done>", files_changed=["src/..."], lessons_learned=1, project_dir="$PWD")
+\`\`\`
+The project_dir parameter auto-refreshes CLAUDE.md with the latest lessons inline.
+
+### Every ~5 tool uses OR before switching providers
+\`\`\`
+session_ping(instance_id="${instanceId}", task="<what you're doing>", provider="claude-code", files=["..."], next_step="<what comes next>")
 \`\`\`
 
 ### After fixing ANY bug or solving a hard problem
 \`\`\`
-learn_from_attempts(
-  instance_id="${instanceId}",
-  topic="category:keyword",   # e.g. "deploy:web", "bug:redis-timeout", "arch:auth"
-  outcome="success",
-  what_worked="exact solution",
-  what_failed="what didn't work (optional)",
-  commands=["the command that worked"],
-  file_paths=["relevant/file.ts"],
-  severity="critical"|"major"|"minor",
-)
+learn_from_attempts(instance_id="${instanceId}", topic="category:keyword", outcome="success", what_worked="exact solution", severity="critical"|"major"|"minor")
+\`\`\`
+
+### Open TODOs that survive sessions and compaction
+\`\`\`
+todo_add(instance_id="${instanceId}", task="description", priority="high"|"medium"|"low")
+todo_done(instance_id="${instanceId}", id="<id from todo_add>")
 \`\`\`
 
 ### Before starting any non-trivial task
 \`\`\`
 recall_best_solution(instance_id="${instanceId}", topic="relevant:topic")
-\`\`\`
-
-### If a stored lesson is wrong
-\`\`\`
-forget_lesson(instance_id="${instanceId}", topic="wrong:topic")
 \`\`\`
 ${CLAUDE_MD_MARKER_END}`;
 }
@@ -4721,6 +5403,31 @@ if (process.argv[2] === 'setup') {
   const mdLabel = mdResult === 'updated' ? '✅ Updated' : mdResult === 'appended' ? '✅ Appended to' : '✅ Written';
   console.log(`${mdLabel}: CLAUDE.md`);
 
+  // ── Step 6: Claude Code Stop hook (auto-checkpoint before context window ends) ──
+  if (editorsToSetup.includes('claude')) {
+    try {
+      const { readFile: rf } = await import('node:fs/promises');
+      const claudeDir    = resolve(cwd, '.claude');
+      const settingsPath = resolve(claudeDir, 'settings.json');
+      await mkdir(claudeDir, { recursive: true });
+      let settings: Record<string, unknown> = {};
+      try { settings = JSON.parse(await rf(settingsPath, 'utf-8')); } catch { /* new file */ }
+      const hookCmd = 'npx @cachly-dev/mcp-server@latest ping';
+      const hooks = (settings.hooks ?? {}) as Record<string, unknown>;
+      const stopHooks = Array.isArray(hooks.Stop) ? hooks.Stop as unknown[] : [];
+      const alreadyAdded = stopHooks.some((h: unknown) =>
+        typeof h === 'object' && h !== null && (h as Record<string, unknown>).command === hookCmd
+      );
+      if (!alreadyAdded) {
+        stopHooks.push({ matcher: '', command: hookCmd });
+        hooks.Stop = stopHooks;
+        settings.hooks = hooks;
+        await writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+        console.log(`✅ Written: .claude/settings.json (Stop hook → auto session_ping)`);
+      }
+    } catch { /* non-fatal */ }
+  }
+
   rl.close();
   console.log(`\n🧠  Done! Restart your editor — the \`cachly\` MCP tools will appear.`);
   console.log(`    Your AI now has persistent memory across every session.\n`);
@@ -4873,8 +5580,144 @@ if (process.argv[2] === 'join') {
   const mdLabel = mdResult === 'updated' ? '✅ Updated' : mdResult === 'appended' ? '✅ Appended to' : '✅ Written';
   console.log(`${mdLabel}: CLAUDE.md`);
 
+  // Write Claude Code Stop hook
+  if (detected.includes('claude')) {
+    try {
+      const { readFile: rf2, writeFile: wf2 } = await import('node:fs/promises');
+      const claudeDir    = resolve(cwd, '.claude');
+      const settingsPath = resolve(claudeDir, 'settings.json');
+      await mkdir(claudeDir, { recursive: true });
+      let settings: Record<string, unknown> = {};
+      try { settings = JSON.parse(await rf2(settingsPath, 'utf-8')); } catch { /* new file */ }
+      const hookCmd = 'npx @cachly-dev/mcp-server@latest ping';
+      const hooks = (settings.hooks ?? {}) as Record<string, unknown>;
+      const stopHooks = Array.isArray(hooks.Stop) ? hooks.Stop as unknown[] : [];
+      const alreadyAdded = stopHooks.some((h: unknown) =>
+        typeof h === 'object' && h !== null && (h as Record<string, unknown>).command === hookCmd
+      );
+      if (!alreadyAdded) {
+        stopHooks.push({ matcher: '', command: hookCmd });
+        hooks.Stop = stopHooks;
+        settings.hooks = hooks;
+        await wf2(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+        console.log(`✅ Written: .claude/settings.json (Stop hook → auto session_ping)`);
+      }
+    } catch { /* non-fatal */ }
+  }
+
   console.log(`\n🧠  Joined! You're now connected to "${instanceName}".`);
   console.log(`    Restart your editor — all ${instanceName} lessons are now available via session_start.\n`);
+  process.exit(0);
+}
+
+// ── CLI: cachly ping (Stop-hook — saves checkpoint when context window ends) ───
+// Called by Claude Code Stop hook. Silent on error — must not break the user's workflow.
+
+if (process.argv[2] === 'ping') {
+  const { readFile: rfp } = await import('node:fs/promises');
+  const { existsSync: ep } = await import('node:fs');
+  const { resolve: rp } = await import('node:path');
+  const cwd = process.cwd();
+
+  let instanceId = process.env.CACHLY_INSTANCE_ID ?? process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  let apiKey     = process.env.CACHLY_API_KEY ?? process.env.CACHLY_JWT ?? '';
+
+  if (!instanceId || !apiKey) {
+    for (const p of [rp(cwd, '.mcp.json'), rp(cwd, '.claude', 'mcp.json')]) {
+      if (ep(p)) {
+        try {
+          const cfg = JSON.parse(await rfp(p, 'utf-8'));
+          const srv = cfg?.mcpServers?.cachly?.env ?? cfg?.mcpServers?.['cachly-brain']?.env ?? {};
+          if (!instanceId) instanceId = srv.CACHLY_BRAIN_INSTANCE_ID ?? srv.CACHLY_INSTANCE_ID ?? '';
+          if (!apiKey)     apiKey     = srv.CACHLY_JWT ?? srv.CACHLY_API_KEY ?? '';
+          if (instanceId && apiKey) break;
+        } catch { /* ignore */ }
+      }
+    }
+  }
+  if (!instanceId || !apiKey) process.exit(0); // not configured — silent
+
+  let task = 'Auto-checkpoint (Stop hook)';
+  let files: string[] = [];
+  try {
+    const { execSync: exc } = await import('node:child_process');
+    const diff = exc('git diff --name-only HEAD 2>/dev/null', { timeout: 3000, cwd }).toString().trim();
+    if (diff) files = diff.split('\n').filter(Boolean).slice(0, 10);
+    const log = exc('git log --oneline -1 2>/dev/null', { timeout: 3000, cwd }).toString().trim();
+    if (log) task = `At: ${log}`;
+  } catch { /* no git */ }
+
+  try {
+    await fetch(`${API_URL}/api/v1/instances/${instanceId}/ping`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ task, provider: 'claude-code', files }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* offline — silent */ }
+
+  process.exit(0);
+}
+
+// ── CLI: cachly learn (terminal wrapper for brain_from_git) ───────────────────
+// Usage: npx @cachly-dev/mcp-server@latest learn [--days 180] [--dry-run]
+// Reads CACHLY_JWT + CACHLY_BRAIN_INSTANCE_ID from env or .mcp.json
+
+if (process.argv[2] === 'learn') {
+  const { readFile: rfl } = await import('node:fs/promises');
+  const { existsSync: efl } = await import('node:fs');
+  const { resolve: rpl } = await import('node:path');
+  const cwd = process.cwd();
+
+  let instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  let apiKey     = process.env.CACHLY_JWT ?? '';
+
+  if (!instanceId || !apiKey) {
+    for (const p of [rpl(cwd, '.mcp.json'), rpl(cwd, '.claude', 'mcp.json')]) {
+      if (efl(p)) {
+        try {
+          const cfg = JSON.parse(await rfl(p, 'utf-8'));
+          const srv = cfg?.mcpServers?.cachly?.env ?? {};
+          if (!instanceId) instanceId = srv.CACHLY_BRAIN_INSTANCE_ID ?? '';
+          if (!apiKey)     apiKey     = srv.CACHLY_JWT ?? '';
+          if (instanceId && apiKey) break;
+        } catch { /* ignore */ }
+      }
+    }
+  }
+
+  if (!instanceId || !apiKey) {
+    console.error('\n❌  No brain configured. Run: npx @cachly-dev/mcp-server@latest setup\n');
+    process.exit(1);
+  }
+
+  const argv = process.argv.slice(3);
+  const flagVal = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
+  const days    = parseInt(flagVal('days') ?? '180', 10);
+  const dryRun  = argv.includes('--dry-run');
+  const maxC    = parseInt(flagVal('max-commits') ?? '500', 10);
+
+  console.log(`\n🧠  cachly — Learn from Git History`);
+  console.log(`────────────────────────────────────`);
+  console.log(`   Repo:     ${cwd}`);
+  console.log(`   History:  last ${days} days`);
+  if (dryRun) console.log(`   Mode:     dry-run (preview only)\n`);
+  else console.log(`   Mode:     import to brain\n`);
+
+  try {
+    const result = await handleTool('brain_from_git', {
+      instance_id: instanceId,
+      repo_path: cwd,
+      days,
+      max_commits: maxC,
+      dry_run: dryRun,
+    });
+    console.log(result);
+    console.log('');
+  } catch (e) {
+    console.error('❌ Error:', (e as Error).message);
+    process.exit(1);
+  }
   process.exit(0);
 }
 

@@ -108,29 +108,86 @@ Step 3: Detected editors: Claude Code, Cursor, GitHub Copilot
 
 ---
 
+## Bootstrap your Brain from Git History
+
+```bash
+npx @cachly-dev/mcp-server@latest learn
+```
+
+Or from inside your AI:
+
+```
+brain_from_git(instance_id="...", repo_path="/home/you/myproject", days=180)
+```
+
+**One command. 2 years of team knowledge. 30 seconds.**
+
+`brain_from_git` reads your git log and turns it into AI Brain lessons automatically:
+
+```
+🧠 Brain bootstrapped from git history
+
+📊 Scanned: 342 commits over last 180 days
+✅ Success lessons: 28  ❌ Failure/revert lessons: 9
+📁 Hotspot files tracked: 12
+💾 Total stored: 31 new lessons
+
+Top lessons extracted:
+  ✅🟡 `auth:jwt-refresh-token` — Use httpOnly cookie, not localStorage — Safari blocks third-party
+  ❌🔴 `deploy:docker-compose-detach` — Reverted: "docker compose up without -d blocks SSH terminal"
+  ✅🟡 `redis:connection-pool-timeout` — connectTimeout:5000 + retryStrategy:null prevents hangs
+  ✅🔴 `api:rate-limit-headers` — Added X-RateLimit headers after customer reports
+  ❌🔴 `auth:pkce-safari-16` — PKCE flow broken Safari 16.3, still unresolved
+
+💡 Run session_start to see these lessons in your next briefing.
+💡 Hotspot files saved — recall_context("git-hotspots") to see fragile areas.
+```
+
+What it extracts:
+- **`fix:` / `bug:` commits** → success lesson with severity `major`
+- **`revert:` commits** → failure lesson (what NOT to do) with severity `critical`
+- **`perf:` / `refactor:`** → architecture lessons
+- **`security:` / CVE references** → critical lessons
+- **Hotspot files** (most-changed) → context entry for fragile areas
+- **CHANGELOG.md** → Fixed/Breaking sections become lessons automatically
+- **Conventional commit scopes** → become topic prefixes (`auth:`, `deploy:`, `redis:`)
+- **File-path inference** → commits without a scope get one from changed files (`src/auth/jwt.ts` → `auth:`)
+
+**Use cases:**
+- 🧑‍💻 **New developer joins** → `brain_from_git` → instant 2 years of team knowledge
+- 🔄 **Switching AI providers** → brain carries context across Claude/Copilot/Cursor
+- 🏖️ **Back from holidays** → `session_start` shows everything that happened
+- 🏢 **Enterprise onboarding** → standardized brain snapshot for all AI sessions
+
+---
+
 ## Tools (most important ones)
 
 ### Session & Memory
 
 | Tool | What it does |
 |------|-------------|
-| **`session_start`** | Full briefing: last session, open failures, relevant lessons, brain stats |
-| **`session_end`** | Save what you built, auto-extract lessons from summary + git log |
+| **`session_start`** | Full briefing: last session, open TODOs, checkpoint, lessons, brain stats |
+| **`session_end`** | Save session + auto-refresh CLAUDE.md with top lessons inline |
+| **`session_ping`** | Cross-provider checkpoint — switch Claude↔Copilot↔Cursor seamlessly |
+| **`compact_recover`** | One call after context compaction — restores checkpoint + TODOs + critical lessons |
+| **`brain_from_git`** | Bootstrap brain from git history — no manual lesson writing required |
 | **`learn_from_attempts`** | Store lessons after any fix, deploy, or discovery |
 | **`recall_best_solution`** | Best known fix for a topic — with full success/failure history |
 | **`smart_recall`** | Full-text search across all brain data (BM25+) |
+| **`todo_add`** / **`todo_done`** | Persistent TODOs — survive sessions, compaction, provider switches |
+| **`refresh_claude_md`** | Embed top lessons inline in CLAUDE.md — ambient brain without tool calls |
 | **`remember_context`** / **`recall_context`** | Save/restore architecture findings, file summaries, ADRs |
-| **`forget_lesson`** | Remove a stale or wrong lesson |
-| **`list_lessons`** | Overview of all stored topics with severity, age, recall count |
 
 ### Team Brain
 
 | Tool | What it does |
 |------|-------------|
 | **`team_learn`** / **`team_recall`** | Share lessons across the whole team on a shared instance |
-| **`memory_crystalize`** | Distill all lessons into a Crystal snapshot — injected at every `session_start` |
-| **`brain_doctor`** | Health check: IQ boost %, lesson quality, open failures |
-| **`invite_member`** | Invite a dev to your org by email |
+| **`invite_link`** | Generate `npx ... join <token>` — teammate connects in one command, no dashboard |
+| **`brain_stats`** | Dashboard: lessons, recalls, time saved, top topics, team authors |
+| **`export_brain`** | Full Markdown export — share, archive, or import into a new instance |
+| **`brain_doctor`** | Health check: lesson quality, open failures, recommendations |
 
 ### Cache & Infrastructure
 
