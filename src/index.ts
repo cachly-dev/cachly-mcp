@@ -1783,6 +1783,29 @@ const TOOLS = [
       required: ['instance_id', 'framework'],
     },
   },
+  {
+    name: 'brain_from_git',
+    description:
+      'Bootstrap your AI Brain from git history — no manual lesson writing required. ' +
+      'Scans commits, reverts, hotspot files, and PR messages to extract lessons automatically:\n' +
+      '  • fix/bug commits → success lessons ("this solved it")\n' +
+      '  • revert commits  → failure lessons ("this approach broke things")\n' +
+      '  • perf/refactor   → architecture lessons\n' +
+      '  • hotspot files   → context entry (most frequently changed = most fragile)\n\n' +
+      'One command turns 6 months of team git history into an instant AI knowledge base. ' +
+      'Perfect for onboarding new developers or AI assistants to an existing project.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        repo_path:    { type: 'string', description: 'Absolute path to the git repository root (default: current directory)' },
+        days:         { type: 'number', description: 'How many days of history to scan (default: 180)' },
+        max_commits:  { type: 'number', description: 'Max commits to analyze (default: 500)' },
+        dry_run:      { type: 'boolean', description: 'Preview what would be imported without writing to brain (default: false)' },
+      },
+      required: ['instance_id'],
+    },
+  },
   // ── Legacy / Setup ────────────────────────────────────────────────────────
   {
     name: 'setup_ai_memory',
@@ -4429,6 +4452,209 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         `Recall any time: \`recall_best_solution(topic="${fw}:...")\``,
       ];
       return lines.join('\n');
+    }
+
+    // ── brain_from_git ────────────────────────────────────────────────────────
+    case 'brain_from_git': {
+      const { instance_id, repo_path = process.cwd(), days = 180, max_commits = 500, dry_run = false } = args as {
+        instance_id: string; repo_path?: string; days?: number; max_commits?: number; dry_run?: boolean;
+      };
+
+      const { execSync } = await import('node:child_process');
+      const redis = dry_run ? null : await getConnection(instance_id);
+
+      // ── 1. Verify it's a git repo ──
+      try {
+        execSync(`git -C "${repo_path}" rev-parse --git-dir`, { timeout: 3000, stdio: 'pipe' });
+      } catch {
+        return `❌ No git repository found at ${repo_path}. Provide the correct repo_path.`;
+      }
+
+      const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
+
+      // ── 2. Parse git log ──
+      let rawLog = '';
+      try {
+        rawLog = execSync(
+          `git -C "${repo_path}" log --format="%H|||%s|||%an|||%ad|||%b---END---" --date=short --since="${since}" -n ${max_commits}`,
+          { timeout: 15000, stdio: 'pipe' }
+        ).toString();
+      } catch {
+        return `❌ git log failed. Is the repo at ${repo_path}?`;
+      }
+
+      // ── 3. Find hotspot files (most frequently changed) ──
+      let hotspotRaw = '';
+      try {
+        hotspotRaw = execSync(
+          `git -C "${repo_path}" log --name-only --format="" --since="${since}" -n ${max_commits} | sort | uniq -c | sort -rn | head -20`,
+          { timeout: 10000, stdio: 'pipe' }
+        ).toString();
+      } catch { /* non-fatal */ }
+
+      // ── 4. Parse commits into lesson candidates ──
+      type LessonCandidate = {
+        topic: string; outcome: 'success' | 'failure'; what_worked: string;
+        what_failed?: string; severity: 'critical' | 'major' | 'minor';
+        tags: string[]; author: string; date: string;
+      };
+      const candidates: LessonCandidate[] = [];
+      const seen = new Set<string>();
+
+      const commits = rawLog.split('---END---').map(s => s.trim()).filter(Boolean);
+      for (const raw of commits) {
+        const [hash, subject = '', author = '', date = '', ...bodyParts] = raw.split('|||');
+        if (!hash || !subject) continue;
+        const body = bodyParts.join(' ').replace(/\n/g, ' ').trim();
+        const full = `${subject} ${body}`.toLowerCase();
+
+        // Detect commit type
+        const isRevert  = /^revert\b|^reverts?\s+"/.test(subject.toLowerCase());
+        const isFix     = /^fix[:(!\s]|^bug[:(!\s]|hotfix|patch/.test(subject.toLowerCase());
+        const isPerf    = /^perf[:(!\s]|^optim|performance/.test(subject.toLowerCase());
+        const isRefactor= /^refactor[:(!\s]|^cleanup|^chore:\s*(?:remove|delete|cleanup)/.test(subject.toLowerCase());
+        const isSecurity= /^security|^sec[:(!\s]|cve-|sql.inject|xss|csrf/.test(full);
+        const isBreaking= /breaking.change|breaking:|!:/.test(full);
+
+        if (!isRevert && !isFix && !isPerf && !isRefactor && !isSecurity && !isBreaking) continue;
+
+        // Extract meaningful topic from subject line
+        // "fix(auth): JWT not refreshing" → "auth:jwt-refresh"
+        // "fix: redis timeout on reconnect" → "fix:redis-timeout"
+        const scopeMatch = subject.match(/^[a-z]+\(([^)]+)\):/i);
+        const scope = scopeMatch?.[1]?.toLowerCase().replace(/[^a-z0-9]/g, '-') ?? '';
+        const rest = subject.replace(/^[a-z]+(\([^)]+\))?:\s*/i, '').trim();
+        const slug = rest.toLowerCase()
+          .replace(/[^a-z0-9\s]/g, '')
+          .split(/\s+/).slice(0, 4).join('-')
+          .replace(/-+$/, '');
+
+        const category = isRevert ? 'revert' : isSecurity ? 'security' : isFix ? 'fix'
+          : isPerf ? 'perf' : isRefactor ? 'refactor' : 'breaking';
+        const topic = scope ? `${scope}:${slug}` : `${category}:${slug}`;
+
+        if (seen.has(topic)) continue;
+        seen.add(topic);
+
+        const severity: 'critical' | 'major' | 'minor' = isSecurity || isBreaking || isRevert ? 'critical'
+          : isFix ? 'major' : 'minor';
+
+        if (isRevert) {
+          // What was reverted = what failed
+          const revertedSubject = subject.replace(/^revert\s+"?/i, '').replace(/"$/, '');
+          candidates.push({
+            topic,
+            outcome: 'failure',
+            what_worked: `Reverted: "${revertedSubject}" — approach was rolled back`,
+            what_failed: revertedSubject,
+            severity,
+            tags: ['git-history', 'revert', author.toLowerCase().replace(/\s/g, '-')],
+            author, date,
+          });
+        } else {
+          const detail = body.length > 20 ? body.slice(0, 200) : subject;
+          candidates.push({
+            topic,
+            outcome: 'success',
+            what_worked: `${subject}${body.length > 20 ? ` — ${body.slice(0, 150)}` : ''}`,
+            severity,
+            tags: ['git-history', category, ...(scope ? [scope] : [])],
+            author, date,
+          });
+        }
+      }
+
+      // ── 5. Hotspot files → context entry ──
+      const hotspots: string[] = [];
+      if (hotspotRaw) {
+        for (const line of hotspotRaw.split('\n').filter(Boolean)) {
+          const m = line.trim().match(/^\s*(\d+)\s+(.+)$/);
+          if (m && parseInt(m[1]) >= 5 && m[2].trim()) hotspots.push(`${m[2].trim()} (${m[1]} changes)`);
+        }
+      }
+
+      if (dry_run) {
+        const lines = [
+          `🔍 **Dry run — brain_from_git** (${repo_path})`,
+          `   Scanned: last ${days} days, ${commits.length} commits`,
+          `   Would import: ${candidates.length} lessons`,
+          `   Hotspot files: ${hotspots.length}`,
+          '',
+          `**Lesson preview:**`,
+          ...candidates.slice(0, 10).map(c => {
+            const sev = c.severity === 'critical' ? '🔴' : c.severity === 'major' ? '🟡' : '⚪';
+            const out = c.outcome === 'success' ? '✅' : '❌';
+            return `  ${out}${sev} \`${c.topic}\` — ${c.what_worked.slice(0, 80)}`;
+          }),
+          candidates.length > 10 ? `  … and ${candidates.length - 10} more` : '',
+          hotspots.length > 0 ? `\n**Top hotspot files:**\n${hotspots.slice(0, 5).map(h => `  📁 ${h}`).join('\n')}` : '',
+          '',
+          `Run without dry_run=true to import into brain.`,
+        ].filter(l => l !== '');
+        return lines.join('\n');
+      }
+
+      // ── 6. Write to brain ──
+      let stored = 0;
+      const pipeline = redis!.pipeline();
+      const now = new Date().toISOString();
+
+      for (const c of candidates) {
+        const key = `cachly:lesson:best:${c.topic}`;
+        const existing = await redis!.get(key);
+        if (existing) {
+          try {
+            const ex = JSON.parse(existing) as { tags?: string[] };
+            if ((ex.tags ?? []).includes('git-history')) continue; // already imported
+          } catch { /* overwrite */ }
+        }
+        const record = {
+          topic: c.topic, outcome: c.outcome, what_worked: c.what_worked,
+          ...(c.what_failed ? { what_failed: c.what_failed } : {}),
+          severity: c.severity, tags: c.tags,
+          ts: c.date ? new Date(c.date).toISOString() : now,
+          recall_count: 0, source: 'git-history', author: c.author,
+        };
+        pipeline.set(key, JSON.stringify(record));
+        stored++;
+      }
+
+      // Store hotspot context
+      if (hotspots.length > 0) {
+        pipeline.set(
+          'cachly:ctx:git-hotspots',
+          JSON.stringify({
+            key: 'git-hotspots', category: 'architecture',
+            content: `Most frequently changed files (fragile areas):\n${hotspots.slice(0, 10).join('\n')}`,
+            ts: now, source: 'git-history',
+          })
+        );
+      }
+
+      await pipeline.exec();
+
+      const byOutcome = { success: 0, failure: 0 };
+      for (const c of candidates) byOutcome[c.outcome]++;
+
+      return [
+        `🧠 **Brain bootstrapped from git history**`,
+        ``,
+        `📊 Scanned: ${commits.length} commits over last ${days} days`,
+        `✅ Success lessons: ${byOutcome.success}  ❌ Failure/revert lessons: ${byOutcome.failure}`,
+        `📁 Hotspot files tracked: ${hotspots.length}`,
+        `💾 Total stored: ${stored} new lessons`,
+        ``,
+        `**Top lessons extracted:**`,
+        ...candidates.slice(0, 6).map(c => {
+          const sev = c.severity === 'critical' ? '🔴' : c.severity === 'major' ? '🟡' : '⚪';
+          const out = c.outcome === 'success' ? '✅' : '❌';
+          return `  ${out}${sev} \`${c.topic}\` — ${c.what_worked.slice(0, 80)}`;
+        }),
+        candidates.length > 6 ? `  … and ${candidates.length - 6} more` : '',
+        ``,
+        `💡 Run \`session_start\` to see these lessons in your next briefing.`,
+        hotspots.length > 0 ? `💡 Hotspot files are saved as context — \`recall_context("git-hotspots")\` to see them.` : '',
+      ].filter(l => l !== '').join('\n');
     }
 
     // ── setup_ai_memory ───────────────────────────────────────────────────────
