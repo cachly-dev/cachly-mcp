@@ -4492,14 +4492,80 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ).toString();
       } catch { /* non-fatal */ }
 
-      // ── 4. Parse commits into lesson candidates ──
+      // ── 4. Get per-commit file changes for path-aware topic extraction ──
+      let commitFiles: Map<string, string[]> = new Map();
+      try {
+        const filesLog = execSync(
+          `git -C "${repo_path}" log --name-only --format="COMMIT:%H" --since="${since}" -n ${max_commits}`,
+          { timeout: 15000, stdio: 'pipe' }
+        ).toString();
+        let currentHash = '';
+        for (const line of filesLog.split('\n')) {
+          if (line.startsWith('COMMIT:')) { currentHash = line.slice(7).trim(); commitFiles.set(currentHash, []); }
+          else if (line.trim() && currentHash) { commitFiles.get(currentHash)?.push(line.trim()); }
+        }
+      } catch { /* non-fatal — fall back to subject-only topics */ }
+
+      // ── 5. Parse CHANGELOG.md if present ──
       type LessonCandidate = {
         topic: string; outcome: 'success' | 'failure'; what_worked: string;
         what_failed?: string; severity: 'critical' | 'major' | 'minor';
         tags: string[]; author: string; date: string;
       };
-      const candidates: LessonCandidate[] = [];
       const seen = new Set<string>();
+      let changelogCandidates: LessonCandidate[] = [];
+      try {
+        const clPath = `${repo_path}/CHANGELOG.md`;
+        const clContent = execSync(`cat "${clPath}" 2>/dev/null`, { timeout: 3000, stdio: 'pipe' }).toString();
+        if (clContent) {
+          // Parse "### Fixed" and "### Breaking Changes" sections
+          const fixedMatches = clContent.matchAll(/###\s+Fixed\s*\n([\s\S]*?)(?=###|\n##\s|$)/g);
+          for (const m of fixedMatches) {
+            const items = m[1].split('\n').filter(l => l.match(/^[-*]\s+/)).slice(0, 5);
+            for (const item of items) {
+              const text = item.replace(/^[-*]\s+/, '').trim();
+              if (text.length < 10) continue;
+              const slug = text.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).slice(0, 4).join('-');
+              const topic = `changelog:${slug}`;
+              if (!seen.has(topic)) {
+                seen.add(topic);
+                changelogCandidates.push({ topic, outcome: 'success', what_worked: text, severity: 'major', tags: ['git-history', 'changelog'], author: 'changelog', date: '' });
+              }
+            }
+          }
+          const breakingMatches = clContent.matchAll(/###\s+Breaking\s+Changes?\s*\n([\s\S]*?)(?=###|\n##\s|$)/g);
+          for (const m of breakingMatches) {
+            const items = m[1].split('\n').filter(l => l.match(/^[-*]\s+/)).slice(0, 3);
+            for (const item of items) {
+              const text = item.replace(/^[-*]\s+/, '').trim();
+              if (text.length < 10) continue;
+              const slug = text.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).slice(0, 4).join('-');
+              const topic = `breaking:${slug}`;
+              if (!seen.has(topic)) {
+                seen.add(topic);
+                changelogCandidates.push({ topic, outcome: 'failure', what_worked: `Breaking change: ${text}`, what_failed: text, severity: 'critical', tags: ['git-history', 'changelog', 'breaking'], author: 'changelog', date: '' });
+              }
+            }
+          }
+        }
+      } catch { /* no CHANGELOG */ }
+
+      // ── 6. Parse commits into lesson candidates ──
+      const candidates: LessonCandidate[] = [];
+
+      // Helper: infer scope from changed file paths when commit has no conventional scope
+      function scopeFromFiles(files: string[]): string {
+        if (!files.length) return '';
+        // Find common path prefix component: src/auth/foo.ts, src/auth/bar.ts → "auth"
+        const parts = files
+          .map(f => f.split('/').filter(p => p && p !== 'src' && p !== 'lib' && p !== 'app' && p !== 'pkg' && p !== 'internal' && !p.includes('.')))
+          .flat();
+        if (!parts.length) return '';
+        const freq = new Map<string, number>();
+        for (const p of parts) freq.set(p, (freq.get(p) ?? 0) + 1);
+        const top = [...freq.entries()].sort((a, b) => b[1] - a[1])[0];
+        return top && top[1] >= 1 ? top[0].toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 20) : '';
+      }
 
       const commits = rawLog.split('---END---').map(s => s.trim()).filter(Boolean);
       for (const raw of commits) {
@@ -4508,7 +4574,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         const body = bodyParts.join(' ').replace(/\n/g, ' ').trim();
         const full = `${subject} ${body}`.toLowerCase();
 
-        // Detect commit type
+        // Skip pure merge commits that aren't reverts
+        const isMerge = /^merge (pull request|branch|remote)/i.test(subject);
         const isRevert  = /^revert\b|^reverts?\s+"/.test(subject.toLowerCase());
         const isFix     = /^fix[:(!\s]|^bug[:(!\s]|hotfix|patch/.test(subject.toLowerCase());
         const isPerf    = /^perf[:(!\s]|^optim|performance/.test(subject.toLowerCase());
@@ -4516,13 +4583,15 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         const isSecurity= /^security|^sec[:(!\s]|cve-|sql.inject|xss|csrf/.test(full);
         const isBreaking= /breaking.change|breaking:|!:/.test(full);
 
+        if (isMerge && !isRevert) continue;
         if (!isRevert && !isFix && !isPerf && !isRefactor && !isSecurity && !isBreaking) continue;
 
-        // Extract meaningful topic from subject line
-        // "fix(auth): JWT not refreshing" → "auth:jwt-refresh"
-        // "fix: redis timeout on reconnect" → "fix:redis-timeout"
+        // Scope: prefer conventional commit scope, fall back to file-path inference
         const scopeMatch = subject.match(/^[a-z]+\(([^)]+)\):/i);
-        const scope = scopeMatch?.[1]?.toLowerCase().replace(/[^a-z0-9]/g, '-') ?? '';
+        const conventionalScope = scopeMatch?.[1]?.toLowerCase().replace(/[^a-z0-9]/g, '-') ?? '';
+        const files = commitFiles.get(hash.trim()) ?? [];
+        const scope = conventionalScope || scopeFromFiles(files);
+
         const rest = subject.replace(/^[a-z]+(\([^)]+\))?:\s*/i, '').trim();
         const slug = rest.toLowerCase()
           .replace(/[^a-z0-9\s]/g, '')
@@ -4539,29 +4608,31 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         const severity: 'critical' | 'major' | 'minor' = isSecurity || isBreaking || isRevert ? 'critical'
           : isFix ? 'major' : 'minor';
 
+        // Build context string including changed files
+        const fileCtx = files.length > 0 ? ` [${files.slice(0, 3).join(', ')}]` : '';
+
         if (isRevert) {
-          // What was reverted = what failed
           const revertedSubject = subject.replace(/^revert\s+"?/i, '').replace(/"$/, '');
           candidates.push({
-            topic,
-            outcome: 'failure',
-            what_worked: `Reverted: "${revertedSubject}" — approach was rolled back`,
-            what_failed: revertedSubject,
-            severity,
-            tags: ['git-history', 'revert', author.toLowerCase().replace(/\s/g, '-')],
+            topic, outcome: 'failure',
+            what_worked: `Reverted: "${revertedSubject}" — approach was rolled back${fileCtx}`,
+            what_failed: revertedSubject, severity,
+            tags: ['git-history', 'revert', ...(scope ? [scope] : [])],
             author, date,
           });
         } else {
-          const detail = body.length > 20 ? body.slice(0, 200) : subject;
           candidates.push({
-            topic,
-            outcome: 'success',
-            what_worked: `${subject}${body.length > 20 ? ` — ${body.slice(0, 150)}` : ''}`,
-            severity,
-            tags: ['git-history', category, ...(scope ? [scope] : [])],
+            topic, outcome: 'success',
+            what_worked: `${subject}${body.length > 20 ? ` — ${body.slice(0, 120)}` : ''}${fileCtx}`,
+            severity, tags: ['git-history', category, ...(scope ? [scope] : [])],
             author, date,
           });
         }
+      }
+
+      // Merge changelog candidates (append, dedup already handled)
+      for (const c of changelogCandidates) {
+        if (!seen.has(c.topic)) { seen.add(c.topic); candidates.push(c); }
       }
 
       // ── 5. Hotspot files → context entry ──
@@ -5585,6 +5656,68 @@ if (process.argv[2] === 'ping') {
     });
   } catch { /* offline — silent */ }
 
+  process.exit(0);
+}
+
+// ── CLI: cachly learn (terminal wrapper for brain_from_git) ───────────────────
+// Usage: npx @cachly-dev/mcp-server@latest learn [--days 180] [--dry-run]
+// Reads CACHLY_JWT + CACHLY_BRAIN_INSTANCE_ID from env or .mcp.json
+
+if (process.argv[2] === 'learn') {
+  const { readFile: rfl } = await import('node:fs/promises');
+  const { existsSync: efl } = await import('node:fs');
+  const { resolve: rpl } = await import('node:path');
+  const cwd = process.cwd();
+
+  let instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  let apiKey     = process.env.CACHLY_JWT ?? '';
+
+  if (!instanceId || !apiKey) {
+    for (const p of [rpl(cwd, '.mcp.json'), rpl(cwd, '.claude', 'mcp.json')]) {
+      if (efl(p)) {
+        try {
+          const cfg = JSON.parse(await rfl(p, 'utf-8'));
+          const srv = cfg?.mcpServers?.cachly?.env ?? {};
+          if (!instanceId) instanceId = srv.CACHLY_BRAIN_INSTANCE_ID ?? '';
+          if (!apiKey)     apiKey     = srv.CACHLY_JWT ?? '';
+          if (instanceId && apiKey) break;
+        } catch { /* ignore */ }
+      }
+    }
+  }
+
+  if (!instanceId || !apiKey) {
+    console.error('\n❌  No brain configured. Run: npx @cachly-dev/mcp-server@latest setup\n');
+    process.exit(1);
+  }
+
+  const argv = process.argv.slice(3);
+  const flagVal = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
+  const days    = parseInt(flagVal('days') ?? '180', 10);
+  const dryRun  = argv.includes('--dry-run');
+  const maxC    = parseInt(flagVal('max-commits') ?? '500', 10);
+
+  console.log(`\n🧠  cachly — Learn from Git History`);
+  console.log(`────────────────────────────────────`);
+  console.log(`   Repo:     ${cwd}`);
+  console.log(`   History:  last ${days} days`);
+  if (dryRun) console.log(`   Mode:     dry-run (preview only)\n`);
+  else console.log(`   Mode:     import to brain\n`);
+
+  try {
+    const result = await handleTool('brain_from_git', {
+      instance_id: instanceId,
+      repo_path: cwd,
+      days,
+      max_commits: maxC,
+      dry_run: dryRun,
+    });
+    console.log(result);
+    console.log('');
+  } catch (e) {
+    console.error('❌ Error:', (e as Error).message);
+    process.exit(1);
+  }
   process.exit(0);
 }
 
