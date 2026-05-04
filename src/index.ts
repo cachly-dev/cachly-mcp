@@ -1410,9 +1410,8 @@ const TOOLS = [
     name: 'session_start',
     description:
       'Single-call session briefing. Call this at the START of every session INSTEAD of multiple separate smart_recall/recall_best_solution calls. ' +
-      'Returns: last session summary, recent lessons sorted by recency, relevant lessons for your focus area, ' +
-      'open failures (topics with only failure outcomes), and brain health stats (lesson count, context count). ' +
-      'Also saves a session start marker so session_end can compute duration.',
+      'Returns: last session summary, open TODOs, checkpoint (if you switched providers), recent lessons, ' +
+      'open failures, and brain health stats. Also saves a session start marker so session_end can compute duration.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1420,6 +1419,14 @@ const TOOLS = [
         focus: {
           type: 'string',
           description: 'Keywords for what you plan to work on today (e.g. "deploy infra api"). Used to surface relevant lessons at the top.',
+        },
+        workspace_path: {
+          type: 'string',
+          description: 'Absolute path to the project root. If provided and no session_end was found, reconstructs context from git log.',
+        },
+        provider: {
+          type: 'string',
+          description: 'Current AI provider (claude-code, copilot, cursor, windsurf, continue). Used to detect cross-provider switches.',
         },
       },
       required: ['instance_id'],
@@ -1449,8 +1456,111 @@ const TOOLS = [
           type: 'number',
           description: 'Number of new lessons stored this session (optional)',
         },
+        project_dir: {
+          type: 'string',
+          description: 'Absolute project path. If provided, refreshes CLAUDE.md with the latest top lessons inline.',
+        },
       },
       required: ['instance_id', 'summary'],
+    },
+  },
+  {
+    name: 'session_ping',
+    description:
+      'Lightweight checkpoint — saves current task, files, and provider mid-session. ' +
+      'Enables seamless cross-provider handoff: if you switch from Claude Code to GitHub Copilot ' +
+      'or Cursor, session_start on the new provider shows exactly where you left off. ' +
+      'Call this every ~5 tool uses, when switching providers, or when approaching context limit. ' +
+      'Much lighter than session_end — does not end the session, just saves a breadcrumb.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        task:      { type: 'string', description: 'What you are currently working on (1 sentence)' },
+        provider:  { type: 'string', description: 'Current AI provider: claude-code, copilot, cursor, windsurf, continue (default: unknown)' },
+        files:     { type: 'array', items: { type: 'string' }, description: 'Files currently open or being edited' },
+        next_step: { type: 'string', description: 'What needs to happen next (optional — helps the next provider pick up)' },
+      },
+      required: ['instance_id', 'task'],
+    },
+  },
+  {
+    name: 'compact_recover',
+    description:
+      'Post-compaction recovery for Claude Code — call this IMMEDIATELY after context compaction. ' +
+      'Returns a dense briefing: last checkpoint (what you were doing), open TODOs, ' +
+      '3 most critical lessons, and files in progress. Single call to restore full working context. ' +
+      'Faster and more targeted than session_start — designed specifically for compaction recovery.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  // ── Brain TODOs — persistent task list across sessions ────────────────────
+  {
+    name: 'todo_add',
+    description:
+      'Add a TODO item to the Brain — persists across sessions, compaction, and provider switches. ' +
+      'session_start automatically shows open TODOs so you always have a clear work agenda. ' +
+      'Use this instead of keeping TODOs only in working memory.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        task: { type: 'string', description: 'The task description (1-2 sentences)' },
+        priority: {
+          type: 'string',
+          enum: ['high', 'medium', 'low'],
+          description: 'Priority level (default: medium)',
+        },
+        context: { type: 'string', description: 'Optional: file path, branch, or relevant context' },
+      },
+      required: ['instance_id', 'task'],
+    },
+  },
+  {
+    name: 'todo_done',
+    description: 'Mark a TODO as done. Removes it from the open TODO list shown in session_start.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        id: { type: 'string', description: 'TODO ID returned by todo_add or todo_list' },
+      },
+      required: ['instance_id', 'id'],
+    },
+  },
+  {
+    name: 'todo_list',
+    description: 'List all open (or recently completed) TODOs from the Brain.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id:   { type: 'string', description: 'UUID of the cache instance' },
+        include_done:  { type: 'boolean', description: 'Also show completed TODOs (default: false)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'refresh_claude_md',
+    description:
+      'Refreshes CLAUDE.md in the project with the top lessons from the Brain inline. ' +
+      'After this call, every AI session benefits from brain content even before calling session_start — ' +
+      'the top lessons are baked directly into the file context. ' +
+      'Call this at session_end (with project_dir) or any time you add important lessons. ' +
+      'Idempotent — safe to run multiple times.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        project_dir:  { type: 'string', description: 'Absolute path to project root containing CLAUDE.md' },
+        max_lessons:  { type: 'number', description: 'Max lessons to embed inline (default: 5)' },
+      },
+      required: ['instance_id', 'project_dir'],
     },
   },
   // ── AI Brain — Extended features ─────────────────────────────────────────
@@ -2985,7 +3095,9 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
     // ── session_start ─────────────────────────────────────────────────────────
     case 'session_start': {
-      const { instance_id, focus = '' } = args as { instance_id: string; focus?: string };
+      const { instance_id, focus = '', workspace_path = '', provider = '' } = args as {
+        instance_id: string; focus?: string; workspace_path?: string; provider?: string;
+      };
       const redis = await getConnection(instance_id);
 
       // 1. Scan all best-solution lessons
@@ -2997,14 +3109,13 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lStream.on('error', reject);
       });
 
-      // 2. Fetch all lesson values for recency sorting + focus matching
+      // 2. Fetch all lesson values in one round-trip
       type Lesson = {
         topic: string; outcome: string; what_worked: string; what_failed?: string;
         ts: string; severity?: string; recall_count?: number; tags?: string[];
       };
       const lessons: Lesson[] = [];
       if (lessonKeys.length > 0) {
-        // Batch fetch all lesson values in one round-trip instead of N sequential gets
         const values = await redis.mget(...lessonKeys);
         for (const raw of values) {
           if (!raw) continue;
@@ -3013,7 +3124,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       }
       lessons.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
 
-      // 3. Count context entries (filter :meta keys)
+      // 3. Count context entries
       let ctxCount = 0;
       const ctxStream = redis.scanStream({ match: 'cachly:ctx:*', count: 200 });
       await new Promise<void>((resolve, reject) => {
@@ -3024,11 +3135,29 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ctxStream.on('error', reject);
       });
 
-      // 4. Last session
-      const lastSessionRaw = await redis.get('cachly:session:last');
+      // 4. Last session + checkpoint + open TODOs (batch)
+      const [lastSessionRaw, checkpointRaw, todosRaw] = await redis.mget(
+        'cachly:session:last', 'cachly:session:checkpoint', 'cachly:todos'
+      );
       let lastSession: { summary: string; ts: string; files_changed?: string[]; duration_min?: number } | null = null;
-      if (lastSessionRaw) {
-        try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ }
+      if (lastSessionRaw) { try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ } }
+      let checkpoint: { task: string; provider?: string; files?: string[]; next_step?: string; ts: string } | null = null;
+      if (checkpointRaw) { try { checkpoint = JSON.parse(checkpointRaw); } catch { /* ignore */ } }
+      type TodoItem = { id: string; task: string; priority: string; context?: string; created: string };
+      let openTodos: TodoItem[] = [];
+      if (todosRaw) { try { openTodos = (JSON.parse(todosRaw) as TodoItem[]).filter(t => !(t as unknown as Record<string,unknown>).done); } catch { /* ignore */ } }
+
+      // 4b. Git reconstruction when no recent session_end but workspace_path provided
+      let gitLines: string[] = [];
+      if (workspace_path && !lastSession) {
+        try {
+          const { execSync } = await import('node:child_process');
+          const log = execSync(`git -C "${workspace_path}" log --oneline -8 2>/dev/null`, { timeout: 3000 }).toString().trim();
+          if (log) {
+            gitLines.push(`⚡ **Reconstructed from git** (no session_end found):`);
+            gitLines.push(`\`\`\`\n${log}\n\`\`\``);
+          }
+        } catch { /* no git */ }
       }
 
       // 5. Focus filtering
@@ -3046,7 +3175,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       await redis.set('cachly:session:current', JSON.stringify({
         started: new Date().toISOString(),
         focus,
-      }), 'EX', 86400); // auto-expire after 24h if session_end never called
+        ...(provider ? { provider } : {}),
+      }), 'EX', 86400);
 
       // ── Build briefing ──────────────────────────────────────────────────────
       const lines: string[] = ['🧠 **Session Briefing**', ''];
@@ -3063,7 +3193,33 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lines.push('');
       }
 
-      // Brain health + first-time onboarding hint
+      // Cross-provider checkpoint
+      if (checkpoint) {
+        const cMin = Math.round((Date.now() - new Date(checkpoint.ts).getTime()) / 60000);
+        const cAgo = cMin < 60 ? `${cMin}m ago` : cMin < 1440 ? `${Math.round(cMin / 60)}h ago` : `${Math.round(cMin / 1440)}d ago`;
+        lines.push(`⚡ **Checkpoint** (${cAgo}${checkpoint.provider ? `, ${checkpoint.provider}` : ''}): ${checkpoint.task}`);
+        if (checkpoint.next_step) lines.push(`   → Next: ${checkpoint.next_step}`);
+        if ((checkpoint.files ?? []).length > 0) lines.push(`   Files: ${(checkpoint.files ?? []).slice(0, 4).map((f: string) => `\`${f}\``).join(', ')}`);
+        lines.push('');
+      }
+
+      // Git reconstruction (when no session_end exists)
+      if (gitLines.length > 0) lines.push(...gitLines, '');
+
+      // Open TODOs
+      if (openTodos.length > 0) {
+        const hiPrio = openTodos.filter(t => t.priority === 'high');
+        const rest   = openTodos.filter(t => t.priority !== 'high');
+        lines.push(`📋 **Open TODOs** (${openTodos.length}):`);
+        for (const t of [...hiPrio, ...rest].slice(0, 5)) {
+          const p = t.priority === 'high' ? '🔴' : t.priority === 'low' ? '⚪' : '🟡';
+          lines.push(`  ${p} [${t.id}] ${t.task}${t.context ? ` _(${t.context})_` : ''}`);
+        }
+        if (openTodos.length > 5) lines.push(`  … and ${openTodos.length - 5} more (todo_list to see all)`);
+        lines.push('');
+      }
+
+      // Brain health + onboarding
       if (lessons.length === 0 && !lastSession) {
         lines.push(`🆕 **Brain is empty — first session!**`);
         lines.push(`After solving anything, call \`learn_from_attempts\` to store the lesson.`);
@@ -3072,9 +3228,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       } else {
         const totalRecalls = lessons.reduce((s, l) => s + (l.recall_count ?? 0), 0);
         const savedMin = totalRecalls * 15;
-        const savedStr = savedMin >= 60
-          ? `~${(savedMin / 60).toFixed(1)}h saved`
-          : savedMin > 0 ? `~${savedMin}min saved` : '';
+        const savedStr = savedMin >= 60 ? `~${(savedMin / 60).toFixed(1)}h saved` : savedMin > 0 ? `~${savedMin}min saved` : '';
         const statsLine = [
           `${lessons.length} lessons`,
           ctxCount > 0 ? `${ctxCount} context entries` : '',
@@ -3109,7 +3263,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lines.push('📭 No lessons yet. Use `learn_from_attempts` after solving tasks.', '');
       }
 
-      // Open failures (lessons whose best-key has outcome != success)
+      // Open failures
       const openFailures = lessons.filter(l => l.outcome === 'failure' || l.outcome === 'partial');
       if (openFailures.length > 0) {
         lines.push(`⚠️ **Unresolved** (${openFailures.length} topic${openFailures.length > 1 ? 's' : ''} with no success yet):`);
@@ -3124,22 +3278,14 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
     // ── session_end ───────────────────────────────────────────────────────────
     case 'session_end': {
-      const {
-        instance_id,
-        summary,
-        files_changed = [],
-        lessons_learned,
-      } = args as {
-        instance_id: string;
-        summary: string;
-        files_changed?: string[];
-        lessons_learned?: number;
+      const { instance_id, summary, files_changed = [], lessons_learned, project_dir } = args as {
+        instance_id: string; summary: string; files_changed?: string[];
+        lessons_learned?: number; project_dir?: string;
       };
 
       const redis = await getConnection(instance_id);
       const now = new Date();
 
-      // Calculate duration from session_start marker
       let durationMin: number | undefined;
       const currentRaw = await redis.get('cachly:session:current');
       if (currentRaw) {
@@ -3150,23 +3296,27 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       }
 
       const sessionRecord = {
-        ts: now.toISOString(),
-        summary,
-        files_changed,
+        ts: now.toISOString(), summary, files_changed,
         ...(lessons_learned !== undefined ? { lessons_learned } : {}),
         ...(durationMin !== undefined ? { duration_min: durationMin } : {}),
       };
 
-      // Save as "last session"
       await redis.set('cachly:session:last', JSON.stringify(sessionRecord));
-
-      // Append to history list (keep last 50 sessions, TTL 90 days)
       await redis.lpush('cachly:session:history', JSON.stringify(sessionRecord));
       await redis.ltrim('cachly:session:history', 0, 49);
       await redis.expire('cachly:session:history', 90 * 86400);
-
-      // Clean up current session marker
       await redis.del('cachly:session:current');
+      // Clear checkpoint — session ended cleanly
+      await redis.del('cachly:session:checkpoint');
+
+      // Auto-refresh CLAUDE.md when project_dir is provided
+      let claudeMdNote = '';
+      if (project_dir) {
+        try {
+          await handleTool('refresh_claude_md', { instance_id, project_dir, max_lessons: 5 });
+          claudeMdNote = '\n✅ CLAUDE.md refreshed with latest brain lessons.';
+        } catch { /* non-fatal */ }
+      }
 
       const durationStr = durationMin !== undefined ? ` · ${durationMin} min` : '';
       return [
@@ -3175,9 +3325,238 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         `📋 **Summary:** ${summary}`,
         files_changed.length > 0 ? `📁 **Files changed:** ${files_changed.map(f => `\`${f}\``).join(', ')}` : '',
         lessons_learned !== undefined ? `🧠 **Lessons stored:** ${lessons_learned}` : '',
+        claudeMdNote,
         ``,
         `💡 Next session: \`session_start(focus="...")\` to see this summary.`,
       ].filter(l => l !== '').join('\n');
+    }
+
+    // ── session_ping ──────────────────────────────────────────────────────────
+    case 'session_ping': {
+      const { instance_id, task, provider = 'unknown', files = [], next_step } = args as {
+        instance_id: string; task: string; provider?: string; files?: string[]; next_step?: string;
+      };
+      const redis = await getConnection(instance_id);
+      const checkpoint = {
+        ts: new Date().toISOString(), task, provider, files,
+        ...(next_step ? { next_step } : {}),
+      };
+      await redis.set('cachly:session:checkpoint', JSON.stringify(checkpoint), 'EX', 48 * 3600);
+      return [
+        `⚡ **Checkpoint saved**`, ``,
+        `📌 **Task:** ${task}`,
+        provider !== 'unknown' ? `🔀 **Provider:** ${provider}` : '',
+        files.length > 0 ? `📁 **Files:** ${files.slice(0, 5).map(f => `\`${f}\``).join(', ')}` : '',
+        next_step ? `➡️ **Next:** ${next_step}` : '',
+        ``,
+        `💡 Switch providers freely — \`session_start\` on any AI will resume from this checkpoint.`,
+      ].filter(l => l !== '').join('\n');
+    }
+
+    // ── compact_recover ───────────────────────────────────────────────────────
+    case 'compact_recover': {
+      const { instance_id } = args as { instance_id: string };
+      const redis = await getConnection(instance_id);
+
+      const [lastSessionRaw, checkpointRaw, todosRaw] = await redis.mget(
+        'cachly:session:last', 'cachly:session:checkpoint', 'cachly:todos'
+      );
+
+      // Top 3 critical/major lessons
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((res, rej) => {
+        lStream.on('data', (b: string[]) => lessonKeys.push(...b));
+        lStream.on('end', res); lStream.on('error', rej);
+      });
+      type Lesson = { topic: string; outcome: string; what_worked: string; severity?: string; ts: string };
+      const topLessons: Lesson[] = [];
+      if (lessonKeys.length > 0) {
+        const vals = await redis.mget(...lessonKeys);
+        for (const raw of vals) {
+          if (!raw) continue;
+          try { topLessons.push(JSON.parse(raw) as Lesson); } catch { /* skip */ }
+        }
+      }
+      topLessons.sort((a, b) => {
+        const sev = (s?: string) => s === 'critical' ? 3 : s === 'major' ? 2 : 1;
+        return sev(b.severity) - sev(a.severity) || new Date(b.ts).getTime() - new Date(a.ts).getTime();
+      });
+
+      const lines: string[] = ['⚡ **Compact Recovery**', ''];
+
+      // Checkpoint — what was being worked on
+      if (checkpointRaw) {
+        try {
+          const cp = JSON.parse(checkpointRaw) as { task: string; next_step?: string; files?: string[]; provider?: string };
+          lines.push(`📌 **Was working on:** ${cp.task}`);
+          if (cp.next_step) lines.push(`➡️ **Next step:** ${cp.next_step}`);
+          if ((cp.files ?? []).length > 0) lines.push(`📁 **Files:** ${(cp.files ?? []).slice(0, 4).map(f => `\`${f}\``).join(', ')}`);
+          lines.push('');
+        } catch { /* ignore */ }
+      } else if (lastSessionRaw) {
+        try {
+          const ls = JSON.parse(lastSessionRaw) as { summary: string; files_changed?: string[] };
+          lines.push(`📅 **Last session:** ${ls.summary}`);
+          if ((ls.files_changed ?? []).length > 0) lines.push(`📁 **Files:** ${(ls.files_changed ?? []).slice(0, 4).map(f => `\`${f}\``).join(', ')}`);
+          lines.push('');
+        } catch { /* ignore */ }
+      }
+
+      // Open TODOs
+      if (todosRaw) {
+        try {
+          type Todo = { id: string; task: string; priority: string; done?: boolean };
+          const todos = (JSON.parse(todosRaw) as Todo[]).filter(t => !t.done);
+          if (todos.length > 0) {
+            lines.push(`📋 **Open TODOs:** ${todos.slice(0, 3).map(t => t.task).join(' · ')}`);
+            lines.push('');
+          }
+        } catch { /* ignore */ }
+      }
+
+      // Critical lessons (top 3)
+      const crit = topLessons.filter(l => l.severity === 'critical' || l.severity === 'major').slice(0, 3);
+      if (crit.length > 0) {
+        lines.push(`🧠 **Critical lessons to keep in mind:**`);
+        for (const l of crit) {
+          const sev = l.severity === 'critical' ? '🔴' : '🟡';
+          lines.push(`  ${sev} \`${l.topic}\` — ${l.what_worked.slice(0, 90)}`);
+        }
+        lines.push('');
+      }
+
+      lines.push(`💡 Context restored. Continue where you left off.`);
+      return lines.join('\n');
+    }
+
+    // ── todo_add ──────────────────────────────────────────────────────────────
+    case 'todo_add': {
+      const { instance_id, task, priority = 'medium', context } = args as {
+        instance_id: string; task: string; priority?: string; context?: string;
+      };
+      const redis = await getConnection(instance_id);
+      const todosRaw = await redis.get('cachly:todos');
+      type Todo = { id: string; task: string; priority: string; context?: string; created: string; done?: boolean };
+      let todos: Todo[] = [];
+      if (todosRaw) { try { todos = JSON.parse(todosRaw) as Todo[]; } catch { /* ignore */ } }
+
+      const id = `t${Date.now().toString(36)}`;
+      todos.push({ id, task, priority, created: new Date().toISOString(), ...(context ? { context } : {}) });
+      await redis.set('cachly:todos', JSON.stringify(todos));
+
+      const prioEmoji = priority === 'high' ? '🔴' : priority === 'low' ? '⚪' : '🟡';
+      return `${prioEmoji} **TODO added** [${id}]: ${task}\n\n💡 \`session_start\` will show this at the top. Mark done with \`todo_done(id="${id}")\`.`;
+    }
+
+    // ── todo_done ─────────────────────────────────────────────────────────────
+    case 'todo_done': {
+      const { instance_id, id } = args as { instance_id: string; id: string };
+      const redis = await getConnection(instance_id);
+      const todosRaw = await redis.get('cachly:todos');
+      type Todo = { id: string; task: string; priority: string; done?: boolean };
+      let todos: Todo[] = [];
+      if (todosRaw) { try { todos = JSON.parse(todosRaw) as Todo[]; } catch { /* ignore */ } }
+
+      const todo = todos.find(t => t.id === id);
+      if (!todo) return `❌ TODO [${id}] not found. Use \`todo_list\` to see all IDs.`;
+      todo.done = true;
+      await redis.set('cachly:todos', JSON.stringify(todos));
+      return `✅ **Done:** ${todo.task}`;
+    }
+
+    // ── todo_list ─────────────────────────────────────────────────────────────
+    case 'todo_list': {
+      const { instance_id, include_done = false } = args as { instance_id: string; include_done?: boolean };
+      const redis = await getConnection(instance_id);
+      const todosRaw = await redis.get('cachly:todos');
+      type Todo = { id: string; task: string; priority: string; context?: string; created: string; done?: boolean };
+      let todos: Todo[] = [];
+      if (todosRaw) { try { todos = JSON.parse(todosRaw) as Todo[]; } catch { /* ignore */ } }
+
+      const visible = include_done ? todos : todos.filter(t => !t.done);
+      if (visible.length === 0) return include_done ? '📋 No TODOs yet.' : '📋 No open TODOs. ✅';
+
+      const lines = [`📋 **TODOs** (${visible.filter(t => !t.done).length} open)`, ''];
+      for (const t of visible) {
+        const p = t.done ? '✅' : t.priority === 'high' ? '🔴' : t.priority === 'low' ? '⚪' : '🟡';
+        lines.push(`${p} [${t.id}] ${t.task}${t.context ? ` _(${t.context})_` : ''}`);
+      }
+      return lines.join('\n');
+    }
+
+    // ── refresh_claude_md ─────────────────────────────────────────────────────
+    case 'refresh_claude_md': {
+      const { instance_id, project_dir, max_lessons = 5 } = args as {
+        instance_id: string; project_dir: string; max_lessons?: number;
+      };
+      const { writeFile, readFile } = await import('node:fs/promises');
+      const { existsSync } = await import('node:fs');
+      const { resolve } = await import('node:path');
+
+      const redis = await getConnection(instance_id);
+
+      // Fetch top lessons sorted by severity + recall
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((res, rej) => {
+        lStream.on('data', (b: string[]) => lessonKeys.push(...b));
+        lStream.on('end', res); lStream.on('error', rej);
+      });
+      type Lesson = { topic: string; outcome: string; what_worked: string; severity?: string; ts: string; recall_count?: number };
+      const lessons: Lesson[] = [];
+      if (lessonKeys.length > 0) {
+        const vals = await redis.mget(...lessonKeys);
+        for (const raw of vals) {
+          if (!raw) continue;
+          try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip */ }
+        }
+      }
+      lessons.sort((a, b) => {
+        const sev = (s?: string) => s === 'critical' ? 3 : s === 'major' ? 2 : 1;
+        return sev(b.severity) - sev(a.severity) || (b.recall_count ?? 0) - (a.recall_count ?? 0);
+      });
+      const top = lessons.slice(0, max_lessons);
+
+      const claudeMdPath = resolve(project_dir, 'CLAUDE.md');
+      if (!existsSync(claudeMdPath)) {
+        return `❌ CLAUDE.md not found at ${claudeMdPath}. Run \`setup\` first or provide the correct project_dir.`;
+      }
+
+      let content = await readFile(claudeMdPath, 'utf-8');
+
+      // Build the inline lessons section
+      const lessonsBlock = top.length > 0
+        ? `\n### Top lessons (auto-synced ${new Date().toLocaleDateString()}):\n` +
+          top.map(l => {
+            const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '⚪';
+            return `- ${sev} \`${l.topic}\`: ${l.what_worked.slice(0, 100)}`;
+          }).join('\n') + '\n'
+        : '';
+
+      // Replace only the lessons section inside the existing cachly block
+      const LESSONS_START = '<!-- cachly-lessons-start -->';
+      const LESSONS_END   = '<!-- cachly-lessons-end -->';
+      const lessonsWrapped = `${LESSONS_START}${lessonsBlock}${LESSONS_END}`;
+
+      if (content.includes(LESSONS_START)) {
+        content = content.replace(
+          new RegExp(`${LESSONS_START}[\\s\\S]*?${LESSONS_END}`),
+          lessonsWrapped
+        );
+      } else if (content.includes('<!-- cachly-brain-end -->')) {
+        content = content.replace(
+          '<!-- cachly-brain-end -->',
+          `${lessonsWrapped}\n<!-- cachly-brain-end -->`
+        );
+      } else {
+        return `❌ CLAUDE.md does not have a cachly brain block. Run \`setup\` to add one.`;
+      }
+
+      await writeFile(claudeMdPath, content, 'utf-8');
+      return top.length > 0
+        ? `✅ **CLAUDE.md refreshed** with ${top.length} top lessons.\n\nNow every AI session sees these lessons before calling any tools:\n${top.map(l => `- \`${l.topic}\`: ${l.what_worked.slice(0, 80)}`).join('\n')}`
+        : `✅ CLAUDE.md updated. No lessons in brain yet — use \`learn_from_attempts\` to store some.`;
     }
 
     // ── auto_learn_session ────────────────────────────────────────────────────
@@ -4412,43 +4791,49 @@ function buildClaudeMdBlock(instanceId: string): string {
 
 Your AI Brain instance ID: \`${instanceId}\`
 
-> The Brain gives you persistent memory across sessions. Every lesson you learn,
-> every bug you fix, every architecture decision — recalled instantly next time.
-> instance_id is pre-filled below. Do NOT ask the user for it.
+> The Brain gives you persistent memory across sessions, context compaction, and provider switches.
+> Every lesson, every bug fix, every decision — recalled instantly next time.
+> instance_id is pre-filled. Do NOT ask the user for it.
+
+<!-- cachly-lessons-start --><!-- cachly-lessons-end -->
 
 ### MANDATORY: Call at the START of every session
 \`\`\`
-session_start(instance_id="${instanceId}", focus="<what you're working on today>")
+session_start(instance_id="${instanceId}", focus="<what you're working on today>", workspace_path="$PWD", provider="claude-code")
 \`\`\`
-This loads your previous context, recent lessons, and open tasks automatically.
+Returns: last session summary, open TODOs, cross-provider checkpoint, and relevant lessons.
+
+### IMMEDIATELY after Claude Code context compaction
+\`\`\`
+compact_recover(instance_id="${instanceId}")
+\`\`\`
+Restores your working context in one call — checkpoint, open TODOs, critical lessons.
 
 ### MANDATORY: Call at the END of every session
 \`\`\`
-session_end(instance_id="${instanceId}", summary="<2-3 sentences on what was done>", files_changed=["src/..."], lessons_learned=1)
+session_end(instance_id="${instanceId}", summary="<2-3 sentences on what was done>", files_changed=["src/..."], lessons_learned=1, project_dir="$PWD")
+\`\`\`
+The project_dir parameter auto-refreshes CLAUDE.md with the latest lessons inline.
+
+### Every ~5 tool uses OR before switching providers
+\`\`\`
+session_ping(instance_id="${instanceId}", task="<what you're doing>", provider="claude-code", files=["..."], next_step="<what comes next>")
 \`\`\`
 
 ### After fixing ANY bug or solving a hard problem
 \`\`\`
-learn_from_attempts(
-  instance_id="${instanceId}",
-  topic="category:keyword",   # e.g. "deploy:web", "bug:redis-timeout", "arch:auth"
-  outcome="success",
-  what_worked="exact solution",
-  what_failed="what didn't work (optional)",
-  commands=["the command that worked"],
-  file_paths=["relevant/file.ts"],
-  severity="critical"|"major"|"minor",
-)
+learn_from_attempts(instance_id="${instanceId}", topic="category:keyword", outcome="success", what_worked="exact solution", severity="critical"|"major"|"minor")
+\`\`\`
+
+### Open TODOs that survive sessions and compaction
+\`\`\`
+todo_add(instance_id="${instanceId}", task="description", priority="high"|"medium"|"low")
+todo_done(instance_id="${instanceId}", id="<id from todo_add>")
 \`\`\`
 
 ### Before starting any non-trivial task
 \`\`\`
 recall_best_solution(instance_id="${instanceId}", topic="relevant:topic")
-\`\`\`
-
-### If a stored lesson is wrong
-\`\`\`
-forget_lesson(instance_id="${instanceId}", topic="wrong:topic")
 \`\`\`
 ${CLAUDE_MD_MARKER_END}`;
 }
@@ -4721,6 +5106,31 @@ if (process.argv[2] === 'setup') {
   const mdLabel = mdResult === 'updated' ? '✅ Updated' : mdResult === 'appended' ? '✅ Appended to' : '✅ Written';
   console.log(`${mdLabel}: CLAUDE.md`);
 
+  // ── Step 6: Claude Code Stop hook (auto-checkpoint before context window ends) ──
+  if (editorsToSetup.includes('claude')) {
+    try {
+      const { readFile: rf } = await import('node:fs/promises');
+      const claudeDir    = resolve(cwd, '.claude');
+      const settingsPath = resolve(claudeDir, 'settings.json');
+      await mkdir(claudeDir, { recursive: true });
+      let settings: Record<string, unknown> = {};
+      try { settings = JSON.parse(await rf(settingsPath, 'utf-8')); } catch { /* new file */ }
+      const hookCmd = 'npx @cachly-dev/mcp-server@latest ping';
+      const hooks = (settings.hooks ?? {}) as Record<string, unknown>;
+      const stopHooks = Array.isArray(hooks.Stop) ? hooks.Stop as unknown[] : [];
+      const alreadyAdded = stopHooks.some((h: unknown) =>
+        typeof h === 'object' && h !== null && (h as Record<string, unknown>).command === hookCmd
+      );
+      if (!alreadyAdded) {
+        stopHooks.push({ matcher: '', command: hookCmd });
+        hooks.Stop = stopHooks;
+        settings.hooks = hooks;
+        await writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+        console.log(`✅ Written: .claude/settings.json (Stop hook → auto session_ping)`);
+      }
+    } catch { /* non-fatal */ }
+  }
+
   rl.close();
   console.log(`\n🧠  Done! Restart your editor — the \`cachly\` MCP tools will appear.`);
   console.log(`    Your AI now has persistent memory across every session.\n`);
@@ -4873,8 +5283,82 @@ if (process.argv[2] === 'join') {
   const mdLabel = mdResult === 'updated' ? '✅ Updated' : mdResult === 'appended' ? '✅ Appended to' : '✅ Written';
   console.log(`${mdLabel}: CLAUDE.md`);
 
+  // Write Claude Code Stop hook
+  if (detected.includes('claude')) {
+    try {
+      const { readFile: rf2, writeFile: wf2 } = await import('node:fs/promises');
+      const claudeDir    = resolve(cwd, '.claude');
+      const settingsPath = resolve(claudeDir, 'settings.json');
+      await mkdir(claudeDir, { recursive: true });
+      let settings: Record<string, unknown> = {};
+      try { settings = JSON.parse(await rf2(settingsPath, 'utf-8')); } catch { /* new file */ }
+      const hookCmd = 'npx @cachly-dev/mcp-server@latest ping';
+      const hooks = (settings.hooks ?? {}) as Record<string, unknown>;
+      const stopHooks = Array.isArray(hooks.Stop) ? hooks.Stop as unknown[] : [];
+      const alreadyAdded = stopHooks.some((h: unknown) =>
+        typeof h === 'object' && h !== null && (h as Record<string, unknown>).command === hookCmd
+      );
+      if (!alreadyAdded) {
+        stopHooks.push({ matcher: '', command: hookCmd });
+        hooks.Stop = stopHooks;
+        settings.hooks = hooks;
+        await wf2(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+        console.log(`✅ Written: .claude/settings.json (Stop hook → auto session_ping)`);
+      }
+    } catch { /* non-fatal */ }
+  }
+
   console.log(`\n🧠  Joined! You're now connected to "${instanceName}".`);
   console.log(`    Restart your editor — all ${instanceName} lessons are now available via session_start.\n`);
+  process.exit(0);
+}
+
+// ── CLI: cachly ping (Stop-hook — saves checkpoint when context window ends) ───
+// Called by Claude Code Stop hook. Silent on error — must not break the user's workflow.
+
+if (process.argv[2] === 'ping') {
+  const { readFile: rfp } = await import('node:fs/promises');
+  const { existsSync: ep } = await import('node:fs');
+  const { resolve: rp } = await import('node:path');
+  const cwd = process.cwd();
+
+  let instanceId = process.env.CACHLY_INSTANCE_ID ?? process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  let apiKey     = process.env.CACHLY_API_KEY ?? process.env.CACHLY_JWT ?? '';
+
+  if (!instanceId || !apiKey) {
+    for (const p of [rp(cwd, '.mcp.json'), rp(cwd, '.claude', 'mcp.json')]) {
+      if (ep(p)) {
+        try {
+          const cfg = JSON.parse(await rfp(p, 'utf-8'));
+          const srv = cfg?.mcpServers?.cachly?.env ?? cfg?.mcpServers?.['cachly-brain']?.env ?? {};
+          if (!instanceId) instanceId = srv.CACHLY_BRAIN_INSTANCE_ID ?? srv.CACHLY_INSTANCE_ID ?? '';
+          if (!apiKey)     apiKey     = srv.CACHLY_JWT ?? srv.CACHLY_API_KEY ?? '';
+          if (instanceId && apiKey) break;
+        } catch { /* ignore */ }
+      }
+    }
+  }
+  if (!instanceId || !apiKey) process.exit(0); // not configured — silent
+
+  let task = 'Auto-checkpoint (Stop hook)';
+  let files: string[] = [];
+  try {
+    const { execSync: exc } = await import('node:child_process');
+    const diff = exc('git diff --name-only HEAD 2>/dev/null', { timeout: 3000, cwd }).toString().trim();
+    if (diff) files = diff.split('\n').filter(Boolean).slice(0, 10);
+    const log = exc('git log --oneline -1 2>/dev/null', { timeout: 3000, cwd }).toString().trim();
+    if (log) task = `At: ${log}`;
+  } catch { /* no git */ }
+
+  try {
+    await fetch(`${API_URL}/api/v1/instances/${instanceId}/ping`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+      body: JSON.stringify({ task, provider: 'claude-code', files }),
+      signal: AbortSignal.timeout(5000),
+    });
+  } catch { /* offline — silent */ }
+
   process.exit(0);
 }
 
