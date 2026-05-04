@@ -1,8 +1,8 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.5.45",
+  "version": "0.6.0",
   "mcpName": "io.github.cachly-dev/mcp-server",
-  "description": "Claude forgets. cachly doesn't. Persistent AI memory for Claude Code, Cursor & Copilot — one command setup, zero copy-paste.",
+  "description": "The world's first Cognitive Cache — AI memory that thinks. Persistent, self-managing, cross-model. One command setup.",
   "type": "module",
   "bin": {
     "cachly-mcp": "./dist/index.js"
@@ -58,6 +58,10 @@
     "team-knowledge",
     "ambient-git",
     "memory-crystals",
+    "cognitive-cache",
+    "causal-reasoning",
+    "knowledge-graph",
+    "autopilot-memory",
     "cachly",
     "redis",
     "valkey",
