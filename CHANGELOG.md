@@ -7,6 +7,18 @@
 
 ---
 
+## [0.9.1] – 2026-05-05
+
+### 💎 Memory Crystals — Properly surfaced
+
+Memory Crystals were implemented but invisible. Now they're first-class:
+
+- **`crystal_view`** — New tool: inspect the current Crystal (patterns by category, freshness status, when to refresh). Previously there was no way to see Crystal contents without triggering a full `session_start`.
+- **`session_end` Crystal reminder** — After saving a session, `session_end` now checks Crystal age. If no Crystal exists, or it's ≥ 30 days old, it reminds you to run `memory_crystalize`. Zero friction — the Brain tells you when it needs a refresh.
+- **`autopilot` updated** — Generated CLAUDE.md now includes: `compact_recover` rule (context compaction), monthly crystal schedule, `syndicate_search` rule (unknown errors), and full Cognitive Tools table. Updated to v0.9.
+
+---
+
 ## [0.9.0] – 2026-05-05
 
 ### ⚡ compact_recover + 🌱 brain_from_git — The two most-requested missing tools

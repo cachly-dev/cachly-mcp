@@ -229,7 +229,7 @@ Top lessons extracted:
 
 ---
 
-## 67 MCP Tools
+## 68 MCP Tools
 
 ### 🧠 Cognitive Cache
 
@@ -274,6 +274,38 @@ Top lessons extracted:
 | **`list_remembered`** / **`forget_context`** | List/remove cached context entries |
 | **`sync_file_changes`** | Track file change history, surface related lessons per file |
 | **`setup_ai_memory`** | Interactive wizard to configure AI memory |
+
+### 💎 Memory Crystals
+
+Memory Crystals distill **everything** your AI brain has learned into a permanent, compact snapshot — injected into every `session_start` automatically.
+
+```
+memory_crystalize(instance_id="...", label="May 2026")
+
+💎 Memory Crystal created: May 2026
+
+📊 Compressed: 47 sessions + 89 lessons → 8 top patterns
+
+Top patterns by category:
+  • auth (12×): Use httpOnly cookie for refresh token — Safari blocks third-party localStorage
+  • k8s (9×): PollUntilContextTimeout 3min before namespace recreate
+  • deploy (8×): readinessProbe.failureThreshold must be ≥ 10 on cold starts
+  • redis (6×): pipeline() for N writes, 10× faster than sequential
+  …and 4 more
+
+💡 This crystal will appear in every future session_start briefing.
+💡 Re-run memory_crystalize monthly to keep it fresh.
+```
+
+| Tool | What it does |
+|------|-------------|
+| **`memory_crystalize`** | Distill all sessions + lessons into a Crystal. Run monthly or after every major milestone. |
+| **`crystal_view`** | Inspect the current Crystal: all patterns, freshness status, when to refresh. |
+
+**`session_end` reminds you** automatically when the Crystal is missing or 30+ days old.  
+**`autopilot`** now generates CLAUDE.md with the monthly crystal schedule pre-wired.
+
+---
 
 ### 🗺️ Roadmap
 

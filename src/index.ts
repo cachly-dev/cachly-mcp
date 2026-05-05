@@ -3037,6 +3037,22 @@ const TOOLS = [
       required: ['instance_id'],
     },
   },
+  // ── crystal_view — inspect current Memory Crystal ──────────────────────
+  {
+    name: 'crystal_view',
+    description:
+      'View the current Memory Crystal — the distilled snapshot of everything your AI brain has learned. ' +
+      'Shows all top patterns grouped by category, lesson count, crystal age, and when to refresh. ' +
+      'A crystal is created by memory_crystalize and injected into every session_start automatically. ' +
+      'Call this to review what institutional knowledge is preserved, or to decide if a refresh is due.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+      },
+      required: ['instance_id'],
+    },
+  },
   // ── Roadmap — Persistent project plan tracker ───────────────────────────
   {
     name: 'roadmap_add',
@@ -5589,6 +5605,21 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         } catch { /* git not available or not a repo — silent skip */ }
       }
 
+      // ── Crystal age check — remind if > 30 days old or missing ──────────────
+      let crystalReminder = '';
+      try {
+        const crystalRaw = await redis.get('cachly:crystal:latest');
+        if (!crystalRaw) {
+          crystalReminder = `💎 **Memory Crystal:** None exists yet. Run \`memory_crystalize(instance_id="${instance_id}")\` to distill your brain into a permanent snapshot — injected into every future session automatically.`;
+        } else {
+          const crystal = JSON.parse(crystalRaw) as { ts: string; label?: string; lesson_count?: number };
+          const crystalAgeDays = Math.round((Date.now() - new Date(crystal.ts).getTime()) / 86_400_000);
+          if (crystalAgeDays >= 30) {
+            crystalReminder = `💎 **Memory Crystal is ${crystalAgeDays} days old** (${crystal.label ?? 'unnamed'}). Run \`memory_crystalize(instance_id="${instance_id}")\` to refresh it with your latest ${crystal.lesson_count ?? '?'} lessons.`;
+          }
+        }
+      } catch { /* non-critical */ }
+
       const durationStr = durationMin !== undefined ? ` · ${durationMin} min` : '';
       return [
         `✅ **Session saved**${durationStr}`,
@@ -5598,6 +5629,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lessons_learned !== undefined ? `🧠 **Lessons stored:** ${lessons_learned}` : '',
         autoLearned.length > 0 ? `🤖 **Auto-learned:** ${autoLearned.length} lessons extracted from summary (${autoLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${autoLearned.length > 3 ? '…' : ''})` : '',
         ambientLearned.length > 0 ? `🌿 **Ambient git learning:** ${ambientLearned.length} commit${ambientLearned.length > 1 ? 's' : ''} auto-learned (${ambientLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${ambientLearned.length > 3 ? '…' : ''})` : '',
+        crystalReminder,
         ``,
         `💡 Next session: \`session_start(focus="...")\` to see this summary.`,
       ].filter(l => l !== '').join('\n');
@@ -6075,6 +6107,63 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         `💡 Re-run \`memory_crystalize\` monthly to keep it fresh.`,
       ];
       return lines.join('\n');
+    }
+
+    // ── crystal_view — show current Memory Crystal ───────────────────────────
+    case 'crystal_view': {
+      const { instance_id } = args as { instance_id: string };
+      const redis = await getConnection(instance_id);
+
+      const crystalRaw = await redis.get('cachly:crystal:latest');
+      if (!crystalRaw) {
+        return [
+          `💎 **No Memory Crystal yet**`,
+          ``,
+          `Your brain has no crystal — all knowledge lives in raw lessons only.`,
+          ``,
+          `Run \`memory_crystalize(instance_id="${instance_id}")\` to:`,
+          `  • Distill everything learned into a permanent, compact snapshot`,
+          `  • Inject it into every future \`session_start\` automatically`,
+          `  • Preserve team knowledge even after lesson TTLs expire`,
+          ``,
+          `💡 Recommended: run monthly or after any major milestone.`,
+        ].join('\n');
+      }
+
+      const crystal = JSON.parse(crystalRaw) as {
+        label: string; ts: string; session_count: number; lesson_count: number;
+        top_patterns: Array<{ category: string; insight: string; count: number }>;
+        categories: string[]; created_from: string;
+      };
+
+      const ageDays = Math.round((Date.now() - new Date(crystal.ts).getTime()) / 86_400_000);
+      const ageStr = ageDays === 0 ? 'today' : ageDays === 1 ? '1 day ago' : `${ageDays} days ago`;
+      const freshness = ageDays < 14 ? '🟢 Fresh' : ageDays < 30 ? '🟡 Aging' : '🔴 Stale — refresh recommended';
+
+      const lines: string[] = [
+        `💎 **Memory Crystal: ${crystal.label}**`,
+        ``,
+        `📅 Created: **${ageStr}** · Freshness: ${freshness}`,
+        `📊 Compressed: **${crystal.session_count} sessions** + **${crystal.lesson_count} lessons** → ${crystal.top_patterns.length} patterns`,
+        `🗂️  Categories: ${crystal.categories.slice(0, 10).join(', ')}${crystal.categories.length > 10 ? `… +${crystal.categories.length - 10}` : ''}`,
+        ``,
+        `**Top patterns by category:**`,
+        ``,
+      ];
+
+      for (const p of crystal.top_patterns) {
+        lines.push(`**${p.category}** (${p.count} lesson${p.count > 1 ? 's' : ''})`);
+        lines.push(`  → ${p.insight.slice(0, 150)}${p.insight.length > 150 ? '…' : ''}`);
+        lines.push('');
+      }
+
+      if (ageDays >= 30) {
+        lines.push(`---`, `⚠️ Crystal is ${ageDays} days old. Run \`memory_crystalize(instance_id="${instance_id}")\` to refresh with your latest lessons.`);
+      } else {
+        lines.push(`---`, `💡 This crystal is injected automatically into every \`session_start\`. Refresh monthly with \`memory_crystalize\`.`);
+      }
+
+      return lines.filter(l => l !== undefined).join('\n');
     }
 
     case 'brain_doctor': {
@@ -7593,9 +7682,11 @@ async function handleBulkLockStream(name: string, args: Record<string, unknown>)
 > Sessions are fully automatic. The Brain starts when you call any tool and saves a summary when you close.
 
 ### MANDATORY hooks (always fire, no exceptions):
+- **Context compacted** → call \`compact_recover(instance_id="${instance_id}", focus="<current task>")\` FIRST
 - **Window opens** → call \`session_start(instance_id="${instance_id}", focus="<today's goal>")\`
 - **Bug fixed / deployed / discovered** → call \`learn_from_attempts(instance_id="${instance_id}", topic="fix:<area>", outcome="success", what_worked="...")\`
 - **Window closes** → call \`session_end(instance_id="${instance_id}", summary="...", files_changed=[...])\`
+- **Monthly** → call \`memory_crystalize(instance_id="${instance_id}")\` to distill knowledge into a permanent Crystal
 `;
 
       const full = `## Cachly AI Brain — Autopilot for ${project_name}
@@ -7656,18 +7747,40 @@ smart_recall(
 
 ---
 
-## ⚡ Cognitive Tools (v0.6)
+## ⚡ Context Recovery (MANDATORY after compaction)
+
+**If your context window was compacted**, call this FIRST — before reading any file:
+\`\`\`
+compact_recover(
+  instance_id = "${instance_id}",
+  focus       = "<what you were working on>",
+)
+\`\`\`
+Returns: last checkpoint, pending tasks, top lessons. Instant — no full brain scan.
+
+---
+
+## 🔁 Scheduled Maintenance (run on schedule)
+
+| When | Call |
+|---|---|
+| **Monthly** | \`memory_crystalize(instance_id="${instance_id}")\` — distill brain into a permanent snapshot |
+| Weekly review | \`brain_diff(instance_id="${instance_id}", since="7d")\` — see what your AI learned this week |
+| Before big refactor | \`knowledge_decay(instance_id="${instance_id}")\` — see which lessons to still trust |
+| After major milestone | \`memory_crystalize(instance_id="${instance_id}", label="v2 launch")\` — preserve milestone knowledge |
+
+## 🧠 Cognitive Tools (use anytime)
 
 | When | Call |
 |---|---|
 | Brain feeling cluttered | \`memory_consolidate(instance_id="${instance_id}")\` |
-| Weekly review | \`brain_diff(instance_id="${instance_id}", since="7d")\` |
 | Weird bug, no idea why | \`causal_trace(instance_id="${instance_id}", problem="<symptom>")\` |
-| Before big refactor | \`knowledge_decay(instance_id="${instance_id}")\` |
+| Unknown error | \`syndicate_search(q="<error message>")\` — global community solutions |
+| Unknown error that you solved | \`syndicate(instance_id="${instance_id}", topic="fix:<area>", what_worked="...")\` |
 
 ---
 
-*Cachly v0.6 · Generated ${new Date().toISOString().slice(0, 10)}*
+*Cachly v0.9 · Generated ${new Date().toISOString().slice(0, 10)}*
 `;
 
       const content = style === 'minimal' ? minimal : full;

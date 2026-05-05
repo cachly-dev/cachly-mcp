@@ -1,8 +1,8 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "mcpName": "io.github.cachly-dev/cachly-mcp",
-  "description": "The world's first Cognitive Cache — AI memory that thinks. 67 MCP tools: sessions, lessons, semantic search, team brain, knowledge syndication, causal tracing, memory consolidation, compact recovery. Claude Code, Cursor, Copilot, Windsurf.",
+  "description": "The world's first Cognitive Cache — AI memory that thinks. 68 MCP tools: sessions, lessons, semantic search, team brain, knowledge syndication, causal tracing, memory consolidation, compact recovery. Claude Code, Cursor, Copilot, Windsurf.",
   "type": "module",
   "bin": {
     "cachly-mcp": "./dist/index.js"
