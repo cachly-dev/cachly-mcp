@@ -5,32 +5,32 @@ startCommand:
     properties:
       CACHLY_JWT:
         type: string
-        title: "API Key"
-        description: "Your Cachly API key. Get it free at cachly.dev/setup-ai → Dashboard → API Keys. Looks like: cky_live_..."
+        title: "API Key (optional — sign in via browser on first use)"
+        description: "Leave blank for zero-config: on your first tool call the server opens a browser sign-in (OAuth Device Flow) and auto-provisions your Brain instance. Or pre-fill with your API key from cachly.dev/setup-ai."
         examples:
           - "cky_live_abc123..."
       CACHLY_BRAIN_INSTANCE_ID:
         type: string
-        title: "Brain Instance ID"
-        description: "UUID of your Cachly Brain instance. Find it at cachly.dev/instances — click your instance and copy the ID from the URL or details panel. Looks like: 9d4077aa-bfa2-468b-89cd-0a8d8f3ec483"
+        title: "Brain Instance ID (optional)"
+        description: "Only needed if you have multiple Brain instances. Leave blank — the server auto-detects your active instance from the API key."
         pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
         examples:
           - "9d4077aa-bfa2-468b-89cd-0a8d8f3ec483"
       CACHLY_API_URL:
         type: string
         title: "API URL (optional)"
-        description: "Cachly API endpoint — leave as default unless you self-host"
+        description: "Leave blank unless you self-host Cachly."
         default: "https://api.cachly.dev"
-    required:
-      - CACHLY_JWT
-      - CACHLY_BRAIN_INSTANCE_ID
+    required: []
   commandFunction: |-
     (config) => ({
       command: "npx",
       args: ["-y", "@cachly-dev/mcp-server@latest"],
-      env: {
-        CACHLY_JWT: config.CACHLY_JWT,
-        CACHLY_BRAIN_INSTANCE_ID: config.CACHLY_BRAIN_INSTANCE_ID,
-        CACHLY_API_URL: config.CACHLY_API_URL ?? "https://api.cachly.dev",
-      }
+      env: Object.fromEntries(
+        Object.entries({
+          CACHLY_JWT: config.CACHLY_JWT,
+          CACHLY_BRAIN_INSTANCE_ID: config.CACHLY_BRAIN_INSTANCE_ID,
+          CACHLY_API_URL: config.CACHLY_API_URL ?? "https://api.cachly.dev",
+        }).filter(([, v]) => v != null && v !== "")
+      )
     })

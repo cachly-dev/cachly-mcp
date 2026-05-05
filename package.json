@@ -1,11 +1,11 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.9.1",
+  "version": "0.9.7",
   "mcpName": "io.github.cachly-dev/cachly-mcp",
-  "description": "The world's first Cognitive Cache — AI memory that thinks. 68 MCP tools: sessions, lessons, semantic search, team brain, knowledge syndication, causal tracing, memory consolidation, compact recovery. Claude Code, Cursor, Copilot, Windsurf.",
+  "description": "Your AI forgets everything between sessions. cachly fixes that permanently. A causal brain that learns WHY things break — built from every bug fix, git commit, and CI run, without any explicit calls. Arrives pre-briefed each session. Predicts failures before they happen. Never re-researches the same problem. 63 MCP tools · Claude Code · Cursor · GitHub Copilot · Windsurf · Free tier · EU servers.",
   "type": "module",
   "bin": {
-    "cachly-mcp": "./dist/index.js"
+    "cachly-mcp": "dist/index.js"
   },
   "main": "./dist/index.js",
   "scripts": {
@@ -34,7 +34,7 @@
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/cachly-dev/cachly-mcp"
+    "url": "git+https://github.com/cachly-dev/cachly-mcp.git"
   },
   "publishConfig": {
     "access": "public",
@@ -51,6 +51,8 @@
     "windsurf",
     "continue",
     "ai-memory",
+    "ai-brain",
+    "persistent-memory",
     "brain",
     "sessions",
     "lessons-learned",
@@ -58,18 +60,19 @@
     "team-knowledge",
     "ambient-git",
     "memory-crystals",
-    "cognitive-cache",
-    "causal-reasoning",
-    "knowledge-graph",
-    "autopilot-memory",
-    "knowledge-syndication",
-    "collective-intelligence",
+    "causal-knowledge-graph",
+    "continuous-learning",
+    "predictive-ai",
     "cachly",
     "redis",
     "valkey",
     "cache",
     "ai",
-    "llm"
+    "llm",
+    "knowledge-base",
+    "developer-productivity",
+    "ckg",
+    "mcp-server"
   ],
   "homepage": "https://cachly.dev/docs/mcp",
   "bugs": {

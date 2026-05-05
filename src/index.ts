@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
@@ -53,9 +53,128 @@ import { Redis } from 'ioredis';
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
-const JWT = process.env.CACHLY_JWT ?? '';
+let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.8.3';
+const CURRENT_VERSION = '0.9.7';
+
+// ── Default Instance Resolution (for Smithery & single-credential setups) ────
+// When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
+// When neither is set, we auto-fetch the first running instance once per process.
+let _defaultInstanceId: string = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+let _defaultInstanceFetched = false;
+
+async function resolveDefaultInstanceId(): Promise<string> {
+  if (_defaultInstanceId) return _defaultInstanceId;
+  if (_defaultInstanceFetched) return '';
+  _defaultInstanceFetched = true;
+  if (!JWT) return '';
+  try {
+    const res = await fetch(`${API_URL}/api/v1/instances`, {
+      headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return '';
+    const data = await res.json() as { data?: Array<{ id: string; status: string }> };
+    const running = (data?.data ?? []).filter(i => i.status === 'running');
+    if (running.length > 0) { _defaultInstanceId = running[0].id; return _defaultInstanceId; }
+  } catch { /* non-fatal — caller will surface missing instance_id error */ }
+  return '';
+}
+
+// ── Zero-Credential Device Flow (for Smithery & zero-config installs) ─────────
+// When no CACHLY_JWT is set, the server starts an OAuth Device Flow on first tool
+// call. The user visits a short URL, enters a code, and the server polls for the
+// token in the background. After auth, it auto-provisions an instance if needed.
+// State is kept in-memory (works because Smithery keeps one process per session).
+interface DeviceFlowState {
+  deviceCode: string;
+  userCode: string;
+  verifyUrl: string;
+  pollInterval: number; // ms
+  deadline: number;     // epoch ms
+  polling: boolean;
+}
+let _deviceFlow: DeviceFlowState | null = null;
+
+async function startDeviceFlow(): Promise<DeviceFlowState | null> {
+  const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
+  const CLIENT_ID = 'cachly-cli';
+  try {
+    const res = await fetch(`${AUTH_BASE}/auth/device`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `client_id=${CLIENT_ID}&scope=openid`,
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      device_code: string; user_code: string;
+      verification_uri_complete: string; interval: number;
+    };
+    return {
+      deviceCode: data.device_code,
+      userCode: data.user_code,
+      verifyUrl: data.verification_uri_complete,
+      pollInterval: (data.interval ?? 5) * 1000,
+      deadline: Date.now() + 10 * 60 * 1000, // 10 min
+      polling: false,
+    };
+  } catch { return null; }
+}
+
+async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expired' | 'done'> {
+  if (Date.now() > flow.deadline) return 'expired';
+  const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
+  const CLIENT_ID = 'cachly-cli';
+  try {
+    const res = await fetch(`${AUTH_BASE}/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `client_id=${CLIENT_ID}&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${flow.deviceCode}`,
+      signal: AbortSignal.timeout(8000),
+    });
+    const data = await res.json() as { access_token?: string; error?: string };
+    if (data.access_token) {
+      // Exchange Keycloak JWT → long-lived API key
+      let apiKey = data.access_token;
+      try {
+        const keyRes = await fetch(`${API_URL}/api/v1/api-keys`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({ name: 'cachly-mcp-smithery', scope: 'read_write' }),
+          signal: AbortSignal.timeout(8000),
+        });
+        if (keyRes.ok) {
+          const keyBody = await keyRes.json() as { key: string };
+          if (keyBody.key) apiKey = keyBody.key;
+        }
+      } catch { /* use raw JWT as fallback */ }
+      JWT = apiKey;
+      _deviceFlow = null;
+      // Auto-provision instance
+      _defaultInstanceFetched = false;
+      await resolveDefaultInstanceId();
+      if (!_defaultInstanceId) {
+        // Try auto-provision
+        try {
+          const autoRes = await fetch(`${API_URL}/api/v1/instances/auto`, {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${JWT}`, 'Content-Type': 'application/json' },
+            signal: AbortSignal.timeout(10000),
+          });
+          if (autoRes.ok) {
+            const body = await autoRes.json() as { instance?: { id: string }; instance_id?: string };
+            const id = body.instance?.id ?? body.instance_id;
+            if (id) _defaultInstanceId = id;
+          }
+        } catch { /* non-fatal */ }
+      }
+      return 'done';
+    }
+    if (data.error === 'slow_down') flow.pollInterval = Math.min(flow.pollInterval + 2000, 15000);
+    return 'pending';
+  } catch { return 'pending'; }
+}
 /**
  * ┌──────────────────────────────────────────────────────────────────────┐
  * │  EMBEDDING PROVIDER — pluggable, client-side first                  │
@@ -2194,6 +2313,58 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
 
 import { detectNamespace } from './namespace.js';
 
+// ── Layer 1: Causal Knowledge Graph (CKG) helpers ────────────────────────────
+// Implements the CKG from the 10x Vision Document.
+// Nodes: cachly:ckg:node:{id}  → { id, domain, type, count, ts }
+// Edges: cachly:ckg:edge:{from}:{edgeType}:{to} → { from, to, edgeType, successes, trials, confidence, last_updated }
+
+type CKGEdge = {
+  from: string; to: string; edgeType: string;
+  successes: number; trials: number; confidence: number; last_updated: string;
+};
+type CKGNode = { id: string; domain: string; type: string; count: number; ts: string };
+
+const STOPWORDS_CKG = new Set(['that','this','with','from','when','then','also','have','been','will','were','they','them','than','more','some','into','over','only','just','where','while','which','there','their','would','could','should','after','before','about']);
+
+function ckgSlug(text: string): string {
+  return text.toLowerCase().replace(/[^a-z0-9\-:]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
+}
+
+/** Extract 1-3 significant keywords from free text for a problem concept */
+function extractProblemConcept(text: string): string | null {
+  const words = text.toLowerCase()
+    .replace(/[^a-z0-9\s\-_]/g, ' ').split(/\s+/)
+    .filter(w => w.length > 3 && !STOPWORDS_CKG.has(w))
+    .slice(0, 5);
+  if (words.length === 0) return null;
+  return words.slice(0, 2).join('-');
+}
+
+async function ckgUpsertNode(redis: Redis, id: string, domain: string, type: string): Promise<void> {
+  const key = `cachly:ckg:node:${id}`;
+  const raw = await redis.get(key);
+  const node: CKGNode = raw ? JSON.parse(raw) : { id, domain, type, count: 0, ts: new Date().toISOString() };
+  node.count = (node.count || 0) + 1;
+  node.ts = new Date().toISOString();
+  await redis.set(key, JSON.stringify(node));
+}
+
+async function ckgUpdateEdge(redis: Redis, from: string, edgeType: string, to: string, success: boolean, partial = false): Promise<void> {
+  const key = `cachly:ckg:edge:${from}:${edgeType}:${to}`;
+  const raw = await redis.get(key);
+  const edge: CKGEdge = raw ? JSON.parse(raw) : { from, to, edgeType, successes: 0, trials: 0, confidence: 0, last_updated: '' };
+  edge.trials = (edge.trials || 0) + 1;
+  if (success) edge.successes = (edge.successes || 0) + 1;
+  else if (partial) edge.successes = (edge.successes || 0) + 0.5;
+  // Beta distribution smoothed confidence: (successes+1) / (trials+2)
+  edge.confidence = (edge.successes + 1) / (edge.trials + 2);
+  edge.last_updated = new Date().toISOString();
+  await redis.set(key, JSON.stringify(edge));
+  // Index: set of edge keys per source node (for fast traversal)
+  await redis.sadd(`cachly:ckg:idx:from:${from}`, key);
+  await redis.sadd(`cachly:ckg:idx:to:${to}`, key);
+}
+
 // ── Tools ─────────────────────────────────────────────────────────────────────
 
 const TOOLS = [
@@ -3037,22 +3208,6 @@ const TOOLS = [
       required: ['instance_id'],
     },
   },
-  // ── crystal_view — inspect current Memory Crystal ──────────────────────
-  {
-    name: 'crystal_view',
-    description:
-      'View the current Memory Crystal — the distilled snapshot of everything your AI brain has learned. ' +
-      'Shows all top patterns grouped by category, lesson count, crystal age, and when to refresh. ' +
-      'A crystal is created by memory_crystalize and injected into every session_start automatically. ' +
-      'Call this to review what institutional knowledge is preserved, or to decide if a refresh is due.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
-      },
-      required: ['instance_id'],
-    },
-  },
   // ── Roadmap — Persistent project plan tracker ───────────────────────────
   {
     name: 'roadmap_add',
@@ -3572,60 +3727,262 @@ const TOOLS = [
       required: [],
     },
   },
-  // ── v0.9 — compact_recover ─────────────────────────────────────────────────
+  // ── Layer 1: Causal Knowledge Graph ────────────────────────────────────────
   {
-    name: 'compact_recover',
+    name: 'brain_search',
     description:
-      'FAST context recovery after Claude/Cursor/Copilot context window compaction. ' +
-      'Call this as the FIRST tool call after any context limit hit or window restart — before reading any files. ' +
-      'Returns: last checkpoint (task + files + next_step), session handoff if any, last 5 recalled lessons, open TODOs. ' +
-      'Unlike session_start, this is instant — no full brain scan, no streak logic, just the critical recovery data. ' +
-      'Typical use in CLAUDE.md: "If context is compacted, call compact_recover immediately."',
+      'BM25+ full-text search over ALL brain data: lessons, context entries, session history, CKG nodes, roadmap items. ' +
+      'Unlike smart_recall (which focuses on lessons + context), brain_search casts a wider net. ' +
+      'Use when smart_recall returns nothing or when you want to find anything the brain knows about a topic.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
-        focus: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        query: { type: 'string', description: 'What to search for' },
+        limit: { type: 'number', description: 'Max results (default: 15)' },
+      },
+      required: ['instance_id', 'query'],
+    },
+  },
+  {
+    name: 'ckg_inspect',
+    description:
+      'Inspect the Causal Knowledge Graph (CKG) for a concept. Shows all typed edges (fixes, requires, co-occurs, causes) ' +
+      'with Bayesian confidence scores. Use to understand what the brain knows about a topic and which fixes have the ' +
+      'highest confidence. Also shows related concepts via graph traversal.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        concept: { type: 'string', description: 'Concept to inspect, e.g. "fix:clickhouse-ipv6" or "docker"' },
+        max_hops: { type: 'number', description: 'Traversal depth (default: 2)' },
+      },
+      required: ['instance_id', 'concept'],
+    },
+  },
+  {
+    name: 'brain_predict',
+    description:
+      'Predictive Pre-fetch Engine (PPE): given your current context (what you\'re working on), traverses the CKG ' +
+      'to predict likely failures and pre-load relevant fixes. Returns top predicted pitfalls + highest-confidence fixes. ' +
+      'Call at session_start when working on a specific feature or debugging area.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        context: { type: 'string', description: 'What you\'re working on, e.g. "upgrading Keycloak from 21 to 24"' },
+        top_k: { type: 'number', description: 'Max predictions to return (default: 5)' },
+      },
+      required: ['instance_id', 'context'],
+    },
+  },
+  // ── Layer 3: MADC ────────────────────────────────────────────────────────
+  {
+    name: 'madc_deliberate',
+    description:
+      'Multi-Agent Deliberation Chamber (MADC — Layer 3): When conflicting lessons exist for a topic, ' +
+      'run deliberation between 6 specialist expert agents (InfraAgent, AuthAgent, DeployAgent, DatabaseAgent, DebugAgent, APIAgent). ' +
+      'Each agent votes based on its domain CKG coverage. Unanimous vote → loser superseded. ' +
+      'Split vote → contested flag, causal_trace required before acting. ' +
+      'Resolution stored as permanent CKG node. Called automatically when learn_from_attempts detects a contradiction.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        topic: { type: 'string', description: 'Topic to deliberate, e.g. "fix:jwks-rotation"' },
+        context: { type: 'string', description: 'Optional context for the deliberation' },
+      },
+      required: ['instance_id', 'topic'],
+    },
+  },
+  // ── Layer 5: CLS ─────────────────────────────────────────────────────────
+  {
+    name: 'cls_ingest',
+    description:
+      'Continuous Learning Stream (CLS — Layer 5): Ingest learning signals WITHOUT explicit session_end calls. ' +
+      'Sources: git_commit (commit message + files → CKG edges), ci_outcome (green/red build → confirms fix), ' +
+      'ide_diagnostic (compiler error + fix pair → instant lesson). ' +
+      'Install automatic ingestion with cls_install_hooks — brain learns from every commit and CI run.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        source: {
           type: 'string',
-          description: 'What you are trying to recover context for — used to surface relevant lessons (optional)',
+          enum: ['git_commit', 'ci_outcome', 'ide_diagnostic'],
+          description: 'Event source type',
+        },
+        payload: {
+          type: 'object',
+          description:
+            'Event data. git_commit: {message, sha?, files?, diff?}. ' +
+            'ci_outcome: {status, prev_status, job, context?}. ' +
+            'ide_diagnostic: {error, fix, file?}',
+        },
+      },
+      required: ['instance_id', 'source', 'payload'],
+    },
+  },
+  {
+    name: 'cls_install_hooks',
+    description:
+      'Output a ready-to-install git post-commit hook + GitHub Actions step for Continuous Learning. ' +
+      'Once installed, every git commit and CI build automatically feeds the brain — no session_end needed. ' +
+      'Run once per repository.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        repo_path: { type: 'string', description: 'Path to repo root (default: current dir)' },
+        hooks: {
+          type: 'array',
+          items: { type: 'string', enum: ['git', 'ci'] },
+          description: 'Which hooks to output (default: ["git", "ci"])',
         },
       },
       required: ['instance_id'],
     },
   },
-  // ── v0.9 — brain_from_git ─────────────────────────────────────────────────
+  // ── Layer 6: FedBrain ────────────────────────────────────────────────────
   {
-    name: 'brain_from_git',
+    name: 'fedbrain_contribute',
     description:
-      'Bootstrap the AI Brain from git history — reads commit messages and automatically stores lessons. ' +
-      'Scans the last N days of commits, extracts actionable knowledge (fixes, reverts, deploys, migrations), ' +
-      'and bulk-loads them into the Brain as lessons. ' +
-      'Run once to pre-load months of team knowledge before the first session_start. ' +
-      'Skips commits already in the Brain (safe to re-run). ' +
-      'Example: brain_from_git(instance_id="...", workspace_path="/home/you/project", days=180) ' +
-      '→ "📊 Scanned 342 commits · ✅ 28 lessons stored · ❌ 9 failure lessons · 0 duplicates skipped"',
+      'FedBrain (Layer 6): Contribute a lesson to the global Knowledge Commons with a cryptographic ' +
+      'knowledge certificate. Certificate includes: domain fingerprint, confidence, outcome chain hash. ' +
+      'Lessons with 10+ independent confirmations become Gold Standard. Context-weighted: ' +
+      'other brains with similar tech stacks see your lesson ranked higher in fedbrain_search.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
-        workspace_path: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        lesson_key: { type: 'string', description: 'Topic key to contribute, e.g. "fix:clickhouse-ipv6"' },
+        visibility: {
           type: 'string',
-          description: 'Absolute path to the git repository root (e.g. "/home/you/myproject")',
-        },
-        days: {
-          type: 'number',
-          description: 'How many days of history to scan (default: 180, max: 365)',
-        },
-        max_commits: {
-          type: 'number',
-          description: 'Maximum number of commits to process (default: 200, max: 500)',
-        },
-        author: {
-          type: 'string',
-          description: 'Filter to commits by this git author email or name (optional — omit to scan all authors)',
+          enum: ['public', 'org_private'],
+          description: 'Visibility (default: public)',
         },
       },
-      required: ['instance_id', 'workspace_path'],
+      required: ['instance_id', 'lesson_key'],
+    },
+  },
+  {
+    name: 'fedbrain_search',
+    description:
+      'FedBrain context-weighted search: Search the global commons, weighting results by tech-stack similarity. ' +
+      'Brains with matching domain context (Go/Kubernetes/Postgres) rank higher than unrelated stacks. ' +
+      'Shows certificate provenance, confirm_count, and Gold Standard badges.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        query: { type: 'string', description: 'What to search for' },
+        context_hints: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Your tech stack, e.g. ["go", "kubernetes", "postgres"]',
+        },
+        limit: { type: 'number', description: 'Max results (default: 10)' },
+      },
+      required: ['instance_id', 'query'],
+    },
+  },
+  {
+    name: 'fedbrain_confirm',
+    description:
+      'Confirm that a syndicated lesson from the global commons worked for you. ' +
+      'Propagates confirmation back — increments confirm_count on the knowledge certificate. ' +
+      'Also updates your local CKG confidence. At 10 independent confirmations → Gold Standard.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        topic: { type: 'string', description: 'Topic of the lesson to confirm' },
+        outcome: {
+          type: 'string',
+          enum: ['worked', 'partially_worked', 'did_not_work'],
+          description: 'Did the lesson work for you?',
+        },
+      },
+      required: ['instance_id', 'topic', 'outcome'],
+    },
+  },
+  {
+    name: 'fedbrain_status',
+    description:
+      'Show your FedBrain federation status: lessons contributed to global commons, recent confirmations, ' +
+      'Gold Standard lessons, pending propagations. Use to track your brain\'s global knowledge contribution.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'crystal_view',
+    description:
+      'Inspect the current Memory Crystal — the compressed wisdom distilled from all past sessions. ' +
+      'Shows top patterns per category, lesson count, and when the crystal was last refreshed. ' +
+      'Call after session_start when you want to quickly see accumulated wisdom across all past work.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        show_raw: { type: 'boolean', description: 'Include raw JSON crystal data (default: false)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'compact_recover',
+    description:
+      'Call FIRST after any context limit hit / compaction. Reconstructs full context from Memory Crystal + ' +
+      'recent sessions + WIP registry + open failures. Returns a condensed briefing so the new context ' +
+      'window starts exactly where the previous one left off — no lost progress.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        focus: { type: 'string', description: 'What you were working on (helps filter relevant context)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'brain_from_git',
+    description:
+      'Bootstrap brain lessons from git history. Parses commit messages and infers fix/feature/refactor ' +
+      'lessons automatically. Great for onboarding an existing codebase — run once and the brain instantly ' +
+      'knows your team\'s accumulated patterns. Supports limit and branch options.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        repo_path: { type: 'string', description: 'Path to git repository (default: current directory)' },
+        limit: { type: 'number', description: 'Max commits to process (default: 100, max: 500)' },
+        branch: { type: 'string', description: 'Git branch to parse (default: current branch / HEAD)' },
+        since: { type: 'string', description: 'Only commits after this date, e.g. "2024-01-01" (optional)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'brain_predict_failures',
+    description:
+      'Pre-deploy failure prediction with probability percentages. Given a change context (e.g. ' +
+      '"upgrading Keycloak 21→24" or "deploying Redis 7 to prod"), returns the top likely failure modes ' +
+      'ranked by probability, with pre-loaded fixes. Uses CKG causal edges + lesson history. ' +
+      'Call before any significant deploy, migration, or infrastructure change.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        context: { type: 'string', description: 'What you are about to do, e.g. "upgrading Keycloak 21 to 24"' },
+        top_k: { type: 'number', description: 'Number of failure predictions to return (default: 5)' },
+        format: { type: 'string', enum: ['brief', 'detailed'], description: 'Output format (default: detailed)' },
+      },
+      required: ['instance_id', 'context'],
     },
   },
 ] as const;
@@ -3679,24 +4036,69 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   // Guard: if no JWT, return actionable onboarding message instead of HTTP 401
   if (!JWT) {
     void sendAnonymousTelemetry(name);
+
+    // ── Zero-credential device flow ─────────────────────────────────────
+    // 1st call: start device flow, return code + URL
+    // 2nd+ calls: poll for token; once authenticated, proceed transparently
+    if (_deviceFlow) {
+      const result = await pollDeviceFlow(_deviceFlow);
+      if (result === 'done') {
+        // Auth complete — re-enter handleTool with now-valid JWT
+        return handleTool(name, args);
+      }
+      if (result === 'expired') {
+        _deviceFlow = null;
+        return '⌛ **Authentication timed out.** Please call any tool again to restart the sign-in flow.';
+      }
+      // Still pending
+      return [
+        '⏳ **Waiting for authentication...**',
+        '',
+        `Sign in at: **${_deviceFlow.verifyUrl}**`,
+        `Enter code: **${_deviceFlow.userCode}**`,
+        '',
+        'Once you complete sign-in in your browser, call this tool again and it will proceed automatically.',
+      ].join('\n');
+    }
+
+    // No pending flow — start a new one
+    const flow = await startDeviceFlow();
+    if (flow) {
+      _deviceFlow = flow;
+      return [
+        '🧠 **cachly AI Brain — One-click sign in**',
+        '',
+        '1. Open this URL in your browser (it may open automatically):',
+        `   **${flow.verifyUrl}**`,
+        '',
+        `2. Enter this code if prompted: **${flow.userCode}**`,
+        '',
+        '3. After sign-in, call this tool again — it will proceed automatically.',
+        '',
+        '✨ Free tier includes: 1 Brain instance, persistent memory, 63 MCP tools.',
+        '   No credit card required.',
+      ].join('\n');
+    }
+
+    // Device flow unavailable (network issue) — fall back to manual setup
     return [
       '🧠 **cachly AI Brain — Setup required**',
       '',
-      'You have no API credentials configured. Get started in 30 seconds:',
-      '',
-      '**Step 1:** Register for free (no credit card):',
-      '   👉 https://cachly.dev/setup-ai',
-      '',
-      '**Step 2:** Run the setup wizard in your terminal:',
+      'Run the setup wizard once in your terminal:',
       '   ```',
       '   npx @cachly-dev/mcp-server@latest setup',
       '   ```',
       '',
-      'The wizard auto-detects your editor (Claude Code, Cursor, Copilot, Windsurf)',
-      'and writes the config file with your credentials.',
+      'Or get your API key at: https://cachly.dev/setup-ai',
       '',
       '✨ Free tier includes: 1 Brain instance, persistent memory, semantic search.',
     ].join('\n');
+  }
+
+  // Auto-resolve instance_id from env / API when not provided in args
+  if (!args.instance_id) {
+    const defaultId = await resolveDefaultInstanceId();
+    if (defaultId) args = { ...args, instance_id: defaultId };
   }
 
   // Delegate v0.2 bulk/lock/stream tools first
@@ -4633,6 +5035,13 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
           if (contradictionWarning.length > 0) {
             // Store contradiction audit but don't block
             auditTrail[auditTrail.length - 1].action = 'contradiction-resolved';
+            // Layer 3: Write CKG contradicts edge for MADC to process
+            try {
+              const cId = ckgSlug(topic);
+              const resId = ckgSlug(`resolution:${topic}`);
+              await ckgUpdateEdge(redis, cId, 'contradicts', resId, false);
+            } catch { /* non-critical */ }
+            contradictionWarning.push(`🗳️ Run \`madc_deliberate(topic="${topic}")\` to resolve via expert agent voting.`);
           }
         } catch { /* ignore parse error */ }
       } else {
@@ -4719,6 +5128,51 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         await redis.rpush(dlKey, dlEntry);
         await redis.ltrim(dlKey, -50, -1);
       } catch { /* non-critical */ }
+
+      // ── Layer 1+2: CKG update (Causal Knowledge Graph + Belief Update Engine) ──
+      try {
+        const conceptId = ckgSlug(topic);
+        const domain = topic.split(':')[0] ?? 'unknown';
+        const conceptType = domain; // fix, debug, deploy, infra, api, etc.
+
+        // Upsert concept node
+        await ckgUpsertNode(redis, conceptId, domain, conceptType);
+
+        // Tag co-occurrence edges
+        for (const tag of tags) {
+          const tagId = ckgSlug(`tag:${tag}`);
+          await ckgUpsertNode(redis, tagId, 'tag', 'tag');
+          await ckgUpdateEdge(redis, conceptId, 'co-occurs', tagId, outcome === 'success', outcome === 'partial');
+        }
+
+        // depends_on → requires edges (structural, always confidence 1.0 direction)
+        for (const dep of depends_on) {
+          const depId = ckgSlug(dep);
+          await ckgUpdateEdge(redis, conceptId, 'requires', depId, true);
+        }
+
+        // fixes edge: if category=fix and outcome=success, link to problem concept
+        if ((domain === 'fix' || domain === 'debug') && (outcome === 'success' || outcome === 'partial')) {
+          const problemText = what_failed || ctx || '';
+          const problemConcept = problemText ? extractProblemConcept(problemText) : null;
+          if (problemConcept) {
+            const problemId = ckgSlug(`problem:${problemConcept}`);
+            await ckgUpsertNode(redis, problemId, 'problem', 'problem');
+            await ckgUpdateEdge(redis, conceptId, 'fixes', problemId, outcome === 'success', outcome === 'partial');
+          }
+        }
+
+        // causes edge: if outcome=failure, link topic concept to the problem context
+        if (outcome === 'failure' && (what_failed || what_worked)) {
+          const causeText = what_failed || what_worked;
+          const causeConcept = extractProblemConcept(causeText);
+          if (causeConcept) {
+            const causeId = ckgSlug(`cause:${causeConcept}`);
+            await ckgUpsertNode(redis, causeId, 'cause', 'cause');
+            await ckgUpdateEdge(redis, conceptId, 'causes', causeId, false);
+          }
+        }
+      } catch { /* CKG updates are non-critical */ }
 
       const emoji = outcome === 'success' ? '✅' : outcome === 'partial' ? '⚠️' : '❌';
       const sevEmoji = severity === 'critical' ? '🔴' : severity === 'major' ? '🟡' : '🟢';
@@ -5240,7 +5694,36 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       // Brain health
       lines.push(`📊 **Brain:** ${lessons.length} lessons · ${ctxCount} context entries`, '');
 
-      // Focus-relevant lessons
+      // ── Layer 7: MCM Domain Coverage Map ────────────────────────────────────
+      if (lessons.length >= 3) {
+        const domainMap = new Map<string, { total: number; success: number; critical: number }>();
+        for (const l of lessons) {
+          const dom = l.topic.split(':')[0] ?? 'other';
+          if (!domainMap.has(dom)) domainMap.set(dom, { total: 0, success: 0, critical: 0 });
+          const d = domainMap.get(dom)!;
+          d.total++;
+          if (l.outcome === 'success') d.success++;
+          if (l.severity === 'critical') d.critical++;
+        }
+        const sorted = [...domainMap.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 6);
+        const hasContestedDomains = sorted.some(([, d]) => d.success < d.total * 0.4 && d.total >= 2);
+        if (sorted.length > 0) {
+          lines.push(`🗺️ **Knowledge Coverage:**`);
+          for (const [dom, d] of sorted) {
+            const pct = Math.round((d.success / d.total) * 100);
+            const filled = Math.round(pct / 10);
+            const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
+            const flag = d.critical > 0 ? ' 🔴' : pct < 40 && d.total >= 2 ? ' ⚠️' : '';
+            lines.push(`  ${bar} ${dom.padEnd(18)} ${String(pct).padStart(3)}% (${d.success}/${d.total} confirmed)${flag}`);
+          }
+          if (hasContestedDomains) {
+            lines.push(`  ⚠️ _Some domains have contested beliefs — use \`ckg_inspect\` to review_`);
+          }
+          lines.push('');
+        }
+      }
+
+
       if (focusLessons.length > 0) {
         lines.push(`🎯 **Relevant for "${focus}":**`);
         for (const l of focusLessons.slice(0, 4)) {
@@ -5605,21 +6088,6 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         } catch { /* git not available or not a repo — silent skip */ }
       }
 
-      // ── Crystal age check — remind if > 30 days old or missing ──────────────
-      let crystalReminder = '';
-      try {
-        const crystalRaw = await redis.get('cachly:crystal:latest');
-        if (!crystalRaw) {
-          crystalReminder = `💎 **Memory Crystal:** None exists yet. Run \`memory_crystalize(instance_id="${instance_id}")\` to distill your brain into a permanent snapshot — injected into every future session automatically.`;
-        } else {
-          const crystal = JSON.parse(crystalRaw) as { ts: string; label?: string; lesson_count?: number };
-          const crystalAgeDays = Math.round((Date.now() - new Date(crystal.ts).getTime()) / 86_400_000);
-          if (crystalAgeDays >= 30) {
-            crystalReminder = `💎 **Memory Crystal is ${crystalAgeDays} days old** (${crystal.label ?? 'unnamed'}). Run \`memory_crystalize(instance_id="${instance_id}")\` to refresh it with your latest ${crystal.lesson_count ?? '?'} lessons.`;
-          }
-        }
-      } catch { /* non-critical */ }
-
       const durationStr = durationMin !== undefined ? ` · ${durationMin} min` : '';
       return [
         `✅ **Session saved**${durationStr}`,
@@ -5629,7 +6097,6 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lessons_learned !== undefined ? `🧠 **Lessons stored:** ${lessons_learned}` : '',
         autoLearned.length > 0 ? `🤖 **Auto-learned:** ${autoLearned.length} lessons extracted from summary (${autoLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${autoLearned.length > 3 ? '…' : ''})` : '',
         ambientLearned.length > 0 ? `🌿 **Ambient git learning:** ${ambientLearned.length} commit${ambientLearned.length > 1 ? 's' : ''} auto-learned (${ambientLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${ambientLearned.length > 3 ? '…' : ''})` : '',
-        crystalReminder,
         ``,
         `💡 Next session: \`session_start(focus="...")\` to see this summary.`,
       ].filter(l => l !== '').join('\n');
@@ -6107,63 +6574,6 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         `💡 Re-run \`memory_crystalize\` monthly to keep it fresh.`,
       ];
       return lines.join('\n');
-    }
-
-    // ── crystal_view — show current Memory Crystal ───────────────────────────
-    case 'crystal_view': {
-      const { instance_id } = args as { instance_id: string };
-      const redis = await getConnection(instance_id);
-
-      const crystalRaw = await redis.get('cachly:crystal:latest');
-      if (!crystalRaw) {
-        return [
-          `💎 **No Memory Crystal yet**`,
-          ``,
-          `Your brain has no crystal — all knowledge lives in raw lessons only.`,
-          ``,
-          `Run \`memory_crystalize(instance_id="${instance_id}")\` to:`,
-          `  • Distill everything learned into a permanent, compact snapshot`,
-          `  • Inject it into every future \`session_start\` automatically`,
-          `  • Preserve team knowledge even after lesson TTLs expire`,
-          ``,
-          `💡 Recommended: run monthly or after any major milestone.`,
-        ].join('\n');
-      }
-
-      const crystal = JSON.parse(crystalRaw) as {
-        label: string; ts: string; session_count: number; lesson_count: number;
-        top_patterns: Array<{ category: string; insight: string; count: number }>;
-        categories: string[]; created_from: string;
-      };
-
-      const ageDays = Math.round((Date.now() - new Date(crystal.ts).getTime()) / 86_400_000);
-      const ageStr = ageDays === 0 ? 'today' : ageDays === 1 ? '1 day ago' : `${ageDays} days ago`;
-      const freshness = ageDays < 14 ? '🟢 Fresh' : ageDays < 30 ? '🟡 Aging' : '🔴 Stale — refresh recommended';
-
-      const lines: string[] = [
-        `💎 **Memory Crystal: ${crystal.label}**`,
-        ``,
-        `📅 Created: **${ageStr}** · Freshness: ${freshness}`,
-        `📊 Compressed: **${crystal.session_count} sessions** + **${crystal.lesson_count} lessons** → ${crystal.top_patterns.length} patterns`,
-        `🗂️  Categories: ${crystal.categories.slice(0, 10).join(', ')}${crystal.categories.length > 10 ? `… +${crystal.categories.length - 10}` : ''}`,
-        ``,
-        `**Top patterns by category:**`,
-        ``,
-      ];
-
-      for (const p of crystal.top_patterns) {
-        lines.push(`**${p.category}** (${p.count} lesson${p.count > 1 ? 's' : ''})`);
-        lines.push(`  → ${p.insight.slice(0, 150)}${p.insight.length > 150 ? '…' : ''}`);
-        lines.push('');
-      }
-
-      if (ageDays >= 30) {
-        lines.push(`---`, `⚠️ Crystal is ${ageDays} days old. Run \`memory_crystalize(instance_id="${instance_id}")\` to refresh with your latest lessons.`);
-      } else {
-        lines.push(`---`, `💡 This crystal is injected automatically into every \`session_start\`. Refresh monthly with \`memory_crystalize\`.`);
-      }
-
-      return lines.filter(l => l !== undefined).join('\n');
     }
 
     case 'brain_doctor': {
@@ -7485,7 +7895,58 @@ async function handleBulkLockStream(name: string, args: Record<string, unknown>)
         .split(/\s+/)
         .filter(t => t.length > 2);
 
-      // Scan all lessons + history entries
+      const SEV_ICON: Record<string, string> = { critical: '🔴', major: '🟠', minor: '🟡' };
+
+      // ── Layer 1: CKG graph traversal (if graph data exists) ─────────────────
+      type CKGResult = { conceptId: string; edge: CKGEdge; lesson?: { topic: string; what_worked?: string; ts: string; outcome: string; recall_count?: number; severity?: string } };
+      const ckgResults: CKGResult[] = [];
+      try {
+        for (const token of tokens.slice(0, 4)) {
+          // Search for CKG nodes matching this token
+          const fromKeys = await redis.smembers(`cachly:ckg:idx:from:${ckgSlug(token)}`);
+          const toKeys   = await redis.smembers(`cachly:ckg:idx:to:${ckgSlug(token)}`);
+          // Also try pattern: scan nodes containing the token
+          const nodeKeys: string[] = [];
+          const nStream = redis.scanStream({ match: `cachly:ckg:node:*${token}*`, count: 50 });
+          await new Promise<void>((res, rej) => { nStream.on('data', (b: string[]) => nodeKeys.push(...b)); nStream.on('end', res); nStream.on('error', rej); });
+          for (const nodeKey of nodeKeys.slice(0, 10)) {
+            const nodeRaw = await redis.get(nodeKey);
+            if (!nodeRaw) continue;
+            const node: CKGNode = JSON.parse(nodeRaw);
+            // Get edges from this node
+            const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${node.id}`);
+            for (const ek of edgeKeys.slice(0, 20)) {
+              const edgeRaw = await redis.get(ek);
+              if (!edgeRaw) continue;
+              const edge: CKGEdge = JSON.parse(edgeRaw);
+              if (edge.edgeType !== 'fixes' && edge.edgeType !== 'requires') continue;
+              // Find lesson for this concept
+              const lessonRaw = await redis.get(`cachly:lesson:best:${edge.from.replace(/-/g, ':').replace(/^fix:/, 'fix:')}`);
+              const lesson = lessonRaw ? JSON.parse(lessonRaw) : undefined;
+              ckgResults.push({ conceptId: node.id, edge, lesson });
+            }
+          }
+          for (const ek of [...fromKeys, ...toKeys].slice(0, 20)) {
+            const edgeRaw = await redis.get(ek);
+            if (!edgeRaw) continue;
+            const edge: CKGEdge = JSON.parse(edgeRaw);
+            const lessonRaw = await redis.get(`cachly:lesson:best:${edge.from}`);
+            const lesson = lessonRaw ? JSON.parse(lessonRaw) : undefined;
+            ckgResults.push({ conceptId: edge.from, edge, lesson });
+          }
+        }
+      } catch { /* CKG traversal non-critical */ }
+
+      // Deduplicate CKG results and sort by confidence
+      const ckgSeen = new Set<string>();
+      const ckgDeduped = ckgResults.filter(r => {
+        const key = `${r.edge.from}:${r.edge.edgeType}:${r.edge.to}`;
+        if (ckgSeen.has(key)) return false;
+        ckgSeen.add(key);
+        return true;
+      }).sort((a, b) => b.edge.confidence - a.edge.confidence).slice(0, max_depth);
+
+      // ── Layer 2 (fallback): text similarity over all lessons ─────────────────
       let cursor = 0;
       const lessonKeys: string[] = [];
       do {
@@ -7507,7 +7968,6 @@ async function handleBulkLockStream(name: string, args: Record<string, unknown>)
         if (!raw) continue;
         try {
           const l = JSON.parse(raw) as Lesson;
-          // Skip if filter tags given and lesson has none of them
           if (filterTags.length > 0 && !(l.tags ?? []).some((t: string) => filterTags.includes(t))) continue;
           const haystack = [l.topic, l.what_failed ?? '', l.what_worked ?? '', l.context ?? '']
             .join(' ').toLowerCase();
@@ -7515,11 +7975,10 @@ async function handleBulkLockStream(name: string, args: Record<string, unknown>)
           if (score > 0) scored.push({ score, lesson: l, key: k });
         } catch { /* skip */ }
       }
-
       scored.sort((a, b) => b.score - a.score);
       const chain = scored.slice(0, max_depth);
 
-      if (chain.length === 0) {
+      if (chain.length === 0 && ckgDeduped.length === 0) {
         return [
           `🔍 **Causal Trace: "${problem}"**`,
           ``,
@@ -7538,55 +7997,68 @@ async function handleBulkLockStream(name: string, args: Record<string, unknown>)
         ].join('\n');
       }
 
-      // Build causal chain narrative: failures first → then successes
-      const failures = chain.filter(c => c.lesson.outcome !== 'success');
-      const solutions = chain.filter(c => c.lesson.outcome === 'success');
-
-      const SEV_ICON: Record<string, string> = { critical: '🔴', major: '🟠', minor: '🟡' };
-
       const lines: string[] = [
         `🔍 **Causal Trace: "${problem}"**`,
         ``,
-        `Found **${chain.length}** related lessons. Reconstructed causal chain:`,
-        ``,
       ];
 
-      if (failures.length > 0) {
-        lines.push(`**Root causes & failure chain:**`);
-        failures.forEach((c, i) => {
-          const l = c.lesson;
-          const sev = SEV_ICON[l.severity ?? 'minor'] ?? '🟡';
-          lines.push(`${i === 0 ? '  Root:' : '   → :'} ${sev} \`${l.topic}\``);
-          if (l.what_failed) lines.push(`          ↳ ${l.what_failed.slice(0, 120)}`);
-        });
-        lines.push('');
+      // Show CKG graph results first if available
+      if (ckgDeduped.length > 0) {
+        lines.push(`### 🕸️ CKG Graph (confidence-ranked)`);
+        for (const r of ckgDeduped) {
+          const confPct = Math.round(r.edge.confidence * 100);
+          const confBar = '▓'.repeat(Math.round(confPct / 10)) + '░'.repeat(10 - Math.round(confPct / 10));
+          lines.push(`  ${r.edge.from} **→[${r.edge.edgeType}]→** ${r.edge.to}`);
+          lines.push(`  ${confBar} ${confPct}% confidence (${r.edge.successes}/${r.edge.trials} confirmed)`);
+          if (r.lesson?.what_worked) lines.push(`  ✅ Fix: ${r.lesson.what_worked.slice(0, 150)}`);
+          lines.push('');
+        }
       }
 
-      if (solutions.length > 0) {
-        lines.push(`**Solutions that worked before:**`);
-        solutions.forEach((c, i) => {
-          const l = c.lesson;
-          const date = new Date(l.ts).toLocaleDateString('de-DE');
-          lines.push(`  ${i + 1}. ✅ \`${l.topic}\` — ${date} · recalled ${l.recall_count ?? 0}× `);
-          if (l.what_worked) lines.push(`     ${l.what_worked.slice(0, 200)}`);
-        });
-        lines.push('');
-      }
+      // Build text-based causal chain narrative
+      if (chain.length > 0) {
+        lines.push(ckgDeduped.length > 0 ? `### 📚 Text Search (${chain.length} related lessons)` : `Found **${chain.length}** related lessons. Reconstructed causal chain:`, '');
+        const failures = chain.filter(c => c.lesson.outcome !== 'success');
+        const solutions = chain.filter(c => c.lesson.outcome === 'success');
 
-      const topSolution = solutions[0]?.lesson;
-      if (topSolution?.what_worked) {
-        lines.push(`**⚡ Most likely fix:**`);
-        lines.push(`\`\`\``);
-        lines.push(topSolution.what_worked.slice(0, 500));
-        lines.push(`\`\`\``);
-        lines.push('');
+        if (failures.length > 0) {
+          lines.push(`**Root causes & failure chain:**`);
+          failures.forEach((c, i) => {
+            const l = c.lesson;
+            const sev = SEV_ICON[l.severity ?? 'minor'] ?? '🟡';
+            lines.push(`${i === 0 ? '  Root:' : '   → :'} ${sev} \`${l.topic}\``);
+            if (l.what_failed) lines.push(`          ↳ ${l.what_failed.slice(0, 120)}`);
+          });
+          lines.push('');
+        }
+
+        if (solutions.length > 0) {
+          lines.push(`**Solutions that worked before:**`);
+          solutions.forEach((c, i) => {
+            const l = c.lesson;
+            const date = new Date(l.ts).toLocaleDateString('de-DE');
+            lines.push(`  ${i + 1}. ✅ \`${l.topic}\` — ${date} · recalled ${l.recall_count ?? 0}×`);
+            if (l.what_worked) lines.push(`     ${l.what_worked.slice(0, 200)}`);
+          });
+          lines.push('');
+        }
+
+        const topSolution = solutions[0]?.lesson;
+        if (topSolution?.what_worked) {
+          lines.push(`**⚡ Most likely fix:**`);
+          lines.push(`\`\`\``);
+          lines.push(topSolution.what_worked.slice(0, 500));
+          lines.push(`\`\`\``);
+          lines.push('');
+        }
       }
 
       lines.push(`💡 After applying: \`learn_from_attempts(topic="fix:${tokens[0] ?? 'issue'}", outcome="success", ...)\``);
+      if (ckgDeduped.length > 0) lines.push(`🕸️ Explore graph: \`ckg_inspect(concept="${tokens[0] ?? 'fix'}")\``);
       return lines.join('\n');
     }
 
-    // ── v0.6 Cognitive Cache: knowledge_decay ────────────────────────────────
+
     case 'knowledge_decay': {
       const { instance_id, min_age_days = 0, show_top = 20 } = args as {
         instance_id: string; min_age_days?: number; show_top?: number;
@@ -7682,11 +8154,9 @@ async function handleBulkLockStream(name: string, args: Record<string, unknown>)
 > Sessions are fully automatic. The Brain starts when you call any tool and saves a summary when you close.
 
 ### MANDATORY hooks (always fire, no exceptions):
-- **Context compacted** → call \`compact_recover(instance_id="${instance_id}", focus="<current task>")\` FIRST
 - **Window opens** → call \`session_start(instance_id="${instance_id}", focus="<today's goal>")\`
 - **Bug fixed / deployed / discovered** → call \`learn_from_attempts(instance_id="${instance_id}", topic="fix:<area>", outcome="success", what_worked="...")\`
 - **Window closes** → call \`session_end(instance_id="${instance_id}", summary="...", files_changed=[...])\`
-- **Monthly** → call \`memory_crystalize(instance_id="${instance_id}")\` to distill knowledge into a permanent Crystal
 `;
 
       const full = `## Cachly AI Brain — Autopilot for ${project_name}
@@ -7747,40 +8217,18 @@ smart_recall(
 
 ---
 
-## ⚡ Context Recovery (MANDATORY after compaction)
-
-**If your context window was compacted**, call this FIRST — before reading any file:
-\`\`\`
-compact_recover(
-  instance_id = "${instance_id}",
-  focus       = "<what you were working on>",
-)
-\`\`\`
-Returns: last checkpoint, pending tasks, top lessons. Instant — no full brain scan.
-
----
-
-## 🔁 Scheduled Maintenance (run on schedule)
-
-| When | Call |
-|---|---|
-| **Monthly** | \`memory_crystalize(instance_id="${instance_id}")\` — distill brain into a permanent snapshot |
-| Weekly review | \`brain_diff(instance_id="${instance_id}", since="7d")\` — see what your AI learned this week |
-| Before big refactor | \`knowledge_decay(instance_id="${instance_id}")\` — see which lessons to still trust |
-| After major milestone | \`memory_crystalize(instance_id="${instance_id}", label="v2 launch")\` — preserve milestone knowledge |
-
-## 🧠 Cognitive Tools (use anytime)
+## ⚡ Cognitive Tools (v0.6)
 
 | When | Call |
 |---|---|
 | Brain feeling cluttered | \`memory_consolidate(instance_id="${instance_id}")\` |
+| Weekly review | \`brain_diff(instance_id="${instance_id}", since="7d")\` |
 | Weird bug, no idea why | \`causal_trace(instance_id="${instance_id}", problem="<symptom>")\` |
-| Unknown error | \`syndicate_search(q="<error message>")\` — global community solutions |
-| Unknown error that you solved | \`syndicate(instance_id="${instance_id}", topic="fix:<area>", what_worked="...")\` |
+| Before big refactor | \`knowledge_decay(instance_id="${instance_id}")\` |
 
 ---
 
-*Cachly v0.9 · Generated ${new Date().toISOString().slice(0, 10)}*
+*Cachly v0.6 · Generated ${new Date().toISOString().slice(0, 10)}*
 `;
 
       const content = style === 'minimal' ? minimal : full;
@@ -8021,194 +8469,1175 @@ Returns: last checkpoint, pending tasks, top lessons. Instant — no full brain 
       return lines.filter(l => l !== '').join('\n');
     }
 
-    // ── v0.9 compact_recover — fast context recovery ──────────────────────────
-    case 'compact_recover': {
-      const { instance_id, focus = '' } = args as { instance_id: string; focus?: string };
+    // ── Layer 1: brain_search ─────────────────────────────────────────────────
+    case 'brain_search': {
+      const { instance_id, query, limit = 15 } = args as { instance_id: string; query: string; limit?: number };
       const redis = await getConnection(instance_id);
 
-      const lines: string[] = ['⚡ **Context Recovered**', ''];
+      // BM25+ over ALL brain key namespaces
+      const allMatches = await keywordSearch(
+        redis,
+        [
+          'cachly:lesson:best:*',
+          'cachly:ctx:*',
+          'cachly:idx:*',
+          'cachly:session:last',
+          'cachly:session:handoff',
+          'cachly:roadmap:*',
+          'cachly:ckg:node:*',
+        ],
+        query,
+        limit,
+      );
 
-      // 1. Latest checkpoint
-      const checkpointRaw = await redis.get('cachly:session:checkpoint');
-      if (checkpointRaw) {
-        try {
-          const cp = JSON.parse(checkpointRaw) as {
-            ts: string; task: string; files_touched?: string[]; next_step?: string; provider?: string;
-          };
-          const ago = Math.round((Date.now() - new Date(cp.ts).getTime()) / 60000);
-          const agoStr = ago < 60 ? `${ago}m ago` : `${Math.round(ago / 60)}h ago`;
-          lines.push(`📌 **Last checkpoint** (${agoStr}): ${cp.task}`);
-          if (cp.files_touched && cp.files_touched.length > 0) {
-            lines.push(`   Files: ${cp.files_touched.slice(0, 5).join(', ')}${cp.files_touched.length > 5 ? '…' : ''}`);
+      if (allMatches.length === 0) {
+        return [`🔎 **Brain Search: "${query}"**`, '', `No results found across all brain data.`, '', `💡 Try \`smart_recall\` or check \`list_remembered\`.`].join('\n');
+      }
+
+      const lines = [`🔎 **Brain Search: "${query}"** — ${allMatches.length} result${allMatches.length !== 1 ? 's' : ''} across all brain data\n`];
+      for (const m of allMatches.slice(0, limit)) {
+        const ns = m.key.startsWith('cachly:lesson:') ? '💡 lesson'
+          : m.key.startsWith('cachly:ctx:') ? '📝 context'
+          : m.key.startsWith('cachly:idx:') ? '📂 index'
+          : m.key.startsWith('cachly:session:') ? '🕐 session'
+          : m.key.startsWith('cachly:roadmap:') ? '🗺️ roadmap'
+          : m.key.startsWith('cachly:ckg:node:') ? '🕸️ ckg-node'
+          : '🗄️ data';
+        const preview = m.content.slice(0, 280).replace(/\n/g, ' ');
+        lines.push(`**${ns}** \`${m.key.split(':').slice(2).join(':')}\` _(BM25: ${m.score.toFixed(2)})_`);
+        lines.push(`> ${preview}${m.content.length > 280 ? '…' : ''}\n`);
+      }
+      return lines.join('\n');
+    }
+
+    // ── Layer 1: ckg_inspect ─────────────────────────────────────────────────
+    case 'ckg_inspect': {
+      const { instance_id, concept, max_hops = 2 } = args as { instance_id: string; concept: string; max_hops?: number };
+      const redis = await getConnection(instance_id);
+
+      const conceptId = ckgSlug(concept);
+      const visited = new Set<string>();
+      const allEdges: CKGEdge[] = [];
+
+      // BFS traversal of CKG
+      const queue: Array<{ id: string; hop: number }> = [{ id: conceptId, hop: 0 }];
+      while (queue.length > 0) {
+        const { id, hop } = queue.shift()!;
+        if (visited.has(id) || hop > max_hops) continue;
+        visited.add(id);
+
+        const fromKeys = await redis.smembers(`cachly:ckg:idx:from:${id}`);
+        const toKeys   = await redis.smembers(`cachly:ckg:idx:to:${id}`);
+
+        for (const ek of [...fromKeys, ...toKeys].slice(0, 50)) {
+          const raw = await redis.get(ek);
+          if (!raw) continue;
+          const edge: CKGEdge = JSON.parse(raw);
+          allEdges.push(edge);
+          if (hop < max_hops) {
+            if (!visited.has(edge.from)) queue.push({ id: edge.from, hop: hop + 1 });
+            if (!visited.has(edge.to))   queue.push({ id: edge.to, hop: hop + 1 });
           }
-          if (cp.next_step) lines.push(`📍 **Resume with:** ${cp.next_step}`);
-          lines.push('');
-        } catch { /* ignore corrupt */ }
+        }
       }
 
-      // 2. Handoff (if any, from a different window)
-      const handoffRaw = await redis.get('cachly:session:handoff');
-      if (handoffRaw) {
-        try {
-          const hf = JSON.parse(handoffRaw) as { ts: string; remaining_tasks?: string[]; blocked_on?: string };
-          const remaining = hf.remaining_tasks ?? [];
-          if (remaining.length > 0) {
-            lines.push(`⏳ **Remaining tasks:**`);
-            remaining.slice(0, 5).forEach(t => lines.push(`  - ${t}`));
-            if (remaining.length > 5) lines.push(`  …and ${remaining.length - 5} more`);
-            lines.push('');
-          }
-          if (hf.blocked_on) { lines.push(`🚫 **Blocked on:** ${hf.blocked_on}`, ''); }
-        } catch { /* ignore */ }
+      if (allEdges.length === 0) {
+        // Try fuzzy: scan for nodes matching the concept as substring
+        const nodeKeys: string[] = [];
+        const nStream = redis.scanStream({ match: `cachly:ckg:node:*${conceptId}*`, count: 100 });
+        await new Promise<void>((res, rej) => { nStream.on('data', (b: string[]) => nodeKeys.push(...b)); nStream.on('end', res); nStream.on('error', rej); });
+        if (nodeKeys.length === 0) {
+          return [`🕸️ **CKG Inspect: "${concept}"**`, '', `No CKG nodes found. The graph builds automatically as you call \`learn_from_attempts\`.`, '', `💡 Once you have lessons stored, CKG edges will appear here.`].join('\n');
+        }
+        const nodeList = nodeKeys.slice(0, 10).map(k => `  • \`${k.replace('cachly:ckg:node:', '')}\``).join('\n');
+        return [`🕸️ **CKG Inspect: "${concept}"**`, '', `No edges found for \`${conceptId}\`, but found similar nodes:`, nodeList, '', `Try: \`ckg_inspect(concept="<exact-node-id>")\``].join('\n');
       }
 
-      // 3. Top recently recalled lessons (BM25 if focus, else recency)
-      const lessonKeys: string[] = [];
-      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
-      await new Promise<void>((resolve, reject) => {
-        lStream.on('data', (batch: string[]) => lessonKeys.push(...batch));
-        lStream.on('end', resolve);
-        lStream.on('error', reject);
-      });
+      // Sort by confidence desc, deduplicate
+      const edgeSeen = new Set<string>();
+      const unique = allEdges.filter(e => {
+        const k = `${e.from}:${e.edgeType}:${e.to}`;
+        if (edgeSeen.has(k)) return false;
+        edgeSeen.add(k);
+        return true;
+      }).sort((a, b) => b.confidence - a.confidence);
 
-      type RecoverLesson = { topic: string; outcome: string; what_worked: string; ts: string; recall_count?: number; tags?: string[] };
-      const allLessons: RecoverLesson[] = [];
-      for (const k of lessonKeys) {
-        const raw = await redis.get(k);
-        if (!raw) continue;
-        try { allLessons.push(JSON.parse(raw) as RecoverLesson); } catch { /* skip */ }
+      const EDGE_ICON: Record<string, string> = { fixes: '🔧', requires: '🔗', 'co-occurs': '🔄', causes: '⚡', contradicts: '⚠️', degrades_under: '📉' };
+
+      const lines = [`🕸️ **CKG Inspect: "${concept}"** (${unique.length} edge${unique.length !== 1 ? 's' : ''}, ${visited.size} node${visited.size !== 1 ? 's' : ''} traversed)\n`];
+
+      // Group by edge type
+      const byType = new Map<string, CKGEdge[]>();
+      for (const e of unique) {
+        if (!byType.has(e.edgeType)) byType.set(e.edgeType, []);
+        byType.get(e.edgeType)!.push(e);
       }
-
-      const focusTerms = focus.toLowerCase().split(/\s+/).filter(Boolean);
-      let topLessons = focusTerms.length > 0
-        ? allLessons.filter(l =>
-            focusTerms.some(t => l.topic.toLowerCase().includes(t) || (l.tags ?? []).some((tag: string) => tag.toLowerCase().includes(t)))
-          ).slice(0, 5)
-        : allLessons.sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0)).slice(0, 5);
-
-      if (topLessons.length > 0) {
-        lines.push(`🧠 **Top lessons${focus ? ` for "${focus}"` : ''}:**`);
-        for (const l of topLessons) {
-          const icon = l.outcome === 'success' ? '✅' : l.outcome === 'failure' ? '❌' : '⚠️';
-          lines.push(`  ${icon} \`${l.topic}\` — ${l.what_worked.slice(0, 120)}${l.what_worked.length > 120 ? '…' : ''}`);
+      for (const [eType, edges] of byType) {
+        const icon = EDGE_ICON[eType] ?? '→';
+        lines.push(`**${icon} ${eType}** (${edges.length})`);
+        for (const e of edges.slice(0, 8)) {
+          const confPct = Math.round(e.confidence * 100);
+          const bar = '▓'.repeat(Math.round(confPct / 10)) + '░'.repeat(10 - Math.round(confPct / 10));
+          lines.push(`  \`${e.from}\` → \`${e.to}\`  ${bar} ${confPct}% (${e.successes.toFixed(1)}/${e.trials} trials)`);
         }
         lines.push('');
       }
 
-      lines.push(`💡 Call \`session_start\` for the full briefing, or resume work directly.`);
-      return lines.filter(l => l !== '').join('\n');
+      lines.push(`💡 Expand: \`ckg_inspect(concept="${concept}", max_hops=3)\`  |  Predict: \`brain_predict(context="${concept}")\``);
+      return lines.join('\n');
     }
 
-    // ── v0.9 brain_from_git — bulk-load git history as lessons ───────────────
-    case 'brain_from_git': {
-      const {
-        instance_id,
-        workspace_path,
-        days = 180,
-        max_commits = 200,
-        author = '',
-      } = args as { instance_id: string; workspace_path: string; days?: number; max_commits?: number; author?: string };
-
+    // ── Layer 4: brain_predict (PPE) ─────────────────────────────────────────
+    case 'brain_predict': {
+      const { instance_id, context: ctx, top_k = 5 } = args as { instance_id: string; context: string; top_k?: number };
       const redis = await getConnection(instance_id);
-      const { execSync } = await import('node:child_process');
 
-      const clampedDays = Math.min(Math.max(1, days), 365);
-      const clampedMax = Math.min(Math.max(1, max_commits), 500);
+      const ctxTokens = ctx.toLowerCase().replace(/[^a-z0-9\s\-_:]/g, ' ').split(/\s+/).filter(t => t.length > 2);
 
-      const authorArg = author ? `--author="${author}"` : '';
-      let gitRaw = '';
-      try {
-        gitRaw = execSync(
-          `git -C "${workspace_path}" log --since="${clampedDays} days ago" ${authorArg} --oneline --format="%H|||%s|||%ai|||%ae" -n ${clampedMax}`,
-          { timeout: 15000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
-        ).trim();
-      } catch {
-        return `❌ **brain_from_git failed**: Could not read git log from \`${workspace_path}\`.\nMake sure the path exists and is a git repository.`;
+      // Step 1: Find CKG nodes matching context tokens
+      type Prediction = { concept: string; edgeType: string; target: string; confidence: number; lesson?: { what_worked?: string; topic: string } };
+      const predictions: Prediction[] = [];
+
+      for (const token of ctxTokens.slice(0, 6)) {
+        const nodeKeys: string[] = [];
+        const nStream = redis.scanStream({ match: `cachly:ckg:node:*${token}*`, count: 50 });
+        await new Promise<void>((res, rej) => { nStream.on('data', (b: string[]) => nodeKeys.push(...b)); nStream.on('end', res); nStream.on('error', rej); });
+
+        for (const nk of nodeKeys.slice(0, 5)) {
+          const nodeRaw = await redis.get(nk);
+          if (!nodeRaw) continue;
+          const node: CKGNode = JSON.parse(nodeRaw);
+          const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${node.id}`);
+          for (const ek of edgeKeys.slice(0, 20)) {
+            const edgeRaw = await redis.get(ek);
+            if (!edgeRaw) continue;
+            const edge: CKGEdge = JSON.parse(edgeRaw);
+            // Only interested in fixes and co-occurs for prediction
+            if (edge.edgeType !== 'fixes' && edge.edgeType !== 'co-occurs' && edge.edgeType !== 'causes') continue;
+            const lessonRaw = await redis.get(`cachly:lesson:best:${edge.from}`);
+            const lesson = lessonRaw ? JSON.parse(lessonRaw) : undefined;
+            predictions.push({ concept: node.id, edgeType: edge.edgeType, target: edge.to, confidence: edge.confidence, lesson });
+          }
+        }
       }
 
-      if (!gitRaw) {
-        return `📭 **No commits found** in the last ${clampedDays} days${author ? ` by "${author}"` : ''}.\nTry increasing \`days\` or removing the \`author\` filter.`;
+      // Step 2: Text-based fallback — scan lessons for matching topics
+      const textPredictions: Array<{ topic: string; what_worked?: string; what_failed?: string; outcome: string; severity?: string; confidence: number }> = [];
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((res, rej) => { lStream.on('data', (b: string[]) => lessonKeys.push(...b)); lStream.on('end', res); lStream.on('error', rej); });
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        try {
+          const l = JSON.parse(raw) as { topic: string; what_worked?: string; what_failed?: string; outcome: string; severity?: string; ts: string; verified_at?: string; recall_count?: number };
+          const haystack = [l.topic, l.what_failed ?? '', l.what_worked ?? ''].join(' ').toLowerCase();
+          const score = ctxTokens.reduce((s, t) => s + (haystack.includes(t) ? 1 : 0), 0);
+          if (score >= 1 && l.outcome !== 'failure') {
+            const conf = calculateConfidence(l);
+            textPredictions.push({ ...l, confidence: conf });
+          }
+        } catch { /* skip */ }
+      }
+      textPredictions.sort((a, b) => b.confidence - a.confidence);
+
+      if (predictions.length === 0 && textPredictions.length === 0) {
+        return [
+          `🔮 **Brain Predict: "${ctx}"**`,
+          ``,
+          `No predictions yet — the brain hasn't seen this domain.`,
+          ``,
+          `💡 As you solve problems in this area and call \`learn_from_attempts\`, the CKG builds up and predictions become available.`,
+        ].join('\n');
       }
 
-      const commitLines = gitRaw.split('\n');
-      const now = new Date();
+      const lines = [`🔮 **Brain Predict: "${ctx}"**\n`];
 
-      const actionRe = /\b(fix|add|remove|refactor|migrate|update|resolve|implement|improve|optimize|configure|create|delete|disable|enable|debug|patch|upgrade|rewrite|deploy|feat|revert|break|merge|bump)\b/i;
-      const failRe = /\b(revert|broken|broke|breaking|rollback|undo|hotfix|crash|oops|wrong|mistake|bad)\b/i;
+      // CKG-based predictions
+      if (predictions.length > 0) {
+        const pSeen = new Set<string>();
+        const pUniq = predictions.filter(p => { const k = `${p.concept}:${p.edgeType}:${p.target}`; if (pSeen.has(k)) return false; pSeen.add(k); return true; })
+          .sort((a, b) => b.confidence - a.confidence).slice(0, top_k);
 
-      let stored = 0;
-      let skipped = 0;
-      let failures = 0;
-      const topLessons: string[] = [];
-
-      for (const line of commitLines) {
-        const parts = line.split('|||');
-        if (parts.length < 2) continue;
-        const [hash, msg, dateStr] = parts;
-        if (!msg || !actionRe.test(msg)) continue;
-
-        const isFail = failRe.test(msg);
-        const cleanMsg = msg
-          .replace(/^(fix|feat|chore|docs|test|ci|perf|refactor|build|revert|hotfix|bump)[:(\s!]+/i, '')
-          .trim();
-        if (!cleanMsg || cleanMsg.length < 5) continue;
-
-        const slug = cleanMsg
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-+|-+$/g, '')
-          .slice(0, 40);
-        if (!slug) continue;
-
-        const topic = `git:${slug}`;
-        const key = `cachly:lesson:best:${topic}`;
-        const existing = await redis.get(key);
-        if (existing) { skipped++; continue; }
-
-        const lesson = {
-          topic,
-          outcome: isFail ? ('failure' as const) : ('success' as const),
-          what_worked: isFail ? '' : cleanMsg.slice(0, 300),
-          what_failed: isFail ? cleanMsg.slice(0, 300) : undefined,
-          context: `Auto-learned from git commit ${(hash ?? '').slice(0, 7)}${dateStr ? ` at ${dateStr}` : ''} in ${workspace_path}${author ? ` (author: ${author})` : ''}`,
-          severity: 'minor' as const,
-          ts: dateStr ? new Date(dateStr).toISOString() : now.toISOString(),
-          recall_count: 0,
-          auto_learned: true,
-          source: 'brain_from_git',
-          version: 3,
-        };
-
-        await redis.set(key, JSON.stringify(lesson));
-        await redis.expire(key, 90 * 86400); // 90-day TTL for git-sourced lessons
-        stored++;
-        if (isFail) failures++;
-        if (topLessons.length < 5) topLessons.push(`  ${isFail ? '❌' : '✅'} \`${topic}\` — ${cleanMsg.slice(0, 80)}`);
-      }
-
-      const lines: string[] = [
-        `🧠 **Brain bootstrapped from git history**`,
-        ``,
-        `📊 **Scanned:** ${commitLines.filter(l => l.trim()).length} commits over last ${clampedDays} days`,
-        `✅ **Success lessons stored:** ${stored - failures}`,
-        `❌ **Failure/revert lessons:** ${failures}`,
-        skipped > 0 ? `⏭️  **Already in brain (skipped):** ${skipped}` : '',
-        ``,
-      ];
-
-      if (topLessons.length > 0) {
-        lines.push(`**Top lessons extracted:**`);
-        lines.push(...topLessons);
-        if (stored > 5) lines.push(`  …and ${stored - 5} more`);
+        lines.push(`### 🕸️ CKG Predictions (based on ${pUniq.length} known edges)`);
+        for (const p of pUniq) {
+          const confPct = Math.round(p.confidence * 100);
+          const icon = p.edgeType === 'fixes' ? '🔧' : p.edgeType === 'co-occurs' ? '🔄' : '⚡';
+          lines.push(`${icon} **${confPct}%** \`${p.concept}\` _${p.edgeType}_ \`${p.target}\``);
+          if (p.lesson?.what_worked) lines.push(`   ✅ ${p.lesson.what_worked.slice(0, 120)}`);
+        }
         lines.push('');
       }
 
-      lines.push(
-        `💡 **Next step:** Call \`session_start(focus="...")\` to see these lessons in your briefing.`,
-        `🔄 **Re-run anytime** — duplicates are safely skipped.`,
-      );
+      // Text-based lesson predictions
+      if (textPredictions.length > 0) {
+        lines.push(`### 📚 Relevant Lessons (${Math.min(textPredictions.length, top_k)} pre-loaded)`);
+        for (const l of textPredictions.slice(0, top_k)) {
+          const confPct = Math.round(l.confidence * 100);
+          lines.push(`  ✅ **${confPct}%** \`${l.topic}\` — ${(l.what_worked ?? '').slice(0, 120)}`);
+        }
+        lines.push('');
+      }
 
-      return lines.filter(l => l !== '').join('\n');
+      lines.push(`💡 Outcome confirmed? \`learn_from_attempts(topic="fix:...", outcome="success", ...)\` → improves future predictions`);
+      return lines.join('\n');
+    }
+
+    // ── Layer 3: MADC ─────────────────────────────────────────────────────────
+    case 'madc_deliberate': {
+      const { instance_id, topic } = args as { instance_id: string; topic: string };
+      const redis = await getConnection(instance_id);
+
+      const historyRaw = await redis.lrange(`cachly:lessons:${topic}`, 0, -1);
+      const history = historyRaw.map(r => { try { return JSON.parse(r) as { outcome: string; what_worked?: string; what_failed?: string; ts?: string }; } catch { return null; } }).filter(Boolean) as Array<{ outcome: string; what_worked?: string; what_failed?: string; ts?: string }>;
+
+      if (history.length < 2) {
+        return [
+          `🗳️ **MADC: "${topic}"**`, '',
+          `Not enough history for deliberation (need ≥ 2 entries, found ${history.length}).`,
+          '', `Call \`learn_from_attempts\` with conflicting outcomes to trigger deliberation.`,
+        ].join('\n');
+      }
+
+      // Specialist agents and their domain keywords
+      const AGENTS = [
+        { name: 'InfraAgent',    domains: ['infra', 'k8s', 'docker', 'server', 'wireguard', 'helm'] },
+        { name: 'AuthAgent',     domains: ['auth', 'jwt', 'keycloak', 'oauth', 'oidc', 'token'] },
+        { name: 'DeployAgent',   domains: ['deploy', 'ci', 'pipeline', 'rsync', 'release'] },
+        { name: 'DatabaseAgent', domains: ['db', 'gorm', 'migration', 'postgres', 'clickhouse', 'redis'] },
+        { name: 'DebugAgent',    domains: ['debug', 'panic', 'race', 'nil', 'fix', 'error'] },
+        { name: 'APIAgent',      domains: ['api', 'http', 'grpc', 'rest', 'fiber', 'web'] },
+      ];
+
+      const topicDomain = topic.split(':')[0] ?? '';
+      const relevantAgents = AGENTS.filter(a => a.domains.some(d => topicDomain === d || topic.includes(d)));
+      const votingAgents = relevantAgents.length > 0 ? relevantAgents : AGENTS;
+
+      // Measure each agent's CKG coverage in their domains
+      const agentCoverage = new Map<string, number>();
+      for (const agent of votingAgents) {
+        let edgeCount = 0;
+        for (const domain of agent.domains) {
+          const nodeKeys: string[] = [];
+          const nStream = redis.scanStream({ match: `cachly:ckg:node:${domain}*`, count: 50 });
+          await new Promise<void>((res, rej) => { nStream.on('data', (b: string[]) => nodeKeys.push(...b)); nStream.on('end', res); nStream.on('error', rej); });
+          edgeCount += nodeKeys.length;
+        }
+        agentCoverage.set(agent.name, edgeCount);
+      }
+
+      const successLessons = history.filter(l => l.outcome === 'success' || l.outcome === 'partial');
+      const failureLessons = history.filter(l => l.outcome === 'failure');
+
+      if (failureLessons.length === 0) {
+        return [
+          `🗳️ **MADC: "${topic}"**`, '',
+          `No contradictions found — all ${successLessons.length} entries have non-failure outcomes.`,
+          '', `Use \`ckg_inspect(concept="${ckgSlug(topic)}")\` to explore the confidence graph.`,
+        ].join('\n');
+      }
+
+      // Agent voting logic
+      const votes: Array<{ agent: string; vote: 'success' | 'failure' | 'abstain'; coverage: number; reason: string }> = [];
+      for (const agent of votingAgents) {
+        const coverage = agentCoverage.get(agent.name) ?? 0;
+        let vote: 'success' | 'failure' | 'abstain';
+        let reason: string;
+        if (coverage < 2) {
+          vote = 'abstain'; reason = 'insufficient domain coverage';
+        } else if (successLessons.length >= failureLessons.length * 2) {
+          vote = 'success'; reason = `${successLessons.length}/${history.length} entries confirm success`;
+        } else if (failureLessons.length >= successLessons.length * 2) {
+          vote = 'failure'; reason = `${failureLessons.length}/${history.length} entries confirm failure`;
+        } else {
+          vote = 'abstain'; reason = `contested (${successLessons.length} success vs ${failureLessons.length} failure)`;
+        }
+        votes.push({ agent: agent.name, vote, coverage, reason });
+      }
+
+      const successVotes = votes.filter(v => v.vote === 'success').length;
+      const failureVotes = votes.filter(v => v.vote === 'failure').length;
+      const abstainVotes = votes.filter(v => v.vote === 'abstain').length;
+
+      let resolution: 'unanimous_success' | 'unanimous_failure' | 'contested';
+      let resolutionText: string;
+      if (successVotes > 0 && failureVotes === 0) {
+        resolution = 'unanimous_success';
+        resolutionText = `✅ **Unanimous: SUCCESS** — ${successVotes} agent(s) confirm, ${abstainVotes} abstain`;
+      } else if (failureVotes > 0 && successVotes === 0) {
+        resolution = 'unanimous_failure';
+        resolutionText = `❌ **Unanimous: FAILURE** — ${failureVotes} agent(s) confirm, ${abstainVotes} abstain`;
+      } else {
+        resolution = 'contested';
+        resolutionText = `⚠️ **CONTESTED** — ${successVotes} success votes, ${failureVotes} failure votes, ${abstainVotes} abstain`;
+      }
+
+      // Store resolution as CKG node
+      const resNodeId = ckgSlug(`resolution:${topic}`);
+      const resNode = {
+        id: resNodeId, domain: 'resolution', type: 'resolution', count: 1,
+        ts: new Date().toISOString(), resolution, topic,
+        votes: { success: successVotes, failure: failureVotes, abstain: abstainVotes },
+      };
+      await redis.set(`cachly:ckg:node:${resNodeId}`, JSON.stringify(resNode));
+
+      // Write contradicts edge if contested
+      if (resolution === 'contested') {
+        await ckgUpdateEdge(redis, ckgSlug(topic), 'contradicts', resNodeId, false);
+      }
+
+      const lines = [
+        `🗳️ **MADC Deliberation: "${topic}"**`, '',
+        `📊 Evidence: ${successLessons.length} success/partial vs ${failureLessons.length} failure entries (${history.length} total)`,
+        '', `**Voting agents (${votingAgents.length}):**`,
+        ...votes.map(v => {
+          const icon = v.vote === 'success' ? '✅' : v.vote === 'failure' ? '❌' : '⬜';
+          const covBar = '▓'.repeat(Math.min(v.coverage, 5)) + '░'.repeat(Math.max(0, 5 - v.coverage));
+          return `  ${icon} **${v.agent}** [${covBar}] ${v.coverage} CKG edges — ${v.reason}`;
+        }),
+        '', resolutionText, '',
+      ];
+
+      if (resolution === 'unanimous_success') {
+        lines.push(`🔧 Failure entries superseded — store confirmed lesson: \`learn_from_attempts(topic="${topic}", outcome="success", ...)\``);
+      } else if (resolution === 'unanimous_failure') {
+        lines.push(`🚫 Success claims unconfirmed — re-verify: \`recall_best_solution(topic="${topic}")\``);
+      } else {
+        lines.push(`⚠️ Contested — run \`causal_trace\` before acting. Explore: \`ckg_inspect(concept="${ckgSlug(topic)}")\``);
+      }
+
+      lines.push('', `📝 Resolution node: \`cachly:ckg:node:${resNodeId}\``);
+      return lines.join('\n');
+    }
+
+    // ── Layer 5: CLS — cls_ingest ─────────────────────────────────────────────
+    case 'cls_ingest': {
+      const { instance_id, source, payload } = args as {
+        instance_id: string;
+        source: 'git_commit' | 'ci_outcome' | 'ide_diagnostic';
+        payload: Record<string, unknown>;
+      };
+      const redis = await getConnection(instance_id);
+      const ts = new Date().toISOString();
+      const clsKey = 'cachly:cls:events';
+
+      if (source === 'git_commit') {
+        const message = String(payload.message ?? '');
+        const sha = String(payload.sha ?? '');
+        const files = (Array.isArray(payload.files) ? payload.files : []) as string[];
+
+        const domain = /^fix/i.test(message) ? 'fix' : /^feat/i.test(message) ? 'feat' : /^refactor/i.test(message) ? 'refactor' : /^test/i.test(message) ? 'test' : 'commit';
+        const slug = `${domain}:${ckgSlug(message.slice(0, 60))}`;
+        const conceptId = ckgSlug(slug);
+
+        await ckgUpsertNode(redis, conceptId, domain, 'commit');
+        for (const f of files.slice(0, 10)) {
+          const fd = f.includes('auth') ? 'auth' : f.includes('api') ? 'api' : f.includes('infra') ? 'infra' : f.includes('web') ? 'web' : 'code';
+          const fileId = ckgSlug(`file:${fd}`);
+          await ckgUpsertNode(redis, fileId, 'file', fd);
+          await ckgUpdateEdge(redis, conceptId, 'co-occurs', fileId, true);
+        }
+
+        const lessonObj = {
+          topic: slug, outcome: 'success' as const, what_worked: message, what_failed: '',
+          context: `CLS/git: sha=${sha}`, severity: 'minor' as const,
+          file_paths: files.slice(0, 10), commands: sha ? [`git show ${sha}`] : [],
+          tags: ['cls', 'git'], depends_on: [], recall_count: 0, ts, verified_at: ts,
+          confidence: 0.6, audit_trail: [{ ts, action: 'cls_git_commit' }], version: 3,
+        };
+        await redis.rpush(`cachly:lessons:${slug}`, JSON.stringify(lessonObj));
+        const existing = await redis.get(`cachly:lesson:best:${slug}`);
+        if (!existing) await redis.set(`cachly:lesson:best:${slug}`, JSON.stringify(lessonObj));
+
+        await redis.rpush(clsKey, JSON.stringify({ source, payload: { message, sha }, ts }));
+        await redis.ltrim(clsKey, -200, -1);
+
+        return [
+          `📨 **CLS Ingested: git_commit**`, '',
+          `Commit \`${sha.slice(0, 8) || '?'}\`: ${message.slice(0, 80)}`,
+          `Concept: \`${conceptId}\` (${domain}) · Files: ${files.length}`,
+          '', `🕸️ CKG: \`${conceptId}\` + ${files.length} file edges · Lesson: \`${slug}\``,
+          `💡 Inspect: \`ckg_inspect(concept="${domain}")\``,
+        ].join('\n');
+      }
+
+      if (source === 'ci_outcome') {
+        const status = String(payload.status ?? '');
+        const prev_status = String(payload.prev_status ?? '');
+        const job = String(payload.job ?? 'unknown');
+        const ciCtx = String(payload.context ?? '');
+
+        const isFixed = ['failure', 'red', 'error'].includes(prev_status) && ['success', 'green', 'passed'].includes(status);
+        const isBroken = ['success', 'green', 'passed'].includes(prev_status) && ['failure', 'red', 'error'].includes(status);
+
+        const slug = `ci:${ckgSlug(job)}`;
+        const conceptId = ckgSlug(slug);
+        await ckgUpsertNode(redis, conceptId, 'ci', 'job');
+
+        if (isFixed) {
+          const problemId = ckgSlug(`problem:${ckgSlug(job)}`);
+          await ckgUpsertNode(redis, problemId, 'problem', 'ci-failure');
+          await ckgUpdateEdge(redis, conceptId, 'fixes', problemId, true);
+          const lessonObj = {
+            topic: slug, outcome: 'success' as const,
+            what_worked: `CI job "${job}" went ${prev_status} → ${status}`,
+            what_failed: `Job "${job}" was failing`, context: `CLS/ci: ${ciCtx}`,
+            severity: 'major' as const, file_paths: [], commands: [], tags: ['cls', 'ci'],
+            depends_on: [], recall_count: 0, ts, verified_at: ts, confidence: 0.75,
+            audit_trail: [{ ts, action: 'cls_ci_fixed' }], version: 3,
+          };
+          await redis.rpush(`cachly:lessons:${slug}`, JSON.stringify(lessonObj));
+          await redis.set(`cachly:lesson:best:${slug}`, JSON.stringify(lessonObj));
+        } else if (isBroken) {
+          const causeId = ckgSlug(`cause:${ckgSlug(job)}`);
+          await ckgUpsertNode(redis, causeId, 'cause', 'ci-break');
+          await ckgUpdateEdge(redis, conceptId, 'causes', causeId, false);
+        }
+
+        await redis.rpush(clsKey, JSON.stringify({ source, payload: { status, prev_status, job }, ts }));
+        await redis.ltrim(clsKey, -200, -1);
+
+        const statusIcon = isFixed ? '✅ Fixed' : isBroken ? '🔴 Broken' : '📊 Recorded';
+        return [
+          `📨 **CLS Ingested: ci_outcome**`, '',
+          `${statusIcon}: \`${job}\` — ${prev_status || '?'} → ${status}`,
+          isFixed ? `🔧 CKG \`fixes\` edge added (75% confidence)` : isBroken ? `⚡ CKG \`causes\` edge added` : `📊 State recorded`,
+          `💡 Lesson: \`${slug}\`  |  Predict: \`brain_predict(context="${job}")\``,
+        ].join('\n');
+      }
+
+      if (source === 'ide_diagnostic') {
+        const error = String(payload.error ?? '');
+        const fix = String(payload.fix ?? '');
+        const file = String(payload.file ?? '');
+
+        const errorConcept = extractProblemConcept(error) ?? 'unknown-error';
+        const slug = `debug:${ckgSlug(errorConcept)}`;
+        const conceptId = ckgSlug(slug);
+        const problemId = ckgSlug(`problem:${errorConcept}`);
+
+        await ckgUpsertNode(redis, conceptId, 'debug', 'diagnostic');
+        await ckgUpsertNode(redis, problemId, 'problem', 'compiler-error');
+        await ckgUpdateEdge(redis, conceptId, 'fixes', problemId, true);
+
+        const lessonObj = {
+          topic: slug, outcome: 'success' as const, what_worked: fix, what_failed: error,
+          context: `CLS/ide: ${file}`, severity: 'minor' as const,
+          file_paths: file ? [file] : [], commands: [], tags: ['cls', 'ide-diagnostic'],
+          depends_on: [], recall_count: 0, ts, verified_at: ts, confidence: 0.65,
+          audit_trail: [{ ts, action: 'cls_ide_diagnostic' }], version: 3,
+        };
+        await redis.rpush(`cachly:lessons:${slug}`, JSON.stringify(lessonObj));
+        const existingL = await redis.get(`cachly:lesson:best:${slug}`);
+        if (!existingL) await redis.set(`cachly:lesson:best:${slug}`, JSON.stringify(lessonObj));
+
+        await redis.rpush(clsKey, JSON.stringify({ source, payload: { error: error.slice(0, 60), fix: fix.slice(0, 60), file }, ts }));
+        await redis.ltrim(clsKey, -200, -1);
+
+        return [
+          `📨 **CLS Ingested: ide_diagnostic**`, '',
+          `Error: \`${error.slice(0, 80)}\``,
+          `Fix: ${fix.slice(0, 100)}`,
+          file ? `File: \`${file}\`` : '',
+          '', `🕸️ CKG: \`${conceptId}\` → fixes → \`${problemId}\`  |  Lesson: \`${slug}\``,
+        ].filter(l => l !== '').join('\n');
+      }
+
+      return `❌ Unknown CLS source: "${source}". Valid: git_commit, ci_outcome, ide_diagnostic`;
+    }
+
+    // ── Layer 5: CLS — cls_install_hooks ─────────────────────────────────────
+    case 'cls_install_hooks': {
+      const { instance_id, repo_path = '.', hooks = ['git', 'ci'] } = args as {
+        instance_id: string; repo_path?: string; hooks?: string[];
+      };
+      const hooksArr = Array.isArray(hooks) ? hooks : ['git', 'ci'];
+      const lines: string[] = [`🔌 **CLS Hook Installation Guide**\n`];
+
+      if (hooksArr.includes('git')) {
+        const hookScript = [
+          `#!/bin/sh`,
+          `# cachly CLS — Continuous Learning Stream git hook`,
+          `# Installed by cls_install_hooks · runs silently on every commit`,
+          `INSTANCE="${instance_id}"`,
+          `SHA=$(git rev-parse HEAD 2>/dev/null || echo "")`,
+          `MSG=$(git log -1 --pretty=%B 2>/dev/null | head -1)`,
+          `FILES=$(git diff-tree --no-commit-id -r --name-only HEAD 2>/dev/null | tr '\\n' ',' | sed 's/,$//')`,
+          `node -e "`,
+          `const p={instance_id:'$INSTANCE',source:'git_commit',payload:{message:$(echo "$MSG" | jq -R . 2>/dev/null || echo '"commit"'),sha:'$SHA',files:'$FILES'.split(',').filter(Boolean)}};`,
+          `try{require('child_process').execSync('npx @cachly-dev/mcp-server@latest cls-ingest \\''+JSON.stringify(p)+'\\'',{stdio:'ignore',timeout:5000})}catch(e){}`,
+          `" 2>/dev/null &`,
+          `exit 0`,
+        ].join('\n');
+
+        lines.push(`### Git post-commit hook`);
+        lines.push(`**Quick install (run once per repo):**`);
+        lines.push('```sh');
+        lines.push(`cat > ${repo_path}/.git/hooks/post-commit << 'HOOK'`);
+        lines.push(hookScript);
+        lines.push(`HOOK`);
+        lines.push(`chmod +x ${repo_path}/.git/hooks/post-commit`);
+        lines.push('```');
+        lines.push(`After install: every \`git commit\` automatically updates your brain's CKG.`);
+        lines.push('');
+      }
+
+      if (hooksArr.includes('ci')) {
+        lines.push(`### GitHub Actions CI outcome hook`);
+        lines.push(`**Add at the end of each job** (after build/test steps):`);
+        lines.push('```yaml');
+        lines.push(`- name: cachly CLS — record CI outcome`);
+        lines.push(`  if: always()`);
+        lines.push(`  run: |`);
+        lines.push(`    node -e "`);
+        lines.push(`    const r=require('https');`);
+        lines.push(`    const d=JSON.stringify({instance_id:'${instance_id}',source:'ci_outcome',payload:{`);
+        lines.push(`      status:'\${{ job.status }}',prev_status:'unknown',job:'\${{ github.job }}',`);
+        lines.push(`      context:'github-actions run \${{ github.run_number }}'}});`);
+        lines.push(`    r.request({hostname:'api.cachly.dev',path:'/api/v1/cls/ingest',method:'POST',`);
+        lines.push(`      headers:{'Content-Type':'application/json','Authorization':'Bearer \$CACHLY_JWT',`);
+        lines.push(`        'Content-Length':d.length}},()=>{}).end(d);`);
+        lines.push(`    " 2>/dev/null || true`);
+        lines.push(`  env:`);
+        lines.push(`    CACHLY_JWT: \${{ secrets.CACHLY_JWT }}`);
+        lines.push('```');
+        lines.push('');
+      }
+
+      lines.push(`💡 Once installed: \`brain_search(query="cls")\` to verify events are arriving.`);
+      lines.push(`📊 Monitor CKG growth: \`ckg_inspect(concept="ci")\` or \`ckg_inspect(concept="fix")\``);
+      return lines.join('\n');
+    }
+
+    // ── Layer 6: FedBrain — fedbrain_contribute ───────────────────────────────
+    case 'fedbrain_contribute': {
+      const { instance_id, lesson_key, visibility = 'public' } = args as {
+        instance_id: string; lesson_key: string; visibility?: string;
+      };
+      const redis = await getConnection(instance_id);
+
+      const raw = await redis.get(`cachly:lesson:best:${lesson_key}`);
+      if (!raw) return `❌ Lesson \`${lesson_key}\` not found. Store it first with \`learn_from_attempts\`.`;
+
+      const lesson = JSON.parse(raw) as { topic: string; outcome: string; what_worked: string; what_failed?: string; tags?: string[]; commands?: string[]; severity?: string; ts?: string };
+
+      const domainTokens = [lesson.topic.split(':')[0], ...(lesson.tags ?? [])].filter(Boolean);
+      const domainFingerprint = [...new Set(domainTokens)].sort().join(',');
+
+      // HMAC certificate ID (non-reversible, privacy-safe)
+      const certContent = `${lesson.topic}:${lesson.outcome}:${lesson.what_worked}`;
+      const certId = createHmac('sha256', `cachly-fedbrain:${instance_id}`).update(certContent).digest('hex').slice(0, 16);
+
+      const cert = {
+        cert_id: certId, lesson_key, visibility,
+        domain_fingerprint: domainFingerprint,
+        contributed_at: new Date().toISOString(),
+        confirm_count: 0,
+        trust_score: lesson.outcome === 'success' ? 0.85 : 0.5,
+      };
+      await redis.set(`cachly:fedbrain:cert:${certId}`, JSON.stringify(cert));
+      await redis.sadd('cachly:fedbrain:contributed', certId);
+
+      // Try global commons via syndication API
+      let syndicationResult: string;
+      try {
+        await apiFetch('/api/v1/syndication/contribute', {
+          method: 'POST',
+          body: JSON.stringify({
+            topic: lesson.topic, outcome: lesson.outcome,
+            what_worked: lesson.what_worked, what_failed: lesson.what_failed ?? '',
+            severity: lesson.severity ?? 'major', cert_id: certId,
+            domain_fingerprint: domainFingerprint, visibility,
+          }),
+        });
+        syndicationResult = `✅ Contributed to global commons`;
+      } catch {
+        syndicationResult = `📦 Stored locally (commons API unavailable — will sync when online)`;
+      }
+
+      return [
+        `🌐 **FedBrain Contribute: "${lesson_key}"**`, '',
+        `📜 Certificate: \`${certId}\``,
+        `🏷️ Domain fingerprint: ${domainTokens.slice(0, 6).map(t => `\`${t}\``).join(', ')}`,
+        `🔒 Visibility: ${visibility}`,
+        '', syndicationResult, '',
+        `💡 At 10 independent confirms → 🏆 Gold Standard`,
+        `🔍 Search: \`fedbrain_search(query="${lesson.topic.split(':').slice(-1)[0]}")\``,
+      ].join('\n');
+    }
+
+    // ── Layer 6: FedBrain — fedbrain_search ──────────────────────────────────
+    case 'fedbrain_search': {
+      const { instance_id, query, context_hints = [], limit = 10 } = args as {
+        instance_id: string; query: string; context_hints?: string[]; limit?: number;
+      };
+      const redis = await getConnection(instance_id);
+
+      // Build local domain context from contributed certificates + explicit hints
+      const contribIds = await redis.smembers('cachly:fedbrain:contributed');
+      const localDomains = new Map<string, number>();
+      for (const certId of contribIds.slice(0, 30)) {
+        const certRaw = await redis.get(`cachly:fedbrain:cert:${certId}`);
+        if (!certRaw) continue;
+        try {
+          const cert = JSON.parse(certRaw) as { domain_fingerprint?: string };
+          for (const d of (cert.domain_fingerprint ?? '').split(',').filter(Boolean)) {
+            localDomains.set(d, (localDomains.get(d) ?? 0) + 1);
+          }
+        } catch { /* skip */ }
+      }
+      for (const hint of (Array.isArray(context_hints) ? context_hints : [])) {
+        localDomains.set(hint.toLowerCase(), (localDomains.get(hint.toLowerCase()) ?? 0) + 2);
+      }
+
+      // Search global commons
+      type SynResult = { id: string; topic: string; category: string; outcome: string; what_worked: string; what_failed?: string; severity: string; confirm_count: number; created_at: string; domain_fingerprint?: string };
+      let results: SynResult[] = [];
+      try {
+        const params = new URLSearchParams({ q: query, limit: String(Math.min((limit as number) * 2, 50)) });
+        const res = await apiFetch<{ results: SynResult[]; count: number }>(`/api/v1/syndication/search?${params}`);
+        results = res.results ?? [];
+      } catch {
+        // Fallback: search local lessons
+        const lessonKeys: string[] = [];
+        const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+        await new Promise<void>((res, rej) => { lStream.on('data', (b: string[]) => lessonKeys.push(...b)); lStream.on('end', res); lStream.on('error', rej); });
+        for (const k of lessonKeys.slice(0, 60)) {
+          const r = await redis.get(k);
+          if (!r) continue;
+          try {
+            const l = JSON.parse(r) as { topic: string; outcome: string; what_worked?: string; what_failed?: string; severity?: string; ts?: string };
+            const haystack = `${l.topic} ${l.what_worked ?? ''} ${l.what_failed ?? ''}`.toLowerCase();
+            if (query.toLowerCase().split(/\s+/).some(t => t.length > 2 && haystack.includes(t))) {
+              results.push({ id: k.split(':').pop() ?? k, topic: l.topic, category: l.topic.split(':')[0], outcome: l.outcome, what_worked: l.what_worked ?? '', severity: l.severity ?? 'major', confirm_count: 0, created_at: l.ts ?? new Date().toISOString() });
+            }
+          } catch { /* skip */ }
+        }
+      }
+
+      if (results.length === 0) {
+        return [`🌐 **FedBrain Search: "${query}"**`, '', `No results. Contribute: \`fedbrain_contribute(lesson_key="fix:...")\``].join('\n');
+      }
+
+      // Context-weighted ranking
+      const ranked = results.map(r => {
+        const rDomains = (r.domain_fingerprint ?? r.category ?? '').split(',').filter(Boolean);
+        const overlap = rDomains.reduce((s, d) => s + (localDomains.get(d) ?? 0), 0);
+        const contextScore = localDomains.size > 0 ? overlap / Math.max(1, localDomains.size + rDomains.length) : 0;
+        const confirmedScore = Math.min(1, r.confirm_count / 10);
+        const weightedScore = (contextScore * 0.4) + (confirmedScore * 0.4) + (r.outcome === 'success' ? 0.2 : 0);
+        return { ...r, weightedScore, isGoldStandard: r.confirm_count >= 10 };
+      }).sort((a, b) => b.weightedScore - a.weightedScore).slice(0, limit as number);
+
+      const lines = [`🌐 **FedBrain Search: "${query}"** — ${ranked.length} result${ranked.length !== 1 ? 's' : ''} (context-weighted)\n`];
+      for (const r of ranked) {
+        const icon = r.outcome === 'success' ? '✅' : r.outcome === 'failure' ? '❌' : '⚠️';
+        const goldBadge = r.isGoldStandard ? ' 🏆 _Gold Standard_' : r.confirm_count >= 3 ? ` ✓${r.confirm_count}` : '';
+        const ctxPct = Math.round(r.weightedScore * 100);
+        lines.push(`${icon}${goldBadge} **\`${r.topic}\`** [ctx: ${ctxPct}%]`);
+        if (r.what_worked) lines.push(`  ✅ ${r.what_worked.slice(0, 150)}`);
+        if (r.what_failed) lines.push(`  ❌ ${r.what_failed.slice(0, 80)}`);
+        lines.push(`  _${r.confirm_count} confirm${r.confirm_count !== 1 ? 's' : ''}  |  \`${r.id.slice(0, 12)}\`_`, '');
+      }
+      if (localDomains.size > 0) {
+        const topDomains = [...localDomains.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([d, n]) => `\`${d}\`(${n})`).join(', ');
+        lines.push(`🎯 Your context: ${topDomains}`);
+      }
+      lines.push(`💡 Confirm: \`fedbrain_confirm(topic="<topic>", outcome="worked")\``);
+      return lines.join('\n');
+    }
+
+    // ── Layer 6: FedBrain — fedbrain_confirm ─────────────────────────────────
+    case 'fedbrain_confirm': {
+      const { instance_id, topic, outcome } = args as {
+        instance_id: string; topic: string; outcome: 'worked' | 'partially_worked' | 'did_not_work';
+      };
+      const redis = await getConnection(instance_id);
+      const ts = new Date().toISOString();
+
+      const confirmEntry = JSON.stringify({ topic, outcome, ts });
+      await redis.rpush('cachly:fedbrain:confirmations', confirmEntry);
+      await redis.ltrim('cachly:fedbrain:confirmations', -200, -1);
+
+      // Update local CKG confidence
+      const worked = outcome === 'worked';
+      const partial = outcome === 'partially_worked';
+      await ckgUpdateEdge(redis, ckgSlug(topic), 'fixes', ckgSlug(`syndicated:${topic}`), worked, partial);
+
+      // Propagate to global commons
+      let propResult: string;
+      try {
+        await apiFetch('/api/v1/syndication/confirm', { method: 'POST', body: JSON.stringify({ topic, outcome }) });
+        propResult = `✅ Confirmation propagated to global commons`;
+      } catch {
+        await redis.rpush('cachly:fedbrain:pending_confirms', confirmEntry);
+        await redis.ltrim('cachly:fedbrain:pending_confirms', -50, -1);
+        propResult = `📦 Queued locally (API unavailable — will propagate on next online session)`;
+      }
+
+      const icon = worked ? '✅' : partial ? '⚠️' : '❌';
+      return [
+        `${icon} **FedBrain Confirm: "${topic}"** → ${outcome}`, '',
+        propResult, '',
+        `🕸️ CKG confidence ${worked || partial ? 'boosted' : 'reduced'} for \`${ckgSlug(topic)}\``,
+        `💡 Your confirmation helps other brains worldwide.`,
+        `📊 Status: \`fedbrain_status(instance_id="...")\``,
+      ].join('\n');
+    }
+
+    // ── Layer 6: FedBrain — fedbrain_status ──────────────────────────────────
+    case 'fedbrain_status': {
+      const { instance_id } = args as { instance_id: string };
+      const redis = await getConnection(instance_id);
+
+      const contribIds = await redis.smembers('cachly:fedbrain:contributed');
+      const confirmsRaw = await redis.lrange('cachly:fedbrain:confirmations', -10, -1);
+      const pendingConfirms = await redis.llen('cachly:fedbrain:pending_confirms');
+      const confirms = confirmsRaw.map(r => { try { return JSON.parse(r) as { topic: string; outcome: string; ts: string }; } catch { return null; } }).filter(Boolean) as Array<{ topic: string; outcome: string; ts: string }>;
+
+      const certDetails: Array<{ cert_id: string; lesson_key: string; confirm_count: number; trust_score: number; isGold: boolean }> = [];
+      for (const certId of contribIds.slice(0, 15)) {
+        const raw = await redis.get(`cachly:fedbrain:cert:${certId}`);
+        if (!raw) continue;
+        try {
+          const cert = JSON.parse(raw) as { cert_id: string; lesson_key: string; confirm_count?: number; trust_score?: number };
+          certDetails.push({ cert_id: cert.cert_id, lesson_key: cert.lesson_key, confirm_count: cert.confirm_count ?? 0, trust_score: cert.trust_score ?? 0.5, isGold: (cert.confirm_count ?? 0) >= 10 });
+        } catch { /* skip */ }
+      }
+
+      const lines = [
+        `🌐 **FedBrain Status**\n`,
+        `### 📤 Contributed Lessons: ${contribIds.length}`,
+      ];
+
+      if (certDetails.length > 0) {
+        for (const c of certDetails) {
+          const goldBadge = c.isGold ? ' 🏆 Gold Standard' : '';
+          const confBar = '█'.repeat(Math.min(10, c.confirm_count)) + '░'.repeat(Math.max(0, 10 - c.confirm_count));
+          lines.push(`  \`${c.lesson_key}\` [${confBar}] ×${c.confirm_count}${goldBadge}`);
+        }
+      } else {
+        lines.push(`  _None yet. Contribute with \`fedbrain_contribute(lesson_key="fix:...")\`_`);
+      }
+
+      lines.push('', `### 📥 Recent Confirmations: ${confirms.length}`);
+      if (confirms.length > 0) {
+        for (const c of confirms.slice(-5)) {
+          const icon = c.outcome === 'worked' ? '✅' : c.outcome === 'partially_worked' ? '⚠️' : '❌';
+          lines.push(`  ${icon} \`${c.topic}\` — ${c.outcome} (${new Date(c.ts).toLocaleDateString('de-DE')})`);
+        }
+      } else {
+        lines.push(`  _None yet. Confirm syndicated lessons with \`fedbrain_confirm\`_`);
+      }
+
+      if (pendingConfirms > 0) {
+        lines.push('', `⚠️ ${pendingConfirms} confirmation${pendingConfirms !== 1 ? 's' : ''} pending propagation`);
+      }
+
+      lines.push('', '---',
+        `**Contribute:** \`fedbrain_contribute(lesson_key="fix:...")\``,
+        `**Search:** \`fedbrain_search(query="...")\``,
+        `**Confirm:** \`fedbrain_confirm(topic="...", outcome="worked")\``,
+      );
+      return lines.join('\n');
+    }
+
+    // ── crystal_view ──────────────────────────────────────────────────────────
+    case 'crystal_view': {
+      const { instance_id, show_raw = false } = args as { instance_id: string; show_raw?: boolean };
+      const redis = await getConnection(instance_id);
+
+      const raw = await redis.get('cachly:crystal:latest');
+      if (!raw) {
+        return [
+          `💎 **Memory Crystal: not yet created**`, '',
+          `No crystal found. Create one with \`memory_crystalize()\` to compress your accumulated wisdom.`,
+          '', `💡 Tip: run \`memory_crystalize\` monthly for best results.`,
+        ].join('\n');
+      }
+
+      type Crystal = { label: string; ts: string; session_count: number; lesson_count: number; top_patterns: Array<{ category: string; insight: string; count: number }>; categories: string[]; created_from: string };
+      const crystal: Crystal = JSON.parse(raw);
+      const age = Math.floor((Date.now() - new Date(crystal.ts).getTime()) / 86400000);
+      const freshEmoji = age <= 7 ? '🟢' : age <= 30 ? '🟡' : '🔴';
+
+      const lines = [
+        `💎 **Memory Crystal: ${crystal.label}**`, '',
+        `📅 Created: ${new Date(crystal.ts).toLocaleDateString('de-DE')} (${age}d ago ${freshEmoji})`,
+        `📊 Compressed from: ${crystal.created_from}`,
+        `🗂️ Categories: ${crystal.categories.slice(0, 10).map(c => `\`${c}\``).join(', ')}${crystal.categories.length > 10 ? ` +${crystal.categories.length - 10} more` : ''}`,
+        '',
+        `**🔑 Top patterns (${crystal.top_patterns.length}):**`,
+      ];
+      for (const p of crystal.top_patterns) {
+        lines.push(`  • **${p.category}** (${p.count}×): ${p.insight.slice(0, 110)}`);
+      }
+      if (age > 30) {
+        lines.push('', `⚠️ Crystal is ${age}d old — run \`memory_crystalize()\` to refresh it.`);
+      }
+      if (show_raw) {
+        lines.push('', '```json', JSON.stringify(crystal, null, 2), '```');
+      }
+      lines.push('', `💡 Refresh: \`memory_crystalize()\`  |  Recover: \`compact_recover(instance_id="...")\``);
+      return lines.join('\n');
+    }
+
+    // ── compact_recover ───────────────────────────────────────────────────────
+    case 'compact_recover': {
+      const { instance_id, focus = '' } = args as { instance_id: string; focus?: string };
+      const redis = await getConnection(instance_id);
+
+      const lines = [`🔁 **Compact Recovery Briefing**\n`];
+      lines.push(`> *Call this first after any context limit hit. Reconstructs where you left off.*\n`);
+
+      // 1. Memory Crystal
+      const crystalRaw = await redis.get('cachly:crystal:latest');
+      if (crystalRaw) {
+        type Crystal = { label: string; ts: string; session_count: number; lesson_count: number; top_patterns: Array<{ category: string; insight: string; count: number }> };
+        const crystal: Crystal = JSON.parse(crystalRaw);
+        lines.push(`### 💎 Memory Crystal: ${crystal.label}`);
+        lines.push(`Compressed from ${crystal.session_count} sessions, ${crystal.lesson_count} lessons.`);
+        const topN = focus
+          ? crystal.top_patterns.filter(p => p.category.toLowerCase().includes(focus.toLowerCase()) || p.insight.toLowerCase().includes(focus.toLowerCase())).slice(0, 4)
+          : crystal.top_patterns.slice(0, 4);
+        for (const p of topN) lines.push(`  • **${p.category}**: ${p.insight.slice(0, 100)}`);
+        lines.push('');
+      }
+
+      // 2. Last session summary
+      const lastSession = await redis.get('cachly:session:last');
+      if (lastSession) {
+        type Session = { summary?: string; ts?: string; focus?: string };
+        const sess: Session = JSON.parse(lastSession);
+        lines.push(`### 🕐 Last Session`);
+        if (sess.focus) lines.push(`Focus: _${sess.focus}_`);
+        if (sess.summary) lines.push(`Summary: ${sess.summary.slice(0, 300)}`);
+        lines.push('');
+      }
+
+      // 3. Session handoff
+      const handoff = await redis.get('cachly:session:handoff');
+      if (handoff) {
+        type Handoff = { remaining_tasks?: string[]; instructions?: string; context_summary?: string; blocked_on?: string };
+        const h: Handoff = JSON.parse(handoff);
+        lines.push(`### 📋 Handoff (from last window)`);
+        if (h.context_summary) lines.push(`Context: ${h.context_summary.slice(0, 200)}`);
+        if (h.remaining_tasks?.length) {
+          lines.push(`Remaining tasks:`);
+          for (const t of h.remaining_tasks.slice(0, 5)) lines.push(`  • ${t}`);
+        }
+        if (h.instructions) lines.push(`⚠️ Instructions: ${h.instructions.slice(0, 200)}`);
+        if (h.blocked_on) lines.push(`🚧 Blocked on: ${h.blocked_on}`);
+        lines.push('');
+      }
+
+      // 4. WIP registry
+      const wipRaw = await redis.get('cachly:ctx:wip-registry');
+      if (wipRaw) {
+        type Ctx = { content?: string };
+        const wip: Ctx = JSON.parse(wipRaw);
+        if (wip.content) {
+          lines.push(`### 🔧 WIP Registry`);
+          lines.push(wip.content.slice(0, 400));
+          lines.push('');
+        }
+      }
+
+      // 5. Open failures (roadmap with status=blocked/in_progress)
+      const roadmapKeys: string[] = [];
+      const rStream = redis.scanStream({ match: 'cachly:roadmap:*', count: 100 });
+      await new Promise<void>((res, rej) => { rStream.on('data', (b: string[]) => roadmapKeys.push(...b)); rStream.on('end', res); rStream.on('error', rej); });
+      const openItems: Array<{ title: string; status: string; priority?: string }> = [];
+      for (const k of roadmapKeys.slice(0, 30)) {
+        const r = await redis.get(k);
+        if (!r) continue;
+        try {
+          const item = JSON.parse(r) as { title?: string; status?: string; priority?: string };
+          if (item.status === 'in_progress' || item.status === 'blocked') openItems.push({ title: item.title ?? k, status: item.status, priority: item.priority });
+        } catch { /* skip */ }
+      }
+      if (openItems.length > 0) {
+        lines.push(`### 🚧 Open Items`);
+        for (const i of openItems.slice(0, 5)) lines.push(`  • [${i.status}] ${i.title}`);
+        lines.push('');
+      }
+
+      // 6. Focus-relevant lessons
+      if (focus) {
+        const lessonKeys: string[] = [];
+        const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+        await new Promise<void>((res, rej) => { lStream.on('data', (b: string[]) => lessonKeys.push(...b)); lStream.on('end', res); lStream.on('error', rej); });
+        const relevant: Array<{ topic: string; what_worked: string }> = [];
+        for (const k of lessonKeys) {
+          const r = await redis.get(k);
+          if (!r) continue;
+          try {
+            const l = JSON.parse(r) as { topic: string; what_worked?: string };
+            if (l.topic.toLowerCase().includes(focus.toLowerCase()) && l.what_worked) {
+              relevant.push({ topic: l.topic, what_worked: l.what_worked });
+            }
+          } catch { /* skip */ }
+        }
+        if (relevant.length > 0) {
+          lines.push(`### 💡 Relevant Lessons for "${focus}"`);
+          for (const l of relevant.slice(0, 4)) lines.push(`  • **${l.topic}**: ${l.what_worked.slice(0, 100)}`);
+          lines.push('');
+        }
+      }
+
+      if (lines.length <= 3) {
+        lines.push(`_No brain data found. Start accumulating knowledge with \`learn_from_attempts\` and \`session_start\`._`);
+      }
+      lines.push(`---`, `🧠 Brain is ready. Continue your work — full context restored.`);
+      return lines.join('\n');
+    }
+
+    // ── brain_from_git ────────────────────────────────────────────────────────
+    case 'brain_from_git': {
+      const { instance_id, repo_path = '.', limit = 100, branch = 'HEAD', since = '' } = args as {
+        instance_id: string; repo_path?: string; limit?: number; branch?: string; since?: string;
+      };
+      const redis = await getConnection(instance_id);
+      const { execSync } = await import('node:child_process');
+      const { resolve } = await import('node:path');
+
+      const repoDir = resolve(repo_path);
+      const maxCommits = Math.min(Number(limit) || 100, 500);
+
+      // Verify it's a git repo
+      try {
+        execSync('git rev-parse --git-dir', { cwd: repoDir, stdio: 'pipe' });
+      } catch {
+        return `❌ Not a git repository: \`${repoDir}\`. Pass \`repo_path\` pointing to a git checkout.`;
+      }
+
+      // Build git log command
+      const sinceFlag = since ? `--since="${since}"` : '';
+      const logCmd = `git log ${branch} ${sinceFlag} --pretty=format:"%H|||%s|||%ad|||%an" --date=short --no-merges -n ${maxCommits}`;
+
+      let logOutput = '';
+      try {
+        logOutput = execSync(logCmd, { cwd: repoDir, encoding: 'utf-8', stdio: 'pipe' });
+      } catch (e) {
+        return `❌ git log failed: ${(e as Error).message}. Check \`repo_path\` and \`branch\`.`;
+      }
+
+      const commits = logOutput.trim().split('\n').filter(Boolean).map(line => {
+        const [sha, subject, date, author] = line.split('|||');
+        return { sha: (sha ?? '').trim(), subject: (subject ?? '').trim(), date: (date ?? '').trim(), author: (author ?? '').trim() };
+      });
+
+      if (commits.length === 0) {
+        return `⚠️ No commits found in \`${repoDir}\` on branch \`${branch}\`${since ? ` since ${since}` : ''}.`;
+      }
+
+      // Pattern classifiers
+      const classifyCommit = (subject: string): { category: string; outcome: 'success' | 'failure' | 'partial'; severity: 'critical' | 'major' | 'minor' } => {
+        const s = subject.toLowerCase();
+        if (/\b(fix|fixed|fixes|bug|hotfix|patch|revert|resolve|closes? #\d+)\b/.test(s)) {
+          const sev: 'critical' | 'major' | 'minor' = /\b(critical|crash|security|auth|data loss|outage|prod|production)\b/.test(s) ? 'critical' : /\b(major|breaking|regression|hotfix)\b/.test(s) ? 'major' : 'minor';
+          return { category: 'fix', outcome: 'success', severity: sev };
+        }
+        if (/\b(feat|feature|add|added|implement|new|introduce)\b/.test(s)) return { category: 'feat', outcome: 'success', severity: 'minor' };
+        if (/\b(refactor|clean|cleanup|improve|simplify|extract|rename)\b/.test(s)) return { category: 'refactor', outcome: 'success', severity: 'minor' };
+        if (/\b(perf|optimize|speed|cache|latency|memory|performance)\b/.test(s)) return { category: 'perf', outcome: 'success', severity: 'major' };
+        if (/\b(security|cve|auth|csrf|xss|sql|injection|sanitize|escape|encrypt)\b/.test(s)) return { category: 'security', outcome: 'success', severity: 'critical' };
+        if (/\b(deploy|ci|cd|build|docker|k8s|helm|infra|devops)\b/.test(s)) return { category: 'deploy', outcome: 'success', severity: 'major' };
+        if (/\b(test|spec|coverage|assert|mock|unit|integration)\b/.test(s)) return { category: 'test', outcome: 'success', severity: 'minor' };
+        return { category: 'chore', outcome: 'success', severity: 'minor' };
+      };
+
+      // Extract domain keywords from commit subject
+      const extractDomain = (subject: string): string => {
+        const s = subject.toLowerCase();
+        const tokens = s.replace(/[^a-z0-9\s\-_]/g, ' ').split(/\s+/).filter(t => t.length > 3 && !['that', 'this', 'with', 'from', 'when', 'into', 'also', 'some', 'were'].includes(t));
+        return tokens.slice(0, 3).join('-') || 'general';
+      };
+
+      const ts = new Date().toISOString();
+      let ingested = 0;
+      let skipped = 0;
+      const categoryCount = new Map<string, number>();
+
+      for (const commit of commits) {
+        if (!commit.subject) { skipped++; continue; }
+        const { category, outcome, severity } = classifyCommit(commit.subject);
+        const domain = extractDomain(commit.subject);
+        const topic = `${category}:${domain}`;
+        categoryCount.set(category, (categoryCount.get(category) ?? 0) + 1);
+
+        const lessonObj = {
+          topic, outcome, severity,
+          what_worked: commit.subject.slice(0, 200),
+          what_failed: '',
+          context: `git:${commit.sha.slice(0, 8)} by ${commit.author} on ${commit.date}`,
+          file_paths: [], commands: [`git show ${commit.sha.slice(0, 8)}`],
+          tags: ['brain_from_git', category, 'git-history'],
+          depends_on: [], recall_count: 0, ts, verified_at: ts,
+          confidence: 0.55, // lower confidence for auto-inferred lessons
+          audit_trail: [{ ts, action: 'brain_from_git', sha: commit.sha.slice(0, 8) }],
+          version: 3,
+        };
+
+        // Only store if no existing lesson for this topic (avoid overwriting higher-confidence lessons)
+        const existing = await redis.get(`cachly:lesson:best:${topic}`);
+        if (!existing) {
+          await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(lessonObj));
+          await redis.rpush(`cachly:lessons:${topic}`, JSON.stringify(lessonObj));
+        }
+        await redis.rpush('cachly:lessons:brain_from_git:all', JSON.stringify({ topic, sha: commit.sha.slice(0, 8), subject: commit.subject.slice(0, 60) }));
+        await redis.ltrim('cachly:lessons:brain_from_git:all', -500, -1);
+
+        // Update CKG
+        const conceptId = ckgSlug(topic);
+        await ckgUpsertNode(redis, conceptId, category, 'git-derived');
+        ingested++;
+      }
+
+      const categoryBreakdown = [...categoryCount.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `  • **${k}** (${v})`).join('\n');
+
+      return [
+        `🔁 **brain_from_git: ${repoDir}**`, '',
+        `📂 Branch: \`${branch}\`  |  Processed: **${commits.length}** commits  |  Ingested: **${ingested}** lessons  |  Skipped: ${skipped}`,
+        ``,
+        `**Breakdown by category:**`,
+        categoryBreakdown,
+        ``,
+        `💡 New lessons are stored with confidence 0.55 (auto-inferred).`,
+        `💡 As you confirm them via \`learn_from_attempts\`, confidence rises automatically.`,
+        `🔍 Explore: \`brain_search(query="fix")\`  |  \`ckg_inspect(concept="deploy")\``,
+      ].join('\n');
+    }
+
+    // ── brain_predict_failures ─────────────────────────────────────────────────
+    case 'brain_predict_failures': {
+      const { instance_id, context: ctx, top_k = 5, format = 'detailed' } = args as {
+        instance_id: string; context: string; top_k?: number; format?: 'brief' | 'detailed';
+      };
+      const redis = await getConnection(instance_id);
+
+      const ctxTokens = ctx.toLowerCase().replace(/[^a-z0-9\s\-_:.]/g, ' ').split(/\s+/).filter(t => t.length > 2);
+
+      type FailurePred = { concept: string; failure: string; probability: number; fix?: string; topic?: string; source: 'ckg' | 'lesson' };
+      const failures: FailurePred[] = [];
+
+      // Step 1: CKG — find 'causes' and 'degrades_under' edges from context tokens
+      for (const token of ctxTokens.slice(0, 8)) {
+        const nodeKeys: string[] = [];
+        const nStream = redis.scanStream({ match: `cachly:ckg:node:*${token}*`, count: 50 });
+        await new Promise<void>((res, rej) => { nStream.on('data', (b: string[]) => nodeKeys.push(...b)); nStream.on('end', res); nStream.on('error', rej); });
+
+        for (const nk of nodeKeys.slice(0, 5)) {
+          const nodeRaw = await redis.get(nk);
+          if (!nodeRaw) continue;
+          const node: CKGNode = JSON.parse(nodeRaw);
+          const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${node.id}`);
+          for (const ek of edgeKeys.slice(0, 20)) {
+            const edgeRaw = await redis.get(ek);
+            if (!edgeRaw) continue;
+            const edge: CKGEdge = JSON.parse(edgeRaw);
+            if (edge.edgeType !== 'causes' && edge.edgeType !== 'degrades_under') continue;
+
+            // Look up fix for this failure from CKG 'fixes' edges
+            const fixEdgeKeys = await redis.smembers(`cachly:ckg:idx:from:${edge.to}`);
+            let fix: string | undefined;
+            for (const fek of fixEdgeKeys.slice(0, 10)) {
+              const feRaw = await redis.get(fek);
+              if (!feRaw) continue;
+              const fe: CKGEdge = JSON.parse(feRaw);
+              if (fe.edgeType === 'fixes') {
+                const lessonRaw = await redis.get(`cachly:lesson:best:${fe.from}`);
+                if (lessonRaw) {
+                  const lesson = JSON.parse(lessonRaw) as { what_worked?: string };
+                  fix = lesson.what_worked?.slice(0, 120);
+                  break;
+                }
+              }
+            }
+
+            failures.push({
+              concept: node.id,
+              failure: edge.to.replace(/-/g, ' '),
+              probability: edge.confidence,
+              fix,
+              source: 'ckg',
+            });
+          }
+        }
+      }
+
+      // Step 2: Lesson history — find failure-outcome lessons matching context
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 300 });
+      await new Promise<void>((res, rej) => { lStream.on('data', (b: string[]) => lessonKeys.push(...b)); lStream.on('end', res); lStream.on('error', rej); });
+
+      for (const k of lessonKeys.slice(0, 100)) {
+        const r = await redis.get(k);
+        if (!r) continue;
+        try {
+          const l = JSON.parse(r) as { topic: string; outcome: string; what_failed?: string; what_worked?: string; confidence?: number; severity?: string };
+          if (l.outcome !== 'failure' && l.outcome !== 'partial') continue;
+          if (!l.what_failed) continue;
+          const haystack = `${l.topic} ${l.what_failed}`.toLowerCase();
+          const matchScore = ctxTokens.filter(t => haystack.includes(t)).length / Math.max(1, ctxTokens.length);
+          if (matchScore < 0.15) continue;
+          const sevBoost = l.severity === 'critical' ? 0.15 : l.severity === 'major' ? 0.05 : 0;
+          failures.push({
+            concept: l.topic,
+            failure: l.what_failed.slice(0, 80),
+            probability: Math.min(0.97, (l.confidence ?? 0.5) * matchScore * 1.5 + sevBoost),
+            fix: l.what_worked?.slice(0, 120),
+            topic: l.topic,
+            source: 'lesson',
+          });
+        } catch { /* skip */ }
+      }
+
+      if (failures.length === 0) {
+        return [
+          `🔮 **Failure Prediction: "${ctx}"**`, '',
+          `No known failure patterns found for this context.`,
+          `💡 The brain learns from every \`learn_from_attempts(outcome="failure")\` call.`,
+          `🔍 Try: \`brain_predict(context="${ctx}")\` for broader predictions.`,
+        ].join('\n');
+      }
+
+      // Deduplicate and rank by probability
+      const seen = new Set<string>();
+      const ranked = failures.filter(f => {
+        const k = f.failure.slice(0, 40);
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      }).sort((a, b) => b.probability - a.probability).slice(0, Number(top_k));
+
+      const lines = [`🔮 **Failure Prediction for: "${ctx}"**\n`];
+      lines.push(`> Pre-deploy failure analysis based on ${failures.length} patterns. Ranked by probability.\n`);
+
+      for (let i = 0; i < ranked.length; i++) {
+        const f = ranked[i];
+        const pct = Math.round(f.probability * 100);
+        const bar = '█'.repeat(Math.round(pct / 10)) + '░'.repeat(10 - Math.round(pct / 10));
+        const icon = pct >= 70 ? '🔴' : pct >= 40 ? '🟡' : '🟢';
+        lines.push(`${icon} **${i + 1}. ${f.failure}**`);
+        lines.push(`   Probability: ${bar} **${pct}%** (${f.source === 'ckg' ? 'CKG causal edge' : 'lesson history'})`);
+        if (format === 'detailed' && f.fix) {
+          lines.push(`   ✅ Pre-loaded fix: _${f.fix}_`);
+        }
+        if (format === 'detailed' && f.topic) {
+          lines.push(`   📚 Lesson: \`${f.topic}\``);
+        }
+        lines.push('');
+      }
+
+      const highRisk = ranked.filter(f => f.probability >= 0.6);
+      if (highRisk.length > 0) {
+        lines.push(`⚠️ **${highRisk.length} high-risk failure${highRisk.length > 1 ? 's' : ''} detected** (≥60% probability). Review fixes before proceeding.`);
+      } else {
+        lines.push(`✅ No high-risk failures detected. Proceed with caution and monitor closely.`);
+      }
+      lines.push('', `💡 After deploy: \`learn_from_attempts(topic="deploy:...", outcome="success|failure")\` to improve future predictions.`);
+      return lines.join('\n');
     }
 
     default:
