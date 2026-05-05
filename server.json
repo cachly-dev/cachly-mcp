@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cachly-dev/mcp-server",
-  "description": "AI memory brain for Claude Code, Cursor, Copilot & Windsurf — 51 MCP tools. Persistent sessions, lessons learned, semantic search, Team Telepathy, Ambient Git Learning, Memory Crystals.",
+  "description": "The world's first Cognitive Cache — AI memory that thinks. 55+ MCP tools: persistent sessions, causal root-cause tracing, knowledge decay scoring, brain diff, zero-config autopilot. Works with Claude, Cursor, Copilot, Windsurf, Gemini. German servers, GDPR-native.",
   "repository": {
     "url": "https://github.com/cachly-dev/cachly-mcp",
     "source": "github"
   },
-  "version": "0.5.30",
+  "version": "0.6.0",
   "packages": [
     {
       "registryType": "npm",
       "name": "@cachly-dev/mcp-server",
       "identifier": "@cachly-dev/mcp-server",
-      "version": "0.5.30",
+      "version": "0.6.0",
       "transport": {
         "type": "stdio"
       }
