@@ -5,16 +5,21 @@ startCommand:
     properties:
       CACHLY_JWT:
         type: string
-        title: "API Key (JWT)"
-        description: "Your Cachly API key from cachly.dev/dashboard → API Keys"
+        title: "API Key"
+        description: "Your Cachly API key. Get it free at cachly.dev/setup-ai → Dashboard → API Keys. Looks like: cky_live_..."
+        examples:
+          - "cky_live_abc123..."
       CACHLY_BRAIN_INSTANCE_ID:
         type: string
         title: "Brain Instance ID"
-        description: "UUID of your Cachly Brain instance (e.g. 9d4077aa-bfa2-468b-89cd-0a8d8f3ec483)"
+        description: "UUID of your Cachly Brain instance. Find it at cachly.dev/instances — click your instance and copy the ID from the URL or details panel. Looks like: 9d4077aa-bfa2-468b-89cd-0a8d8f3ec483"
+        pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+        examples:
+          - "9d4077aa-bfa2-468b-89cd-0a8d8f3ec483"
       CACHLY_API_URL:
         type: string
-        title: "API URL"
-        description: "Cachly API endpoint — leave as default"
+        title: "API URL (optional)"
+        description: "Cachly API endpoint — leave as default unless you self-host"
         default: "https://api.cachly.dev"
     required:
       - CACHLY_JWT

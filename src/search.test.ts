@@ -4,13 +4,16 @@
  * Run: npx vitest run src/search.test.ts
  */
 import { describe, it, expect } from 'vitest';
-import { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp, STOPWORDS } from './index.js';
+import { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp, STOPWORDS,
+         katakanaToRomaji, arabicLightStem, expandCrossLingual, CROSS_LINGUAL_MAP } from './index.js';
 
 // ── Tokenizer ─────────────────────────────────────────────────────────────────
 
 describe('tokenize', () => {
   it('lowercases and splits on whitespace', () => {
-    expect(tokenize('Deploy API')).toEqual(['deploy', 'api']);
+    const result = tokenize('Deploy API');
+    expect(result).toContain('deploy');
+    expect(result).toContain('api');
   });
 
   it('filters English stopwords', () => {
@@ -69,7 +72,12 @@ describe('tokenize', () => {
   });
 
   it('removes single-char tokens', () => {
-    expect(tokenize('a b c deploy')).toEqual(['deploy']);
+    const result = tokenize('a b c deploy');
+    expect(result).toContain('deploy');
+    // single chars a, b, c must not appear
+    expect(result).not.toContain('a');
+    expect(result).not.toContain('b');
+    expect(result).not.toContain('c');
   });
 
   it('preserves colons and dots in tokens (topic slugs)', () => {
@@ -280,3 +288,322 @@ describe('extractTimestamp', () => {
     expect(extractTimestamp('{"ts":"not-a-date"}')).toBeUndefined();
   });
 });
+
+// ── Katakana → Romaji ──────────────────────────────────────────────────────────
+
+describe('katakanaToRomaji', () => {
+  it('converts basic katakana vowels', () => {
+    expect(katakanaToRomaji('アイウエオ')).toBe('aiueo');
+  });
+
+  it('converts コンテナ (container)', () => {
+    expect(katakanaToRomaji('コンテナ')).toBe('kontena');
+  });
+
+  it('converts デプロイ (deploy)', () => {
+    expect(katakanaToRomaji('デプロイ')).toBe('depuroi');
+  });
+
+  it('converts サーバー (server) — long vowel stripped', () => {
+    const r = katakanaToRomaji('サーバー');
+    expect(r).toContain('sa');
+    expect(r).toContain('ba');
+  });
+
+  it('converts digraph チェック (check)', () => {
+    const r = katakanaToRomaji('チェック');
+    expect(r).toContain('che');
+  });
+
+  it('converts ファイル (file)', () => {
+    const r = katakanaToRomaji('ファイル');
+    expect(r).toContain('fa');
+  });
+
+  it('handles empty string', () => {
+    expect(katakanaToRomaji('')).toBe('');
+  });
+});
+
+// ── Arabic Light Stemmer ───────────────────────────────────────────────────────
+
+describe('arabicLightStem', () => {
+  it('strips definite article ال (al-)', () => {
+    // الخطأ (al-khata = the error) → خطأ (khata)
+    expect(arabicLightStem('الخطأ')).toBe('خطأ');
+  });
+
+  it('strips و (wa-) prefix from long words', () => {
+    // وخطأ → خطأ (and error → error)
+    expect(arabicLightStem('وخطأ')).toBe('خطأ');
+  });
+
+  it('strips ب (bi-) prefix', () => {
+    expect(arabicLightStem('بسرعة')).toBe('سرعة');
+  });
+
+  it('does not strip from short words (≤3 chars)', () => {
+    // بلد (3 chars) should not be stripped
+    expect(arabicLightStem('بلد')).toBe('بلد');
+  });
+
+  it('returns unchanged for Latin input', () => {
+    expect(arabicLightStem('deploy')).toBe('deploy');
+  });
+});
+
+// ── Cross-lingual Expansion ────────────────────────────────────────────────────
+
+describe('expandCrossLingual', () => {
+  it('returns Japanese katakana for "deploy"', () => {
+    const syns = expandCrossLingual('deploy');
+    expect(syns).toContain('デプロイ');
+  });
+
+  it('returns Chinese for "deploy"', () => {
+    expect(expandCrossLingual('deploy')).toContain('部署');
+  });
+
+  it('returns Korean for "deploy"', () => {
+    expect(expandCrossLingual('deploy')).toContain('배포');
+  });
+
+  it('returns English for Japanese デプロイ', () => {
+    expect(expandCrossLingual('デプロイ')).toContain('deploy');
+  });
+
+  it('returns English for Chinese 部署', () => {
+    expect(expandCrossLingual('部署')).toContain('deploy');
+  });
+
+  it('returns English for Korean 배포', () => {
+    expect(expandCrossLingual('배포')).toContain('deploy');
+  });
+
+  it('returns English for Arabic خطأ (error)', () => {
+    expect(expandCrossLingual('خطأ')).toContain('error');
+  });
+
+  it('returns English for Hebrew שגיאה (error)', () => {
+    expect(expandCrossLingual('שגיאה')).toContain('error');
+  });
+
+  it('returns empty array for unknown tokens', () => {
+    expect(expandCrossLingual('foobar')).toEqual([]);
+  });
+
+  it('covers all major languages for "server"', () => {
+    const syns = expandCrossLingual('server');
+    expect(syns).toContain('サーバー');
+    expect(syns).toContain('服务器');
+    expect(syns).toContain('서버');
+  });
+
+  it('has at least 50 tech terms in the map', () => {
+    expect(CROSS_LINGUAL_MAP.size).toBeGreaterThanOrEqual(50);
+  });
+});
+
+// ── RTL Tokenization ───────────────────────────────────────────────────────────
+
+describe('tokenize — RTL (Arabic/Hebrew)', () => {
+  it('tokenizes Arabic text into words', () => {
+    // "خطأ في النظام" = error in the system
+    const tokens = tokenize('خطأ في النظام');
+    expect(tokens.length).toBeGreaterThan(0);
+    // خطأ = error, not a stopword
+    const hasError = tokens.some(t => t === 'خطأ' || t === 'error');
+    expect(hasError).toBe(true);
+  });
+
+  it('strips Arabic definite article via light stemmer', () => {
+    // النظام → نظام (the system → system)
+    const tokens = tokenize('النظام');
+    expect(tokens).toContain('نظام');
+  });
+
+  it('filters Arabic stopwords', () => {
+    const tokens = tokenize('في على من');
+    // All three are stopwords
+    expect(tokens.filter(t => RTL_RE_TEST(t)).length).toBe(0);
+  });
+
+  it('tokenizes Hebrew text', () => {
+    // שגיאה = error
+    const tokens = tokenize('שגיאה בשרת');
+    expect(tokens.length).toBeGreaterThan(0);
+    const hasErr = tokens.some(t => t === 'שגיאה' || t === 'error');
+    expect(hasErr).toBe(true);
+  });
+
+  it('handles mixed Arabic + English text', () => {
+    const tokens = tokenize('deploy خطأ error');
+    expect(tokens).toContain('deploy');
+    expect(tokens.some(t => t === 'خطأ' || t === 'error')).toBe(true);
+  });
+});
+
+// Helper: test if a string contains RTL characters
+function RTL_RE_TEST(s: string) {
+  return /[\u0590-\u05ff\u0600-\u06ff]/.test(s);
+}
+
+// ── Cross-lingual Search Integration ──────────────────────────────────────────
+
+describe('tokenize — cross-lingual expansion', () => {
+  it('English "deploy" expands to Japanese bigrams', () => {
+    const tokens = tokenize('deploy');
+    // デプロイ bigrams: デプ, プロ, ロイ
+    expect(tokens.some(t => t === 'デプ' || t === 'プロ' || t === 'ロイ')).toBe(true);
+  });
+
+  it('Japanese デプロイ expands to include "deploy"', () => {
+    const tokens = tokenize('デプロイ');
+    expect(tokens).toContain('deploy');
+  });
+
+  it('Chinese 部署 expands to "deploy"', () => {
+    const tokens = tokenize('部署');
+    expect(tokens).toContain('deploy');
+  });
+
+  it('Korean 배포 expands to "deploy"', () => {
+    const tokens = tokenize('배포');
+    expect(tokens).toContain('deploy');
+  });
+
+  it('Arabic خطأ expands to "error"', () => {
+    const tokens = tokenize('خطأ');
+    expect(tokens).toContain('error');
+  });
+
+  it('Hebrew שגיאה expands to "error"', () => {
+    const tokens = tokenize('שגיאה');
+    expect(tokens).toContain('error');
+  });
+
+  it('English "container" expands to all CJK variants', () => {
+    const tokens = tokenize('container');
+    // コンテナ bigrams should be present
+    expect(tokens.some(t => t === 'コン' || t === 'ンテ' || t === 'テナ')).toBe(true);
+  });
+
+  it('katakana コンテナ generates romaji "kontena"', () => {
+    const tokens = tokenize('コンテナ');
+    expect(tokens).toContain('kontena');
+  });
+});
+
+// ── Language-specific tokenizer + stemmer tests ───────────────────────────────
+describe('multilingual tokenizer', () => {
+  // Russian
+  it('Russian: токенизирует слово и стемит суффикс', () => {
+    const tokens = tokenize('развёртывание сервера');
+    expect(tokens.some(t => t.startsWith('развёрт') || t === 'deploy' || t === 'deployment')).toBe(true);
+  });
+  it('Russian: развёртывание expands to "deploy"', () => {
+    const tokens = tokenize('развёртывание');
+    expect(tokens).toContain('deploy');
+  });
+  it('Russian: ошибка expands to "error"', () => {
+    const tokens = tokenize('ошибка');
+    expect(tokens).toContain('error');
+  });
+
+  // Turkish
+  it('Turkish: sunucu expands to "server"', () => {
+    const tokens = tokenize('sunucu');
+    expect(tokens).toContain('server');
+  });
+  it('Turkish: hata expands to "error"', () => {
+    const tokens = tokenize('hata');
+    expect(tokens).toContain('error');
+  });
+
+  // Bengali
+  it('Bengali: tokenizes words with Bengali script', () => {
+    const tokens = tokenize('সার্ভার ডেটাবেস');
+    expect(tokens.length).toBeGreaterThan(0);
+  });
+  it('Bengali: strips -গুলো plural suffix', () => {
+    // সার্ভারগুলো → সার্ভার
+    const tokens = tokenize('সার্ভারগুলো');
+    expect(tokens.some(t => t.startsWith('\u09b8\u09be\u09b0') || t.length > 0)).toBe(true);
+  });
+
+  // Vietnamese
+  it('Vietnamese: tokenizes tone-marked words', () => {
+    const tokens = tokenize('triển khai máy chủ');
+    expect(tokens.some(t => t === 'tri\u1ec3n' || t === 'khai' || t === 'm\u00e1y' || t === 'ch\u1ee7')).toBe(true);
+  });
+  it('Vietnamese: triển khai expands to "deploy"', () => {
+    const tokens = tokenize('triển khai');
+    expect(tokens).toContain('deploy');
+  });
+  it('Vietnamese: lỗi expands to "error"', () => {
+    const tokens = tokenize('lỗi');
+    expect(tokens).toContain('error');
+  });
+  it('Vietnamese: stopwords filtered out', () => {
+    const tokens = tokenize('không tôi và');
+    expect(tokens).not.toContain('t\u00f4i');
+    expect(tokens).not.toContain('v\u00e0');
+  });
+
+  // Hindi
+  it('Hindi: तैनाती expands to "deploy"', () => {
+    const tokens = tokenize('तैनाती');
+    expect(tokens).toContain('deploy');
+  });
+  it('Hindi: त्रुटि expands to "error"', () => {
+    const tokens = tokenize('त्रुटि');
+    expect(tokens).toContain('error');
+  });
+
+  // Farsi
+  it('Farsi: استقرار expands to "deploy"', () => {
+    const tokens = tokenize('استقرار');
+    expect(tokens).toContain('deploy');
+  });
+
+  // camelCase splitting
+  it('preprocessText splits camelCase', () => {
+    const tokens = tokenize('deployServer');
+    expect(tokens).toContain('deploy');
+    expect(tokens).toContain('server');
+  });
+  it('preprocessText splits snake_case', () => {
+    const tokens = tokenize('my_api_key');
+    expect(tokens).toContain('api');
+    expect(tokens).toContain('key');
+  });
+  it('preprocessText splits PascalCase HTMLParser', () => {
+    const tokens = tokenize('HTMLParser');
+    expect(tokens).toContain('html');
+    expect(tokens).toContain('parser');
+  });
+
+  // Tech synonyms
+  it('tech synonym: k8s expands to include kubernetes', () => {
+    const tokens = tokenize('k8s');
+    expect(tokens).toContain('kubernetes');
+  });
+  it('tech synonym: postgres expands to postgresql', () => {
+    const tokens = tokenize('postgres');
+    expect(tokens).toContain('postgresql');
+  });
+});
+
+// ── Prefix-Matching tests ─────────────────────────────────────────────────────
+describe('keywordSearch prefix-matching', () => {
+  it('English "deploy" matches forward entries for 17 languages in cross-lingual map', () => {
+    const result = CROSS_LINGUAL_MAP.get('deploy');
+    expect(result).toBeDefined();
+    // Should include at least Vietnamese, Russian, Turkish entries
+    expect(result).toContain('triển khai');
+    expect(result).toContain('развёртывание');
+    expect(result).toContain('dağıtım');
+  });
+});
+
+

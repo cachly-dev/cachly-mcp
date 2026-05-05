@@ -1,23 +1,15 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { readdir, readFile, stat } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
+import { execSync } from 'node:child_process';
 import { join, relative, extname } from 'node:path';
 /**
- * cachly MCP Server v0.6.0  —  The World's First Cognitive Cache
+ * cachly MCP Server v0.4.0
  *
- * cachly is not just a managed Valkey/Redis cache.
- * It is the universal AI memory layer — a cache that thinks.
- *
- * ┌─────────────────────────────────────────────────────────────────────────┐
- * │  COGNITIVE CACHE  — 5 capabilities no other cache has ever had         │
- * │                                                                         │
- * │  memory_consolidate  – Distill entire knowledge base, detect           │
- * │                        contradictions, merge duplicates, prune stale   │
- * │  brain_diff          – Git-style diff for AI knowledge across sessions │
- * │  causal_trace        – Root cause analysis through memory graph        │
- * │  knowledge_decay     – Temporal confidence scoring for every memory    │
- * │  autopilot           – Zero-config: AI manages its own brain forever   │
- * └─────────────────────────────────────────────────────────────────────────┘
+ * Exposes cachly.dev as MCP tools so any AI assistant
+ * (GitHub Copilot, Claude, Cursor, Windsurf, Continue.dev …) can:
  *
  * ── Instance Management ─────────────────────────────────────────────────────
  *   • list_instances        – list all your cache instances
@@ -27,42 +19,29 @@ import { join, relative, extname } from 'node:path';
  *   • delete_instance       – permanently delete an instance
  *
  * ── Live Cache Operations ────────────────────────────────────────────────────
- *   • cache_get / cache_set / cache_delete / cache_exists / cache_ttl
- *   • cache_keys / cache_stats / cache_mget / cache_mset
- *   • semantic_search       – find semantically similar entries (multi-provider)
- *   • cache_warmup          – pre-warm cache from file/URL list
- *   • cache_lock_acquire / cache_lock_release – distributed locking
- *   • cache_stream_set / cache_stream_get – streaming LLM response cache
+ *   • cache_get             – get a value by key
+ *   • cache_set             – set a key-value pair with optional TTL
+ *   • cache_delete          – delete one or more keys
+ *   • cache_exists          – check if keys exist
+ *   • cache_ttl             – inspect TTL of a key
+ *   • cache_keys            – list keys matching a glob pattern
+ *   • cache_stats           – memory, hit rate, ops/sec, keyspace info
+ *   • semantic_search       – find semantically similar cached entries
+ *                             (needs OPENAI_API_KEY or other embed provider in .env)
  *
- * ── AI Brain (persistent memory across sessions) ─────────────────────────────
- *   • session_start / session_end / session_ping / compact_recover
- *   • remember_context / recall_context / list_remembered / forget_context
- *   • learn_from_attempts / recall_best_solution / list_lessons / forget_lesson
- *   • smart_recall / auto_learn_session / sync_file_changes
- *   • todo_add / todo_done / todo_list / refresh_claude_md
- *   • team_learn / team_recall / global_learn / global_recall
- *   • publish_lesson / import_public_brain / brain_from_git
- *   • brain_stats / export_brain / invite_link / brain_doctor
- *   • setup_ai_memory
- *
- * ── Cognitive Cache (new in v0.6) ────────────────────────────────────────────
- *   • memory_consolidate    – distill + deduplicate the knowledge base
- *   • brain_diff            – knowledge delta between sessions (like git diff)
- *   • causal_trace          – root cause analysis through memory
- *   • knowledge_decay       – temporal confidence scoring per memory
- *   • autopilot             – zero-config AI memory (writes CLAUDE.md for you)
+ * ── Auth & Status ────────────────────────────────────────────────────────────
+ *   • get_api_status        – check API health + JWT auth info (Keycloak)
  *
  * Configuration (env vars):
- *   CACHLY_API_URL           – default https://api.cachly.dev
- *   CACHLY_AUTH_URL          – default https://auth.cachly.dev
- *   CACHLY_JWT               – your JWT (Keycloak access token)
- *   CACHLY_BRAIN_INSTANCE_ID – default instance for all brain tools
- *   CACHLY_EMBED_PROVIDER    – openai (default) | gemini | mistral | cohere | ollama | cachly
- *   CACHLY_EMBED_MODEL       – override embedding model (optional)
+ *   CACHLY_API_URL      – default https://api.cachly.dev
+ *   CACHLY_JWT          – your JWT (Keycloak access token)
+ *   CACHLY_EMBED_PROVIDER – embedding backend: openai (default), gemini, mistral, cohere, ollama, cachly (server fallback)
+ *   CACHLY_EMBED_MODEL  – override embedding model (optional)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -74,9 +53,9 @@ import { Redis } from 'ioredis';
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
-const AUTH_URL = process.env.CACHLY_AUTH_URL ?? 'https://auth.cachly.dev';
 const JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
+const CURRENT_VERSION = '0.8.3';
 /**
  * ┌──────────────────────────────────────────────────────────────────────┐
  * │  EMBEDDING PROVIDER — pluggable, client-side first                  │
@@ -95,6 +74,44 @@ const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
  * └──────────────────────────────────────────────────────────────────────┘
  */
 const EMBED_PROVIDER = (process.env.CACHLY_EMBED_PROVIDER ?? detectEmbedProvider()).toLowerCase();
+
+// ── Confidence Decay Config (all values configurable via env) ─────────────────
+const CONFIDENCE_WARN_DAYS  = Number(process.env.CACHLY_CONFIDENCE_WARN_DAYS  ?? 5);   // → 0.7
+const CONFIDENCE_STALE_DAYS = Number(process.env.CACHLY_CONFIDENCE_STALE_DAYS ?? 10);  // → 0.5
+const CONFIDENCE_WARN_VALUE  = 0.7;
+const CONFIDENCE_STALE_VALUE = 0.5;
+
+/** Calculate current confidence for a lesson based on how long since last verified. */
+function calculateConfidence(lesson: { verified_at?: string; ts: string; recall_count?: number }): number {
+  const ref = lesson.verified_at ?? lesson.ts;
+  const ageMs = Date.now() - new Date(ref).getTime();
+  const ageDays = ageMs / 86400000;
+  if (ageDays >= CONFIDENCE_STALE_DAYS) return CONFIDENCE_STALE_VALUE;
+  if (ageDays >= CONFIDENCE_WARN_DAYS)  return CONFIDENCE_WARN_VALUE;
+  // Linear interpolation between fresh (1.0) and warn threshold
+  return 1.0 - (ageDays / CONFIDENCE_WARN_DAYS) * (1.0 - CONFIDENCE_WARN_VALUE);
+}
+
+/** Render a confidence badge string. */
+function confidenceBadge(confidence: number, ageDays: number): string {
+  if (confidence >= 0.9) return '✅';
+  if (confidence >= 0.7) return `⚠️ (${Math.round(ageDays)}d old, confidence ${(confidence * 100).toFixed(0)}% — verify before applying)`;
+  return `🔴 STALE (${Math.round(ageDays)}d old, confidence ${(confidence * 100).toFixed(0)}% — likely outdated!)`;
+}
+
+/** Category-specific required fields for structured lessons. */
+const STRUCTURED_TEMPLATES: Record<string, { required: string[]; hint: string }> = {
+  'deploy':  { required: ['commands'],                hint: 'deploy:* needs commands[]' },
+  'bash':    { required: ['commands'],                hint: 'bash:* needs commands[]' },
+  'infra':   { required: ['commands'],                hint: 'infra:* needs commands[] + verified on real system' },
+  'pricing': { required: [],                          hint: 'pricing:* — add context with source (e.g. "Stripe Dashboard Apr 2026")' },
+  'stripe':  { required: [],                          hint: 'stripe:* — add context with Stripe API version' },
+};
+
+/** Fast content hash for index invalidation (not cryptographic, just change detection) */
+function simpleHash(text: string): string {
+  return createHash('md5').update(text).digest('hex').slice(0, 12);
+}
 
 function detectEmbedProvider(): string {
   // Client-side keys first (direct, fast, no server roundtrip)
@@ -169,6 +186,7 @@ async function computeEmbedding(text: string): Promise<number[]> {
       });
       if (!res.ok) throw new Error(`Mistral embedding error: ${res.statusText}`);
       const json = (await res.json()) as { data: { embedding: number[] }[] };
+      if (!json.data?.[0]?.embedding) throw new Error('Mistral returned empty embedding response');
       return json.data[0].embedding;
     }
 
@@ -233,6 +251,7 @@ async function computeEmbedding(text: string): Promise<number[]> {
       });
       if (!res.ok) throw new Error(`OpenAI embedding error: ${res.statusText}`);
       const json = (await res.json()) as { data: { embedding: number[] }[] };
+      if (!json.data?.[0]?.embedding) throw new Error('OpenAI returned empty embedding response');
       return json.data[0].embedding;
     }
 
@@ -284,13 +303,18 @@ function embedProviderHint(): string {
 //   • Recency boost — newer entries rank higher (exponential decay, 7-day half-life)
 //   • Multi-query splitting — numbered lists, semicolons, conjunctions
 //   • Fuzzy matching with Levenshtein distance ≤ 2
-//   • Multilingual stopwords (EN, DE, FR, ES, IT, PT)
+//   • Multilingual stopwords (EN, DE, FR, ES, IT, PT, ZH, JA, KO, AR, HE)
+//   • CJK character bigram extraction — handles Chinese, Japanese, Korean
+//   • RTL language support (Arabic, Hebrew) — word tokenization + light stemming
+//   • Romanization matching — katakana → romaji tokens for romaji queries
+//   • Cross-language retrieval — tech term synonyms EN↔JA↔ZH↔KO↔AR↔HE
 //   • Pipeline Redis reads for performance
 //
 
 /**
  * Stopwords — filtered out during tokenization.
- * Covers: English, German, French, Spanish, Italian, Portuguese.
+ * Covers: English, German, French, Spanish, Italian, Portuguese,
+ *         Chinese (Simplified + Traditional), Japanese, Korean.
  * Keeps the index small and scores meaningful.
  */
 const STOPWORDS = new Set([
@@ -364,15 +388,1303 @@ const STOPWORDS = new Set([
   'eu', 'tu', 'ele', 'ela', 'nós', 'eles', 'elas', 'você', 'vocês',
   'não', 'já', 'sim', 'bem', 'muito', 'também', 'ainda', 'sempre',
   'todo', 'toda', 'todos', 'cada', 'outro', 'outra', 'quando', 'porque',
+  // ── Chinese (Simplified + Traditional) — high-frequency function characters ──
+  '的', '了', '是', '在', '不', '和', '我', '他', '这', '中', '大', '为',
+  '上', '个', '国', '以', '要', '就', '出', '说', '们', '有', '来', '到',
+  '时', '地', '年', '得', '着', '那', '过', '后', '还', '与', '也', '可',
+  '于', '从', '但', '而', '被', '把', '让', '使', '对', '很', '都', '一',
+  '会', '没', '人', '它', '这个', '那个', '什么', '如果', '因为', '所以',
+  '已经', '可以', '这些', '那些', '我们', '他们', '她们', '它们',
+  // ── Japanese — common hiragana particles and auxiliary verbs ──
+  'の', 'は', 'が', 'を', 'に', 'で', 'と', 'も', 'や', 'か', 'な', 'ね',
+  'よ', 'わ', 'て', 'い', 'う', 'え', 'お', 'き', 'く', 'け', 'こ', 'さ',
+  'し', 'す', 'せ', 'そ', 'た', 'ち', 'つ', 'ぬ', 'ん', 'から', 'まで',
+  'より', 'へ', 'です', 'ます', 'ない', 'ある', 'いる', 'する', 'こと',
+  'もの', 'ので', 'では', 'には', 'との', 'への', 'から', 'まで',
+  // ── Korean — common particles and auxiliary forms ──
+  '이', '가', '은', '는', '을', '를', '의', '에', '와', '과', '도',
+  '로', '에서', '한', '하', '있', '없', '것', '수', '않', '들',
+  '이다', '하다', '이고', '이며', '라고', '에게', '에서', '으로',
+  // ── Arabic — high-frequency function words & particles ──
+  'في', 'من', 'إلى', 'على', 'عن', 'مع', 'هذا', 'هذه', 'ذلك', 'تلك',
+  'الذي', 'التي', 'الذين', 'اللواتي', 'هو', 'هي', 'هم', 'هن', 'نحن',
+  'أنت', 'أنتم', 'أنا', 'كان', 'كانت', 'كانوا', 'يكون', 'تكون',
+  'أن', 'إن', 'لأن', 'لكن', 'أو', 'بل', 'ثم', 'حتى', 'إذا', 'كي',
+  'قد', 'لقد', 'لم', 'لن', 'ما', 'لا', 'ليس', 'غير', 'بعض', 'كل',
+  'جميع', 'أي', 'كيف', 'متى', 'أين', 'لماذا', 'ماذا', 'هل', 'ال',
+  'و', 'ف', 'ب', 'ل', 'ك', 'يا', 'أم', 'إلا', 'عند', 'بين',
+  // ── Hebrew — common particles, pronouns, conjunctions ──
+  'של', 'את', 'אל', 'על', 'עם', 'לא', 'הוא', 'היא', 'הם', 'הן',
+  'אני', 'אתה', 'אנחנו', 'אתם', 'כי', 'אם', 'אבל', 'גם', 'כבר',
+  'רק', 'עוד', 'יש', 'אין', 'מה', 'זה', 'זאת', 'אלה', 'כל', 'כן',
+  'לו', 'לה', 'להם', 'בו', 'בה', 'בהם', 'שם', 'כך', 'כן', 'מי',
+  'אשר', 'אחרי', 'לפני', 'תחת', 'בין', 'מאז', 'עד', 'כמו', 'אז',
+  // ── Farsi/Persian — common function words, prepositions, pronouns ──
+  'در', 'از', 'به', 'با', 'که', 'این', 'آن', 'را', 'است',
+  'بود', 'باشد', 'شد', 'شده', 'می', 'نه', 'نیست', 'هم', 'هر',
+  'یک', 'اما', 'و', 'یا', 'تا', 'اگر', 'برای', 'چون', 'چه',
+  'کجا', 'کی', 'چطور', 'وقتی', 'بعد', 'قبل', 'مثل', 'همه', 'بعضی',
+  'هیچ', 'آیا', 'خود', 'چند', 'دیگر', 'هنوز', 'همان', 'آنها', 'اینها',
+  'ما', 'شما', 'آنان', 'من', 'تو', 'او', 'آنان', 'ایشان',
+  'روی', 'زیر', 'بین', 'پیش', 'پس', 'طرف', 'داخل', 'خارج', 'کنار',
+  'همچنین', 'مگر', 'ولی', 'وگرنه', 'چرا', 'چگونه', 'کدام',
+  // ── Hindi — common particles, postpositions, pronouns, auxiliary verbs ──
+  'है', 'में', 'से', 'को', 'का', 'की', 'के', 'पर', 'और', 'या',
+  'नहीं', 'यह', 'वह', 'एक', 'इस', 'उस', 'भी', 'हो', 'था', 'थी',
+  'थे', 'हैं', 'हूँ', 'लिए', 'तक', 'साथ', 'बाद', 'पहले', 'जो',
+  'जब', 'कैसे', 'क्यों', 'क्या', 'कहाँ', 'कौन', 'हम', 'आप', 'वे',
+  'मैं', 'तुम', 'उन', 'इन', 'ने', 'बहुत', 'सब', 'कुछ', 'फिर',
+  'अब', 'तो', 'ही', 'तरह', 'जैसे', 'करना', 'होना', 'रहा', 'रही',
+  'रहे', 'गया', 'गई', 'गए', 'किया', 'किए', 'कर', 'हुआ', 'हुई',
+  // ── Russian — common prepositions, pronouns, auxiliary verbs ───────────────
+  'в', 'на', 'не', 'с', 'и', 'а', 'но', 'по', 'за', 'из', 'от', 'до',
+  'к', 'у', 'о', 'об', 'во', 'при', 'под', 'над', 'без', 'для',
+  'что', 'как', 'это', 'все', 'так', 'уже', 'или', 'же', 'ли',
+  'если', 'то', 'да', 'нет', 'был', 'была', 'были', 'быть', 'есть',
+  'его', 'её', 'их', 'этот', 'эта', 'эти', 'который', 'которая',
+  'которые', 'который', 'мой', 'моя', 'мои', 'ваш', 'ваша', 'ваши',
+  'он', 'она', 'они', 'мы', 'вы', 'я', 'ты', 'тот', 'та', 'те',
+  'очень', 'тоже', 'также', 'когда', 'где', 'как', 'почему', 'зачем',
+  'сейчас', 'здесь', 'там', 'потому', 'поэтому', 'чтобы', 'тут',
+  // ── Turkish — common particles, postpositions, copulas ─────────────────────
+  'bir', 'bu', 'şu', 'o', 've', 'ile', 'de', 'da', 'için', 'gibi',
+  'ama', 'fakat', 'ancak', 'ya', 'ne', 'ki', 'mi', 'mı', 'mu', 'mü',
+  'var', 'yok', 'olan', 'oldu', 'olur', 'olarak', 'ise', 'daha',
+  'çok', 'en', 'her', 'hiç', 'bazı', 'tüm', 'bütün', 'hem', 'veya',
+  'bu', 'şu', 'ben', 'sen', 'biz', 'siz', 'onlar', 'benim', 'senin',
+  'nasıl', 'neden', 'niçin', 'nerede', 'ne', 'hangi', 'kaç',
+  // ── Polish — common prepositions, pronouns, particles ─────────────────────
+  'w', 'na', 'z', 'do', 'się', 'że', 'to', 'jest', 'i', 'a', 'nie',
+  'tak', 'jak', 'czy', 'po', 'o', 'ale', 'go', 'mu', 'jej', 'ich',
+  'tego', 'tej', 'te', 'ten', 'ta', 'są', 'był', 'była', 'było', 'byli',
+  'będzie', 'będą', 'ma', 'mam', 'masz', 'mają', 'ze', 'co', 'już',
+  'przez', 'przy', 'za', 'bez', 'nad', 'pod', 'przed', 'po', 'między',
+  'kiedy', 'gdzie', 'dlaczego', 'który', 'która', 'które', 'tylko', 'też',
+  // ── Czech — common words ──────────────────────────────────────────────────
+  'v', 'na', 'z', 'do', 'se', 'že', 'to', 'je', 'a', 'ne', 'pro',
+  'ale', 'jak', 'by', 'byl', 'být', 'jsem', 'jsou', 'má', 'mám',
+  'ten', 'ta', 'ty', 'tato', 'jeho', 'její', 'jejich', 'také', 'jen',
+  'kde', 'kdy', 'proč', 'který', 'která', 'které', 'co', 'při', 'bez',
+  // ── Bengali — common particles, pronouns, verbs ───────────────────────────
+  'এই', 'এটি', 'এটা', 'এর', 'তার', 'তারা', 'আমি', 'তুমি', 'সে', 'আমরা',
+  'এবং', 'কিন্তু', 'বা', 'না', 'হ্যাঁ', 'যে', 'কি', 'কে', 'কী', 'থেকে',
+  'দিয়ে', 'জন্য', 'সাথে', 'মধ্যে', 'উপর', 'নিচে', 'আছে', 'ছিল', 'হয়',
+  'করা', 'করে', 'করেছে', 'হবে', 'হয়েছে', 'একটি', 'একটা', 'অনেক', 'সব',
+  // ── Vietnamese — common particles, pronouns, auxiliary words ─────────────
+  'tôi', 'bạn', 'anh', 'chị', 'em', 'họ', 'chúng', 'ta', 'mình',
+  'là', 'có', 'không', 'và', 'với', 'của', 'cho', 'trong', 'về',
+  'từ', 'đến', 'để', 'khi', 'nếu', 'thì', 'mà', 'nhưng', 'vì',
+  'đây', 'đó', 'này', 'kia', 'rất', 'cũng', 'đã', 'sẽ', 'đang',
+  'được', 'bị', 'những', 'các', 'một', 'hai', 'ba', 'nhiều', 'ít',
+  'nào', 'ai', 'gì', 'đâu', 'sao', 'bao', 'giờ', 'lúc', 'sau',
 ]);
 
-/** Tokenize text into meaningful keywords. Handles unicode (accented chars). */
-function tokenize(text: string): string[] {
+
+// CJK Unicode ranges used for bigram extraction
+const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/;
+const SEGMENT_RE = /([\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]+|[^\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]+)/g;
+
+// RTL Unicode ranges: Arabic (U+0600–U+06FF + extended), Hebrew (U+0590–U+05FF)
+const RTL_RE = /[\u0590-\u05ff\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb1d-\ufb4f\ufb50-\ufdff\ufe70-\ufeff]/;
+// Distinguish Arabic from Hebrew within RTL segments
+const HEBREW_CHAR_RE = /[\u0590-\u05ff\ufb1d-\ufb4f]/;
+const ARABIC_CHAR_RE  = /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]/;
+// Persian/Farsi: exclusive chars not in Arabic (U+067E=پ, U+0686=چ, U+0698=ژ, U+06AF=گ, U+06CC=ی)
+const FARSI_CHAR_RE   = /[\u067e\u0686\u0698\u06af\u06cc]/;
+// Devanagari (Hindi, Sanskrit, Marathi …) — U+0900–U+097F + extended
+const DEVANAGARI_RE   = /[\u0900-\u097f]/;
+// Cyrillic (Russian, Bulgarian, Ukrainian, Serbian …) — U+0400–U+04FF
+const CYRILLIC_RE     = /[\u0400-\u04ff]/;
+// Turkish uses Latin alphabet but has unique chars (ğ, ş, ı, ö, ü, ç) — detected by these
+const TURKISH_CHAR_RE = /[\u011f\u015f\u0131\u0130\u00e7]/; // ğ ş ı İ ç
+// Bengali (Bangla) — U+0980–U+09FF
+const BENGALI_RE      = /[\u0980-\u09ff]/;
+// Vietnamese uses Latin + Latin Extended Additional (U+1EA0–U+1EF9) for tone marks
+// e.g. ắ ặ ầ ổ ợ ụ ừ — detected by chars exclusive to Vietnamese diacritics
+const VIETNAMESE_CHAR_RE = /[\u1ea0-\u1ef9]/;
+
+// ── Katakana → Romaji conversion table (Hepburn system) ──────────────────────
+// Digraphs must be listed before single chars so they match first.
+const KATA_ROMAJI_TABLE: [string, string][] = [
+  // Special combinations for loanwords
+  ['ファ', 'fa'], ['フィ', 'fi'], ['フェ', 'fe'], ['フォ', 'fo'],
+  ['ティ', 'ti'], ['ディ', 'di'], ['トゥ', 'tu'], ['ドゥ', 'du'],
+  ['ウィ', 'wi'], ['ウェ', 'we'], ['ウォ', 'wo'],
+  ['チェ', 'che'], ['ジェ', 'je'], ['シェ', 'she'],
+  ['イェ', 'ye'], ['ヴァ', 'va'], ['ヴィ', 'vi'], ['ヴェ', 've'], ['ヴォ', 'vo'],
+  // Digraphs (2-char → romaji)
+  ['キャ', 'kya'], ['キュ', 'kyu'], ['キョ', 'kyo'],
+  ['シャ', 'sha'], ['シュ', 'shu'], ['ショ', 'sho'],
+  ['チャ', 'cha'], ['チュ', 'chu'], ['チョ', 'cho'],
+  ['ニャ', 'nya'], ['ニュ', 'nyu'], ['ニョ', 'nyo'],
+  ['ヒャ', 'hya'], ['ヒュ', 'hyu'], ['ヒョ', 'hyo'],
+  ['ミャ', 'mya'], ['ミュ', 'myu'], ['ミョ', 'myo'],
+  ['リャ', 'rya'], ['リュ', 'ryu'], ['リョ', 'ryo'],
+  ['ギャ', 'gya'], ['ギュ', 'gyu'], ['ギョ', 'gyo'],
+  ['ジャ', 'ja'], ['ジュ', 'ju'], ['ジョ', 'jo'],
+  ['ビャ', 'bya'], ['ビュ', 'byu'], ['ビョ', 'byo'],
+  ['ピャ', 'pya'], ['ピュ', 'pyu'], ['ピョ', 'pyo'],
+  // Single chars
+  ['ア', 'a'], ['イ', 'i'], ['ウ', 'u'], ['エ', 'e'], ['オ', 'o'],
+  ['カ', 'ka'], ['キ', 'ki'], ['ク', 'ku'], ['ケ', 'ke'], ['コ', 'ko'],
+  ['サ', 'sa'], ['シ', 'shi'], ['ス', 'su'], ['セ', 'se'], ['ソ', 'so'],
+  ['タ', 'ta'], ['チ', 'chi'], ['ツ', 'tsu'], ['テ', 'te'], ['ト', 'to'],
+  ['ナ', 'na'], ['ニ', 'ni'], ['ヌ', 'nu'], ['ネ', 'ne'], ['ノ', 'no'],
+  ['ハ', 'ha'], ['ヒ', 'hi'], ['フ', 'fu'], ['ヘ', 'he'], ['ホ', 'ho'],
+  ['マ', 'ma'], ['ミ', 'mi'], ['ム', 'mu'], ['メ', 'me'], ['モ', 'mo'],
+  ['ヤ', 'ya'], ['ユ', 'yu'], ['ヨ', 'yo'],
+  ['ラ', 'ra'], ['リ', 'ri'], ['ル', 'ru'], ['レ', 're'], ['ロ', 'ro'],
+  ['ワ', 'wa'], ['ヲ', 'wo'], ['ン', 'n'],
+  // Voiced
+  ['ガ', 'ga'], ['ギ', 'gi'], ['グ', 'gu'], ['ゲ', 'ge'], ['ゴ', 'go'],
+  ['ザ', 'za'], ['ジ', 'ji'], ['ズ', 'zu'], ['ゼ', 'ze'], ['ゾ', 'zo'],
+  ['ダ', 'da'], ['ヂ', 'ji'], ['ヅ', 'zu'], ['デ', 'de'], ['ド', 'do'],
+  ['バ', 'ba'], ['ビ', 'bi'], ['ブ', 'bu'], ['ベ', 'be'], ['ボ', 'bo'],
+  ['パ', 'pa'], ['ピ', 'pi'], ['プ', 'pu'], ['ペ', 'pe'], ['ポ', 'po'],
+  ['ヴ', 'v'],
+  // Long vowel / small chars
+  ['ー', ''], ['ァ', 'a'], ['ィ', 'i'], ['ゥ', 'u'], ['ェ', 'e'], ['ォ', 'o'],
+  ['ッ', ''],  // handled separately (doubles next consonant)
+];
+
+const KATA_MAP = new Map<string, string>(KATA_ROMAJI_TABLE);
+
+/**
+ * Convert a katakana string to Hepburn romaji.
+ * Handles digraphs, geminate consonants (ッ), and long vowel marks (ー).
+ */
+function katakanaToRomaji(kata: string): string {
+  let result = '';
+  let i = 0;
+  while (i < kata.length) {
+    // Geminate consonant: ッ doubles the following consonant
+    if (kata[i] === 'ッ' && i + 1 < kata.length) {
+      const next = KATA_MAP.get(kata[i + 1]) ?? KATA_MAP.get(kata[i + 1] + kata[i + 2]) ?? '';
+      if (next.length > 0) result += next[0]; // double first consonant
+      i++;
+      continue;
+    }
+    // Try 2-char digraph first
+    if (i + 1 < kata.length) {
+      const two = kata[i] + kata[i + 1];
+      const r2 = KATA_MAP.get(two);
+      if (r2 !== undefined) { result += r2; i += 2; continue; }
+    }
+    // Single char
+    const r1 = KATA_MAP.get(kata[i]);
+    if (r1 !== undefined) result += r1;
+    i++;
+  }
+  return result;
+}
+
+/**
+ * Arabic light stemmer — strips definite article and common prefix particles.
+ * Handles: ال (al-), و (wa-), ب (bi-), ل (li-), ف (fa-), ك (ka-).
+ * Runs iteratively (max 3 passes) so compound prefixes like فال- are fully
+ * resolved: فالخطأ → الخطأ → خطأ.
+ * Only strips when the result is still ≥ 3 chars to avoid over-stemming.
+ */
+function arabicLightStem(word: string): string {
+  let result = word;
+  for (let i = 0; i < 3; i++) {
+    const prev = result;
+    if (result.startsWith('ال') && result.length > 4) {
+      result = result.slice(2);
+    } else if (result.length > 3 && 'وبلفك'.includes(result[0]) && RTL_RE.test(result[1])) {
+      result = result.slice(1);
+    }
+    if (result === prev) break; // stable — no more prefixes to strip
+  }
+  return result;
+}
+
+/**
+ * Hebrew light stemmer — strips the definite article and common prefix particles
+ * that attach directly to words (no space) in Hebrew.
+ *
+ * Handles:
+ *   ה (ha-) — definite article:   הפריסה → פריסה
+ *   ו (ve-/u-) — conjunction “and”: ופריסה → פריסה
+ *   ב (be-/bi-) — preposition “in”: בסביבה → סביבה
+ *   ל (le-/li-) — preposition “for”: לשרת → שרת
+ *   מ (mi-/me-) — preposition “from”: מהשרת → השרת → שרת
+ *   כ (ke-/ki-) — preposition “like”: כשרת → שרת
+ *
+ * Iterative (max 3 passes): מהפריסה → הפריסה → פריסה.
+ * Only strips when result is still ≥ 3 chars.
+ */
+function hebrewLightStem(word: string): string {
+  let result = word;
+  for (let i = 0; i < 3; i++) {
+    const prev = result;
+    if (result.length > 3 && 'הובלמכ'.includes(result[0]) && HEBREW_CHAR_RE.test(result[1])) {
+      result = result.slice(1);
+    }
+    if (result === prev) break;
+  }
+  return result;
+}
+
+/**
+ * Farsi/Persian light stemmer — handles Persian morphology.
+ * Strips:
+ *   \u0647\u0627 / \u0647\u0627\u06cc (ha/haye) — plural suffixes:  \u0633\u0631\u0648\u0631\u0647\u0627 \u2192 \u0633\u0631\u0648\u0631
+ *   \u0645\u06cc\u200c / \u0645\u06cc   (mi-)    — present-tense prefix: \u0645\u06cc\u200c\u06a9\u0646\u062f \u2192 \u06a9\u0646\u062f
+ *   \u0646\u0645\u06cc\u200c             (nami-)  — negated present:  \u0646\u0645\u06cc\u200c\u0634\u0648\u062f \u2192 \u0634\u0648\u062f
+ * Only strips when the result is still \u2265 3 chars.
+ */
+function farsiLightStem(word: string): string {
+  let result = word;
+  // Suffixes first (longest first)
+  if (result.endsWith('\u0647\u0627\u06cc') && result.length > 5) result = result.slice(0, -3);
+  else if (result.endsWith('\u0647\u0627') && result.length > 4) result = result.slice(0, -2);
+  // Prefixes
+  if (result.startsWith('\u0646\u0645\u06cc\u200c') && result.length > 5) result = result.slice(4);
+  else if (result.startsWith('\u0645\u06cc\u200c') && result.length > 4) result = result.slice(3);
+  else if (result.startsWith('\u0645\u06cc') && result.length > 4) result = result.slice(2);
+  return result;
+}
+
+/**
+ * Hindi light stemmer — strips the most common inflectional suffixes.
+ * Handles basic verb forms and oblique plural markers.
+ * Avoids over-stemming loanwords (most tech terms in Hindi are English loanwords).
+ * Only strips when result is still \u2265 3 chars.
+ */
+function hindiLightStem(word: string): string {
+  const result = word;
+  // Infinitive / verb suffixes (longest first to avoid partial match)
+  if (result.endsWith('\u0928\u093e') && result.length > 4) return result.slice(0, -2); // \u0928\u093e (nā) infinitive
+  if (result.endsWith('\u0928\u0947') && result.length > 4) return result.slice(0, -2); // \u0928\u0947 (ne) ergative
+  if (result.endsWith('\u0928\u0940') && result.length > 4) return result.slice(0, -2); // \u0928\u0940 (nī) fem infinitive
+  if (result.endsWith('\u0924\u093e') && result.length > 4) return result.slice(0, -2); // \u0924\u093e (tā) m present participle
+  if (result.endsWith('\u0924\u0940') && result.length > 4) return result.slice(0, -2); // \u0924\u0940 (tī) f present participle
+  if (result.endsWith('\u0915\u0930') && result.length > 4) return result.slice(0, -2); // \u0915\u0930 (kar) conjunctive
+  if (result.endsWith('\u0913\u0902') && result.length > 4) return result.slice(0, -2); // \u0913\u0902 (oṃ) oblique plural
+  if (result.endsWith('\u0907\u092f\u093e\u0902') && result.length > 5) return result.slice(0, -4); // \u0907\u092f\u093e\u0902 (iyāṃ) f plural
+  if (result.endsWith('\u0940\u092f\u093e\u0902') && result.length > 5) return result.slice(0, -4); // \u0940\u092f\u093e\u0102 (īyāṃ)
+  return result;
+}
+
+/**
+ * Russian light stemmer — strips common inflectional suffixes.
+ * Handles the most frequent verb/noun/adjective endings to improve recall.
+ * Only strips when result is still ≥ 3 chars.
+ *
+ * Covers:
+ *  ошибки/ошибка → ошибк  (noun plural/genitive)
+ *  развёртывание → развёртыва  (gerund → stem)
+ *  установить → установ  (infinitive)
+ *  настройки → настройк  (genitive plural)
+ */
+function russianLightStem(word: string): string {
+  let w = word;
+  // Longest first to avoid partial stripping
+  // Verb infinitives / gerunds
+  if (w.endsWith('ывание') && w.length > 7) return w.slice(0, -6);
+  if (w.endsWith('ивание') && w.length > 7) return w.slice(0, -6);
+  if (w.endsWith('ование') && w.length > 7) return w.slice(0, -6);
+  if (w.endsWith('вание')  && w.length > 6) return w.slice(0, -5);
+  if (w.endsWith('ение')   && w.length > 5) return w.slice(0, -4);
+  if (w.endsWith('ание')   && w.length > 5) return w.slice(0, -4);
+  if (w.endsWith('ить')    && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('ать')    && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('еть')    && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('уть')    && w.length > 4) return w.slice(0, -3);
+  // Noun plural/genitive
+  if (w.endsWith('ки')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ги')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ов')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ев')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ей')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ий')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ый')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ая')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ое')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ую')     && w.length > 4) return w.slice(0, -2);
+  // Verb present tense
+  if (w.endsWith('ет')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ют')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ут')     && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ят')     && w.length > 4) return w.slice(0, -2);
+  return w;
+}
+
+/**
+ * Turkish light stemmer — strips common agglutinative suffixes.
+ * Turkish is highly agglutinative; this covers the most common inflectional ends.
+ *
+ * Covers:
+ *  hatalar → hata  (-lar/-ler plural)
+ *  sunucuda → sunucu  (-da/-de locative)
+ *  dağıtımı → dağıtım  (-ı/-i/-u/-ü accusative)
+ *  yüklemek → yükle  (-mek/-mak infinitive)
+ */
+function turkishLightStem(word: string): string {
+  let w = word;
+  // Suffixes longest-first
+  if (w.endsWith('lardaki') && w.length > 7) return w.slice(0, -7);
+  if (w.endsWith('lerdeki') && w.length > 7) return w.slice(0, -7);
+  if (w.endsWith('ların')   && w.length > 6) return w.slice(0, -5);
+  if (w.endsWith('lerin')   && w.length > 6) return w.slice(0, -5);
+  if (w.endsWith('larda')   && w.length > 6) return w.slice(0, -5);
+  if (w.endsWith('lerde')   && w.length > 6) return w.slice(0, -5);
+  if (w.endsWith('ları')    && w.length > 5) return w.slice(0, -4);
+  if (w.endsWith('leri')    && w.length > 5) return w.slice(0, -4);
+  if (w.endsWith('mek')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('mak')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('ler')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('lar')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('nın')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('nin')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('nun')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('nün')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('da')      && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('de')      && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ta')      && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('te')      && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('dan')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('den')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('tan')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('ten')     && w.length > 4) return w.slice(0, -3);
+  if (w.endsWith('ın')      && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('in')      && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('un')      && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ün')      && w.length > 4) return w.slice(0, -2);
+  if (w.endsWith('ı')       && w.length > 4) return w.slice(0, -1);
+  if (w.endsWith('i')       && w.length > 4) return w.slice(0, -1);
+  if (w.endsWith('u')       && w.length > 4) return w.slice(0, -1);
+  if (w.endsWith('ü')       && w.length > 4) return w.slice(0, -1);
+  return w;
+}
+
+/**
+ * Bengali (Bangla) light stemmer — strips common verbal and nominal suffixes.
+ * Bengali is an Indo-Aryan language with moderate morphological complexity.
+ * Only strips when result is still ≥ 2 chars.
+ *
+ * Covers:
+ *  করছে/করেছে → কর  (progressive/perfect aspect)
+ *  সার্ভারগুলো → সার্ভার  (-গুলো plural)
+ *  সমস্যাটি → সমস্যা  (-টি singular marker)
+ */
+function bengaliLightStem(word: string): string {
+  let w = word;
+  // Plural / collective markers (longest first)
+  if (w.endsWith('\u0997\u09c1\u09b2\u09cb') && w.length > 5) return w.slice(0, -4); // গুলো (-gulo plural)
+  if (w.endsWith('\u0997\u09c1\u09b2\u09bf') && w.length > 5) return w.slice(0, -4); // গুলি (-guli plural)
+  if (w.endsWith('\u09a6\u09c7\u09b0') && w.length > 4) return w.slice(0, -3); // দের (genitive plural)
+  if (w.endsWith('\u09a6\u09bf\u0997\u09c7') && w.length > 5) return w.slice(0, -4); // দিগে
+  // Definiteness / case markers
+  if (w.endsWith('\u099f\u09bf') && w.length > 3) return w.slice(0, -2); // টি (singular definite)
+  if (w.endsWith('\u099f\u09be') && w.length > 3) return w.slice(0, -2); // টা (singular definite)
+  if (w.endsWith('\u0996\u09be\u09a8\u09be') && w.length > 5) return w.slice(0, -4); // খানা
+  // Verbal suffixes
+  if (w.endsWith('\u099b\u09c7') && w.length > 3) return w.slice(0, -2); // ছে (progressive)
+  if (w.endsWith('\u099b\u09bf\u09b2') && w.length > 4) return w.slice(0, -3); // ছিল (past progressive)
+  if (w.endsWith('\u09af\u09be\u09ac\u09c7') && w.length > 5) return w.slice(0, -4); // যাবে (future)
+  if (w.endsWith('\u0995\u09b0\u09be') && w.length > 4) return w.slice(0, -3); // করা (infinitive)
+  if (w.endsWith('\u0995\u09b0\u09c7') && w.length > 4) return w.slice(0, -3); // করে (present)
+  if (w.endsWith('\u09b9\u09df') && w.length > 3) return w.slice(0, -2); // হয় (is/becomes)
+  if (w.endsWith('\u09b9\u09ac\u09c7') && w.length > 4) return w.slice(0, -3); // হবে (will be)
+  return w;
+}
+
+/**
+ * Pre-process text BEFORE tokenization to split code identifiers.
+ * Handles camelCase, PascalCase, snake_case, and kebab-case.
+ *
+ * Examples:
+ *   deployServer       → deploy Server  (then lowercased → deploy server)
+ *   HTMLParser         → HTML Parser
+ *   my_api_key         → my api key
+ *   get-user-by-id     → get user by id (hyphens preserved in regex, spaces also fine)
+ *   BackendServiceImpl → Backend Service Impl
+ */
+function preprocessText(text: string): string {
   return text
-    .toLowerCase()
-    .replace(/[^a-záàâãäåæçéèêëíìîïñóòôõöúùûüýÿßœ0-9:_\-./]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 1 && !STOPWORDS.has(w));
+    // camelCase boundary: lowercase/digit → uppercase
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    // Consecutive uppercase → uppercase+lowercase boundary: HTMLParser → HTML Parser
+    .replace(/([A-Z]{2,})([A-Z][a-z])/g, '$1 $2')
+    // snake_case: replace underscores with spaces
+    .replace(/_/g, ' ');
+}
+
+
+// Maps tokens (English, Japanese katakana, Chinese, Korean, Arabic, Hebrew)
+// to their equivalents in other languages. Used to expand tokens at search time
+// so "deploy" finds documents containing "デプロイ" / "部署" / "배포", and vice versa.
+//
+// Keys must be lowercase. CJK values will be bigram-expanded at use time.
+const CROSS_LINGUAL_MAP = new Map<string, string[]>([
+
+  // ── Tech / Ecosystem synonyms (language-agnostic) ─────────────────────────
+  ['javascript',    ['js', 'node', 'nodejs', 'ecmascript']],
+  ['js',            ['javascript', 'node', 'nodejs']],
+  ['typescript',    ['ts', 'javascript', 'js', 'tsc']],
+  ['ts',            ['typescript', 'javascript', 'js']],
+  ['python',        ['py', 'pip', 'django', 'flask', 'fastapi']],
+  ['py',            ['python', 'pip']],
+  ['golang',        ['go', 'gopher', 'goroutine']],
+  ['go',            ['golang', 'goroutine']],
+  ['rust',          ['cargo', 'rustlang', 'crates']],
+  ['cargo',         ['rust', 'rustlang']],
+  ['java',          ['jvm', 'maven', 'gradle', 'spring']],
+  ['kotlin',        ['jvm', 'android', 'coroutine']],
+  ['dotnet',        ['csharp', 'asp', 'nuget', 'aspnet']],
+  ['postgresql',    ['postgres', 'pg', 'psql']],
+  ['postgres',      ['postgresql', 'pg', 'psql']],
+  ['mysql',         ['mariadb', 'sql']],
+  ['mongodb',       ['mongo', 'nosql', 'bson', 'mongoose']],
+  ['mongo',         ['mongodb', 'nosql', 'bson']],
+  ['elasticsearch', ['elastic', 'opensearch', 'lucene', 'kibana']],
+  ['elastic',       ['elasticsearch', 'opensearch']],
+  ['kubernetes',    ['k8s', 'kube', 'kubectl', 'helm', 'k3s']],
+  ['k8s',           ['kubernetes', 'kube', 'kubectl', 'helm']],
+  ['helm',          ['kubernetes', 'k8s', 'chart']],
+  ['terraform',     ['tf', 'hcl', 'iac', 'opentofu']],
+  ['ansible',       ['playbook', 'automation']],
+  ['grafana',       ['dashboard', 'visualization', 'metrics']],
+  ['prometheus',    ['metrics', 'alert', 'scrape', 'grafana']],
+  ['nginx',         ['proxy', 'webserver', 'ingress']],
+  ['traefik',       ['proxy', 'ingress', 'router']],
+  ['rabbitmq',      ['amqp', 'queue', 'broker', 'messaging']],
+  ['kafka',         ['messaging', 'stream', 'broker']],
+  ['grpc',          ['protobuf', 'proto', 'rpc']],
+  ['graphql',       ['gql', 'resolver', 'schema']],
+  ['react',         ['jsx', 'hooks', 'component', 'redux']],
+  ['nextjs',        ['next', 'react', 'ssr', 'vercel']],
+  ['vue',           ['vuejs', 'vite', 'nuxt']],
+  ['angular',       ['ng', 'rxjs', 'typescript']],
+  ['aws',           ['amazon', 'ec2', 's3', 'lambda', 'cloudwatch', 'ecs', 'eks']],
+  ['gcp',           ['google cloud', 'gke', 'bigquery']],
+  ['azure',         ['microsoft cloud', 'aks', 'devops']],
+  ['s3',            ['bucket', 'object storage', 'aws']],
+  ['lambda',        ['serverless', 'function', 'faas', 'aws']],
+  ['jwt',           ['token', 'bearer', 'oauth', 'auth']],
+  ['oauth',         ['oidc', 'auth', 'token', 'sso']],
+  ['webhook',       ['callback', 'event', 'trigger']],
+  ['cron',          ['schedule', 'job', 'timer']],
+  ['yaml',          ['yml', 'config', 'manifest']],
+  ['dotenv',        ['env', 'environment', 'envfile']],
+  ['github',        ['git', 'actions', 'repo', 'ci']],
+  ['gitlab',        ['git', 'pipeline', 'runner']],
+  ['wireguard',     ['vpn', 'tunnel', 'wg']],
+  ['prisma',        ['orm', 'database', 'schema', 'migration']],
+  ['npm',           ['node', 'package', 'registry', 'yarn', 'pnpm']],
+  ['yarn',          ['npm', 'package', 'node']],
+  ['pip',           ['python', 'package', 'pypi']],
+  ['brew',          ['homebrew', 'macos', 'package']],
+  // English → all
+  ['deploy',      ['デプロイ', '部署', '배포', 'deployment', 'deploying', 'نشر', 'פריסה', 'استقرار', 'तैनाती', 'bereitstellen', 'bereitstellung', 'déployer', 'déploiement', 'desplegar', 'despliegue', 'distribuire', 'distribuzione', 'implantar', 'implantação', 'развёртывание', 'развертывание', 'dağıtım', 'dağıtmak', 'triển khai']],
+  ['deployment',  ['デプロイ', '部署', '배포', 'deploy', 'نشر', 'פריסה', 'استقرار', 'तैनाती', 'bereitstellung', 'déploiement', 'despliegue', 'distribuzione', 'implantação', 'развёртывание', 'dağıtım', 'triển khai']],
+  ['container',   ['コンテナ', '容器', '컨테이너', 'docker']],
+  ['server',      ['サーバー', 'サーバ', '服务器', '서버', 'سيرفر', 'שרת', 'سرور', 'सर्वर', 'сервер', 'sunucu', 'máy chủ']],
+  ['database',    ['データベース', '数据库', '데이터베이스', 'db', 'قاعدة البيانات', 'datenbank', 'پایگاه داده', 'डेटाबेس', 'base de données', 'base de datos', 'banco de dados']],
+  ['cache',       ['キャッシュ', '缓存', '캐시', 'كاش', 'מטמון', 'کش', 'कैश', 'кэш', 'önbellek', 'bộ đệm']],
+  ['error',       ['エラー', '错误', '오류', 'خطأ', 'שגיאה', 'خطا', 'त्रुटि', 'गलती', 'exception', 'err', 'fehler', 'erreur', 'fallo', 'errore', 'erro', 'ошибка', 'hata', 'hatalı', 'lỗi']],
+  ['bug',         ['バグ', '缺陷', '버그', 'issue', 'defect', 'خلل', 'اشکال', 'बग']],
+  ['fix',         ['修正', '修复', '수정', 'bugfix', 'patch', 'hotfix', 'إصلاح', 'תיקון', 'رفع', 'सुधार', 'beheben', 'behoben', 'réparer', 'correction', 'arreglar', 'corrección', 'correggere', 'corrigir', 'исправить', 'исправление', 'düzeltmek', 'düzeltme']],
+  ['build',       ['ビルド', '构建', '빌드', 'بناء', 'בנייה', 'ساخت', 'निर्माण', 'bauen', 'construire', 'construir', 'costruire', 'сборка', 'собрать', 'derleme', 'derlemek']],
+  ['test',        ['テスト', '测试', '테스트', 'اختبار', 'בדיקה', 'آزمایش', 'परीक्षण', 'testen', 'tester', 'probar', 'testare', 'testar', 'тест', 'тестирование', 'test', 'testlemek']],
+  ['auth',        ['認証', '认证', '인증', 'authentication', 'login', 'oauth', 'مصادقة', 'אימות', 'احراز هویت', 'प्रमाणीकरण', 'authentifizierung', 'authentification', 'autenticación', 'autenticazione', 'autenticação', 'аутентификация', 'авторизация', 'kimlik doğrulama', 'yetkilendirme']],
+  ['authentication', ['auth', 'مصادقة', 'אימות', 'احراز هویت', 'प्रमाणीकरण', '認証', '认证', '인증', 'login', 'oauth', 'аутентификация', 'авторизация', 'kimlik doğrulama']],
+  ['environment', ['環境', '环境', '환경', 'env', 'بيئة', 'סביבה', 'umgebung', 'environnement', 'entorno', 'ambiente', 'среда', 'окружение', 'ortam']],
+  ['secret',      ['key', 'token', 'password', 'jwt', 'مفتاح', 'מפתח', 'geheimnis', 'schlüssel', 'clave', 'clé', 'chiave', 'chave', 'секрет', 'ключ', 'gizli', 'anahtar']],
+  ['problem',     ['error', 'issue', 'bug', 'failure', 'مشكلة', '問題', '오류', 'fehler', 'problème', 'problema', 'проблема', 'ошибка', 'sorun', 'problem']],
+  ['kubernetes',  ['クベルネテス', 'k8s', 'kube']],
+  ['network',     ['ネットワーク', '网络', '네트워크', 'شبكة', 'רשת', 'شبکه', 'नेटवर्क', 'netzwerk', 'réseau', 'red', 'rete', 'rede', 'сеть', 'ağ']],
+  ['timeout',     ['タイムアウト', '超时', '타임아웃', 'مهلة']],
+  ['memory',      ['メモリ', '内存', '메모리', 'ram', 'ذاكرة', 'זיכרון', 'حافظه', 'मेमोरी', 'speicher', 'mémoire', 'memoria', 'memória', 'память', 'bellek', 'hafıza']],
+  ['config',      ['設定', '配置', '설정', 'configuration', 'settings', 'conf', 'إعدادات', 'הגדרות', 'پیکربندی', 'कॉन्फ़िग', 'konfiguration', 'einstellungen', 'configuración', 'configurazione', 'configuração', 'конфигурация', 'настройки', 'yapılandırma', 'ayarlar']],
+  ['install',     ['インストール', '安装', '설치', 'تثبيت', 'התקנה', 'نصب', 'इंस्टॉल', 'installieren', 'installer', 'instalar', 'installare', 'установить', 'установка', 'yüklemek', 'kurulum']],
+  ['update',      ['アップデート', '更新', '업데이트', 'upgrade', 'تحديث', 'עדכון', 'به‌روزرسانی', 'अपडेट', 'aktualisieren', 'aktualisierung', 'actualizar', 'aggiornare', 'atualizar', 'обновление', 'обновить', 'güncelleme']],
+  ['log',         ['ログ', '日志', '로그', 'logging', 'سجل', 'יומן', 'ثبت', 'लॉग', 'protokoll', 'protokolle', 'journal', 'registro', 'журнал', 'лог', 'günlük']],
+  ['port',        ['ポート', '端口', '포트', 'منفذ', 'פורט']],
+  ['file',        ['ファイル', '文件', '파일', 'ملف', 'קובץ']],
+  ['image',       ['イメージ', '镜像', '이미지', 'صورة', 'תמונה', 'abbild', 'imagen', 'imagem']],
+  ['volume',      ['ボリューム', '卷', '볼륨']],
+  ['cluster',     ['クラスター', '集群', '클러스터']],
+  ['node',        ['ノード', '节点', '노드']],
+  ['service',     ['サービス', '服务', '서비스', 'svc', 'خدمة', 'שירות', 'dienst', 'servicio', 'servizio', 'serviço', 'сервис', 'служба', 'servis', 'hizmet']],
+  ['certificate', ['証明書', '证书', '인증서', 'cert', 'ssl', 'tls', 'شهادة', 'תעודה']],
+  ['password',    ['パスワード', '密码', '비밀번호', 'passwd', 'pwd', 'كلمة المرور', 'סיסמה']],
+  ['token',       ['トークン', '令牌', '토큰', 'jwt', 'secret', 'رمز', 'אסימון']],
+  ['health',      ['ヘルス', '健康', '헬스', 'healthcheck', 'probe', 'صحة']],
+  ['migration',   ['マイグレーション', '迁移', '마이그레이션', 'migrate', 'هجرة']],
+  ['backup',      ['バックアップ', '备份', '백업', 'نسخ احتياطي', 'גיבוי', 'پشتیبان‌گیری', 'बैकअप', 'sicherung', 'sauvegarde', 'respaldo', 'cópia de segurança', 'резервная копия', 'резерв', 'yedekleme']],
+  ['monitor',     ['モニター', '监控', '모니터링', 'monitoring', 'metrics', 'alert', 'مراقبة', 'ניטור', 'نظارت', 'निगरानी', 'überwachung', 'surveiller', 'monitoreo', 'monitorare', 'monitorar', 'мониторинг', 'наблюдение', 'izleme']],
+  ['performance', ['パフォーマンス', '性能', '성능', 'latency', 'throughput', 'عملکرد', 'प्रदर्शन', 'leistung', 'performances', 'rendimiento', 'prestazioni', 'desempenho', 'производительность', 'быстродействие', 'performans']],
+  ['connection',  ['接続', '连接', '연결', 'conn', 'socket', 'اتصال', 'חיבור', 'اتصال', 'कनेक्शन', 'verbindung', 'connexion', 'conexión', 'connessione', 'conexão']],
+  ['queue',       ['キュー', '队列', '큐', 'طابور', 'warteschlange', 'file d\'attente', 'cola', 'coda', 'fila']],
+  ['redis',       ['レディス', '레디스']],
+  ['nginx',       ['エンジンエックス']],
+  ['linux',       ['リナックス', 'لينكس']],
+  ['api',         ['エーピーアイ', '接口', 'endpoint', 'واجهة برمجية', 'ממשק']],
+  ['healthcheck', ['ヘルスチェック', 'health', 'probe', 'فحص الصحة']],
+  ['loadbalancer',['ロードバランサー', '负载均衡', '로드밸런서', 'lb']],
+  ['ssl',         ['tls', 'https', 'certificate', 'cert']],
+  ['tls',         ['ssl', 'https', 'certificate', 'cert']],
+  ['docker',      ['container', 'コンテナ', '容器', '컨테이너', 'دوكر']],
+  ['git',         ['version control', 'repo', 'repository', 'commit', 'push', 'pull']],
+  ['ci',          ['pipeline', 'github actions', 'gitlab', 'jenkins', 'build']],
+  ['cd',          ['deploy', 'deployment', 'release']],
+  ['debug',       ['デバッグ', '调试', '디버그', 'debugging', 'breakpoint', 'تصحيح', 'איתור באגים', 'اشکال‌زدایی', 'डीबग', 'debuggen', 'déboguer', 'depurar', 'отладка', 'дебаг', 'hata ayıklama']],
+  ['crash',       ['クラッシュ', '崩溃', '크래시', 'panic', 'segfault', 'انهيار', 'קריסה', 'خرابی', 'क्रैश', 'absturz', 'panne', 'plantage', 'caída', 'falha', 'сбой', 'крэш', 'çökme', 'çöküş']],
+  ['restart',     ['再起動', '重启', '재시작', 'reboot', 'إعادة تشغيل', 'הפעלה מחדש', 'راه‌اندازی مجدد', 'पुنरारंभ', 'neustart', 'redémarrer', 'reiniciar', 'riavviare']],
+  ['permission',  ['権限', '权限', '권한', 'access', 'acl', 'chmod', 'صلاحية', 'הרשאה', 'مجوز', 'अनुमति', 'berechtigung', 'berechtigungen', 'permiso', 'permesso', 'permissão', 'разрешение', 'доступ', 'izin', 'yetki']],
+  // Japanese katakana → English
+  ['デプロイ',    ['deploy', 'deployment']],
+  ['コンテナ',    ['container', 'docker']],
+  ['サーバー',    ['server']],
+  ['サーバ',      ['server']],
+  ['データベース',['database', 'db']],
+  ['キャッシュ',  ['cache']],
+  ['エラー',      ['error', 'err']],
+  ['バグ',        ['bug', 'issue']],
+  ['ビルド',      ['build']],
+  ['テスト',      ['test']],
+  ['認証',        ['auth', 'authentication']],
+  ['設定',        ['config', 'configuration']],
+  ['インストール',['install']],
+  ['アップデート',['update', 'upgrade']],
+  ['ログ',        ['log', 'logs']],
+  ['ポート',      ['port']],
+  ['ファイル',    ['file']],
+  ['イメージ',    ['image']],
+  ['クラスター',  ['cluster']],
+  ['ノード',      ['node']],
+  ['サービス',    ['service']],
+  ['パスワード',  ['password']],
+  ['トークン',    ['token']],
+  ['バックアップ',['backup']],
+  ['モニター',    ['monitor', 'monitoring']],
+  ['接続',        ['connection']],
+  ['キュー',      ['queue']],
+  ['ヘルスチェック',['healthcheck', 'health check', 'health']],
+  ['ロードバランサー',['loadbalancer', 'load balancer']],
+  ['デバッグ',    ['debug']],
+  ['クラッシュ',  ['crash', 'panic']],
+  ['再起動',      ['restart', 'reboot']],
+  ['権限',        ['permission', 'access']],
+  // Chinese → English
+  ['部署',        ['deploy', 'deployment']],
+  ['容器',        ['container', 'docker']],
+  ['服务器',      ['server']],
+  ['数据库',      ['database']],
+  ['缓存',        ['cache']],
+  ['错误',        ['error']],
+  ['修复',        ['fix', 'bugfix']],
+  ['构建',        ['build']],
+  ['测试',        ['test']],
+  ['认证',        ['auth']],
+  ['配置',        ['config']],
+  ['安装',        ['install']],
+  ['更新',        ['update']],
+  ['日志',        ['log']],
+  ['端口',        ['port']],
+  ['镜像',        ['image']],
+  ['集群',        ['cluster']],
+  ['节点',        ['node']],
+  ['服务',        ['service']],
+  ['密码',        ['password']],
+  ['令牌',        ['token']],
+  ['备份',        ['backup']],
+  ['监控',        ['monitor']],
+  ['连接',        ['connection']],
+  ['队列',        ['queue']],
+  ['性能',        ['performance']],
+  ['内存',        ['memory']],
+  ['调试',        ['debug']],
+  ['崩溃',        ['crash']],
+  ['重启',        ['restart']],
+  ['权限',        ['permission']],
+  // Korean → English
+  ['배포',        ['deploy', 'deployment']],
+  ['컨테이너',    ['container']],
+  ['서버',        ['server']],
+  ['데이터베이스',['database']],
+  ['캐시',        ['cache']],
+  ['오류',        ['error']],
+  ['수정',        ['fix']],
+  ['빌드',        ['build']],
+  ['테스트',      ['test']],
+  ['인증',        ['auth']],
+  ['설정',        ['config']],
+  ['설치',        ['install']],
+  ['업데이트',    ['update']],
+  ['로그',        ['log']],
+  ['포트',        ['port']],
+  ['이미지',      ['image']],
+  ['클러스터',    ['cluster']],
+  ['노드',        ['node']],
+  ['서비스',      ['service']],
+  ['토큰',        ['token']],
+  ['백업',        ['backup']],
+  ['모니터링',    ['monitor']],
+  ['연결',        ['connection']],
+  ['큐',          ['queue']],
+  ['성능',        ['performance']],
+  ['메모리',      ['memory']],
+  ['디버그',      ['debug']],
+  ['크래시',      ['crash']],
+  ['재시작',      ['restart']],
+  ['권한',        ['permission']],
+  // Arabic → English
+  ['خطأ',              ['error']],
+  ['إصلاح',            ['fix']],
+  ['بناء',             ['build']],
+  ['اختبار',           ['test']],
+  ['مصادقة',           ['auth', 'authentication']],
+  ['إعدادات',          ['config', 'configuration']],
+  ['تثبيت',            ['install']],
+  ['تحديث',            ['update', 'upgrade']],
+  ['سجل',              ['log']],
+  ['صورة',             ['image']],
+  ['خدمة',             ['service']],
+  ['نسخ احتياطي',      ['backup']],
+  ['مراقبة',           ['monitor', 'monitoring']],
+  ['اتصال',            ['connection']],
+  ['ذاكرة',            ['memory']],
+  ['تصحيح',            ['debug', 'debugging']],
+  ['شبكة',             ['network']],
+  // Additional Arabic → English (covering blog post examples + common terms)
+  ['نشر',              ['deploy', 'deployment']],
+  ['انهيار',           ['crash', 'panic']],
+  ['طابور',            ['queue']],
+  ['رمز',              ['token', 'secret']],
+  ['كاش',              ['cache']],
+  ['منفذ',             ['port']],
+  ['سيرفر',            ['server']],
+  ['قاعدة البيانات',   ['database', 'db']],
+  ['إعادة تشغيل',      ['restart', 'reboot']],
+  ['صلاحية',           ['permission', 'access']],
+  ['تطبيق',            ['application', 'app']],
+  ['مفتاح',            ['key', 'token', 'secret']],
+  ['واجهة برمجية',     ['api', 'interface']],
+  ['فحص الصحة',        ['healthcheck', 'health']],
+  ['حاوية',            ['container', 'docker']],
+  ['عقدة',             ['node']],
+  ['سرعة',             ['performance', 'speed']],
+  ['قرص',              ['disk', 'storage']],
+  ['خادم',             ['server']],
+  ['برنامج',           ['application', 'software', 'app']],
+  // Arabic terms from blog examples
+  ['مشكلة',            ['error', 'issue', 'bug', 'problem', 'failure']],
+  ['بيئة',             ['environment', 'env']],
+  ['متغيرات',          ['variables', 'env', 'environment']],
+  ['إنتاج',            ['production', 'prod']],
+  ['سري',              ['secret', 'key', 'token']],
+  ['مفتاح سري',        ['secret', 'key']],
+  // Hebrew → English
+  ['שגיאה',            ['error']],
+  ['תיקון',            ['fix']],
+  ['בנייה',            ['build']],
+  ['בדיקה',            ['test']],
+  ['אימות',            ['auth', 'authentication']],
+  ['הגדרות',           ['config', 'configuration']],
+  ['התקנה',            ['install']],
+  ['עדכון',            ['update', 'upgrade']],
+  ['יומן',             ['log']],
+  ['שרת',              ['server']],
+  ['שירות',            ['service']],
+  ['גיבוי',            ['backup']],
+  ['ניטור',            ['monitor', 'monitoring']],
+  ['חיבור',            ['connection']],
+  ['זיכרון',           ['memory']],
+  ['רשת',              ['network']],
+  ['תמונה',            ['image']],
+  ['סיסמה',            ['password']],
+  ['הרשאה',            ['permission', 'access']],
+  // Additional Hebrew → English (covering blog post examples + common terms)
+  ['קריסה',            ['crash', 'panic']],
+  ['תור',              ['queue']],
+  ['מטמון',            ['cache']],
+  ['אסימון',           ['token', 'secret']],
+  ['פורט',             ['port']],
+  ['איתור באגים',      ['debug', 'debugging']],
+  ['הפעלה מחדש',       ['restart', 'reboot']],
+  ['מיכל',             ['container', 'docker']],
+  ['יישום',            ['application', 'app']],
+  ['מפתח',             ['key', 'token', 'secret']],
+  ['בדיקת תקינות',     ['healthcheck', 'health']],
+  ['ממשק תכנות',       ['api', 'interface']],
+  ['ביצועים',          ['performance']],
+  ['אחסון',            ['storage', 'disk']],
+  // Hebrew terms from blog examples
+  ['פריסה',            ['deploy', 'deployment']],
+  ['בעיה',             ['error', 'issue', 'bug', 'problem']],
+  ['סביבה',            ['environment', 'env']],
+  ['ייצור',            ['production', 'prod']],
+  ['סודי',             ['secret', 'key', 'token']],
+  ['מפתח סודי',        ['secret', 'key']],
+
+  // ── Farsi/Persian → English ───────────────────────────────────────────────
+  ['استقرار',          ['deploy', 'deployment']],
+  ['خطا',              ['error', 'err']],         // Farsi: خطا  vs Arabic: خطأ
+  ['اشکال',            ['bug', 'issue', 'error']],
+  ['رفع اشکال',        ['fix', 'debug', 'debugging']],
+  ['ساخت',             ['build']],
+  ['آزمایش',           ['test']],
+  ['احراز هویت',       ['auth', 'authentication']],
+  ['پیکربندی',         ['config', 'configuration']],
+  ['نصب',              ['install']],
+  ['به‌روزرسانی',      ['update', 'upgrade']],
+  ['ثبت',              ['log']],
+  ['سرور',             ['server']],
+  ['پایگاه داده',      ['database', 'db']],
+  ['شبکه',             ['network']],              // Farsi شبکه vs Arabic شبكة
+  ['حافظه',            ['memory', 'ram']],        // Farsi حافظه vs Arabic ذاكرة
+  ['کش',               ['cache']],
+  ['اشکال‌زدایی',      ['debug', 'debugging']],
+  ['خرابی',            ['crash', 'failure', 'error']],
+  ['راه‌اندازی مجدد',  ['restart', 'reboot']],
+  ['مجوز',             ['permission', 'access']],
+  ['پشتیبان‌گیری',     ['backup']],
+  ['عملکرد',           ['performance']],
+  ['مشکل',             ['problem', 'issue', 'error']],
+  ['سرویس',            ['service']],
+  ['کلید',             ['key', 'token', 'secret']],
+  ['محیط',             ['environment', 'env']],
+  ['تولید',            ['production', 'prod']],
+  ['رمز',              ['secret', 'key', 'token']],
+  ['اتصال',            ['connection', 'conn']],
+
+  // ── Hindi (Devanagari) → English ──────────────────────────────────────────
+  ['तैनाती',           ['deploy', 'deployment']],
+  ['तैना',             ['deploy', 'deployment']],  // stemmed form
+  ['त्रुटि',           ['error', 'err']],
+  ['गलती',             ['error', 'bug', 'issue']],
+  ['सुधार',            ['fix', 'bugfix']],
+  ['निर्माण',          ['build']],
+  ['परीक्षण',          ['test']],
+  ['प्रमाणीकरण',       ['auth', 'authentication']],
+  ['विन्यास',          ['config', 'configuration']],
+  ['कॉन्फ़िगरेशन',     ['config', 'configuration']],
+  ['इंस्टॉल',          ['install']],
+  ['अपडेट',            ['update', 'upgrade']],
+  ['लॉग',              ['log']],
+  ['सर्वर',            ['server']],
+  ['डेटाबेस',          ['database', 'db']],
+  ['नेटवर्क',          ['network']],
+  ['मेमोरी',           ['memory', 'ram']],
+  ['कैश',              ['cache']],
+  ['डीबग',             ['debug', 'debugging']],
+  ['क्रैश',            ['crash', 'panic']],
+  ['पुनरारंभ',         ['restart', 'reboot']],
+  ['अनुमति',           ['permission', 'access']],
+  ['बैकअप',            ['backup']],
+  ['प्रदर्शन',         ['performance']],
+  ['समस्या',           ['problem', 'issue', 'error']],
+  ['सेवा',             ['service']],
+  ['कनेक्शन',          ['connection', 'conn']],
+  ['पासवर्ड',          ['password']],
+  ['टोकन',             ['token', 'secret']],
+  ['वातावरण',          ['environment', 'env']],
+  ['उत्पादन',          ['production', 'prod']],
+
+  // ── European languages → English ─────────────────────────────────────────
+  // German (Deutsch) → English
+  ['fehler',          ['error', 'err']],
+  ['absturz',         ['crash', 'panic']],
+  ['bug',             ['bug', 'issue']],  // same word, keep for completeness
+  ['beheben',         ['fix', 'bugfix']],
+  ['behoben',         ['fix', 'fixed']],
+  ['lösung',          ['solution', 'fix']],
+  ['bauen',           ['build']],
+  ['testen',          ['test']],
+  ['authentifizierung',['auth', 'authentication']],
+  ['konfiguration',   ['config', 'configuration']],
+  ['einstellungen',   ['config', 'settings']],
+  ['installieren',    ['install']],
+  ['installiert',     ['install', 'installed']],
+  ['aktualisieren',   ['update', 'upgrade']],
+  ['aktualisierung',  ['update', 'upgrade']],
+  ['protokoll',       ['log']],
+  ['protokolle',      ['log', 'logs']],
+  ['abbild',          ['image']],
+  ['knoten',          ['node']],
+  ['dienst',          ['service']],
+  ['sicherung',       ['backup']],
+  ['überwachung',     ['monitor', 'monitoring']],
+  ['verbindung',      ['connection', 'conn']],
+  ['warteschlange',   ['queue']],
+  ['leistung',        ['performance']],
+  ['speicher',        ['memory', 'storage']],
+  ['debuggen',        ['debug', 'debugging']],
+  ['neustart',        ['restart', 'reboot']],
+  ['berechtigung',    ['permission', 'access']],
+  ['berechtigungen',  ['permission', 'access', 'acl']],
+  ['netzwerk',        ['network']],
+  ['datenbank',       ['database', 'db']],
+  ['bereitstellen',   ['deploy', 'deployment']],
+  ['bereitstellung',  ['deploy', 'deployment']],
+  // 'container' and 'server' are the same in German/French/Spanish/Italian/Portuguese
+  ['kaputt',          ['broken', 'error', 'crash']],
+  ['funktioniert',    ['works', 'working']],
+  ['geht nicht',      ['not working', 'broken', 'error']],
+  ['schlüssel',       ['key', 'token', 'secret']],
+  ['zertifikat',      ['certificate', 'cert', 'ssl', 'tls']],
+  ['umgebung',        ['environment', 'env']],
+  ['variablen',       ['variables', 'env', 'environment']],
+  ['aufgabe',         ['task', 'job']],
+  ['wartung',         ['maintenance']],
+  ['speicherleck',    ['memory leak', 'memory']],
+  ['schnittstelle',   ['interface', 'api']],
+
+  // French (Français) → English
+  ['erreur',          ['error', 'err']],
+  ['réparer',         ['fix']],
+  ['correction',      ['fix', 'bugfix']],
+  ['construire',      ['build']],
+  ['tester',          ['test']],
+  ['authentification',['auth', 'authentication']],
+  ['configuration',   ['config', 'configuration']],
+  ['installer',       ['install']],
+  ['installation',    ['install']],
+  ['mettre',          ['update', 'upgrade']],
+  ['journal',         ['log', 'logs']],
+  ['nœud',            ['node']],
+  ['sauvegarde',      ['backup']],
+  ['surveiller',      ['monitor', 'monitoring']],
+  ['connexion',       ['connection']],
+  ['mémoire',         ['memory']],
+  ['déboguer',        ['debug']],
+  ['redémarrer',      ['restart', 'reboot']],
+  ['réseau',          ['network']],
+  ['base de données', ['database', 'db']],
+  ['déployer',        ['deploy']],
+  ['déploiement',     ['deploy', 'deployment']],
+  ['clé',             ['key', 'token']],
+  ['certificat',      ['certificate', 'cert', 'ssl']],
+  ['environnement',   ['environment', 'env']],
+  ['panne',           ['crash', 'outage', 'failure']],
+  ['plantage',        ['crash', 'panic']],
+  ['interface',       ['interface', 'api']],
+  ['performances',    ['performance']],
+  ['stockage',        ['storage', 'disk']],
+  ['file attente',    ['queue']],
+
+  // Spanish (Español) → English
+  ['arreglar',        ['fix']],
+  ['corrección',      ['fix', 'bugfix']],
+  ['construir',       ['build']],
+  ['probar',          ['test']],
+  ['autenticación',   ['auth', 'authentication']],
+  ['configuración',   ['config', 'configuration']],
+  ['instalar',        ['install']],
+  ['actualizar',      ['update', 'upgrade']],
+  ['actualización',   ['update', 'upgrade']],
+  ['registro',        ['log', 'registry']],
+  ['nodo',            ['node']],
+  ['servicio',        ['service']],
+  ['contraseña',      ['password']],
+  ['copia de seguridad',['backup']],
+  ['respaldo',        ['backup']],
+  ['monitorear',      ['monitor']],
+  ['monitoreo',       ['monitoring']],
+  ['conexión',        ['connection']],
+  ['rendimiento',     ['performance']],
+  ['memoria',         ['memory']],
+  ['depurar',         ['debug']],
+  ['fallo',           ['crash', 'failure', 'error']],
+  ['caída',           ['crash', 'outage']],
+  ['reiniciar',       ['restart', 'reboot']],
+  ['permiso',         ['permission']],
+  ['permisos',        ['permission', 'access']],
+  ['red',             ['network']],
+  ['base de datos',   ['database', 'db']],
+  ['desplegar',       ['deploy']],
+  ['despliegue',      ['deploy', 'deployment']],
+  ['clave',           ['key', 'token', 'secret']],
+  ['certificado',     ['certificate', 'cert', 'ssl']],
+  ['entorno',         ['environment', 'env']],
+  ['cola',            ['queue']],
+  ['interfaz',        ['interface', 'api']],
+  ['imagen',          ['image']],
+
+  // Italian (Italiano) → English
+  ['errore',          ['error', 'err']],
+  ['correggere',      ['fix']],
+  ['costruire',       ['build']],
+  ['testare',         ['test']],
+  ['autenticazione',  ['auth', 'authentication']],
+  ['configurazione',  ['config', 'configuration']],
+  ['installare',      ['install']],
+  ['aggiornare',      ['update', 'upgrade']],
+  ['aggiornamento',   ['update', 'upgrade']],
+  ['registro',        ['log']],
+  ['nodo',            ['node']],
+  ['servizio',        ['service']],
+  ['password',        ['password']],
+  ['backup',          ['backup']],
+  ['monitorare',      ['monitor']],
+  ['connessione',     ['connection']],
+  ['prestazioni',     ['performance']],
+  ['memoria',         ['memory']],
+  ['debug',           ['debug']],
+  ['arresto anomalo', ['crash']],
+  ['riavviare',       ['restart']],
+  ['permesso',        ['permission']],
+  ['rete',            ['network']],
+  ['database',        ['database', 'db']],
+  ['distribuire',     ['deploy']],
+  ['distribuzione',   ['deploy', 'deployment']],
+  ['chiave',          ['key', 'token', 'secret']],
+  ['certificato',     ['certificate', 'cert']],
+  ['ambiente',        ['environment', 'env']],
+  ['coda',            ['queue']],
+  ['immagine',        ['image']],
+
+  // Portuguese (Português) → English
+  ['erro',            ['error', 'err']],
+  ['corrigir',        ['fix']],
+  ['construir',       ['build']],
+  ['testar',          ['test']],
+  ['autenticação',    ['auth', 'authentication']],
+  ['configuração',    ['config', 'configuration']],
+  ['instalar',        ['install']],
+  ['atualizar',       ['update', 'upgrade']],
+  ['atualização',     ['update', 'upgrade']],
+  ['registro',        ['log']],
+  ['nó',              ['node']],
+  ['serviço',         ['service']],
+  ['senha',           ['password']],
+  ['cópia de segurança',['backup']],
+  ['monitorar',       ['monitor']],
+  ['conexão',         ['connection']],
+  ['desempenho',      ['performance']],
+  ['memória',         ['memory']],
+  ['depurar',         ['debug']],
+  ['falha',           ['crash', 'failure', 'error']],
+  ['reiniciar',       ['restart']],
+  ['permissão',       ['permission']],
+  ['rede',            ['network']],
+  ['banco de dados',  ['database', 'db']],
+  ['implantar',       ['deploy']],
+  ['implantação',     ['deploy', 'deployment']],
+  ['chave',           ['key', 'token', 'secret']],
+  ['certificado',     ['certificate', 'cert']],
+  ['ambiente',        ['environment', 'env']],
+  ['fila',            ['queue']],
+  ['imagem',          ['image']],
+
+  // ── Russian (Cyrillic) → English ──────────────────────────────────────────
+  ['ошибка',          ['error', 'err']],
+  ['ошибки',          ['error', 'err']],
+  ['сбой',            ['crash', 'failure', 'error']],
+  ['крэш',            ['crash', 'panic']],
+  ['баг',             ['bug', 'issue']],
+  ['исправить',       ['fix', 'bugfix']],
+  ['исправление',     ['fix', 'patch']],
+  ['сборка',          ['build']],
+  ['собрать',         ['build']],
+  ['тест',            ['test']],
+  ['тестирование',    ['test', 'testing']],
+  ['аутентификация',  ['auth', 'authentication']],
+  ['авторизация',     ['auth', 'authorization']],
+  ['конфигурация',    ['config', 'configuration']],
+  ['настройки',       ['config', 'settings']],
+  ['установить',      ['install']],
+  ['установка',       ['install']],
+  ['обновление',      ['update', 'upgrade']],
+  ['обновить',        ['update', 'upgrade']],
+  ['журнал',          ['log']],
+  ['лог',             ['log', 'logs']],
+  ['сервер',          ['server']],
+  ['база данных',     ['database', 'db']],
+  ['сеть',            ['network']],
+  ['память',          ['memory', 'ram']],
+  ['кэш',             ['cache']],
+  ['отладка',         ['debug', 'debugging']],
+  ['перезапуск',      ['restart', 'reboot']],
+  ['перезагрузка',    ['restart', 'reboot']],
+  ['разрешение',      ['permission', 'access']],
+  ['доступ',          ['permission', 'access']],
+  ['резерв',          ['backup']],
+  ['производительность', ['performance']],
+  ['проблема',        ['problem', 'issue', 'error']],
+  ['сервис',          ['service']],
+  ['служба',          ['service']],
+  ['подключение',     ['connection', 'conn']],
+  ['соединение',      ['connection', 'conn']],
+  ['развёртывание',   ['deploy', 'deployment']],
+  ['развертывание',   ['deploy', 'deployment']],
+  ['развёрт',         ['deploy', 'deployment']],  // stemmed form
+  ['разверт',         ['deploy', 'deployment']],  // stemmed form
+  ['контейнер',       ['container', 'docker']],
+  ['образ',           ['image']],
+  ['кластер',         ['cluster']],
+  ['узел',            ['node']],
+  ['секрет',          ['secret', 'key', 'token']],
+  ['ключ',            ['key', 'token', 'secret']],
+  ['пароль',          ['password']],
+  ['токен',           ['token', 'secret']],
+  ['мониторинг',      ['monitor', 'monitoring']],
+  ['наблюдение',      ['monitor', 'monitoring']],
+  ['мигрировать',     ['migrate', 'migration']],
+  ['миграция',        ['migrate', 'migration']],
+
+  // ── Turkish (Latin + special chars ğ/ş/ı) → English ─────────────────────
+  ['hata',            ['error', 'err']],
+  ['hatalı',          ['error', 'err']],
+  ['çökme',           ['crash', 'panic']],
+  ['çöküş',           ['crash', 'failure']],
+  ['düzeltmek',       ['fix', 'bugfix']],
+  ['düzeltme',        ['fix', 'patch']],
+  ['derleme',         ['build']],
+  ['derlemek',        ['build']],
+  ['test',            ['test']],
+  ['testlemek',       ['test', 'testing']],
+  ['kimlik doğrulama',['auth', 'authentication']],
+  ['yetkilendirme',   ['auth', 'authorization']],
+  ['yapılandırma',    ['config', 'configuration']],
+  ['ayarlar',         ['config', 'settings']],
+  ['yüklemek',        ['install']],
+  ['kurulum',         ['install']],
+  ['güncelleme',      ['update', 'upgrade']],
+  ['günlük',          ['log']],
+  ['sunucu',          ['server']],
+  ['veritabanı',      ['database', 'db']],
+  ['ağ',              ['network']],
+  ['bellek',          ['memory', 'ram']],
+  ['önbellek',        ['cache']],
+  ['hata ayıklama',   ['debug', 'debugging']],
+  ['yeniden başlatma',['restart', 'reboot']],
+  ['izin',            ['permission', 'access']],
+  ['yetki',           ['permission', 'access', 'acl']],
+  ['yedekleme',       ['backup']],
+  ['performans',      ['performance']],
+  ['sorun',           ['problem', 'issue', 'error']],
+  ['servis',          ['service']],
+  ['hizmet',          ['service']],
+  ['bağlantı',        ['connection', 'conn']],
+  ['dağıtım',         ['deploy', 'deployment']],
+  ['dağıtmak',        ['deploy']],
+  ['konteyner',       ['container', 'docker']],
+  ['küme',            ['cluster']],
+  ['düğüm',           ['node']],
+  ['gizli',           ['secret', 'key']],
+  ['anahtar',         ['key', 'token', 'secret']],
+  ['şifre',           ['password']],
+  ['izleme',          ['monitor', 'monitoring']],
+  ['göç',             ['migrate', 'migration']],
+
+  // ── Vietnamese (Latin + Latin Extended Additional U+1EA0–U+1EF9) → English ─
+  ['triển khai',      ['deploy', 'deployment']],
+  ['triển',           ['deploy', 'deployment']],  // split token form
+  ['lỗi',             ['error', 'err']],
+  ['sửa lỗi',         ['fix', 'bugfix', 'debug']],
+  ['xây dựng',        ['build']],
+  ['kiểm tra',        ['test']],
+  ['xác thực',        ['auth', 'authentication']],
+  ['cấu hình',        ['config', 'configuration']],
+  ['cài đặt',         ['install']],
+  ['cập nhật',        ['update', 'upgrade']],
+  ['nhật ký',         ['log']],
+  ['máy chủ',         ['server']],
+  ['cơ sở dữ liệu',   ['database', 'db']],
+  ['mạng',            ['network']],
+  ['bộ nhớ',          ['memory', 'ram']],
+  ['bộ đệm',          ['cache']],
+  ['gỡ lỗi',          ['debug', 'debugging']],
+  ['sự cố',           ['crash', 'failure', 'error']],
+  ['khởi động lại',   ['restart', 'reboot']],
+  ['quyền',           ['permission', 'access']],
+  ['sao lưu',         ['backup']],
+  ['hiệu suất',       ['performance']],
+  ['vấn đề',          ['problem', 'issue', 'error']],
+  ['dịch vụ',         ['service']],
+  ['kết nối',         ['connection', 'conn']],
+  ['vùng chứa',       ['container', 'docker']],
+  ['nút',             ['node']],
+  ['khóa',            ['key', 'token', 'secret']],
+  ['mật khẩu',        ['password']],
+  ['giám sát',        ['monitor', 'monitoring']],
+  ['di chuyển',       ['migrate', 'migration']],
+]);
+
+/**
+ * Expand a token to its cross-lingual synonyms.
+ * Returns synonyms to be added to the token stream (pre-tokenized).
+ * CJK synonyms are NOT pre-bigram'd here — caller handles that.
+ */
+function expandCrossLingual(token: string): string[] {
+  return CROSS_LINGUAL_MAP.get(token) ?? [];
+}
+
+/**
+ * Tokenize text into meaningful keywords.
+ * Handles accented Latin, RTL (Arabic, Hebrew), and CJK (Chinese, Japanese, Korean).
+ *
+ * Features:
+ *  • CJK → character bigrams
+ *  • Katakana → additionally emits Hepburn romaji tokens (enables romaji queries)
+ *  • Arabic  → word tokenization + iterative prefix stemming (ال/و/ب/ل/ف/ك)
+ *  • Hebrew  → word tokenization + iterative prefix stemming (ה/ו/ב/ל/מ/כ)
+ *  • Farsi   → word tokenization + suffix/prefix stemming (ها/های plural, می prefix)
+ *  • Hindi   → Devanagari word tokenization + light suffix stemming
+ *  • All scripts → cross-lingual synonym expansion (EN↔JA↔ZH↔KO↔AR↔HE↔FA↔HI↔DE↔FR↔ES↔IT↔PT)
+ */
+function tokenize(text: string): string[] {
+  const tokens: string[] = [];
+  // Pre-process: split camelCase/PascalCase identifiers and snake_case before lowercasing
+  const lower = preprocessText(text).toLowerCase();
+
+  for (const [seg] of lower.matchAll(SEGMENT_RE)) {
+    if (CJK_RE.test(seg)) {
+      // CJK segment — extract overlapping character bigrams
+      for (let i = 0; i < seg.length - 1; i++) {
+        const bigram = seg[i] + seg[i + 1];
+        if (!STOPWORDS.has(seg[i]) && !STOPWORDS.has(bigram)) {
+          tokens.push(bigram);
+        }
+      }
+      // Trailing single character (for 1-char CJK terms)
+      if (seg.length >= 1) {
+        const last = seg[seg.length - 1];
+        if (!STOPWORDS.has(last)) tokens.push(last);
+      }
+      // Whole-segment cross-lingual lookup (for known tech terms like デプロイ, 部署, 배포)
+      // This ensures CJK full-words map to their English equivalents
+      const segSyns = expandCrossLingual(seg);
+      for (const syn of segSyns) {
+        if (!CJK_RE.test(syn)) {
+          syn.split(/\s+/).filter(w => w.length > 1 && !STOPWORDS.has(w)).forEach(w => tokens.push(w));
+        }
+      }
+      // Romanization: extract katakana-only portion and emit romaji tokens.
+      // This allows users to search "kontena" or "depuroi" to find katakana docs.
+      const kataOnly = seg.replace(/[^\u30a0-\u30ff]/g, '');
+      if (kataOnly.length >= 2) {
+        const romaji = katakanaToRomaji(kataOnly);
+        if (romaji.length >= 2 && romaji.length <= 40 && !STOPWORDS.has(romaji)) {
+          tokens.push(romaji);
+        }
+      }
+    } else if (RTL_RE.test(seg)) {
+      // RTL segment — 3-way branch: Farsi / Hebrew / Arabic
+      const words = seg.trim().split(/\s+/);
+      let stemFn: (w: string) => string;
+      if (FARSI_CHAR_RE.test(seg))       stemFn = farsiLightStem;
+      else if (HEBREW_CHAR_RE.test(seg)) stemFn = hebrewLightStem;
+      else                               stemFn = arabicLightStem;
+      for (const w of words) {
+        if (w.length <= 1 || STOPWORDS.has(w)) continue;
+        const stemmed = stemFn(w);
+        if (stemmed.length > 1 && !STOPWORDS.has(stemmed)) tokens.push(stemmed);
+      }
+    } else if (DEVANAGARI_RE.test(seg)) {
+      // Devanagari segment (Hindi / Marathi) — naturally space-separated
+      const words = seg.trim().split(/[\s\u200c\u200d]+/); // handle zero-width joiners
+      for (const w of words) {
+        const deva = w.replace(/[^\u0900-\u097f0-9]/g, '');
+        if (deva.length <= 1 || STOPWORDS.has(deva)) continue;
+        const stemmed = hindiLightStem(deva);
+        if (stemmed.length > 1 && !STOPWORDS.has(stemmed)) tokens.push(stemmed);
+      }
+    } else if (BENGALI_RE.test(seg)) {
+      // Bengali (Bangla) segment — space-separated words, Bengali script
+      const words = seg.trim().split(/[\s\u200c\u200d]+/);
+      for (const w of words) {
+        const bn = w.replace(/[^\u0980-\u09ff0-9]/g, '');
+        if (bn.length <= 1 || STOPWORDS.has(bn)) continue;
+        const stemmed = bengaliLightStem(bn);
+        if (stemmed.length > 1 && !STOPWORDS.has(stemmed)) tokens.push(stemmed);
+      }
+    } else if (CYRILLIC_RE.test(seg)) {
+      // Cyrillic segment (Russian, Bulgarian, Ukrainian, Serbian …)
+      const words = seg.trim().split(/\s+/);
+      for (const w of words) {
+        const cyr = w.replace(/[^\u0400-\u04ff]/g, '');
+        if (cyr.length <= 1 || STOPWORDS.has(cyr)) continue;
+        const stemmed = russianLightStem(cyr);
+        if (stemmed.length > 1 && !STOPWORDS.has(stemmed)) tokens.push(stemmed);
+      }
+    } else {
+      // Latin / other — includes Turkish (ğ/ş/ı), Polish (ą/ę/ł/ń/ó/ś/ź/ż/ć),
+      // Czech (č/š/ž/ě/ů/ř), Hungarian (ő/ű), Romanian (ș/ț), Vietnamese (ắặầổợụừ…)
+      const words = seg
+        .replace(/[^a-záàâãäåæçéèêëíìîïñóòôõöúùûüýÿßœğşıİąćęłńśźżčšžěůřőűșț\u1ea0-\u1ef90-9:\-./]/g, ' ')
+        .split(/\s+/)
+        .filter(w => w.length > 1 && !STOPWORDS.has(w));
+      // Turkish: apply light stemmer to words with Turkish-specific chars
+      for (const w of words) {
+        if (TURKISH_CHAR_RE.test(w)) {
+          const stemmed = turkishLightStem(w);
+          if (stemmed !== w && stemmed.length > 1 && !STOPWORDS.has(stemmed)) {
+            tokens.push(stemmed);
+          }
+        }
+        tokens.push(w);
+      }
+    }
+  }
+
+  // ── Cross-lingual expansion ──────────────────────────────────────────────
+  // For each token, look up synonyms in other languages and add them.
+  // CJK synonyms are bigram-expanded inline; Latin/RTL synonyms added as-is.
+  const expansions: string[] = [];
+  const seen = new Set(tokens);
+  for (const tok of tokens) {
+    const syns = expandCrossLingual(tok);
+    for (const syn of syns) {
+      if (seen.has(syn)) continue;
+      seen.add(syn);
+      if (CJK_RE.test(syn)) {
+        // CJK synonym → expand to character bigrams
+        for (let i = 0; i < syn.length - 1; i++) {
+          const bg = syn[i] + syn[i + 1];
+          if (!STOPWORDS.has(syn[i]) && !STOPWORDS.has(bg)) expansions.push(bg);
+        }
+        if (syn.length >= 1) {
+          const last = syn[syn.length - 1];
+          if (!STOPWORDS.has(last)) expansions.push(last);
+        }
+      } else if (RTL_RE.test(syn)) {
+        // RTL synonym — apply correct stemmer per language
+        const rtlStem = FARSI_CHAR_RE.test(syn) ? farsiLightStem
+                      : HEBREW_CHAR_RE.test(syn) ? hebrewLightStem
+                      : arabicLightStem;
+        const stemmed = rtlStem(syn);
+        if (stemmed.length > 1 && !STOPWORDS.has(stemmed)) expansions.push(stemmed);
+      } else if (DEVANAGARI_RE.test(syn)) {
+        // Devanagari synonym (Hindi)
+        const stemmed = hindiLightStem(syn);
+        if (stemmed.length > 1 && !STOPWORDS.has(stemmed)) expansions.push(stemmed);
+      } else if (BENGALI_RE.test(syn)) {
+        // Bengali synonym
+        const stemmed = bengaliLightStem(syn);
+        if (stemmed.length > 1 && !STOPWORDS.has(stemmed)) expansions.push(stemmed);
+      } else if (CYRILLIC_RE.test(syn)) {
+        // Cyrillic synonym (Russian)
+        const cyr = syn.replace(/[^\u0400-\u04ff]/g, '');
+        const stemmed = russianLightStem(cyr);
+        if (stemmed.length > 1 && !STOPWORDS.has(stemmed)) expansions.push(stemmed);
+      } else {
+        // Latin synonym (includes Turkish) — split in case of multi-word
+        const parts = syn.split(/\s+/).filter(w => {
+          if (w.length <= 1 || STOPWORDS.has(w)) return false;
+          return true;
+        });
+        for (const p of parts) {
+          expansions.push(p);
+          // Apply Turkish stemmer if it has Turkish-specific characters
+          if (TURKISH_CHAR_RE.test(p)) {
+            const stemmed = turkishLightStem(p);
+            if (stemmed !== p && stemmed.length > 1 && !STOPWORDS.has(stemmed)) {
+              expansions.push(stemmed);
+            }
+          }
+        }
+      }
+    }
+  }
+  tokens.push(...expansions);
+
+  return tokens;
 }
 
 /**
@@ -394,9 +1706,9 @@ function splitMultiQuery(query: string): string[] {
   const semiParts = query.split(/[;\n]+/).filter(s => s.trim().length > 2);
   if (semiParts.length >= 2) return semiParts.map(s => s.trim());
 
-  // Conjunctions (EN + DE + FR + ES)
+  // Conjunctions (EN + DE + FR + ES + IT + PT + RU + TR)
   const conjParts = query.split(
-    /\b(?:and also|also noch|außerdem|plus|additionally|furthermore|de plus|además|inoltre|além disso)\b/i
+    /\b(?:and also|also noch|außerdem|plus|additionally|furthermore|de plus|además|inoltre|além disso|а также|и также|кроме того|плюс|ayrıca|bunun yanı sıra|همچنین|وأيضاً|وكذلك|وهمچنین|और भी|इसके अलावा)\b/i
   ).filter(s => s.trim().length > 2);
   if (conjParts.length >= 2) return conjParts.map(s => s.trim());
 
@@ -428,12 +1740,31 @@ const BM25_DELTA = 1.0;   // BM25+ lower-bound guarantee (0 = classic BM25)
 /** Recency boost: half-life in days. Entry from 7 days ago gets 0.5× boost. */
 const RECENCY_HALF_LIFE_DAYS = 7;
 
+/**
+ * Zero-results query log — in-memory FIFO ring (max 500 entries).
+ * Exposed via /health for observability. Never persisted.
+ */
+interface ZeroResultEntry { query: string; ts: number; }
+const ZERO_RESULTS_LOG: ZeroResultEntry[] = [];
+const ZERO_RESULTS_MAX = 500;
+let zeroResultsTotal = 0;
+
+function logZeroResult(query: string): void {
+  zeroResultsTotal++;
+  if (ZERO_RESULTS_LOG.length >= ZERO_RESULTS_MAX) ZERO_RESULTS_LOG.shift();
+  ZERO_RESULTS_LOG.push({ query, ts: Date.now() });
+}
+
+/** Global index vocabulary — rebuilt on each keywordSearch call from the doc set. */
+let _indexVocab: Set<string> = new Set();
+
 interface DocEntry {
   key: string;
   content: string;
   tokens: string[];
   tokenFreq: Map<string, number>;  // term → count in this doc
   bigrams: Set<string>;            // "term1|term2" adjacency pairs
+  keyTokens: Set<string>;          // tokens from key/title only (for title boost)
   timestamp?: number;              // epoch ms, extracted from content if present
 }
 
@@ -553,7 +1884,9 @@ async function keywordSearch(
     }
 
     const timestamp = extractTimestamp(content);
-    docs.push({ key: allKeys[i], content, tokens, tokenFreq, bigrams, timestamp });
+    // Key tokens for title-boost: terms appearing in the Redis key get extra weight
+    const keyTokens = new Set(tokenize(allKeys[i]));
+    docs.push({ key: allKeys[i], content, tokens, tokenFreq, bigrams, keyTokens, timestamp });
     totalTokens += tokens.length;
   }
 
@@ -592,12 +1925,31 @@ async function keywordSearch(
   }
 
   /**
-   * Fuzzy match: tries exact → substring → Levenshtein ≤ 2.
+   * Fuzzy match: tries exact → prefix → substring → Levenshtein ≤ 2.
    * Returns [matchedTerm, weight] or null.
+   *
+   * Weights:
+   *  1.0 — exact match
+   *  0.85 — doc token starts with query (e.g. "dockerf" → "dockerfile")
+   *  0.75 — query starts with doc token (e.g. "kubernetes" → "kube")
+   *  0.6  — substring (either direction)
+   *  0.4  — Levenshtein ≤ 2 (typo tolerance)
    */
   function fuzzyMatch(qt: string, docTermSet: Set<string>): [string, number] | null {
     // Exact
     if (docTermSet.has(qt)) return [qt, 1.0];
+    // Prefix: query is prefix of a doc token (user typed partial word)
+    if (qt.length >= 4) {
+      for (const dt of docTermSet) {
+        if (dt.length > qt.length && dt.startsWith(qt)) return [dt, 0.85];
+      }
+    }
+    // Reverse-prefix: doc token is prefix of query (doc has abbreviated form)
+    if (qt.length >= 4) {
+      for (const dt of docTermSet) {
+        if (dt.length >= 4 && dt.length < qt.length && qt.startsWith(dt)) return [dt, 0.75];
+      }
+    }
     // Substring (partial)
     for (const dt of docTermSet) {
       if (dt.length > 3 && qt.length > 3 && (dt.includes(qt) || qt.includes(dt))) {
@@ -661,6 +2013,24 @@ async function keywordSearch(
         }
       }
 
+      // Phrase-match boost: if the raw (lowercased) query appears verbatim in content, 2× boost
+      // This rewards docs where the exact phrase exists (vs scattered tokens).
+      if (sq.length >= 4 && doc.content.toLowerCase().includes(sq.toLowerCase())) {
+        score *= 2.0;
+      }
+
+      // Key/title boost: if query terms appear in the Redis key (=title), 1.5× boost
+      // Keys often encode the primary topic (e.g. "deploy:api:server"), so key hits are high-precision.
+      if (score > 0) {
+        let keyHits = 0;
+        for (const qt of queryTokens) {
+          if (doc.keyTokens.has(qt)) keyHits++;
+        }
+        if (keyHits > 0) {
+          score *= 1 + 0.5 * (keyHits / queryTokens.length);
+        }
+      }
+
       // Recency boost
       score *= recencyBoost(doc.timestamp);
 
@@ -681,11 +2051,22 @@ async function keywordSearch(
 
   // ── Step 4: Sort by score, return top-K ──
   const sorted = [...allMatches.values()].sort((a, b) => b.score - a.score);
-  return sorted.slice(0, topK);
+  const topResults = sorted.slice(0, topK);
+
+  // ── Step 5: Zero-results logging + Did-You-Mean ───────────────────────────
+  if (topResults.length === 0) {
+    logZeroResult(query);
+    // Rebuild index vocab for Did-You-Mean suggestions
+    _indexVocab = new Set<string>();
+    for (const doc of docs) for (const t of doc.tokens) _indexVocab.add(t);
+  }
+
+  return topResults;
 }
 
 // ── Exported for testing ──────────────────────────────────────────────────────
-export { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp, STOPWORDS };
+export { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp, STOPWORDS,
+         katakanaToRomaji, arabicLightStem, expandCrossLingual, CROSS_LINGUAL_MAP };
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -720,26 +2101,11 @@ interface SemanticSearchResponse {
 
 // ── Connection pool ───────────────────────────────────────────────────────────
 
-/** Reuse Redis connections across tool calls (keyed by instance_id). Max 20 entries, LRU eviction. */
+/** Reuse Redis connections across tool calls (keyed by instance_id). */
 const pool = new Map<string, Redis>();
-const POOL_MAX = 20;
 
 async function getConnection(instance_id: string): Promise<Redis> {
-  if (pool.has(instance_id)) {
-    // Move to end (most-recently-used)
-    const conn = pool.get(instance_id)!;
-    pool.delete(instance_id);
-    pool.set(instance_id, conn);
-    return conn;
-  }
-  // Evict oldest entry when pool is full
-  if (pool.size >= POOL_MAX) {
-    const oldest = pool.keys().next().value;
-    if (oldest) {
-      pool.get(oldest)?.quit().catch(() => undefined);
-      pool.delete(oldest);
-    }
-  }
+  if (pool.has(instance_id)) return pool.get(instance_id)!;
 
   const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
   if (inst.status !== 'running') {
@@ -809,34 +2175,13 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   }
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
-    signal: AbortSignal.timeout(15000),
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${JWT}`,
       ...options.headers,
     },
-  }).catch((err: Error) => {
-    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
-      throw new McpError(ErrorCode.InternalError,
-        `cachly API timed out after 15s — check your connection or try again.`);
-    }
-    throw new McpError(ErrorCode.InternalError, `cachly API unreachable: ${err.message}`);
   });
   if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `cachly API: authentication failed (${res.status}) — your JWT may be expired or invalid.\n` +
-        `Get a new API token at https://cachly.dev/settings or run \`get_api_status\` to check token expiry.`
-      );
-    }
-    if (res.status === 503 || res.status === 502) {
-      throw new McpError(
-        ErrorCode.InternalError,
-        `cachly API: auth service unavailable (${res.status}) — the authentication service may be temporarily down.\n` +
-        `Please try again in a moment or contact support@cachly.dev`
-      );
-    }
     const body = await res.json().catch(() => ({ error: res.statusText }));
     throw new McpError(
       ErrorCode.InternalError,
@@ -863,8 +2208,8 @@ const TOOLS = [
     description:
       'Create a new managed Valkey/Redis cache instance on cachly.dev. ' +
       'Free tier provisions in ~30 seconds. Paid tiers return a Stripe checkout URL. ' +
-      'Available tiers: free (30 MB), dev (256 MB, €8/mo), pro (1 GB, €25/mo), ' +
-      'speed (1 GB Dragonfly + Semantic Cache, €39/mo), business (8 GB, €99/mo).',
+      'Available tiers: free (25 MB), dev (200 MB, €19/mo), pro (900 MB, €49/mo), ' +
+      'speed (900 MB Dragonfly + Semantic Cache, €79/mo), business (7 GB, €199/mo).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1239,10 +2584,10 @@ const TOOLS = [
   {
     name: 'get_api_status',
     description:
-      'Check the cachly API health, auth service reachability, and your authentication status. ' +
-      'Returns API health, whether the Keycloak auth service is reachable, JWT validity, ' +
-      'user ID (sub claim), token expiry, and the auth provider. ' +
-      'Use this to debug connection issues, verify your CACHLY_JWT, or diagnose "Auth Service Unavailable" errors.',
+      'Check the cachly API health and your authentication status. ' +
+      'Returns whether the JWT is valid, your user ID (sub claim), ' +
+      'token expiry, and the auth provider (keycloak). ' +
+      'Use this to debug connection issues or verify your CACHLY_JWT is correct.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   // ── Thinking/Context Cache (for AI assistants) ────────────────────────────
@@ -1333,7 +2678,9 @@ const TOOLS = [
       'Fields: topic (short slug like "deploy:web"), outcome ("success"|"failure"), ' +
       'what_worked (what solved it), what_failed (what did NOT work), context (extra details). ' +
       'Supports structured metadata: severity, file_paths (files involved), commands (working commands), tags. ' +
-      'Deduplication: if a lesson for this topic already exists, it is updated instead of duplicated. ' +
+      'Deduplication: if a lesson for this topic already exists, it is updated with full audit trail. ' +
+      'Contradiction detection: warns if new outcome conflicts with existing lesson outcome. ' +
+      'Confidence: lesson starts at 1.0, decays after 5d (→0.7) and 10d (→0.5) without recall. ' +
       'Example: learn_from_attempts(topic="deploy:api", outcome="success", what_worked="nohup docker compose up -d --build", what_failed="docker compose up hangs on SSH timeout", severity="critical", commands=["nohup docker compose up -d --build"])',
     inputSchema: {
       type: 'object',
@@ -1364,6 +2711,15 @@ const TOOLS = [
           items: { type: 'string' },
           description: 'Topic tags for filtering (e.g. ["bash", "deploy", "env"])',
         },
+        depends_on: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Prerequisites this lesson depends on (e.g. ["node:>=20", "docker:running", "wireguard:active"]). When a dependency is marked stale, all dependent lessons get needs_review.',
+        },
+        author: {
+          type: 'string',
+          description: 'Name or handle of the person storing this lesson (e.g. "alice", "bob"). Used for Team Telepathy — teammates see each other\'s lessons in session_start.',
+        },
       },
       required: ['instance_id', 'topic', 'outcome', 'what_worked'],
     },
@@ -1373,42 +2729,15 @@ const TOOLS = [
     description:
       'Recall the best known solution for a topic from past lessons. ' +
       'Call this BEFORE attempting any task that might have been done before. ' +
-      'Returns the most recent successful lesson for the topic, or a summary of attempts. ' +
+      'Returns the most recent successful lesson for the topic, with confidence indicator. ' +
+      '⚠️ badge = lesson is >5d old (verify before applying). 🔴 = >10d old (likely stale!). ' +
+      'Recalling a lesson resets its confidence clock to 1.0 (marks as recently verified). ' +
       'Example: recall_best_solution(topic="deploy:web") → returns the working deploy command.',
     inputSchema: {
       type: 'object',
       properties: {
         instance_id: { type: 'string', description: 'UUID of the cache instance' },
         topic:        { type: 'string', description: 'Topic slug to look up, e.g. "deploy:web". Supports partial match.' },
-      },
-      required: ['instance_id', 'topic'],
-    },
-  },
-  {
-    name: 'list_lessons',
-    description:
-      'List all topics stored in the Brain. Use this to see what the AI has learned, find topics to recall, or identify outdated lessons to delete with forget_lesson. ' +
-      'Returns topics sorted by most recently stored, with severity and recall count.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
-        filter:      { type: 'string', description: 'Optional substring filter, e.g. "deploy" returns only deploy-related topics' },
-      },
-      required: ['instance_id'],
-    },
-  },
-  {
-    name: 'forget_lesson',
-    description:
-      'Delete a stored lesson from the Brain. Use this when a lesson is wrong, outdated, or was learned incorrectly. ' +
-      'Removes both the best-solution entry and the attempt history for the topic. ' +
-      'Example: forget_lesson(topic="deploy:web") → deletes the wrong deployment lesson so a correct one can be stored.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
-        topic:       { type: 'string', description: 'Exact topic slug to delete, e.g. "deploy:web"' },
       },
       required: ['instance_id', 'topic'],
     },
@@ -1434,8 +2763,10 @@ const TOOLS = [
     name: 'session_start',
     description:
       'Single-call session briefing. Call this at the START of every session INSTEAD of multiple separate smart_recall/recall_best_solution calls. ' +
-      'Returns: last session summary, open TODOs, checkpoint (if you switched providers), recent lessons, ' +
-      'open failures, and brain health stats. Also saves a session start marker so session_end can compute duration.',
+      'Returns: last session summary, recent lessons sorted by recency, relevant lessons for your focus area, ' +
+      'open failures (topics with only failure outcomes), brain health stats, team telepathy (what teammates learned this week), ' +
+      'predictive pre-warnings (if your focus area has known failure patterns), and memory crystals (compressed wisdom from old sessions). ' +
+      'Also saves a session start marker so session_end can compute duration.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1444,13 +2775,17 @@ const TOOLS = [
           type: 'string',
           description: 'Keywords for what you plan to work on today (e.g. "deploy infra api"). Used to surface relevant lessons at the top.',
         },
-        workspace_path: {
+        author: {
           type: 'string',
-          description: 'Absolute path to the project root. If provided and no session_end was found, reconstructs context from git log.',
+          description: 'Your name or handle (e.g. "alice"). Enables Team Telepathy — filters YOUR lessons vs TEAM lessons from past 7 days.',
         },
         provider: {
           type: 'string',
-          description: 'Current AI provider (claude-code, copilot, cursor, windsurf, continue). Used to detect cross-provider switches.',
+          description: 'Current AI provider (e.g. "claude-code", "copilot", "cursor", "windsurf"). Shown in the briefing header and saved so the next provider can see who was last active.',
+        },
+        workspace_path: {
+          type: 'string',
+          description: 'Absolute path to the project root. If no session_end was found (e.g. context limit hit), reads git log to reconstruct what happened since last session.',
         },
       },
       required: ['instance_id'],
@@ -1462,7 +2797,8 @@ const TOOLS = [
       'Save a session summary when you finish working. ' +
       'Records what was accomplished, files changed, and lesson count. ' +
       'The next session_start will show this summary as "Last session". ' +
-      'Call this when ending a work session, before going idle, or before summarizing.',
+      'Call this when ending a work session, before going idle, or before summarizing. ' +
+      'Ambient Learning: if workspace_path is provided, reads git log since session start and auto-learns from commits.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1480,111 +2816,99 @@ const TOOLS = [
           type: 'number',
           description: 'Number of new lessons stored this session (optional)',
         },
-        project_dir: {
+        workspace_path: {
           type: 'string',
-          description: 'Absolute project path. If provided, refreshes CLAUDE.md with the latest top lessons inline.',
+          description: 'Absolute path to the project root (e.g. "/Users/you/myproject"). Enables Ambient Learning — reads git log since session start and auto-learns from commit messages.',
         },
       },
       required: ['instance_id', 'summary'],
     },
   },
+  // ── Session Handoff — cross-window continuity ─────────────────────────────
+  {
+    name: 'session_handoff',
+    description:
+      'Save a detailed handoff for the NEXT chat window / session. ' +
+      'Stores: current progress, TODO list (done + remaining), changed files with descriptions, ' +
+      'instructions for the next assistant, and any incomplete work. ' +
+      'The next session_start automatically includes this handoff so the new window knows EXACTLY what happened and what remains. ' +
+      'Call this BEFORE closing a chat window, especially if work is incomplete. ' +
+      'This prevents the "continue" problem where new windows lose context, skip tasks, or produce broken code.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        completed_tasks: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tasks that were fully completed (e.g. "Implemented brainSearch() in JS SDK")',
+        },
+        remaining_tasks: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tasks NOT yet done — the next window MUST pick these up',
+        },
+        files_changed: {
+          type: 'array',
+          items: {
+            type: 'object',
+            properties: {
+              path: { type: 'string', description: 'File path relative to project root' },
+              status: { type: 'string', enum: ['complete', 'partial', 'broken'], description: 'State of this file' },
+              description: { type: 'string', description: 'What was changed and what still needs work' },
+            },
+            required: ['path', 'status'],
+          },
+          description: 'Changed files with their current state — marks partial/broken files so next window knows to fix them',
+        },
+        instructions: {
+          type: 'string',
+          description: 'Free-form instructions for the next assistant. Be specific: what to do next, what to avoid, what broke.',
+        },
+        context_summary: {
+          type: 'string',
+          description: 'Brief summary of what happened this session (architecture decisions, key findings, blockers)',
+        },
+        blocked_on: {
+          type: 'string',
+          description: 'If work is blocked, describe what is needed to unblock (e.g. "waiting for API deploy", "needs user input on design")',
+        },
+      },
+      required: ['instance_id', 'completed_tasks', 'remaining_tasks'],
+    },
+  },
+  // ── session_ping — lightweight in-session checkpoint ─────────────────────
   {
     name: 'session_ping',
     description:
-      'Lightweight checkpoint — saves current task, files, and provider mid-session. ' +
-      'Enables seamless cross-provider handoff: if you switch from Claude Code to GitHub Copilot ' +
-      'or Cursor, session_start on the new provider shows exactly where you left off. ' +
-      'Call this every ~5 tool uses, when switching providers, or when approaching context limit. ' +
-      'Much lighter than session_end — does not end the session, just saves a breadcrumb.',
+      'Lightweight checkpoint — call this every ~5 tool calls or whenever you complete a significant step. ' +
+      'Stores the current task + files touched so session_start on the NEXT provider can reconstruct what happened ' +
+      'even if session_end was never called (e.g. Claude context limit hit, window crashed). ' +
+      'This solves the provider-switching problem: Claude → Copilot → Cursor all see the same last checkpoint. ' +
+      'Extremely fast — one Redis SET, no blocking operations.',
     inputSchema: {
       type: 'object',
       properties: {
         instance_id: { type: 'string', description: 'UUID of the cache instance' },
-        task:      { type: 'string', description: 'What you are currently working on (1 sentence)' },
-        provider:  { type: 'string', description: 'Current AI provider: claude-code, copilot, cursor, windsurf, continue (default: unknown)' },
-        files:     { type: 'array', items: { type: 'string' }, description: 'Files currently open or being edited' },
-        next_step: { type: 'string', description: 'What needs to happen next (optional — helps the next provider pick up)' },
-      },
-      required: ['instance_id', 'task'],
-    },
-  },
-  {
-    name: 'compact_recover',
-    description:
-      'Post-compaction recovery for Claude Code — call this IMMEDIATELY after context compaction. ' +
-      'Returns a dense briefing: last checkpoint (what you were doing), open TODOs, ' +
-      '3 most critical lessons, and files in progress. Single call to restore full working context. ' +
-      'Faster and more targeted than session_start — designed specifically for compaction recovery.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
-      },
-      required: ['instance_id'],
-    },
-  },
-  // ── Brain TODOs — persistent task list across sessions ────────────────────
-  {
-    name: 'todo_add',
-    description:
-      'Add a TODO item to the Brain — persists across sessions, compaction, and provider switches. ' +
-      'session_start automatically shows open TODOs so you always have a clear work agenda. ' +
-      'Use this instead of keeping TODOs only in working memory.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
-        task: { type: 'string', description: 'The task description (1-2 sentences)' },
-        priority: {
+        task: {
           type: 'string',
-          enum: ['high', 'medium', 'low'],
-          description: 'Priority level (default: medium)',
+          description: 'What you are currently working on (e.g. "Implementing invite handler in handler/invite.go")',
         },
-        context: { type: 'string', description: 'Optional: file path, branch, or relevant context' },
+        files_touched: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Files modified so far this session',
+        },
+        next_step: {
+          type: 'string',
+          description: 'What the NEXT step is after this checkpoint (helps next provider resume immediately)',
+        },
+        provider: {
+          type: 'string',
+          description: 'Current AI provider (e.g. "claude-code", "copilot", "cursor", "windsurf")',
+        },
       },
       required: ['instance_id', 'task'],
-    },
-  },
-  {
-    name: 'todo_done',
-    description: 'Mark a TODO as done. Removes it from the open TODO list shown in session_start.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
-        id: { type: 'string', description: 'TODO ID returned by todo_add or todo_list' },
-      },
-      required: ['instance_id', 'id'],
-    },
-  },
-  {
-    name: 'todo_list',
-    description: 'List all open (or recently completed) TODOs from the Brain.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        instance_id:   { type: 'string', description: 'UUID of the cache instance' },
-        include_done:  { type: 'boolean', description: 'Also show completed TODOs (default: false)' },
-      },
-      required: ['instance_id'],
-    },
-  },
-  {
-    name: 'refresh_claude_md',
-    description:
-      'Refreshes CLAUDE.md in the project with the top lessons from the Brain inline. ' +
-      'After this call, every AI session benefits from brain content even before calling session_start — ' +
-      'the top lessons are baked directly into the file context. ' +
-      'Call this at session_end (with project_dir) or any time you add important lessons. ' +
-      'Idempotent — safe to run multiple times.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
-        project_dir:  { type: 'string', description: 'Absolute path to project root containing CLAUDE.md' },
-        max_lessons:  { type: 'number', description: 'Max lessons to embed inline (default: 5)' },
-      },
-      required: ['instance_id', 'project_dir'],
     },
   },
   // ── AI Brain — Extended features ─────────────────────────────────────────
@@ -1678,50 +3002,135 @@ const TOOLS = [
     },
   },
   {
-    name: 'brain_stats',
+    name: 'team_synthesize',
     description:
-      'Complete statistics dashboard for your AI Brain — lessons, recalls, time saved, top topics, team authors, memory usage. ' +
-      'Returns a formatted report designed for sharing (screenshot-worthy). ' +
-      'Use this when you want a full overview or want to share your brain health with others.',
+      'Team Brain Synthesis — merge multiple contributors\' lessons on the same topic into one canonical version. ' +
+      'When 2+ developers store lessons for the same topic with different details, this proposes the best merged version. ' +
+      'Shows: all contributions by author, what worked (consensus), what failed (union), canonical lesson to store. ' +
+      'Use this when onboarding new team members or before documenting a process.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
+        topic:       { type: 'string', description: 'Topic slug to synthesize (e.g. "deploy:api")' },
+      },
+      required: ['instance_id', 'topic'],
+    },
+  },
+  {
+    name: 'memory_crystalize',
+    description:
+      'Compress the last 30-50 sessions and auto-learned lessons into a dense Memory Crystal. ' +
+      'A crystal is a compact, structured summary of everything the brain learned — grouped by category (deploy, fix, debug, …). ' +
+      'Crystals survive session cleanup and appear in session_start once enough sessions have accumulated. ' +
+      'Run this monthly or after a big milestone to preserve institutional knowledge. ' +
+      'Returns a digest of what was crystallized.',
     inputSchema: {
       type: 'object',
       properties: {
         instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        label: {
+          type: 'string',
+          description: 'Optional label for this crystal (e.g. "Q1 2026", "v2 launch"). Auto-generated from date if omitted.',
+        },
+      },
+      required: ['instance_id'],
+    },
+  },
+  // ── Roadmap — Persistent project plan tracker ───────────────────────────
+  {
+    name: 'roadmap_add',
+    description:
+      'Add a new item to the persistent project roadmap stored in the Brain. ' +
+      'Items survive across sessions and editors — the roadmap is always up to date. ' +
+      'Use for features, bugs, refactors, or any planned work. ' +
+      'Call roadmap_list to see all open items, roadmap_next to get the next actionable item.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        title: { type: 'string', description: 'Short title of the task/feature (3–10 words)' },
+        description: { type: 'string', description: 'What needs to be done, acceptance criteria, context' },
+        priority: {
+          type: 'string',
+          enum: ['critical', 'high', 'medium', 'low'],
+          description: 'Priority level (default: medium)',
+        },
+        tags: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Tags for filtering (e.g. ["api", "web", "sdk", "infra"])',
+        },
+        milestone: { type: 'string', description: 'Milestone/epic this belongs to (optional)' },
+      },
+      required: ['instance_id', 'title'],
+    },
+  },
+  {
+    name: 'roadmap_update',
+    description:
+      'Update the status, priority, or details of a roadmap item. ' +
+      'Use to move items through the lifecycle: planned → in-progress → done (or blocked/cancelled). ' +
+      'Also use to add notes/findings while working on an item.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        id: { type: 'string', description: 'Item ID returned by roadmap_add or roadmap_list' },
+        status: {
+          type: 'string',
+          enum: ['planned', 'in-progress', 'done', 'blocked', 'cancelled'],
+          description: 'New status for the item',
+        },
+        priority: {
+          type: 'string',
+          enum: ['critical', 'high', 'medium', 'low'],
+          description: 'Updated priority (optional)',
+        },
+        notes: { type: 'string', description: 'Progress notes, findings, or blockers (appended to existing notes)' },
+        title: { type: 'string', description: 'Updated title (optional)' },
+        description: { type: 'string', description: 'Updated description (optional)' },
+      },
+      required: ['instance_id', 'id'],
+    },
+  },
+  {
+    name: 'roadmap_list',
+    description:
+      'List all roadmap items, optionally filtered by status, priority, tag, or milestone. ' +
+      'Returns items sorted by priority then creation date. ' +
+      'Called automatically by session_start to show open work.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        status: {
+          type: 'string',
+          enum: ['planned', 'in-progress', 'done', 'blocked', 'cancelled', 'open'],
+          description: 'Filter by status. Use \'open\' to see planned+in-progress+blocked (default: open)',
+        },
+        tag: { type: 'string', description: 'Filter by tag (optional)' },
+        milestone: { type: 'string', description: 'Filter by milestone (optional)' },
+        priority: {
+          type: 'string',
+          enum: ['critical', 'high', 'medium', 'low'],
+          description: 'Filter by minimum priority (optional)',
+        },
       },
       required: ['instance_id'],
     },
   },
   {
-    name: 'export_brain',
+    name: 'roadmap_next',
     description:
-      'Export your entire AI Brain as a portable Markdown file. ' +
-      'Includes all lessons (topic, outcome, what worked, severity), context entries (keys + content), ' +
-      'session history, and metadata. Perfect for sharing with teammates, archiving, posting to GitHub, ' +
-      'or importing into a new instance. ' +
-      'Example: export_brain() → returns full markdown string you can save to a .md file.',
+      'Get the single most important next actionable roadmap item. ' +
+      'Returns the highest-priority in-progress item first, then planned items, sorted by priority. ' +
+      'Call at session start to immediately know what to work on next.',
     inputSchema: {
       type: 'object',
       properties: {
         instance_id: { type: 'string', description: 'UUID of the cache instance' },
-        include_context: { type: 'boolean', description: 'Include context entries (default: true)' },
-        max_lessons:    { type: 'number',  description: 'Max lessons to include (default: all)' },
-      },
-      required: ['instance_id'],
-    },
-  },
-  {
-    name: 'invite_link',
-    description:
-      'Generate a one-click team invite link for your Brain instance. ' +
-      'Share the link (or the npx join command) with a teammate — they run one command and are instantly ' +
-      'connected to the same shared Brain with all your lessons and context. ' +
-      'No dashboard visit, no copy-paste of instance IDs required. ' +
-      'Example: invite_link() → returns "npx @cachly-dev/mcp-server@latest join <token>"',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance to share' },
-        label:       { type: 'string', description: 'Optional label shown to the invitee (e.g. "my-api project")' },
+        tag: { type: 'string', description: 'Filter by tag (optional)' },
       },
       required: ['instance_id'],
     },
@@ -1730,12 +3139,16 @@ const TOOLS = [
     name: 'brain_doctor',
     description:
       'Check the health of your AI Brain and get actionable recommendations. ' +
-      'Reports: lesson count, context entries, last session age, open failures, quality score. ' +
+      'Reports: lesson count, context entries, last session age, open failures, quality score, effective IQ boost, stale index. ' +
       'Returns a prioritized list of issues with fix instructions.',
     inputSchema: {
       type: 'object',
       properties: {
         instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        workspace_path: {
+          type: 'string',
+          description: 'Absolute path to workspace root — enables package.json analysis for openclaw cross-promo (optional)',
+        },
       },
       required: ['instance_id'],
     },
@@ -1807,27 +3220,98 @@ const TOOLS = [
       required: ['instance_id', 'framework'],
     },
   },
+  // ── Brain Archaeology + Causal Chain ────────────────────────────────────
   {
-    name: 'brain_from_git',
+    name: 'recall_at',
     description:
-      'Bootstrap your AI Brain from git history — no manual lesson writing required. ' +
-      'Scans commits, reverts, hotspot files, and PR messages to extract lessons automatically:\n' +
-      '  • fix/bug commits → success lessons ("this solved it")\n' +
-      '  • revert commits  → failure lessons ("this approach broke things")\n' +
-      '  • perf/refactor   → architecture lessons\n' +
-      '  • hotspot files   → context entry (most frequently changed = most fragile)\n\n' +
-      'One command turns 6 months of team git history into an instant AI knowledge base. ' +
-      'Perfect for onboarding new developers or AI assistants to an existing project.',
+      'Brain Archaeology — see what a lesson looked like at a specific point in time. ' +
+      '"What did we know about deployments 3 months ago?" ' +
+      'Returns the history of a topic filtered to entries before the given date. ' +
+      'Shows how the lesson evolved: failure → partial → success. ' +
+      'Also useful to understand WHY old code decisions were made.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
-        repo_path:    { type: 'string', description: 'Absolute path to the git repository root (default: current directory)' },
-        days:         { type: 'number', description: 'How many days of history to scan (default: 180)' },
-        max_commits:  { type: 'number', description: 'Max commits to analyze (default: 500)' },
-        dry_run:      { type: 'boolean', description: 'Preview what would be imported without writing to brain (default: false)' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        topic:       { type: 'string', description: 'Topic slug to look up, e.g. "deploy:api"' },
+        date:        { type: 'string', description: 'ISO date string (e.g. "2026-01-15") — returns entries stored BEFORE this date' },
       },
-      required: ['instance_id'],
+      required: ['instance_id', 'topic', 'date'],
+    },
+  },
+  {
+    name: 'trace_dependency',
+    description:
+      'Causal Chain — find all lessons that depend on a given prerequisite. ' +
+      '"What lessons are affected if node version changes?" ' +
+      'When a dependency changes (new version, different provider, new OS), call this to see which lessons need review. ' +
+      'Lessons store dependencies via the depends_on field in learn_from_attempts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        dependency:  { type: 'string', description: 'Dependency to trace (e.g. "node:>=20", "docker:running", "wireguard:active")' },
+        mark_review: { type: 'boolean', description: 'If true, marks all dependent lessons as needs_review (default: false)' },
+      },
+      required: ['instance_id', 'dependency'],
+    },
+  },
+  // ── Team / Org Management ────────────────────────────────────────────────
+  {
+    name: 'list_orgs',
+    description:
+      'List your Cachly organizations (team/org plans). ' +
+      'Returns each org with plan, seat count, and member info. ' +
+      'Org plans (Team €99, Business €299, Enterprise custom) are billed separately from cache tiers.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'create_org',
+    description:
+      'Create a new Cachly organization for team collaboration. ' +
+      'After creation, invite team members with invite_member and upgrade the plan via the billing portal. ' +
+      'Org plans: Team (€99/mo, 10 seats), Business (€299/mo, 50 seats), Enterprise (custom).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Organization display name (e.g. "Acme Engineering")' },
+        slug: { type: 'string', description: 'URL-safe slug (e.g. "acme-eng"). Auto-generated from name if omitted.' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'invite_member',
+    description:
+      'Invite a team member to a Cachly organization by email. ' +
+      'They will receive an invite email and can join via the dashboard. ' +
+      'Roles: owner (full access), admin (manage members + instances), member (read + cache ops).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        org_id: { type: 'string', description: 'UUID of the organization' },
+        email:  { type: 'string', description: 'Email address to invite' },
+        role:   { type: 'string', enum: ['admin', 'member'], description: 'Role for the invited member (default: member)' },
+      },
+      required: ['org_id', 'email'],
+    },
+  },
+  {
+    name: 'get_org_plan',
+    description:
+      'Get the current org plan, seat usage, and billing info for an organization. ' +
+      'Shows: plan name, price, seats used/max, next billing date. ' +
+      'To upgrade: use the billing portal URL returned by this tool.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        org_id: { type: 'string', description: 'UUID of the organization' },
+      },
+      required: ['org_id'],
     },
   },
   // ── Legacy / Setup ────────────────────────────────────────────────────────
@@ -1903,24 +3387,23 @@ const TOOLS = [
     },
   },
 
-  // ── Cognitive Cache — the world's first thinking cache ───────────────────
+  // ── v0.6 Cognitive Cache Tools ────────────────────────────────────────────
   {
     name: 'memory_consolidate',
     description:
-      'Distill and deduplicate your entire AI knowledge base — the world\'s first cognitive cache operation.\n\n' +
-      'Scans ALL stored lessons and context, then:\n' +
-      '  • Detects contradictions: same topic with conflicting outcomes\n' +
-      '  • Merges duplicates: 3 similar lessons → 1 canonical truth\n' +
-      '  • Flags stale knowledge: memories never recalled in 60+ days\n' +
-      '  • Returns a "knowledge health score" for the entire brain\n\n' +
-      'Run periodically (weekly) to keep your AI\'s knowledge sharp and conflict-free.\n' +
-      'Use dry_run: true first to preview changes without modifying anything.',
+      'Cognitive memory consolidation — the weekly garbage collector for your AI Brain. ' +
+      'Scans all lessons, detects contradictions (same topic with conflicting outcomes), ' +
+      'merges duplicates, flags stale entries (not recalled in 90+ days), and computes a ' +
+      'health score. Returns a full consolidation report with conflicts resolved, ' +
+      'duplicates merged, and a before/after count. ' +
+      'Run weekly or when brain_doctor reports > 20 lessons. ' +
+      'Like git gc for knowledge.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
-        dry_run:     { type: 'boolean', description: 'Preview changes without applying (default: false)' },
-        prune_stale: { type: 'boolean', description: 'Delete lessons older than 90d that were never recalled (default: false)' },
+        instance_id:   { type: 'string', description: 'UUID of the cache instance' },
+        dry_run:       { type: 'boolean', description: 'If true, report what would change without writing (default: false)' },
+        stale_days:    { type: 'number',  description: 'Lessons not recalled in this many days are flagged stale (default: 90)' },
       },
       required: ['instance_id'],
     },
@@ -1928,19 +3411,17 @@ const TOOLS = [
   {
     name: 'brain_diff',
     description:
-      'Git-style diff for AI knowledge — shows exactly what your AI learned since N sessions ago.\n\n' +
-      'Returns:\n' +
-      '  ➕ New lessons learned (knowledge gained)\n' +
-      '  📝 Updated lessons (knowledge refined)\n' +
-      '  ⚠️ Lessons that may be stale (knowledge that hasn\'t been recalled)\n\n' +
-      'Perfect for: weekly AI knowledge reviews, onboarding handoffs, debugging "why does the AI think X?".\n' +
-      'Think of it as `git log --stat` but for your AI\'s brain.',
+      'git log for your AI Brain — see exactly what changed since a point in time. ' +
+      'Returns a structured changelog: new lessons added, lessons updated (outcome changed), ' +
+      'lessons recalled (hit count increased), and lessons that decayed. ' +
+      'Perfect for weekly reviews: "What did my AI learn this week?" ' +
+      'Example: brain_diff(instance_id="...", since="7d") → "12 new · 4 updated · 2 stale"',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id:    { type: 'string', description: 'UUID of the cache instance' },
-        since_sessions: { type: 'number', description: 'How many sessions back to diff against (default: 1)' },
-        since_days:     { type: 'number', description: 'Alternative: diff against N days ago (overrides since_sessions)' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        since:       { type: 'string', description: 'Time window: "1d", "7d", "30d", or ISO-8601 date (default: "7d")' },
+        format:      { type: 'string', enum: ['summary', 'detailed'], description: 'Output format (default: summary)' },
       },
       required: ['instance_id'],
     },
@@ -1948,22 +3429,19 @@ const TOOLS = [
   {
     name: 'causal_trace',
     description:
-      'Root cause analysis through AI memory — trace backwards from a problem to find what caused it.\n\n' +
-      'Given a problem description, searches the entire knowledge graph and returns:\n' +
-      '  • Related past failures (similar problems the AI has seen before)\n' +
-      '  • What was tried and why it failed\n' +
-      '  • What eventually worked for similar problems\n' +
-      '  • A causal chain: root cause → intermediate effects → current symptom\n\n' +
-      'This is fundamentally different from recall_best_solution:\n' +
-      '  - recall_best_solution: "What worked for X?" (forward lookup)\n' +
-      '  - causal_trace: "Why is X happening?" (backward causal reasoning)\n\n' +
-      'Use when debugging: causal_trace tells you not just the fix but WHY it broke.',
+      'Root Cause Analysis through memory — the most powerful debugging tool in your AI Brain. ' +
+      'Given a problem description, traces the causal chain from root cause through intermediate ' +
+      'failures to the current symptom, then surfaces the exact solution that worked before. ' +
+      'Example: causal_trace(problem="auth breaks after restart") → ' +
+      '"Root: k8s:namespace-terminating → keycloak:jwks-race → Solution from March 12: PollUntilContextTimeout 3min" ' +
+      'No other memory system can do this. Replaces 30 minutes of git blame + log archaeology.',
     inputSchema: {
       type: 'object',
       properties: {
         instance_id: { type: 'string', description: 'UUID of the cache instance' },
-        problem:     { type: 'string', description: 'Describe the current problem or symptom in plain language' },
-        depth:       { type: 'number', description: 'How many causal steps back to trace (default: 3)' },
+        problem:     { type: 'string', description: 'Describe the problem or error you are seeing right now' },
+        max_depth:   { type: 'number', description: 'Max causal chain depth to trace (default: 5)' },
+        tags:        { type: 'array', items: { type: 'string' }, description: 'Optional: narrow search to these tags' },
       },
       required: ['instance_id', 'problem'],
     },
@@ -1971,22 +3449,17 @@ const TOOLS = [
   {
     name: 'knowledge_decay',
     description:
-      'Temporal confidence scoring for AI memories — find knowledge that has gone stale.\n\n' +
-      'Every memory degrades in confidence over time based on:\n' +
-      '  • Age: older = lower confidence (configurable decay rate)\n' +
-      '  • Recall frequency: memories used often stay fresh\n' +
-      '  • Severity: critical lessons decay 3× slower than minor ones\n\n' +
-      'Returns a ranked list of decaying memories with confidence percentages.\n' +
-      'Use before important tasks to identify which "known solutions" need re-verification.\n\n' +
-      'Example output:\n' +
-      '  ████████░░ 80% — `auth:jwt-refresh` (12d old, recalled 3×)\n' +
-      '  ████░░░░░░ 40% — `k8s:namespace-cleanup` (67d old, recalled 0×)',
+      'Confidence scoring for every lesson in your Brain — because old knowledge rots. ' +
+      'Computes a decay score (0–100%) per lesson based on age, recall frequency, and outcome. ' +
+      'Lessons recalled recently score high. Lessons from 90 days ago never recalled score low. ' +
+      'Returns a ranked list with visual confidence bars: "████░░░░ 40%". ' +
+      'Use this before a big refactor to know which lessons to trust and which to re-validate.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id:    { type: 'string', description: 'UUID of the cache instance' },
-        threshold_days: { type: 'number', description: 'Only show memories older than N days (default: 30)' },
-        min_confidence: { type: 'number', description: 'Only show memories below this confidence % (default: 70)' },
+        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        min_age_days: { type: 'number', description: 'Only include lessons older than N days (default: 0 = all)' },
+        show_top:     { type: 'number', description: 'Number of entries to return, sorted by lowest confidence first (default: 20)' },
       },
       required: ['instance_id'],
     },
@@ -1994,27 +3467,93 @@ const TOOLS = [
   {
     name: 'autopilot',
     description:
-      'Generate a zero-config AI memory system — the AI manages its own brain automatically.\n\n' +
-      'Produces a CLAUDE.md / copilot-instructions.md that instructs ANY AI to:\n' +
-      '  • Auto-recall relevant context at session start (no manual session_start needed)\n' +
-      '  • Auto-save checkpoints during work (no manual session_ping needed)\n' +
-      '  • Auto-learn from successes and failures (no manual learn_from_attempts needed)\n' +
-      '  • Auto-compress memory before context limit (no manual compact_recover needed)\n' +
-      '  • Auto-persist on session end (no manual session_end needed)\n\n' +
-      'This is the endgame: not AI tools you call, but an AI that remembers by itself.\n' +
-      'One command → permanent memory for any AI, across sessions, reboots, and model switches.\n\n' +
-      'Works with: Claude, GPT-4, Gemini, Cursor, Copilot, Windsurf, Continue.dev, or any MCP host.',
+      'The endgame: generate a CLAUDE.md / copilot-instructions.md that turns any AI into a ' +
+      'self-managing brain operator. Zero manual session_start / session_end calls forever. ' +
+      'The generated file instructs Claude, Cursor, Copilot, Windsurf, or Gemini to ' +
+      'automatically call session_start at window open, learn_from_attempts after every fix, ' +
+      'and session_end before closing — without being asked. ' +
+      'One command. Every AI. Always on.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id:         { type: 'string', description: 'UUID of the cache instance' },
-        project_dir:         { type: 'string', description: 'Absolute path to project root (optional — if set, writes files directly)' },
-        project_name:        { type: 'string', description: 'Human-readable project name for the generated instructions' },
-        project_description: { type: 'string', description: 'What the project does — used to personalise the AI instructions' },
-        write:               { type: 'boolean', description: 'Write CLAUDE.md and .github/copilot-instructions.md to project_dir (default: false)' },
-        ai_personality:      { type: 'string', description: 'Optional personality note for the AI, e.g. "Prefer TypeScript, avoid premature abstractions"' },
+        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        editor:       { type: 'string', enum: ['claude', 'cursor', 'copilot', 'windsurf', 'gemini', 'continue', 'all'], description: 'Target editor (default: claude)' },
+        project_name: { type: 'string', description: 'Your project name (used in generated instructions)' },
+        style:        { type: 'string', enum: ['minimal', 'full'], description: 'minimal = just the hooks, full = full ruleset with examples (default: full)' },
       },
       required: ['instance_id'],
+    },
+  },
+  // ── v0.7 Knowledge Syndication ────────────────────────────────────────────
+  {
+    name: 'syndicate',
+    description:
+      'Contribute a verified lesson to the GLOBAL Cachly Knowledge Commons — ' +
+      'a privacy-preserving shared brain where every AI instance can learn from the discoveries ' +
+      'of every other. Your contributor identity is a one-way HMAC hash: completely anonymous. ' +
+      'The lesson is immediately searchable by any other AI using syndicate_search. ' +
+      'This is how individual knowledge becomes collective intelligence. ' +
+      'Call this AFTER every learn_from_attempts that is worth sharing universally ' +
+      '(critical bugs, deployment gotchas, architecture discoveries). ' +
+      'Use scope="org" to keep the lesson private to your organisation.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        topic:       { type: 'string', description: 'Topic key in category:keyword format (e.g. "fix:clickhouse-ipv6", "deploy:docker-compose")' },
+        outcome:     { type: 'string', enum: ['success', 'failure', 'partial'], description: 'Result of the attempt (default: success)' },
+        what_worked: { type: 'string', description: 'Exact approach, command, or fix that worked. File paths are stripped automatically.' },
+        what_failed: { type: 'string', description: 'What failed or was wrong — helps others avoid the same trap.' },
+        severity:    { type: 'string', enum: ['critical', 'major', 'minor'], description: 'How severe the issue was (default: minor)' },
+        tags:        { type: 'array', items: { type: 'string' }, description: 'Up to 10 keywords for better discoverability' },
+        scope:       { type: 'string', enum: ['public', 'org'], description: 'Visibility: "public" = global commons (default), "org" = private to your org only' },
+      },
+      required: ['topic', 'what_worked'],
+    },
+  },
+  {
+    name: 'syndicate_search',
+    description:
+      'Search the GLOBAL Cachly Knowledge Commons for solutions contributed by the entire community. ' +
+      'Returns lessons ranked by confirm_count (trust score) then recency. ' +
+      'Use this BEFORE debugging any unknown issue — someone in the global brain likely solved it already. ' +
+      'Example: syndicate_search(q="clickhouse localhost connection refused") → ' +
+      '"fix: use 127.0.0.1 not localhost when IPv6 is disabled · confirmed by 47 instances"',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        q:        { type: 'string', description: 'Free-text search query (leave empty for most recent lessons)' },
+        category: { type: 'string', description: 'Filter by category prefix: "fix", "deploy", "debug", "infra", "api", "web"' },
+        scope:    { type: 'string', enum: ['public', 'org'], description: '"public" = global commons (default), "org" = public + your org-private lessons' },
+        limit:    { type: 'number', description: 'Max results to return (default: 20, max: 50)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'syndicate_stats',
+    description:
+      'Show the health of the global Knowledge Commons: total lessons, total confirms, ' +
+      'top categories, most-trusted lessons, growth in the last 7 days, and top contributors (anonymous scores). ' +
+      'Use for weekly reviews or to explore what the community knows.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
+  {
+    name: 'syndicate_trending',
+    description:
+      'Show the TRENDING lessons in the global Knowledge Commons — those with the fastest confirmation velocity ' +
+      'in the last 7 days (confirm_count / age_in_days). ' +
+      'Use this at the start of a session or weekly review to see what the community is actively validating. ' +
+      'Lessons need at least 2 independent confirms to appear here.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        limit: { type: 'number', description: 'Max results (default: 10, max: 50)' },
+      },
+      required: [],
     },
   },
 ] as const;
@@ -2042,10 +3581,50 @@ function buildConnectionString(inst: Instance): string {
   return `${scheme}://${pw}${inst.host}:${inst.port}`;
 }
 
+// Fires once per process when no JWT is set (anonymous, opt-out via CACHLY_NO_TELEMETRY=1)
+let _telemetryPingSent = false;
+async function sendAnonymousTelemetry(toolName: string): Promise<void> {
+  if (_telemetryPingSent) return;
+  if (process.env.CACHLY_NO_TELEMETRY === '1') return;
+  _telemetryPingSent = true;
+  // Detect editor from common env vars injected by IDE extensions
+  const editor = process.env.CURSOR_TRACE_ID ? 'cursor'
+    : process.env.WINDSURF_SESSION_ID ? 'windsurf'
+    : process.env.GITHUB_COPILOT_WORKSPACE ? 'copilot'
+    : process.env.CLAUDE_CODE_ENTRYPOINT ? 'claude'
+    : 'unknown';
+  try {
+    await fetch(`${API_URL}/api/v1/telemetry/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'first_call_no_jwt', version: CURRENT_VERSION, editor, tool: toolName }),
+      signal: AbortSignal.timeout(3000),
+    });
+  } catch { /* fire-and-forget, never block the user */ }
+}
+
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
-  // Default instance_id from env so tools work even if AI omits it
-  if (!args.instance_id && process.env.CACHLY_BRAIN_INSTANCE_ID) {
-    args = { ...args, instance_id: process.env.CACHLY_BRAIN_INSTANCE_ID };
+  // Guard: if no JWT, return actionable onboarding message instead of HTTP 401
+  if (!JWT) {
+    void sendAnonymousTelemetry(name);
+    return [
+      '🧠 **cachly AI Brain — Setup required**',
+      '',
+      'You have no API credentials configured. Get started in 30 seconds:',
+      '',
+      '**Step 1:** Register for free (no credit card):',
+      '   👉 https://cachly.dev/setup-ai',
+      '',
+      '**Step 2:** Run the setup wizard in your terminal:',
+      '   ```',
+      '   npx @cachly-dev/mcp-server@latest setup',
+      '   ```',
+      '',
+      'The wizard auto-detects your editor (Claude Code, Cursor, Copilot, Windsurf)',
+      'and writes the config file with your credentials.',
+      '',
+      '✨ Free tier includes: 1 Brain instance, persistent memory, semantic search.',
+    ].join('\n');
   }
 
   // Delegate v0.2 bulk/lock/stream tools first
@@ -2066,7 +3645,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       const { name: instName, tier } = args as { name: string; tier: string };
       const res = await apiFetch<CreateResponse>('/api/v1/instances', {
         method: 'POST',
-        body: JSON.stringify({ name: instName, tier }),
+        body: JSON.stringify({ name: instName, tier, created_via: 'api' }),
       });
       if (res.checkout_url) {
         return [
@@ -2124,6 +3703,69 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       pool.delete(instance_id);
       await apiFetch(`/api/v1/instances/${instance_id}`, { method: 'DELETE' });
       return `✅ Instance \`${instance_id}\` has been deleted and all data removed.`;
+    }
+
+    // ── Org / Team management ────────────────────────────────────────────
+    case 'list_orgs': {
+      const res = await apiFetch<{ orgs: Array<{ id: string; name: string; slug: string; plan: string; max_members: number; member_count?: number }> }>('/api/v1/orgs');
+      const orgs = res.orgs ?? [];
+      if (orgs.length === 0) return `📭 No organizations yet.\n\nCreate one with \`create_org(name="My Team")\`.\nOrg plans: Team €99/mo (10 seats), Business €299/mo (50 seats), Enterprise custom.`;
+      return [
+        `🏢 **Your organizations (${orgs.length})**\n`,
+        ...orgs.map(o => `• **${o.name}** (\`${o.slug}\`) — plan: ${o.plan} · seats: ${o.member_count ?? '?'}/${o.max_members}\n  ID: \`${o.id}\``),
+        `\n_Manage: \`get_org_plan\`, \`invite_member\`, dashboard → /team_`,
+      ].join('\n');
+    }
+
+    case 'create_org': {
+      const { name: orgName, slug } = args as { name: string; slug?: string };
+      const body: Record<string, string> = { name: orgName };
+      if (slug) body.slug = slug;
+      const res = await apiFetch<{ id: string; name: string; slug: string; plan: string }>('/api/v1/orgs', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      });
+      return [
+        `✅ **Organization created:** ${res.name}`,
+        `   ID: \`${res.id}\` · Slug: \`${res.slug}\` · Plan: ${res.plan}`,
+        ``,
+        `**Next steps:**`,
+        `1. Invite team members: \`invite_member(org_id="${res.id}", email="dev@example.com")\``,
+        `2. Upgrade plan: open billing portal via dashboard → /team`,
+        `   Team: €99/mo (10 seats) · Business: €299/mo (50 seats)`,
+      ].join('\n');
+    }
+
+    case 'invite_member': {
+      const { org_id, email, role = 'member' } = args as { org_id: string; email: string; role?: string };
+      await apiFetch(`/api/v1/orgs/${org_id}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ email, role }),
+      });
+      return `✅ Invite sent to **${email}** as \`${role}\` in org \`${org_id}\`.\n\nThey will receive an email to join the organization.`;
+    }
+
+    case 'get_org_plan': {
+      const { org_id } = args as { org_id: string };
+      const org = await apiFetch<{
+        id: string; name: string; plan: string; max_members: number;
+        members: Array<{ role: string; invite_email: string; accepted_at?: string }>;
+        stripe_customer_id?: string;
+      }>(`/api/v1/orgs/${org_id}`);
+      const accepted = (org.members ?? []).filter(m => m.accepted_at).length;
+      const pending = (org.members ?? []).filter(m => !m.accepted_at).length;
+      const planPrice: Record<string, string> = { free: '€0', team: '€99/mo', business: '€299/mo', enterprise: 'custom' };
+      return [
+        `🏢 **${org.name}** — Plan: **${org.plan}** (${planPrice[org.plan] ?? org.plan})`,
+        `   Seats: ${accepted} active + ${pending} pending / ${org.max_members} max`,
+        ``,
+        `**Members:**`,
+        ...(org.members ?? []).map(m => `  • ${m.invite_email} (${m.role})${m.accepted_at ? '' : ' — pending'}`),
+        ``,
+        org.stripe_customer_id
+          ? `💳 Billing: managed via Stripe. Upgrade/cancel: dashboard → /billing`
+          : `💳 No payment method yet. Upgrade: dashboard → /billing → Team Plans`,
+      ].join('\n');
     }
 
     // ── Live cache operations ────────────────────────────────────────────
@@ -2552,6 +4194,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       let skipped = 0;
       let errors = 0;
       let semanticIndexed = 0;
+      let unchanged = 0;
       const details: string[] = [];
       const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
       const redis = await getConnection(instance_id);
@@ -2559,12 +4202,28 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       for (const filePath of files) {
         const relPath = relative(dir, filePath);
         let content: string;
+        let fileSize: number;
         try {
           const s = await stat(filePath);
           if (s.size > 200_000) { skipped++; continue; } // skip files >200 KB
+          fileSize = s.size;
           content = await readFile(filePath, 'utf-8');
         } catch {
           errors++;
+          continue;
+        }
+
+        // ── Smart invalidation: hash-based change detection ──
+        // Compute a simple hash of file content to skip unchanged files
+        const hashKey = `cachly:idx:hash:${relPath}`;
+        const contentHash = `${fileSize}:${content.length}:${simpleHash(content)}`;
+        const existingHash = await redis.get(hashKey);
+        if (existingHash === contentHash) {
+          // File unchanged — refresh TTL but skip re-indexing
+          const idxKey = `cachly:idx:${relPath}`;
+          if (ttl > 0) await redis.expire(idxKey, ttl);
+          if (ttl > 0) await redis.expire(hashKey, ttl);
+          unchanged++;
           continue;
         }
 
@@ -2577,6 +4236,12 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
           await redis.set(idxKey, idxValue, 'EX', ttl);
         } else {
           await redis.set(idxKey, idxValue);
+        }
+        // Store content hash for smart invalidation on next run
+        if (ttl > 0) {
+          await redis.set(hashKey, contentHash, 'EX', ttl);
+        } else {
+          await redis.set(hashKey, contentHash);
         }
         indexed++;
         details.push(`  ✅ ${relPath}`);
@@ -2606,7 +4271,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         `📂 **index_project Complete** — ${mode}`,
         ``,
         `  📁 Dir:       ${dir}`,
-        `  ✅ Indexed:   **${indexed}** files (keyword-searchable via smart_recall)`,
+        `  ✅ Indexed:   **${indexed}** files (new/changed)`,
+        `  ♻️  Unchanged: ${unchanged} files (hash match — skipped)`,
         ...(canEmbed ? [`  🎯 Semantic:  **${semanticIndexed}** files (vector-searchable)`] : []),
         `  ⏭️  Skipped:   ${skipped} (too large or filtered)`,
         `  ❌ Errors:    ${errors}`,
@@ -2654,8 +4320,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         await redis.set(`${cacheKey}:meta`, meta);
       }
 
-      // Also index semantically for smart_recall (if vector available and embedding is configured)
-      if (EMBED_PROVIDER !== 'none') {
+      // Also index semantically for smart_recall (if vector available)
       const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
       if (inst.vector_token) {
         try {
@@ -2679,7 +4344,6 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
           // Embedding optional — continue silently
         }
       }
-      } // end EMBED_PROVIDER !== 'none'
 
       return [
         `🧠 **Context Saved**`,
@@ -2831,6 +4495,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         file_paths = [],
         commands = [],
         tags = [],
+        depends_on = [],
+        author = '',
       } = args as {
         instance_id: string;
         topic: string;
@@ -2842,26 +4508,107 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         file_paths?: string[];
         commands?: string[];
         tags?: string[];
+        depends_on?: string[];
+        author?: string;
       };
 
       const redis = await getConnection(instance_id);
       const ts = new Date().toISOString();
 
-      // ── Deduplication: check for existing lesson with same topic ─────────────
-      let isUpdate = false;
-      let recallCount = 0;
-      if (outcome === 'success') {
-        const existing = await redis.get(`cachly:lesson:best:${topic}`);
-        if (existing) {
-          try {
-            const prev = JSON.parse(existing) as { recall_count?: number };
-            recallCount = (prev.recall_count ?? 0); // preserve existing recall count
-            isUpdate = true;
-          } catch { /* ignore parse error */ }
+      // ── Structured template hints ──────────────────────────────────────────
+      const category = topic.split(':')[0];
+      const template = STRUCTURED_TEMPLATES[category];
+      const templateWarnings: string[] = [];
+      if (template) {
+        for (const req of template.required) {
+          if (req === 'commands' && commands.length === 0) {
+            templateWarnings.push(`📋 ${template.hint}`);
+          }
         }
       }
 
-      const lesson = JSON.stringify({
+      // ── Deduplication + audit trail ────────────────────────────────────────
+      let isUpdate = false;
+      let recallCount = 0;
+      let auditTrail: Array<{ ts: string; action: string; prev_outcome?: string }> = [];
+      const existingRaw = await redis.get(`cachly:lesson:best:${topic}`);
+      if (existingRaw) {
+        try {
+          const prev = JSON.parse(existingRaw) as {
+            recall_count?: number;
+            outcome?: string;
+            audit_trail?: Array<{ ts: string; action: string; prev_outcome?: string }>;
+          };
+          recallCount = prev.recall_count ?? 0;
+          auditTrail = prev.audit_trail ?? [];
+          auditTrail.push({ ts, action: 'updated', prev_outcome: prev.outcome });
+          if (auditTrail.length > 20) auditTrail = auditTrail.slice(-20);
+          isUpdate = true;
+
+          // ── Contradiction detection ─────────────────────────────────────────
+          const contradictionWarning: string[] = [];
+          if (prev.outcome === 'success' && outcome === 'failure') {
+            contradictionWarning.push(
+              `⚠️ **Contradiction detected!** Existing lesson has outcome: \`success\`, but you're storing \`failure\`.`,
+              `The existing "success" lesson will be preserved. Only the audit trail is updated.`,
+              `If you meant to mark this as failed permanently, store a new lesson with a distinct topic slug.`,
+            );
+          } else if (prev.outcome === 'failure' && outcome === 'success') {
+            contradictionWarning.push(
+              `✅ **Conflict resolved!** Previous lesson was \`failure\` — now overwriting with \`success\`.`,
+            );
+          }
+          if (contradictionWarning.length > 0) {
+            // Store contradiction audit but don't block
+            auditTrail[auditTrail.length - 1].action = 'contradiction-resolved';
+          }
+        } catch { /* ignore parse error */ }
+      } else {
+        auditTrail = [{ ts, action: 'created' }];
+      }
+
+      // ── "I Was Wrong" Protocol — failure attribution ───────────────────────
+      const iWasWrongWarning: string[] = [];
+      if (outcome === 'failure') {
+        // Search for related success lessons that might have prevented this failure
+        const scanKeys: string[] = [];
+        const scanStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 100 });
+        await new Promise<void>((res, rej) => {
+          scanStream.on('data', (b: string[]) => scanKeys.push(...b));
+          scanStream.on('end', res);
+          scanStream.on('error', rej);
+        });
+        const topicWords = topic.split(/[:\-_]/).filter(w => w.length > 2);
+        for (const k of scanKeys.slice(0, 50)) {
+          const raw = await redis.get(k);
+          if (!raw) continue;
+          try {
+            const l = JSON.parse(raw) as { outcome?: string; topic?: string; severity?: string };
+            if (l.outcome !== 'success') continue;
+            const lWords = (l.topic ?? '').split(/[:\-_]/).filter(w => w.length > 2);
+            const overlap = topicWords.filter(w => lWords.includes(w)).length;
+            if (overlap >= 1 && l.topic !== topic) {
+              iWasWrongWarning.push(
+                `⚠️ **"I Was Wrong"**: lesson \`${l.topic}\` (success, ${l.severity ?? 'major'}) might have prevented this failure.`,
+                `   → Use \`recall_best_solution(topic="${l.topic}")\` before next attempt.`,
+                `   → To mark it critical: \`learn_from_attempts(topic="${l.topic}", ..., severity="critical")\``,
+              );
+              break; // only show the most relevant match
+            }
+          } catch { /* skip */ }
+        }
+      }
+
+      // ── Register dependency index for causal chain ─────────────────────────
+      for (const dep of depends_on) {
+        const depKey = `cachly:dep:${dep}`;
+        const existing = await redis.get(depKey);
+        const depTopics: string[] = existing ? JSON.parse(existing) : [];
+        if (!depTopics.includes(topic)) depTopics.push(topic);
+        await redis.set(depKey, JSON.stringify(depTopics));
+      }
+
+      const lessonObj = {
         topic,
         outcome,
         what_worked,
@@ -2871,19 +4618,35 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         file_paths,
         commands,
         tags,
+        depends_on,
+        ...(author ? { author } : {}),
         recall_count: recallCount,
         ts,
-        version: 2,
-      });
+        verified_at: outcome === 'success' || outcome === 'partial' ? ts : undefined,
+        confidence: 1.0,
+        audit_trail: auditTrail,
+        version: 3,
+      };
+      const lesson = JSON.stringify(lessonObj);
 
-      // Always append to the history list
+      // Always append to the history list (audit log)
       const listKey = `cachly:lessons:${topic}`;
       await redis.rpush(listKey, lesson);
 
-      // Update best key only for success/partial (not for failures)
+      // Update best key for success/partial; for failure only update if no success exists
       if (outcome === 'success' || outcome === 'partial') {
         await redis.set(`cachly:lesson:best:${topic}`, lesson);
+      } else if (!existingRaw) {
+        await redis.set(`cachly:lesson:best:${topic}`, lesson);
       }
+
+      // Track in decision log for session replay
+      try {
+        const dlKey = 'cachly:session:decision-log';
+        const dlEntry = JSON.stringify({ ts, topic, outcome, what_worked: what_worked.slice(0, 120) });
+        await redis.rpush(dlKey, dlEntry);
+        await redis.ltrim(dlKey, -50, -1);
+      } catch { /* non-critical */ }
 
       const emoji = outcome === 'success' ? '✅' : outcome === 'partial' ? '⚠️' : '❌';
       const sevEmoji = severity === 'critical' ? '🔴' : severity === 'major' ? '🟡' : '🟢';
@@ -2899,8 +4662,13 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         tags.length > 0 ? `**Tags:** ${tags.map(t => `#${t}`).join(' ')}` : '',
         ``,
         isUpdate
-          ? `♻️ Updated existing lesson (preserved recall count: ${recallCount})`
+          ? `♻️ Updated (recall count: ${recallCount} · audit entries: ${auditTrail.length})`
           : `💡 Recall later with \`recall_best_solution(topic="${topic}")\``,
+        depends_on.length > 0
+          ? `🔗 Depends on: ${depends_on.map(d => `\`${d}\``).join(', ')} → trace with \`trace_dependency\``
+          : '',
+        ...templateWarnings,
+        ...iWasWrongWarning,
       ].filter(l => l !== '').join('\n');
     }
 
@@ -2911,43 +4679,47 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       // Try exact best-solution key first
       const best = await redis.get(`cachly:lesson:best:${topic}`);
       if (best) {
-        let lesson: {
+        const lesson = JSON.parse(best) as {
           topic: string; outcome: string; what_worked: string; what_failed?: string;
-          context?: string; ts: string; severity?: string; file_paths?: string[];
-          commands?: string[]; tags?: string[]; recall_count?: number;
+          context?: string; ts: string; verified_at?: string; severity?: string;
+          file_paths?: string[]; commands?: string[]; tags?: string[];
+          recall_count?: number; audit_trail?: unknown[];
         };
-        try { lesson = JSON.parse(best); } catch {
-          return `⚠️ Lesson for \`${topic}\` could not be read (corrupted data). Use \`learn_from_attempts\` to overwrite it.`;
-        }
-        // Increment recall_count
-        const updatedLesson = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1 };
+
+        // ── Confidence decay check ───────────────────────────────────────────
+        const confidence = calculateConfidence(lesson);
+        const ref = lesson.verified_at ?? lesson.ts;
+        const ageDays = (Date.now() - new Date(ref).getTime()) / 86400000;
+        const badge = confidenceBadge(confidence, ageDays);
+
+        // Recall resets verified_at (confidence clock restart)
+        const updatedLesson = {
+          ...lesson,
+          recall_count: (lesson.recall_count ?? 0) + 1,
+          verified_at: new Date().toISOString(),
+          confidence: 1.0,
+        };
         await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
 
-        // Fire-and-forget: track Magic Moment in Plausible + API engagement counter
-        const isFirstRecall = (lesson.recall_count ?? 0) === 0;
-        const recallEvent = isFirstRecall ? 'First Brain Recall' : 'Brain Recall Hit';
-        fetch('https://analytics.cachly.dev/api/event', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'User-Agent': 'cachly-mcp/recall' },
-          body: JSON.stringify({
-            domain: 'cachly.dev', name: recallEvent,
-            url: 'https://cachly.dev/mcp/recall', props: { topic },
-          }),
-        }).catch(() => { /* non-critical */ });
-        if (JWT) {
-          fetch(`${API_URL}/api/v1/telemetry/mcp`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ event: isFirstRecall ? 'first_recall' : 'recall', api_key: JWT }),
-          }).catch(() => { /* non-critical */ });
-        }
-
         const sevEmoji = lesson.severity === 'critical' ? '🔴' : lesson.severity === 'major' ? '🟡' : lesson.severity ? '🟢' : '';
-        const sessionAgeMs = Date.now() - new Date(lesson.ts).getTime();
-        const sessionAgeDays = Math.round(sessionAgeMs / 86_400_000);
-        const ageLabel = sessionAgeDays === 0 ? 'today' : sessionAgeDays === 1 ? 'yesterday' : `${sessionAgeDays} days ago`;
+        const auditSummary = (lesson.audit_trail ?? []).length > 1
+          ? `_Audit: ${(lesson.audit_trail ?? []).length} changes · stored ${new Date(lesson.ts).toLocaleDateString('de-DE')}_`
+          : '';
+
+        // "Remember when..." — emotional header for lessons > 60 days old
+        const ageFromStoreDays = (Date.now() - new Date(lesson.ts).getTime()) / 86400000;
+        const rememberWhen = ageFromStoreDays > 60
+          ? `💭 _Remember when you solved this ${Math.round(ageFromStoreDays / 30)} months ago? Still works._`
+          : '';
+
+        // "Never Google This Again" — suggest pinning after 3rd recall
+        const suggestPin = updatedLesson.recall_count === 3 && !(lesson as { pinned?: boolean }).pinned
+          ? `📌 **You've looked this up 3 times.** Consider pinning it for instant access: add \`pinned: true\` via \`learn_from_attempts\` to always surface it first.`
+          : '';
+
         return [
-          `✅ **Best solution for \`${topic}\`** ${sevEmoji}${lesson.severity ? ` (${lesson.severity})` : ''} · recalled ${updatedLesson.recall_count}× · stored ${ageLabel}`,
+          rememberWhen,
+          `${badge} **Best solution for \`${topic}\`** ${sevEmoji}${lesson.severity ? ` (${lesson.severity})` : ''} · recalled ${updatedLesson.recall_count}×`,
           ``,
           `**What worked:** ${lesson.what_worked}`,
           lesson.what_failed ? `**What failed (avoid this):** ${lesson.what_failed}` : '',
@@ -2955,8 +4727,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
           (lesson.file_paths ?? []).length > 0 ? `**Files:** ${(lesson.file_paths ?? []).map((f: string) => `\`${f}\``).join(', ')}` : '',
           (lesson.commands ?? []).length > 0 ? `**Commands:** ${(lesson.commands ?? []).map((c: string) => `\`${c}\``).join(', ')}` : '',
           (lesson.tags ?? []).length > 0 ? `**Tags:** ${(lesson.tags ?? []).map((t: string) => `#${t}`).join(' ')}` : '',
-          ``,
-          `> 🧠 *Your AI remembered this from ${ageLabel} — persistent memory by [cachly.dev](https://cachly.dev)*`,
+          auditSummary,
+          suggestPin,
         ].filter(l => l !== '').join('\n');
       }
 
@@ -2975,7 +4747,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         const histKey = `cachly:lessons:${topic}`;
         const all = await redis.lrange(histKey, -3, -1);
         if (all.length > 0) {
-          const parsed = all.flatMap(e => { try { return [JSON.parse(e) as { outcome: string; what_worked: string; ts: string }]; } catch { return []; } });
+          const parsed = all.map(e => JSON.parse(e) as { outcome: string; what_worked: string; ts: string });
           const lines = parsed.map(p => `- ${p.outcome === 'success' ? '✅' : '❌'} ${p.what_worked.slice(0, 120)} (${new Date(p.ts).toLocaleDateString('de-DE')})`);
           return `⚠️ No successful solution for \`${topic}\` yet. Last attempts:\n\n${lines.join('\n')}`;
         }
@@ -2987,68 +4759,10 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       for (const k of matching.slice(0, 5)) {
         const raw = await redis.get(k);
         if (!raw) continue;
-        let lesson: { topic: string; what_worked: string; context?: string; ts: string };
-        try { lesson = JSON.parse(raw); } catch { continue; }
+        const lesson = JSON.parse(raw) as { topic: string; what_worked: string; context?: string; ts: string };
         results.push(`**\`${lesson.topic}\`** — ${lesson.what_worked.slice(0, 200)}`);
       }
       return `🔍 **Partial matches for \`${topic}\`:**\n\n${results.join('\n\n')}`;
-    }
-
-    case 'list_lessons': {
-      const { instance_id, filter = '' } = args as { instance_id: string; filter?: string };
-      const redis = await getConnection(instance_id);
-      const keys: string[] = [];
-      const stream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
-      await new Promise<void>((resolve, reject) => {
-        stream.on('data', (batch: string[]) => keys.push(...batch));
-        stream.on('end', resolve);
-        stream.on('error', reject);
-      });
-      if (keys.length === 0) return `📭 No lessons stored yet. Use \`learn_from_attempts\` after solving any problem.`;
-
-      const values = await redis.mget(...keys);
-      type LessonMeta = { topic: string; ts: string; severity?: string; recall_count?: number; outcome?: string };
-      const lessons: LessonMeta[] = values.flatMap(raw => {
-        if (!raw) return [];
-        try { return [JSON.parse(raw) as LessonMeta]; } catch { return []; }
-      });
-
-      const filtered = filter
-        ? lessons.filter(l => l.topic.toLowerCase().includes(filter.toLowerCase()))
-        : lessons;
-
-      filtered.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-
-      if (filtered.length === 0) return `📭 No lessons matching \`${filter}\`.`;
-
-      const sevEmoji = (s?: string) => s === 'critical' ? '🔴' : s === 'major' ? '🟡' : '🟢';
-      const lines = [
-        `🧠 **${filtered.length} lesson${filtered.length === 1 ? '' : 's'}${filter ? ` matching "${filter}"` : ''} in Brain:**`,
-        '',
-        ...filtered.slice(0, 30).map(l => {
-          const age = Math.round((Date.now() - new Date(l.ts).getTime()) / 86400000);
-          const ageStr = age === 0 ? 'today' : age === 1 ? 'yesterday' : `${age}d ago`;
-          const recalls = l.recall_count ? ` · recalled ${l.recall_count}×` : '';
-          return `${sevEmoji(l.severity)} \`${l.topic}\` — ${ageStr}${recalls}`;
-        }),
-        filtered.length > 30 ? `\n_…and ${filtered.length - 30} more. Use filter to narrow down._` : '',
-      ].filter(l => l !== '');
-      return lines.join('\n');
-    }
-
-    case 'forget_lesson': {
-      const { instance_id, topic } = args as { instance_id: string; topic: string };
-      const redis = await getConnection(instance_id);
-      const bestKey = `cachly:lesson:best:${topic}`;
-      const histKey = `cachly:lessons:${topic}`;
-      const [delBest, delHist] = await Promise.all([
-        redis.del(bestKey),
-        redis.del(histKey),
-      ]);
-      if (delBest === 0 && delHist === 0) {
-        return `📭 No lesson found for \`${topic}\` — nothing to delete.`;
-      }
-      return `🗑️ Lesson for \`${topic}\` deleted (best-solution: ${delBest > 0 ? 'removed' : 'not found'}, history: ${delHist > 0 ? 'removed' : 'not found'}). You can now store a corrected lesson with \`learn_from_attempts\`.`;
     }
 
     case 'smart_recall': {
@@ -3154,10 +4868,31 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
       if (kwMatches.length === 0) {
         lines.push(`⚠️ No matches found for: "${query}"`);
-        lines.push(`\n💡 Tips:`);
-        lines.push(`  • Try different keywords`);
-        lines.push(`  • Use \`list_remembered\` to see available context`);
-        lines.push(`  • Use \`recall_best_solution("topic")\` for exact topic lookup`);
+
+        // Did-You-Mean: find nearest token in index vocab
+        const queryTokens = tokenize(query);
+        const suggestions: string[] = [];
+        if (_indexVocab.size > 0 && queryTokens.length > 0) {
+          for (const qt of queryTokens.slice(0, 3)) {
+            if (qt.length < 4) continue;
+            let bestDist = 3;
+            let bestTok = '';
+            for (const v of _indexVocab) {
+              if (v.length < 3 || Math.abs(v.length - qt.length) > 4) continue;
+              const d = levenshtein(qt, v);
+              if (d > 0 && d < bestDist) { bestDist = d; bestTok = v; }
+            }
+            if (bestTok) suggestions.push(`"${bestTok}" (instead of "${qt}")`);
+          }
+        }
+        if (suggestions.length > 0) {
+          lines.push(`💡 **Did you mean:** ${suggestions.join(', ')}?`);
+        } else {
+          lines.push(`\n💡 Tips:`);
+          lines.push(`  • Try different keywords`);
+          lines.push(`  • Use \`list_remembered\` to see available context`);
+          lines.push(`  • Use \`recall_best_solution("topic")\` for exact topic lookup`);
+        }
       }
 
       return lines.join('\n');
@@ -3165,32 +4900,18 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
     // ── get_api_status ────────────────────────────────────────────────────────
     case 'get_api_status': {
-      // Check API health and auth service in parallel
-      const [healthResult, authServiceResult] = await Promise.allSettled([
-        fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(5000) }),
-        fetch(`${AUTH_URL}/.well-known/openid-configuration`, { signal: AbortSignal.timeout(5000) }),
-      ]);
-
+      // Check health
       let healthStatus = 'unknown';
-      if (healthResult.status === 'fulfilled') {
-        const healthRes = healthResult.value;
+      try {
+        const healthRes = await fetch(`${API_URL}/health`);
         if (healthRes.ok) {
-          const body = await healthRes.json().catch(() => ({})) as { status?: string; db?: string };
-          healthStatus = `✅ ${body.status ?? 'ok'}${body.db ? ` (db: ${body.db})` : ''}`;
+          const body = await healthRes.json() as { status?: string; db?: string };
+          healthStatus = `${body.status ?? 'ok'} (db: ${body.db ?? '?'})`;
         } else {
-          healthStatus = `❌ HTTP ${healthRes.status}`;
+          healthStatus = `HTTP ${healthRes.status}`;
         }
-      } else {
-        healthStatus = `❌ unreachable: ${healthResult.reason?.message ?? 'timeout'}`;
-      }
-
-      let authSvcStatus = 'unknown';
-      if (authServiceResult.status === 'fulfilled') {
-        authSvcStatus = authServiceResult.value.ok
-          ? `✅ reachable (${AUTH_URL})`
-          : `❌ HTTP ${authServiceResult.value.status} — auth service may be down`;
-      } else {
-        authSvcStatus = `❌ unreachable: ${authServiceResult.reason?.message ?? 'timeout'} — auth service may be down`;
+      } catch (e) {
+        healthStatus = `unreachable: ${(e as Error).message}`;
       }
 
       // Check JWT / auth
@@ -3198,18 +4919,16 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         return [
           `📡 **cachly API Status**`,
           ``,
-          `  🌐 API:          ${API_URL}`,
-          `  💓 API Health:   ${healthStatus}`,
-          `  🔐 Auth Service: ${authSvcStatus}`,
-          `  🔑 JWT:          ❌ CACHLY_JWT not set`,
+          `  🌐 API:      ${API_URL}`,
+          `  💓 Health:   ${healthStatus}`,
+          `  🔑 Auth:     ❌ CACHLY_JWT not set`,
           ``,
-          `💡 Get your API token at https://cachly.dev/settings`,
+          `💡 Get your API token at https://cachly.dev/instances → Settings → API Token`,
         ].join('\n');
       }
 
       // Decode JWT claims (inspection only, no verification)
       let authInfo = '❌ invalid JWT format';
-      let isExpired = false;
       try {
         const parts = JWT.split('.');
         if (parts.length === 3) {
@@ -3220,46 +4939,33 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
           const iss = payload.iss ?? '(unknown)';
           const provider = iss.includes('keycloak') ? 'Keycloak' : 'OIDC';
           const expTs = payload.exp ? new Date(payload.exp * 1000) : null;
-          isExpired = expTs ? expTs < new Date() : false;
+          const expired = expTs ? expTs < new Date() : false;
           authInfo = [
-            `${isExpired ? '⚠️ ' : '✅'} JWT decoded`,
+            `✅ JWT decoded`,
             `  Sub (user ID): ${sub}`,
             `  Provider:      ${provider}`,
             `  Issuer:        ${iss}`,
-            `  Expires:       ${expTs ? expTs.toISOString() : 'never'} ${isExpired ? '⚠️  EXPIRED' : '✅'}`,
+            `  Expires:       ${expTs ? expTs.toISOString() : 'never'} ${expired ? '⚠️  EXPIRED – get a new token!' : '✅'}`,
           ].join('\n');
         }
       } catch {
         authInfo = '❌ JWT decode failed – check CACHLY_JWT format';
       }
 
-      const lines = [
+      return [
         `📡 **cachly API Status**`,
         ``,
-        `  🌐 API:          ${API_URL}`,
-        `  💓 API Health:   ${healthStatus}`,
-        `  🔐 Auth Service: ${authSvcStatus}`,
+        `  🌐 API:    ${API_URL}`,
+        `  💓 Health: ${healthStatus}`,
         ``,
-        `🔑 **Auth (JWT):**`,
+        `🔑 **Auth:**`,
         authInfo,
-      ];
-
-      if (isExpired) {
-        lines.push(``, `⚠️  Your token is expired — get a new one at https://cachly.dev/settings`);
-      }
-      if (authSvcStatus.startsWith('❌')) {
-        lines.push(``, `⚠️  Auth service appears down. Registration and login on cachly.dev may be unavailable.`);
-        lines.push(`   Contact support@cachly.dev if this persists.`);
-      }
-
-      return lines.join('\n');
+      ].join('\n');
     }
 
     // ── session_start ─────────────────────────────────────────────────────────
     case 'session_start': {
-      const { instance_id, focus = '', workspace_path = '', provider = '' } = args as {
-        instance_id: string; focus?: string; workspace_path?: string; provider?: string;
-      };
+      const { instance_id, focus = '', author = '', provider = '', workspace_path = '' } = args as { instance_id: string; focus?: string; author?: string; provider?: string; workspace_path?: string };
       const redis = await getConnection(instance_id);
 
       // 1. Scan all best-solution lessons
@@ -3271,22 +4977,21 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lStream.on('error', reject);
       });
 
-      // 2. Fetch all lesson values in one round-trip
+      // 2. Fetch all lesson values for recency sorting + focus matching
       type Lesson = {
         topic: string; outcome: string; what_worked: string; what_failed?: string;
-        ts: string; severity?: string; recall_count?: number; tags?: string[];
+        ts: string; verified_at?: string; severity?: string; recall_count?: number;
+        tags?: string[]; confidence?: number; audit_trail?: unknown[];
       };
       const lessons: Lesson[] = [];
-      if (lessonKeys.length > 0) {
-        const values = await redis.mget(...lessonKeys);
-        for (const raw of values) {
-          if (!raw) continue;
-          try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip corrupt */ }
-        }
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip corrupt */ }
       }
       lessons.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
 
-      // 3. Count context entries
+      // 3. Count context entries (filter :meta keys)
       let ctxCount = 0;
       const ctxStream = redis.scanStream({ match: 'cachly:ctx:*', count: 200 });
       await new Promise<void>((resolve, reject) => {
@@ -3297,29 +5002,11 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ctxStream.on('error', reject);
       });
 
-      // 4. Last session + checkpoint + open TODOs (batch)
-      const [lastSessionRaw, checkpointRaw, todosRaw] = await redis.mget(
-        'cachly:session:last', 'cachly:session:checkpoint', 'cachly:todos'
-      );
+      // 4. Last session
+      const lastSessionRaw = await redis.get('cachly:session:last');
       let lastSession: { summary: string; ts: string; files_changed?: string[]; duration_min?: number } | null = null;
-      if (lastSessionRaw) { try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ } }
-      let checkpoint: { task: string; provider?: string; files?: string[]; next_step?: string; ts: string } | null = null;
-      if (checkpointRaw) { try { checkpoint = JSON.parse(checkpointRaw); } catch { /* ignore */ } }
-      type TodoItem = { id: string; task: string; priority: string; context?: string; created: string };
-      let openTodos: TodoItem[] = [];
-      if (todosRaw) { try { openTodos = (JSON.parse(todosRaw) as TodoItem[]).filter(t => !(t as unknown as Record<string,unknown>).done); } catch { /* ignore */ } }
-
-      // 4b. Git reconstruction when no recent session_end but workspace_path provided
-      let gitLines: string[] = [];
-      if (workspace_path && !lastSession) {
-        try {
-          const { execSync } = await import('node:child_process');
-          const log = execSync(`git -C "${workspace_path}" log --oneline -8 2>/dev/null`, { timeout: 3000 }).toString().trim();
-          if (log) {
-            gitLines.push(`⚡ **Reconstructed from git** (no session_end found):`);
-            gitLines.push(`\`\`\`\n${log}\n\`\`\``);
-          }
-        } catch { /* no git */ }
+      if (lastSessionRaw) {
+        try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ }
       }
 
       // 5. Focus filtering
@@ -3333,15 +5020,138 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
           )
         : [];
 
-      // 6. Save session start marker
+      // 6. Streak tracking
+      let streakDays = 0;
+      let streakRecord = 0;
+      let streakMessage = '';
+      try {
+        const streakRaw = await redis.get('cachly:streak:current');
+        const streak = streakRaw ? JSON.parse(streakRaw) as { days: number; last_date: string; record: number } : null;
+        const today = new Date().toISOString().slice(0, 10);
+        if (streak) {
+          const lastDate = streak.last_date;
+          const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+          if (lastDate === today) {
+            // Already counted today
+            streakDays = streak.days;
+            streakRecord = streak.record;
+          } else if (lastDate === yesterday) {
+            // Continuing streak
+            streakDays = streak.days + 1;
+            streakRecord = Math.max(streakDays, streak.record);
+            await redis.set('cachly:streak:current', JSON.stringify({ days: streakDays, last_date: today, record: streakRecord }));
+          } else {
+            // Streak broken
+            streakDays = 1;
+            streakRecord = streak.record;
+            await redis.set('cachly:streak:current', JSON.stringify({ days: 1, last_date: today, record: streakRecord }));
+          }
+        } else {
+          // First session ever
+          streakDays = 1;
+          streakRecord = 1;
+          await redis.set('cachly:streak:current', JSON.stringify({ days: 1, last_date: today, record: 1 }));
+        }
+        if (streakDays >= 7) streakMessage = `🔥 **${streakDays}-day streak!** ${streakDays === streakRecord ? ' New record!' : `Best: ${streakRecord}d`}`;
+        else if (streakDays > 1) streakMessage = `🔥 ${streakDays}-day streak`;
+      } catch { /* non-critical */ }
+
+      // 7. Save session start marker
       await redis.set('cachly:session:current', JSON.stringify({
         started: new Date().toISOString(),
         focus,
-        ...(provider ? { provider } : {}),
-      }), 'EX', 86400);
+        provider,
+      }), 'EX', 86400); // auto-expire after 24h if session_end never called
 
       // ── Build briefing ──────────────────────────────────────────────────────
-      const lines: string[] = ['🧠 **Session Briefing**', ''];
+      const providerLabel = provider ? ` · ${provider}` : '';
+      const lines: string[] = [`🧠 **Session Briefing**${providerLabel}`, ''];
+      if (streakMessage) lines.push(streakMessage, '');
+
+      // Handoff from previous window (if any)
+      const handoffRaw = await redis.get('cachly:session:handoff');
+      if (handoffRaw) {
+        try {
+          const handoff = JSON.parse(handoffRaw) as {
+            ts: string; completed_tasks: string[]; remaining_tasks: string[];
+            files_changed?: { path: string; status: string; description?: string }[];
+            instructions?: string; context_summary?: string; blocked_on?: string;
+          };
+          const ago = Math.round((Date.now() - new Date(handoff.ts).getTime()) / 60000);
+          const agoStr = ago < 60 ? `${ago}m ago` : ago < 1440 ? `${Math.round(ago / 60)}h ago` : `${Math.round(ago / 1440)}d ago`;
+
+          lines.push(`🤝 **Handoff from previous window** (${agoStr}):`);
+          if (handoff.context_summary) lines.push(`   ${handoff.context_summary}`);
+          if (handoff.remaining_tasks.length > 0) {
+            lines.push(`   ⏳ **Remaining tasks:**`);
+            for (const t of handoff.remaining_tasks) lines.push(`     - ${t}`);
+          }
+          if (handoff.completed_tasks.length > 0) {
+            lines.push(`   ✅ **Already done:** ${handoff.completed_tasks.join(', ')}`);
+          }
+          const brokenFiles = (handoff.files_changed ?? []).filter(f => f.status === 'broken' || f.status === 'partial');
+          if (brokenFiles.length > 0) {
+            lines.push(`   ⚠️ **Needs fix:** ${brokenFiles.map(f => `\`${f.path}\` (${f.status}${f.description ? ': ' + f.description : ''})`).join(', ')}`);
+          }
+          if (handoff.blocked_on) lines.push(`   🚫 **Blocked on:** ${handoff.blocked_on}`);
+          if (handoff.instructions) lines.push(`   📝 **Instructions:** ${handoff.instructions}`);
+          lines.push('');
+        } catch { /* ignore corrupt handoff */ }
+      }
+
+      // ── Last checkpoint (session_ping) — shown when no session_end found ────
+      const checkpointRaw = await redis.get('cachly:session:checkpoint');
+      if (checkpointRaw) {
+        try {
+          const cp = JSON.parse(checkpointRaw) as {
+            ts: string; task: string; files_touched: string[]; next_step?: string; provider?: string;
+          };
+          // Only show checkpoint if it's more recent than last session_end
+          const cpTime = new Date(cp.ts).getTime();
+          const lastSessionTime = lastSession ? new Date(lastSession.ts).getTime() : 0;
+          if (cpTime > lastSessionTime) {
+            const ago = Math.round((Date.now() - cpTime) / 60000);
+            const agoStr = ago < 60 ? `${ago}m ago` : ago < 1440 ? `${Math.round(ago / 60)}h ago` : `${Math.round(ago / 1440)}d ago`;
+            const providerStr = cp.provider ? ` [${cp.provider}]` : '';
+            lines.push(`📌 **Last checkpoint**${providerStr} (${agoStr}): ${cp.task}`);
+            if (cp.files_touched.length > 0) {
+              lines.push(`   Files: ${cp.files_touched.slice(0, 5).map(f => `\`${f}\``).join(', ')}`);
+            }
+            if (cp.next_step) lines.push(`   📍 Next step was: ${cp.next_step}`);
+            if (!lastSession || cpTime - lastSessionTime > 300_000) {
+              lines.push(`   ⚠️ No \`session_end\` found — reconstructed from last checkpoint`);
+            }
+            lines.push('');
+          }
+        } catch { /* ignore */ }
+      }
+
+      // ── Git reconstruction — when no session_end + workspace_path given ─────
+      if (workspace_path && !lastSession) {
+        try {
+          const { execSync } = await import('node:child_process');
+          const gitLog = execSync(
+            `git -C "${workspace_path}" log --oneline --format="%h %s" -15 2>/dev/null`,
+            { encoding: 'utf-8', timeout: 5000 },
+          ).trim();
+          const gitDiff = execSync(
+            `git -C "${workspace_path}" diff --stat HEAD~3 2>/dev/null || git -C "${workspace_path}" diff --stat 2>/dev/null`,
+            { encoding: 'utf-8', timeout: 5000 },
+          ).trim();
+          if (gitLog) {
+            lines.push(`🔍 **Git reconstruction** (no session_end found — reconstructed from git):`);
+            for (const l of gitLog.split('\n').slice(0, 8)) lines.push(`   ${l}`);
+            if (gitDiff) {
+              const diffLines = gitDiff.split('\n').filter(l => l.includes('|') || l.includes('changed'));
+              if (diffLines.length > 0) {
+                lines.push(`   **Recent changes:**`);
+                for (const dl of diffLines.slice(0, 5)) lines.push(`   ${dl.trim()}`);
+              }
+            }
+            lines.push('');
+          }
+        } catch { /* git not available or no repo — silent */ }
+      }
 
       // Last session
       if (lastSession) {
@@ -3355,50 +5165,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lines.push('');
       }
 
-      // Cross-provider checkpoint
-      if (checkpoint) {
-        const cMin = Math.round((Date.now() - new Date(checkpoint.ts).getTime()) / 60000);
-        const cAgo = cMin < 60 ? `${cMin}m ago` : cMin < 1440 ? `${Math.round(cMin / 60)}h ago` : `${Math.round(cMin / 1440)}d ago`;
-        lines.push(`⚡ **Checkpoint** (${cAgo}${checkpoint.provider ? `, ${checkpoint.provider}` : ''}): ${checkpoint.task}`);
-        if (checkpoint.next_step) lines.push(`   → Next: ${checkpoint.next_step}`);
-        if ((checkpoint.files ?? []).length > 0) lines.push(`   Files: ${(checkpoint.files ?? []).slice(0, 4).map((f: string) => `\`${f}\``).join(', ')}`);
-        lines.push('');
-      }
-
-      // Git reconstruction (when no session_end exists)
-      if (gitLines.length > 0) lines.push(...gitLines, '');
-
-      // Open TODOs
-      if (openTodos.length > 0) {
-        const hiPrio = openTodos.filter(t => t.priority === 'high');
-        const rest   = openTodos.filter(t => t.priority !== 'high');
-        lines.push(`📋 **Open TODOs** (${openTodos.length}):`);
-        for (const t of [...hiPrio, ...rest].slice(0, 5)) {
-          const p = t.priority === 'high' ? '🔴' : t.priority === 'low' ? '⚪' : '🟡';
-          lines.push(`  ${p} [${t.id}] ${t.task}${t.context ? ` _(${t.context})_` : ''}`);
-        }
-        if (openTodos.length > 5) lines.push(`  … and ${openTodos.length - 5} more (todo_list to see all)`);
-        lines.push('');
-      }
-
-      // Brain health + onboarding
-      if (lessons.length === 0 && !lastSession) {
-        lines.push(`🆕 **Brain is empty — first session!**`);
-        lines.push(`After solving anything, call \`learn_from_attempts\` to store the lesson.`);
-        lines.push(`After this session, call \`session_end\` to save a summary.`);
-        lines.push('');
-      } else {
-        const totalRecalls = lessons.reduce((s, l) => s + (l.recall_count ?? 0), 0);
-        const savedMin = totalRecalls * 15;
-        const savedStr = savedMin >= 60 ? `~${(savedMin / 60).toFixed(1)}h saved` : savedMin > 0 ? `~${savedMin}min saved` : '';
-        const statsLine = [
-          `${lessons.length} lessons`,
-          ctxCount > 0 ? `${ctxCount} context entries` : '',
-          totalRecalls > 0 ? `${totalRecalls} recalls` : '',
-          savedStr,
-        ].filter(Boolean).join(' · ');
-        lines.push(`📊 **Brain:** ${statsLine}`, '');
-      }
+      // Brain health
+      lines.push(`📊 **Brain:** ${lessons.length} lessons · ${ctxCount} context entries`, '');
 
       // Focus-relevant lessons
       if (focusLessons.length > 0) {
@@ -3425,7 +5193,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lines.push('📭 No lessons yet. Use `learn_from_attempts` after solving tasks.', '');
       }
 
-      // Open failures
+      // Open failures (lessons whose best-key has outcome != success)
       const openFailures = lessons.filter(l => l.outcome === 'failure' || l.outcome === 'partial');
       if (openFailures.length > 0) {
         lines.push(`⚠️ **Unresolved** (${openFailures.length} topic${openFailures.length > 1 ? 's' : ''} with no success yet):`);
@@ -3435,19 +5203,178 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lines.push('');
       }
 
+      // ── Stale / low-confidence lessons (confidence decay) ─────────────────
+      const staleSuccessLessons = lessons.filter(l => {
+        if (l.outcome !== 'success' && l.outcome !== 'partial') return false;
+        return calculateConfidence(l) < CONFIDENCE_WARN_VALUE;
+      });
+      if (staleSuccessLessons.length > 0) {
+        lines.push(`🔴 **Stale lessons** (not recalled in >${CONFIDENCE_WARN_DAYS}d — verify before applying):`);
+        for (const l of staleSuccessLessons.slice(0, 4)) {
+          const conf = calculateConfidence(l);
+          const ageDays = Math.round((Date.now() - new Date(l.verified_at ?? l.ts).getTime()) / 86400000);
+          const flag = conf < CONFIDENCE_STALE_VALUE ? '🔴' : '⚠️';
+          lines.push(`  ${flag} \`${l.topic}\` — ${ageDays}d stale, ${(conf * 100).toFixed(0)}% confidence`);
+        }
+        lines.push(`  _Run \`recall_best_solution\` on these to reset their confidence clock._`);
+        lines.push('');
+      }
+
+      // ── Session Replay: show last session's decision log ──────────────────
+      const lastSessionAny = lastSession as unknown as { decision_log?: Array<{ topic: string; outcome: string; what_worked: string }> } | null;
+      if (lastSessionAny?.decision_log?.length) {
+        const dl = lastSessionAny.decision_log;
+        const successes = dl.filter(d => d.outcome === 'success');
+        const failures  = dl.filter(d => d.outcome === 'failure');
+        lines.push(`🎬 **Last session decisions** (${dl.length} lessons stored):`);
+        if (successes.length > 0) lines.push(`  ✅ Worked: ${successes.slice(0, 3).map(d => `\`${d.topic}\``).join(', ')}`);
+        if (failures.length > 0)  lines.push(`  ❌ Failed: ${failures.slice(0, 3).map(d => `\`${d.topic}\``).join(', ')}`);
+        lines.push('');
+      }
+
+      // ── 🔮 Predictive Pre-Warning — intent-based danger detection ────────────
+      // Fires BEFORE work starts. If focus area has known failure patterns → warn loudly.
+      if (focusTerms.length > 0) {
+        type LessonAny = typeof lessons[0] & { author?: string; tags?: string[] };
+        const dangerLessons = (lessons as LessonAny[]).filter(l => {
+          if (l.outcome === 'success') return false;
+          const topicCategory = l.topic.split(':')[0];
+          return focusTerms.some(term =>
+            l.topic.toLowerCase().includes(term) ||
+            topicCategory === term ||
+            (l.tags ?? []).some((t: string) => t.toLowerCase() === term),
+          );
+        });
+        if (dangerLessons.length >= 1) {
+          // Insert warning block right after the title line (index 1 = blank line after title)
+          const warning = [
+            `🚨 **PRE-WARNING** — Read this BEFORE starting:`,
+            `  Known pitfalls for **"${focus}"** (${dangerLessons.length} past failure${dangerLessons.length > 1 ? 's' : ''}):`,
+            ...dangerLessons.slice(0, 3).map(l => `  ❌ \`${l.topic}\` — ${(l.what_failed ?? l.what_worked).slice(0, 80)}`),
+            '',
+          ];
+          lines.splice(2, 0, ...warning); // after '🧠 **Session Briefing**' + empty line
+        }
+      }
+
+      // ── 👥 Team Telepathy — what teammates learned this week ─────────────────
+      if (author) {
+        type LessonAny = typeof lessons[0] & { author?: string };
+        const oneWeekAgo = Date.now() - 7 * 86_400_000;
+        const teamLessons = (lessons as LessonAny[]).filter(l =>
+          l.author && l.author !== author && new Date(l.ts).getTime() > oneWeekAgo,
+        );
+        if (teamLessons.length > 0) {
+          // Group by author
+          const byAuthor = new Map<string, LessonAny[]>();
+          for (const l of teamLessons) {
+            const a = l.author!;
+            if (!byAuthor.has(a)) byAuthor.set(a, []);
+            byAuthor.get(a)!.push(l);
+          }
+          lines.push(`👥 **Team this week** (${teamLessons.length} lesson${teamLessons.length > 1 ? 's' : ''} from teammates):`);
+          for (const [teamAuthor, tls] of byAuthor) {
+            lines.push(`  👤 **${teamAuthor}**:`);
+            for (const l of tls.slice(0, 3)) {
+              const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
+              lines.push(`    ${emoji} \`${l.topic}\` — ${l.what_worked.slice(0, 80)}`);
+            }
+            if (tls.length > 3) lines.push(`    … and ${tls.length - 3} more`);
+          }
+          lines.push('');
+        }
+      }
+
+      // ── 💎 Memory Crystal — compressed wisdom from old sessions ──────────────
+      try {
+        const crystalRaw = await redis.get('cachly:crystal:latest');
+        if (crystalRaw) {
+          const crystal = JSON.parse(crystalRaw) as {
+            label: string; ts: string; session_count: number;
+            top_patterns: Array<{ category: string; insight: string; count: number }>;
+          };
+          const crystalAge = Math.round((Date.now() - new Date(crystal.ts).getTime()) / 86_400_000);
+          if (crystalAge <= 90) {
+            lines.push(`💎 **Memory Crystal** (${crystal.label} · ${crystal.session_count} sessions compressed):`);
+            for (const p of crystal.top_patterns.slice(0, 3)) {
+              lines.push(`  • **${p.category}** (${p.count}×): ${p.insight.slice(0, 90)}`);
+            }
+            lines.push('');
+          }
+        }
+      } catch { /* non-critical */ }
+
+      // ── 🗺️ Roadmap — open items at session start ────────────────────────────
+      try {
+        const roadmapAll = await redis.hgetall(`cachly:roadmap:${instance_id}`);
+        if (roadmapAll && Object.keys(roadmapAll).length > 0) {
+          const PRIORITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+          const PRIORITY_ICON: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
+          const openStatuses = new Set(['planned', 'in-progress', 'blocked']);
+          const allItems = Object.values(roadmapAll).map(v => JSON.parse(v as string) as Record<string, unknown>);
+          const openItems = allItems
+            .filter(i => openStatuses.has(i.status as string))
+            .sort((a, b) => {
+              if (a.status === 'in-progress' && b.status !== 'in-progress') return -1;
+              if (b.status === 'in-progress' && a.status !== 'in-progress') return 1;
+              return (PRIORITY_ORDER[a.priority as string] ?? 99) - (PRIORITY_ORDER[b.priority as string] ?? 99);
+            });
+          const doneCount = allItems.filter(i => i.status === 'done').length;
+          if (openItems.length > 0) {
+            lines.push(`🗺️ **Roadmap** (${openItems.length} open · ${doneCount} done):`);
+            for (const it of openItems.slice(0, 5)) {
+              const statusIcon = it.status === 'in-progress' ? '⚡' : it.status === 'blocked' ? '🚫' : '📋';
+              lines.push(`  ${statusIcon} ${PRIORITY_ICON[it.priority as string] ?? '⚪'} \`${it.id}\` **${it.title}**`);
+            }
+            if (openItems.length > 5) lines.push(`  … and ${openItems.length - 5} more`);
+            lines.push(`  _Use \`roadmap_next\` for the top priority item · \`roadmap_list\` for full view_`);
+            lines.push('');
+          }
+        }
+      } catch { /* non-critical */ }
+
+      // ── 🌍 Knowledge Commons — community stats banner ───────────────────────
+      // Fetch syndication stats and show a 1-liner: total lessons + confirms + weekly growth.
+      // Non-fatal: never blocks session start if the API call fails.
+      try {
+        const commonsStats = await apiFetch<{
+          total_lessons: number;
+          total_confirms: number;
+          added_last_7_days: number;
+        }>('/api/v1/syndication/stats');
+        if (commonsStats.total_lessons > 0) {
+          lines.push(
+            `🌍 **Commons:** ${commonsStats.total_lessons.toLocaleString()} lessons · ` +
+            `${commonsStats.total_confirms.toLocaleString()} confirms · ` +
+            `+${commonsStats.added_last_7_days} this week`,
+          );
+          lines.push('');
+        }
+      } catch { /* non-critical — never block session start */ }
+
       return lines.join('\n');
     }
 
     // ── session_end ───────────────────────────────────────────────────────────
     case 'session_end': {
-      const { instance_id, summary, files_changed = [], lessons_learned, project_dir } = args as {
-        instance_id: string; summary: string; files_changed?: string[];
-        lessons_learned?: number; project_dir?: string;
+      const {
+        instance_id,
+        summary,
+        files_changed = [],
+        lessons_learned,
+        workspace_path = '',
+      } = args as {
+        instance_id: string;
+        summary: string;
+        files_changed?: string[];
+        lessons_learned?: number;
+        workspace_path?: string;
       };
 
       const redis = await getConnection(instance_id);
       const now = new Date();
 
+      // Calculate duration from session_start marker
       let durationMin: number | undefined;
       const currentRaw = await redis.get('cachly:session:current');
       if (currentRaw) {
@@ -3457,27 +5384,153 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         } catch { /* ignore */ }
       }
 
+      // ── Session Replay: capture decision log ─────────────────────────────
+      let decisionLog: Array<{ ts: string; topic: string; outcome: string; what_worked: string }> = [];
+      try {
+        const dlEntries = await redis.lrange('cachly:session:decision-log', 0, -1);
+        decisionLog = dlEntries.map(e => JSON.parse(e) as { ts: string; topic: string; outcome: string; what_worked: string });
+        await redis.del('cachly:session:decision-log');
+      } catch { /* non-critical */ }
+
       const sessionRecord = {
-        ts: now.toISOString(), summary, files_changed,
+        ts: now.toISOString(),
+        summary,
+        files_changed,
         ...(lessons_learned !== undefined ? { lessons_learned } : {}),
         ...(durationMin !== undefined ? { duration_min: durationMin } : {}),
+        ...(decisionLog.length > 0 ? { decision_log: decisionLog } : {}),
       };
 
+      // Save as "last session"
       await redis.set('cachly:session:last', JSON.stringify(sessionRecord));
+
+      // Append to history list (keep last 50 sessions, TTL 90 days)
       await redis.lpush('cachly:session:history', JSON.stringify(sessionRecord));
       await redis.ltrim('cachly:session:history', 0, 49);
       await redis.expire('cachly:session:history', 90 * 86400);
-      await redis.del('cachly:session:current');
-      // Clear checkpoint — session ended cleanly
-      await redis.del('cachly:session:checkpoint');
 
-      // Auto-refresh CLAUDE.md when project_dir is provided
-      let claudeMdNote = '';
-      if (project_dir) {
+      // Clean up current session marker
+      await redis.del('cachly:session:current');
+
+      // ── AUTO-LEARN from session summary (no manual call needed) ─────────────
+      // Parse the summary for actionable lessons and store them automatically.
+      const autoLearned: string[] = [];
+      try {
+        // Extract key sentences from the summary that contain action verbs
+        const actionVerbs = /\b(fixed|deployed|added|removed|refactored|migrated|updated|resolved|implemented|improved|optimized|configured|created|deleted|disabled|enabled|discovered|found|learned|debugged|patched|upgraded|installed|tested|built|rewrote|moved|renamed|split|merged|extracted)\b/i;
+        const sentences = summary
+          .split(/[.!\n]+/)
+          .map(s => s.trim())
+          .filter(s => s.length > 20 && actionVerbs.test(s));
+
+        for (const sentence of sentences.slice(0, 6)) {
+          // Build a topic slug from the first meaningful words
+          const words = sentence.toLowerCase()
+            .replace(/[^a-z0-9\s]/g, ' ')
+            .split(/\s+/)
+            .filter(w => w.length > 3 && !['that', 'this', 'with', 'from', 'have', 'been', 'were', 'they', 'then', 'when', 'also', 'into', 'will', 'would', 'could', 'should'].includes(w));
+          const slug = words.slice(0, 4).join('-');
+          if (!slug) continue;
+          const topic = `auto:${slug}`;
+          const key = `cachly:lesson:best:${topic}`;
+
+          // Don't overwrite existing successful lessons
+          const existing = await redis.get(key);
+          if (existing) {
+            try {
+              const ex = JSON.parse(existing) as { outcome: string };
+              if (ex.outcome === 'success') continue;
+            } catch { /* ignore */ }
+          }
+
+          const lesson = {
+            topic,
+            outcome: 'success',
+            what_worked: sentence,
+            context: `Auto-learned from session summary. Full summary: ${summary.slice(0, 300)}`,
+            severity: 'minor',
+            ts: now.toISOString(),
+            recall_count: 0,
+            auto_learned: true,
+            session_ts: now.toISOString(),
+            version: 2,
+          };
+          await redis.set(key, JSON.stringify(lesson));
+          // 90-day TTL for auto-learned lessons
+          await redis.expire(key, 90 * 86400);
+          autoLearned.push(topic);
+        }
+
+        // Also store a lesson per changed file area if files were changed
+        if (files_changed.length > 0) {
+          const areas = [...new Set(files_changed.map(f => f.split('/').slice(0, 2).join('/')))].slice(0, 3);
+          for (const area of areas) {
+            const slug = area.replace(/[^a-z0-9]/gi, '-').toLowerCase().replace(/-+/g, '-').slice(0, 30);
+            const topic = `auto:changed:${slug}`;
+            const key = `cachly:lesson:best:${topic}`;
+            const lesson = {
+              topic,
+              outcome: 'success',
+              what_worked: `Files changed in ${area}: ${files_changed.filter(f => f.startsWith(area.split('/')[0])).slice(0, 5).join(', ')}`,
+              context: summary.slice(0, 200),
+              severity: 'minor',
+              ts: now.toISOString(),
+              recall_count: 0,
+              auto_learned: true,
+              version: 2,
+            };
+            await redis.set(key, JSON.stringify(lesson));
+            await redis.expire(key, 90 * 86400);
+            autoLearned.push(topic);
+          }
+        }
+      } catch { /* auto-learn errors must never break session_end */ }
+
+      // ── 🌿 Ambient Git Learning ────────────────────────────────────────────────
+      // Read git commits since session start → auto-learn each meaningful commit.
+      const ambientLearned: string[] = [];
+      if (workspace_path) {
         try {
-          await handleTool('refresh_claude_md', { instance_id, project_dir, max_lessons: 5 });
-          claudeMdNote = '\n✅ CLAUDE.md refreshed with latest brain lessons.';
-        } catch { /* non-fatal */ }
+          // Get the session start time (stored by session_start)
+          const sessionStartTs = currentRaw
+            ? (() => { try { return (JSON.parse(currentRaw) as { started?: string }).started ?? ''; } catch { return ''; } })()
+            : '';
+          const sinceArg = sessionStartTs ? `--since="${sessionStartTs}"` : '--since="1 hour ago"';
+          const gitOut = execSync(
+            `git -C "${workspace_path}" log ${sinceArg} --oneline --format="%H|||%s|||%ai"`,
+            { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+          ).trim();
+          if (gitOut) {
+            const commitActionRe = /\b(fix|add|remove|refactor|migrate|update|resolve|implement|improve|optimize|configure|create|delete|disable|enable|debug|patch|upgrade|build|rewrite|deploy|feat|chore|docs|test|perf|ci)\b/i;
+            for (const line of gitOut.split('\n').slice(0, 10)) {
+              const [hash, msg, dateStr] = line.split('|||');
+              if (!msg || !commitActionRe.test(msg)) continue;
+              const slug = msg
+                .toLowerCase().replace(/^(fix|feat|chore|docs|test|ci|perf|refactor|build|revert)[:(\s]/i, '')
+                .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
+              if (!slug) continue;
+              const topic = `git:${slug}`;
+              const key = `cachly:lesson:best:${topic}`;
+              const existing = await redis.get(key);
+              if (existing) continue; // don't overwrite existing
+              const commitLesson = {
+                topic,
+                outcome: 'success' as const,
+                what_worked: msg.slice(0, 200),
+                context: `Auto-learned from git commit ${(hash ?? '').slice(0, 7)} at ${dateStr ?? ''} in ${workspace_path}`,
+                severity: 'minor' as const,
+                ts: now.toISOString(),
+                recall_count: 0,
+                auto_learned: true,
+                source: 'ambient-git',
+                version: 3,
+              };
+              await redis.set(key, JSON.stringify(commitLesson));
+              await redis.expire(key, 60 * 86400); // 60 day TTL for git lessons
+              ambientLearned.push(topic);
+            }
+          }
+        } catch { /* git not available or not a repo — silent skip */ }
       }
 
       const durationStr = durationMin !== undefined ? ` · ${durationMin} min` : '';
@@ -3487,238 +5540,113 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         `📋 **Summary:** ${summary}`,
         files_changed.length > 0 ? `📁 **Files changed:** ${files_changed.map(f => `\`${f}\``).join(', ')}` : '',
         lessons_learned !== undefined ? `🧠 **Lessons stored:** ${lessons_learned}` : '',
-        claudeMdNote,
+        autoLearned.length > 0 ? `🤖 **Auto-learned:** ${autoLearned.length} lessons extracted from summary (${autoLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${autoLearned.length > 3 ? '…' : ''})` : '',
+        ambientLearned.length > 0 ? `🌿 **Ambient git learning:** ${ambientLearned.length} commit${ambientLearned.length > 1 ? 's' : ''} auto-learned (${ambientLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${ambientLearned.length > 3 ? '…' : ''})` : '',
         ``,
         `💡 Next session: \`session_start(focus="...")\` to see this summary.`,
       ].filter(l => l !== '').join('\n');
     }
 
-    // ── session_ping ──────────────────────────────────────────────────────────
+    // ── session_ping — lightweight checkpoint ─────────────────────────────────
     case 'session_ping': {
-      const { instance_id, task, provider = 'unknown', files = [], next_step } = args as {
-        instance_id: string; task: string; provider?: string; files?: string[]; next_step?: string;
+      const {
+        instance_id,
+        task,
+        files_touched = [],
+        next_step = '',
+        provider = '',
+      } = args as {
+        instance_id: string;
+        task: string;
+        files_touched?: string[];
+        next_step?: string;
+        provider?: string;
       };
+
       const redis = await getConnection(instance_id);
       const checkpoint = {
-        ts: new Date().toISOString(), task, provider, files,
-        ...(next_step ? { next_step } : {}),
+        ts: new Date().toISOString(),
+        task,
+        files_touched,
+        next_step,
+        provider,
       };
-      await redis.set('cachly:session:checkpoint', JSON.stringify(checkpoint), 'EX', 48 * 3600);
+
+      // Store as the latest checkpoint — session_start reads this when no session_end found
+      await redis.set('cachly:session:checkpoint', JSON.stringify(checkpoint), 'EX', 86400 * 3); // 3-day TTL
+
+      // Also keep a short rolling log (last 20 checkpoints for history)
+      await redis.lpush('cachly:session:checkpoint:log', JSON.stringify(checkpoint));
+      await redis.ltrim('cachly:session:checkpoint:log', 0, 19);
+
+      const providerStr = provider ? ` [${provider}]` : '';
+      const filesStr = files_touched.length > 0 ? ` · ${files_touched.length} file${files_touched.length > 1 ? 's' : ''} touched` : '';
+      const nextStr = next_step ? `\n📍 **Next step:** ${next_step}` : '';
+
       return [
-        `⚡ **Checkpoint saved**`, ``,
-        `📌 **Task:** ${task}`,
-        provider !== 'unknown' ? `🔀 **Provider:** ${provider}` : '',
-        files.length > 0 ? `📁 **Files:** ${files.slice(0, 5).map(f => `\`${f}\``).join(', ')}` : '',
-        next_step ? `➡️ **Next:** ${next_step}` : '',
+        `📌 **Checkpoint saved**${providerStr} — ${new Date().toLocaleTimeString()}`,
+        `🔨 **Working on:** ${task}${filesStr}`,
+        nextStr,
         ``,
-        `💡 Switch providers freely — \`session_start\` on any AI will resume from this checkpoint.`,
+        `💡 If you switch providers, \`session_start\` will show this checkpoint automatically.`,
       ].filter(l => l !== '').join('\n');
     }
 
-    // ── compact_recover ───────────────────────────────────────────────────────
-    case 'compact_recover': {
-      const { instance_id } = args as { instance_id: string };
-      const redis = await getConnection(instance_id);
-
-      const [lastSessionRaw, checkpointRaw, todosRaw] = await redis.mget(
-        'cachly:session:last', 'cachly:session:checkpoint', 'cachly:todos'
-      );
-
-      // Top 3 critical/major lessons
-      const lessonKeys: string[] = [];
-      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
-      await new Promise<void>((res, rej) => {
-        lStream.on('data', (b: string[]) => lessonKeys.push(...b));
-        lStream.on('end', res); lStream.on('error', rej);
-      });
-      type Lesson = { topic: string; outcome: string; what_worked: string; severity?: string; ts: string };
-      const topLessons: Lesson[] = [];
-      if (lessonKeys.length > 0) {
-        const vals = await redis.mget(...lessonKeys);
-        for (const raw of vals) {
-          if (!raw) continue;
-          try { topLessons.push(JSON.parse(raw) as Lesson); } catch { /* skip */ }
-        }
-      }
-      topLessons.sort((a, b) => {
-        const sev = (s?: string) => s === 'critical' ? 3 : s === 'major' ? 2 : 1;
-        return sev(b.severity) - sev(a.severity) || new Date(b.ts).getTime() - new Date(a.ts).getTime();
-      });
-
-      const lines: string[] = ['⚡ **Compact Recovery**', ''];
-
-      // Checkpoint — what was being worked on
-      if (checkpointRaw) {
-        try {
-          const cp = JSON.parse(checkpointRaw) as { task: string; next_step?: string; files?: string[]; provider?: string };
-          lines.push(`📌 **Was working on:** ${cp.task}`);
-          if (cp.next_step) lines.push(`➡️ **Next step:** ${cp.next_step}`);
-          if ((cp.files ?? []).length > 0) lines.push(`📁 **Files:** ${(cp.files ?? []).slice(0, 4).map(f => `\`${f}\``).join(', ')}`);
-          lines.push('');
-        } catch { /* ignore */ }
-      } else if (lastSessionRaw) {
-        try {
-          const ls = JSON.parse(lastSessionRaw) as { summary: string; files_changed?: string[] };
-          lines.push(`📅 **Last session:** ${ls.summary}`);
-          if ((ls.files_changed ?? []).length > 0) lines.push(`📁 **Files:** ${(ls.files_changed ?? []).slice(0, 4).map(f => `\`${f}\``).join(', ')}`);
-          lines.push('');
-        } catch { /* ignore */ }
-      }
-
-      // Open TODOs
-      if (todosRaw) {
-        try {
-          type Todo = { id: string; task: string; priority: string; done?: boolean };
-          const todos = (JSON.parse(todosRaw) as Todo[]).filter(t => !t.done);
-          if (todos.length > 0) {
-            lines.push(`📋 **Open TODOs:** ${todos.slice(0, 3).map(t => t.task).join(' · ')}`);
-            lines.push('');
-          }
-        } catch { /* ignore */ }
-      }
-
-      // Critical lessons (top 3)
-      const crit = topLessons.filter(l => l.severity === 'critical' || l.severity === 'major').slice(0, 3);
-      if (crit.length > 0) {
-        lines.push(`🧠 **Critical lessons to keep in mind:**`);
-        for (const l of crit) {
-          const sev = l.severity === 'critical' ? '🔴' : '🟡';
-          lines.push(`  ${sev} \`${l.topic}\` — ${l.what_worked.slice(0, 90)}`);
-        }
-        lines.push('');
-      }
-
-      lines.push(`💡 Context restored. Continue where you left off.`);
-      return lines.join('\n');
-    }
-
-    // ── todo_add ──────────────────────────────────────────────────────────────
-    case 'todo_add': {
-      const { instance_id, task, priority = 'medium', context } = args as {
-        instance_id: string; task: string; priority?: string; context?: string;
+    // ── session_handoff — cross-window continuity ─────────────────────────────
+    case 'session_handoff': {
+      const {
+        instance_id,
+        completed_tasks = [],
+        remaining_tasks = [],
+        files_changed = [],
+        instructions = '',
+        context_summary = '',
+        blocked_on = '',
+      } = args as {
+        instance_id: string;
+        completed_tasks: string[];
+        remaining_tasks: string[];
+        files_changed?: { path: string; status: string; description?: string }[];
+        instructions?: string;
+        context_summary?: string;
+        blocked_on?: string;
       };
+
       const redis = await getConnection(instance_id);
-      const todosRaw = await redis.get('cachly:todos');
-      type Todo = { id: string; task: string; priority: string; context?: string; created: string; done?: boolean };
-      let todos: Todo[] = [];
-      if (todosRaw) { try { todos = JSON.parse(todosRaw) as Todo[]; } catch { /* ignore */ } }
+      const now = new Date();
 
-      const id = `t${Date.now().toString(36)}`;
-      todos.push({ id, task, priority, created: new Date().toISOString(), ...(context ? { context } : {}) });
-      await redis.set('cachly:todos', JSON.stringify(todos));
-
-      const prioEmoji = priority === 'high' ? '🔴' : priority === 'low' ? '⚪' : '🟡';
-      return `${prioEmoji} **TODO added** [${id}]: ${task}\n\n💡 \`session_start\` will show this at the top. Mark done with \`todo_done(id="${id}")\`.`;
-    }
-
-    // ── todo_done ─────────────────────────────────────────────────────────────
-    case 'todo_done': {
-      const { instance_id, id } = args as { instance_id: string; id: string };
-      const redis = await getConnection(instance_id);
-      const todosRaw = await redis.get('cachly:todos');
-      type Todo = { id: string; task: string; priority: string; done?: boolean };
-      let todos: Todo[] = [];
-      if (todosRaw) { try { todos = JSON.parse(todosRaw) as Todo[]; } catch { /* ignore */ } }
-
-      const todo = todos.find(t => t.id === id);
-      if (!todo) return `❌ TODO [${id}] not found. Use \`todo_list\` to see all IDs.`;
-      todo.done = true;
-      await redis.set('cachly:todos', JSON.stringify(todos));
-      return `✅ **Done:** ${todo.task}`;
-    }
-
-    // ── todo_list ─────────────────────────────────────────────────────────────
-    case 'todo_list': {
-      const { instance_id, include_done = false } = args as { instance_id: string; include_done?: boolean };
-      const redis = await getConnection(instance_id);
-      const todosRaw = await redis.get('cachly:todos');
-      type Todo = { id: string; task: string; priority: string; context?: string; created: string; done?: boolean };
-      let todos: Todo[] = [];
-      if (todosRaw) { try { todos = JSON.parse(todosRaw) as Todo[]; } catch { /* ignore */ } }
-
-      const visible = include_done ? todos : todos.filter(t => !t.done);
-      if (visible.length === 0) return include_done ? '📋 No TODOs yet.' : '📋 No open TODOs. ✅';
-
-      const lines = [`📋 **TODOs** (${visible.filter(t => !t.done).length} open)`, ''];
-      for (const t of visible) {
-        const p = t.done ? '✅' : t.priority === 'high' ? '🔴' : t.priority === 'low' ? '⚪' : '🟡';
-        lines.push(`${p} [${t.id}] ${t.task}${t.context ? ` _(${t.context})_` : ''}`);
-      }
-      return lines.join('\n');
-    }
-
-    // ── refresh_claude_md ─────────────────────────────────────────────────────
-    case 'refresh_claude_md': {
-      const { instance_id, project_dir, max_lessons = 5 } = args as {
-        instance_id: string; project_dir: string; max_lessons?: number;
+      const handoff = {
+        ts: now.toISOString(),
+        completed_tasks,
+        remaining_tasks,
+        files_changed,
+        instructions,
+        context_summary,
+        blocked_on,
       };
-      const { writeFile, readFile } = await import('node:fs/promises');
-      const { existsSync } = await import('node:fs');
-      const { resolve } = await import('node:path');
 
-      const redis = await getConnection(instance_id);
+      // Store handoff — never expires until next handoff overwrites it
+      await redis.set('cachly:session:handoff', JSON.stringify(handoff));
 
-      // Fetch top lessons sorted by severity + recall
-      const lessonKeys: string[] = [];
-      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
-      await new Promise<void>((res, rej) => {
-        lStream.on('data', (b: string[]) => lessonKeys.push(...b));
-        lStream.on('end', res); lStream.on('error', rej);
-      });
-      type Lesson = { topic: string; outcome: string; what_worked: string; severity?: string; ts: string; recall_count?: number };
-      const lessons: Lesson[] = [];
-      if (lessonKeys.length > 0) {
-        const vals = await redis.mget(...lessonKeys);
-        for (const raw of vals) {
-          if (!raw) continue;
-          try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip */ }
-        }
-      }
-      lessons.sort((a, b) => {
-        const sev = (s?: string) => s === 'critical' ? 3 : s === 'major' ? 2 : 1;
-        return sev(b.severity) - sev(a.severity) || (b.recall_count ?? 0) - (a.recall_count ?? 0);
-      });
-      const top = lessons.slice(0, max_lessons);
+      // Also append to history
+      await redis.lpush('cachly:session:handoff:history', JSON.stringify(handoff));
+      await redis.ltrim('cachly:session:handoff:history', 0, 19);
 
-      const claudeMdPath = resolve(project_dir, 'CLAUDE.md');
-      if (!existsSync(claudeMdPath)) {
-        return `❌ CLAUDE.md not found at ${claudeMdPath}. Run \`setup\` first or provide the correct project_dir.`;
-      }
+      const totalTasks = completed_tasks.length + remaining_tasks.length;
+      const pct = totalTasks > 0 ? Math.round((completed_tasks.length / totalTasks) * 100) : 0;
+      const brokenFiles = files_changed.filter(f => f.status === 'broken' || f.status === 'partial');
 
-      let content = await readFile(claudeMdPath, 'utf-8');
-
-      // Build the inline lessons section
-      const lessonsBlock = top.length > 0
-        ? `\n### Top lessons (auto-synced ${new Date().toLocaleDateString()}):\n` +
-          top.map(l => {
-            const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '⚪';
-            return `- ${sev} \`${l.topic}\`: ${l.what_worked.slice(0, 100)}`;
-          }).join('\n') + '\n'
-        : '';
-
-      // Replace only the lessons section inside the existing cachly block
-      const LESSONS_START = '<!-- cachly-lessons-start -->';
-      const LESSONS_END   = '<!-- cachly-lessons-end -->';
-      const lessonsWrapped = `${LESSONS_START}${lessonsBlock}${LESSONS_END}`;
-
-      if (content.includes(LESSONS_START)) {
-        content = content.replace(
-          new RegExp(`${LESSONS_START}[\\s\\S]*?${LESSONS_END}`),
-          lessonsWrapped
-        );
-      } else if (content.includes('<!-- cachly-brain-end -->')) {
-        content = content.replace(
-          '<!-- cachly-brain-end -->',
-          `${lessonsWrapped}\n<!-- cachly-brain-end -->`
-        );
-      } else {
-        return `❌ CLAUDE.md does not have a cachly brain block. Run \`setup\` to add one.`;
-      }
-
-      await writeFile(claudeMdPath, content, 'utf-8');
-      return top.length > 0
-        ? `✅ **CLAUDE.md refreshed** with ${top.length} top lessons.\n\nNow every AI session sees these lessons before calling any tools:\n${top.map(l => `- \`${l.topic}\`: ${l.what_worked.slice(0, 80)}`).join('\n')}`
-        : `✅ CLAUDE.md updated. No lessons in brain yet — use \`learn_from_attempts\` to store some.`;
+      return [
+        `🤝 **Handoff saved** — ${completed_tasks.length}/${totalTasks} tasks done (${pct}%)`,
+        ``,
+        completed_tasks.length > 0 ? `✅ **Completed:**\n${completed_tasks.map(t => `  - ${t}`).join('\n')}` : '',
+        remaining_tasks.length > 0 ? `\n⏳ **Remaining for next window:**\n${remaining_tasks.map(t => `  - ${t}`).join('\n')}` : '',
+        brokenFiles.length > 0 ? `\n⚠️ **Needs attention:** ${brokenFiles.map(f => `\`${f.path}\` (${f.status})`).join(', ')}` : '',
+        blocked_on ? `\n🚫 **Blocked on:** ${blocked_on}` : '',
+        instructions ? `\n📝 **Instructions:** ${instructions}` : '',
+        ``,
+        `💡 The next \`session_start\` will include this handoff automatically.`,
+      ].filter(l => l !== '').join('\n');
     }
 
     // ── auto_learn_session ────────────────────────────────────────────────────
@@ -3746,8 +5674,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         // Only overwrite if this is a success and existing is failure, or topic is new
         const existing = await redis.get(key);
         if (existing) {
-          let existingLesson: { outcome: string };
-          try { existingLesson = JSON.parse(existing); } catch { existingLesson = { outcome: 'failure' }; }
+          const existingLesson = JSON.parse(existing) as { outcome: string };
           if (existingLesson.outcome === 'success' && obs.outcome !== 'success') {
             skipped.push(topic);
             continue;
@@ -3812,23 +5739,20 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
       type Lesson = { topic: string; what_worked: string; outcome: string; file_paths?: string[] };
       const relevant: string[] = [];
-      if (lessonKeys.length > 0) {
-        const values = await redis.mget(...lessonKeys);
-        for (const raw of values) {
-          if (!raw) continue;
-          let lesson: Lesson;
-          try { lesson = JSON.parse(raw) as Lesson; } catch { continue; }
-          // Match by file_paths stored in lesson OR by topic keywords matching file name
-          const topicWords = lesson.topic.toLowerCase().split(/[:\-_]/);
-          const fileMatches = changed_files.some(f => {
-            const fname = f.split('/').pop()?.replace(/\.[^.]+$/, '').toLowerCase() ?? '';
-            return topicWords.some(w => w.length > 3 && fname.includes(w))
-              || (lesson.file_paths ?? []).some(lf => f.includes(lf) || lf.includes(f));
-          });
-          if (fileMatches) {
-            const emoji = lesson.outcome === 'success' ? '✅' : '⚠️';
-            relevant.push(`  ${emoji} \`${lesson.topic}\` — ${lesson.what_worked.slice(0, 80)}`);
-          }
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        const lesson = JSON.parse(raw) as Lesson;
+        // Match by file_paths stored in lesson OR by topic keywords matching file name
+        const topicWords = lesson.topic.toLowerCase().split(/[:\-_]/);
+        const fileMatches = changed_files.some(f => {
+          const fname = f.split('/').pop()?.replace(/\.[^.]+$/, '').toLowerCase() ?? '';
+          return topicWords.some(w => w.length > 3 && fname.includes(w))
+            || (lesson.file_paths ?? []).some(lf => f.includes(lf) || lf.includes(f));
+        });
+        if (fileMatches) {
+          const emoji = lesson.outcome === 'success' ? '✅' : '⚠️';
+          relevant.push(`  ${emoji} \`${lesson.topic}\` — ${lesson.what_worked.slice(0, 80)}`);
         }
       }
 
@@ -3869,7 +5793,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         file_paths: file_paths ?? [],
         commands: commands ?? [],
         tags: [...(tags ?? []), 'team'],
-        ts: new Date().toISOString(),
+        timestamp: new Date().toISOString(),
         recall_count: 0,
         version: 2,
       };
@@ -3908,12 +5832,10 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         author?: string; tags?: string[];
       };
       let lessons: TeamLesson[] = [];
-      if (lessonKeys.length > 0) {
-        const values = await redis.mget(...lessonKeys);
-        for (const raw of values) {
-          if (!raw) continue;
-          try { lessons.push(JSON.parse(raw) as TeamLesson); } catch { /* skip */ }
-        }
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        try { lessons.push(JSON.parse(raw) as TeamLesson); } catch { /* skip */ }
       }
 
       // Filter
@@ -3954,306 +5876,153 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       return lines.join('\n');
     }
 
-    // ── brain_stats ───────────────────────────────────────────────────────────
-    case 'brain_stats': {
-      const { instance_id } = args as { instance_id: string };
+    // ── team_synthesize — Team Brain Synthesis ────────────────────────────────
+    case 'team_synthesize': {
+      const { instance_id, topic } = args as { instance_id: string; topic: string };
       const redis = await getConnection(instance_id);
 
-      // Scan all lesson keys
-      const lessonKeys: string[] = [];
-      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
-      await new Promise<void>((resolve, reject) => {
-        lStream.on('data', (batch: string[]) => lessonKeys.push(...batch));
-        lStream.on('end', resolve);
-        lStream.on('error', reject);
-      });
-
-      type Lesson = { topic: string; outcome: string; recall_count?: number; ts: string; severity?: string; what_worked: string; author?: string };
-      const lessons: Lesson[] = [];
-      if (lessonKeys.length > 0) {
-        const vals = await redis.mget(...lessonKeys);
-        for (const raw of vals) {
-          if (!raw) continue;
-          try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip */ }
-        }
+      // Load history list for this topic (all authors' contributions)
+      const listKey = `cachly:lessons:${topic}`;
+      const all = await redis.lrange(listKey, 0, -1);
+      if (all.length < 2) {
+        return `📭 Need at least 2 entries for topic \`${topic}\` to synthesize.\n\nCurrently: ${all.length} entr${all.length === 1 ? 'y' : 'ies'}.\n\nHave team members store lessons via \`learn_from_attempts(topic="${topic}", ...)\`.`;
       }
 
-      // Context count
-      let ctxCount = 0;
-      const ctxStream = redis.scanStream({ match: 'cachly:ctx:*', count: 200 });
-      await new Promise<void>((resolve, reject) => {
-        ctxStream.on('data', (batch: string[]) => { ctxCount += batch.filter((k: string) => !k.endsWith(':meta')).length; });
-        ctxStream.on('end', resolve);
-        ctxStream.on('error', reject);
-      });
+      type Entry = { outcome: string; what_worked: string; what_failed?: string; author?: string; ts: string; severity?: string };
+      const entries: Entry[] = all.map(r => { try { return JSON.parse(r) as Entry; } catch { return null; } }).filter((e): e is Entry => e !== null);
 
-      const lastSessionRaw = await redis.get('cachly:session:last');
-      let lastSession: { ts: string; summary: string; duration_min?: number } | null = null;
-      if (lastSessionRaw) { try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ } }
+      // Group by outcome
+      const successes = entries.filter(e => e.outcome === 'success');
+      const failures  = entries.filter(e => e.outcome === 'failure');
+      const partials  = entries.filter(e => e.outcome === 'partial');
 
-      const totalRecalls  = lessons.reduce((s, l) => s + (l.recall_count ?? 0), 0);
-      const savedMin      = totalRecalls * 15;
-      const savedHours    = (savedMin / 60).toFixed(1);
-      const successCount  = lessons.filter(l => l.outcome === 'success').length;
-      const failureCount  = lessons.filter(l => l.outcome === 'failure' || l.outcome === 'partial').length;
-      const criticalCount = lessons.filter(l => l.severity === 'critical').length;
-      const majorCount    = lessons.filter(l => l.severity === 'major').length;
-      const authors       = [...new Set(lessons.map(l => l.author).filter(Boolean))];
-      const topByRecall   = [...lessons].sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0)).slice(0, 5);
-      const newestLesson  = [...lessons].sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())[0];
+      const authors = [...new Set(entries.map(e => e.author).filter(Boolean))];
+      const hasMultiAuthor = authors.length > 1;
 
-      // Age of last session
-      let lastSessionStr = 'none yet';
-      if (lastSession) {
-        const ageMin = Math.round((Date.now() - new Date(lastSession.ts).getTime()) / 60000);
-        lastSessionStr = ageMin < 60 ? `${ageMin}m ago`
-          : ageMin < 1440 ? `${Math.round(ageMin / 60)}h ago`
-          : `${Math.round(ageMin / 1440)}d ago`;
-      }
+      // Build canonical merged version
+      // what_worked: pick the most recent success, or longest for most detail
+      const bestSuccess = successes.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime())[0];
+      const whatWorkedCandidates = successes.map(e => e.what_worked).filter(w => w && w.length > 10);
+      const canonicalWorked = whatWorkedCandidates.sort((a, b) => b.length - a.length)[0] ?? bestSuccess?.what_worked ?? '';
 
-      const tokensSaved = (totalRecalls * 1200);
-      const tokenStr    = tokensSaved >= 1000 ? `~${(tokensSaved / 1000).toFixed(0)}k tokens` : `~${tokensSaved} tokens`;
-      const costSaved   = (tokensSaved * 0.000003).toFixed(2);
+      // what_failed: union of all unique failure reasons
+      const allFailed = [...new Set(
+        [...failures, ...partials].map(e => e.what_failed).filter((w): w is string => !!w && w.length > 5)
+      )];
+
+      const severities = entries.map(e => e.severity).filter(Boolean);
+      const canonicalSeverity = severities.includes('critical') ? 'critical' : severities.includes('major') ? 'major' : 'minor';
 
       const lines = [
-        `🧠 **Brain Stats — Full Dashboard**`,
-        ``,
-        `╔══════════════════════════════════════╗`,
-        `║  📚 Lessons:       ${String(lessons.length).padEnd(18)}║`,
-        `║  🔄 Total recalls: ${String(totalRecalls).padEnd(18)}║`,
-        `║  🕐 Time saved:    ~${savedHours}h${' '.repeat(Math.max(0, 16 - savedHours.length))}║`,
-        `║  💎 Tokens saved:  ${tokenStr.padEnd(18)}║`,
-        `║  💵 Cost saved:    ~$${costSaved.padEnd(17)}║`,
-        `║  📁 Context keys:  ${String(ctxCount).padEnd(18)}║`,
-        `╚══════════════════════════════════════╝`,
-        ``,
-        `**Lessons breakdown:**`,
-        `  ✅ Success:  ${successCount}   ❌ Failures/partial: ${failureCount}`,
-        `  🔴 Critical: ${criticalCount}   🟡 Major: ${majorCount}`,
-        ``,
-        `**Last session:** ${lastSessionStr}${lastSession?.summary ? ` — ${lastSession.summary.slice(0, 80)}` : ''}`,
-        `**Newest lesson:** ${newestLesson ? `\`${newestLesson.topic}\`` : 'none'}`,
-        ``,
-      ];
-
-      if (topByRecall.length > 0) {
-        lines.push(`**Top recalled lessons (most reused):**`);
-        for (const l of topByRecall) {
-          const emoji = l.outcome === 'success' ? '✅' : '⚠️';
-          lines.push(`  ${emoji} \`${l.topic}\` — recalled ${l.recall_count ?? 0}× · ${l.what_worked.slice(0, 60)}`);
-        }
-        lines.push('');
-      }
-
-      if (authors.length > 0) {
-        lines.push(`**Team contributors (${authors.length}):** ${(authors as string[]).join(', ')}`);
-        lines.push('');
-      }
-
-      lines.push(`💡 Share your brain: \`invite_link()\` — generates a one-command team invite.`);
-      lines.push(`📤 Export to Markdown: \`export_brain()\` — portable snapshot you can save or share.`);
-
-      return lines.join('\n');
-    }
-
-    // ── export_brain ──────────────────────────────────────────────────────────
-    case 'export_brain': {
-      const { instance_id, include_context = true, max_lessons } = args as {
-        instance_id: string;
-        include_context?: boolean;
-        max_lessons?: number;
-      };
-      const redis = await getConnection(instance_id);
-
-      // Scan all lessons
-      const lessonKeys: string[] = [];
-      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
-      await new Promise<void>((resolve, reject) => {
-        lStream.on('data', (batch: string[]) => lessonKeys.push(...batch));
-        lStream.on('end', resolve);
-        lStream.on('error', reject);
-      });
-
-      type FullLesson = {
-        topic: string; outcome: string; what_worked: string; what_failed?: string;
-        severity?: string; ts: string; recall_count?: number; author?: string;
-        file_paths?: string[]; commands?: string[]; tags?: string[];
-      };
-      let lessons: FullLesson[] = [];
-      if (lessonKeys.length > 0) {
-        const vals = await redis.mget(...lessonKeys);
-        for (const raw of vals) {
-          if (!raw) continue;
-          try { lessons.push(JSON.parse(raw) as FullLesson); } catch { /* skip */ }
-        }
-      }
-      lessons.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
-      if (max_lessons && max_lessons > 0) lessons = lessons.slice(0, max_lessons);
-
-      // Last session + crystal
-      const lastSessionRaw = await redis.get('cachly:session:last');
-      let lastSession: { ts: string; summary: string } | null = null;
-      if (lastSessionRaw) { try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ } }
-
-      const crystalRaw = await redis.get('cachly:crystal');
-      let crystal: { summary: string; created_at: string } | null = null;
-      if (crystalRaw) { try { crystal = JSON.parse(crystalRaw); } catch { /* ignore */ } }
-
-      // Context entries
-      type CtxEntry = { key: string; value: string };
-      const ctxEntries: CtxEntry[] = [];
-      if (include_context) {
-        const ctxKeys: string[] = [];
-        const ctxStream = redis.scanStream({ match: 'cachly:ctx:*', count: 200 });
-        await new Promise<void>((resolve, reject) => {
-          ctxStream.on('data', (batch: string[]) => {
-            ctxKeys.push(...batch.filter((k: string) => !k.endsWith(':meta')));
-          });
-          ctxStream.on('end', resolve);
-          ctxStream.on('error', reject);
-        });
-        if (ctxKeys.length > 0) {
-          const ctxVals = await redis.mget(...ctxKeys);
-          for (let i = 0; i < ctxKeys.length; i++) {
-            const val = ctxVals[i];
-            if (val) ctxEntries.push({ key: ctxKeys[i].replace('cachly:ctx:', ''), value: val });
-          }
-        }
-      }
-
-      const exportedAt = new Date().toISOString();
-      const totalRecalls = lessons.reduce((s, l) => s + (l.recall_count ?? 0), 0);
-      const savedHours = (totalRecalls * 15 / 60).toFixed(1);
-
-      const md: string[] = [
-        `# 🧠 cachly Brain Export`,
-        ``,
-        `> Exported: ${exportedAt}  `,
-        `> Instance: \`${instance_id}\`  `,
-        `> Lessons: ${lessons.length} · Recalls: ${totalRecalls} · Time saved: ~${savedHours}h`,
-        ``,
-      ];
-
-      if (crystal) {
-        md.push(`## 💎 Memory Crystal`, ``, `> ${crystal.summary}`, ``, `_Generated: ${crystal.created_at}_`, ``);
-      }
-
-      if (lastSession) {
-        md.push(`## 📅 Last Session`, ``, `**${lastSession.ts.slice(0, 10)}** — ${lastSession.summary}`, ``);
-      }
-
-      // Group lessons by outcome
-      const successLessons = lessons.filter(l => l.outcome === 'success');
-      const failureLessons = lessons.filter(l => l.outcome !== 'success');
-
-      const formatLesson = (l: FullLesson) => {
-        const sev = l.severity === 'critical' ? ' 🔴' : l.severity === 'major' ? ' 🟡' : '';
-        const lines: string[] = [
-          `### \`${l.topic}\`${sev}`,
-          ``,
-          `**Outcome:** ${l.outcome}  `,
-          `**Recalls:** ${l.recall_count ?? 0}×  `,
-          `**Stored:** ${l.ts.slice(0, 10)}${l.author ? `  \n**Author:** ${l.author}` : ''}`,
-          ``,
-          `**What worked:**  `,
-          l.what_worked,
-        ];
-        if (l.what_failed) { lines.push(``, `**What failed:**  `, l.what_failed); }
-        if ((l.commands ?? []).length > 0) {
-          lines.push(``, `**Commands:**`);
-          for (const cmd of l.commands!) lines.push(`\`\`\`\n${cmd}\n\`\`\``);
-        }
-        if ((l.file_paths ?? []).length > 0) {
-          lines.push(``, `**Files:** ${l.file_paths!.map(f => `\`${f}\``).join(', ')}`);
-        }
-        if ((l.tags ?? []).length > 0) {
-          lines.push(``, `**Tags:** ${l.tags!.map(t => `\`${t}\``).join(', ')}`);
-        }
-        lines.push(``);
-        return lines.join('\n');
-      };
-
-      if (successLessons.length > 0) {
-        md.push(`## ✅ Successful Solutions (${successLessons.length})`, ``);
-        for (const l of successLessons) md.push(formatLesson(l));
-      }
-
-      if (failureLessons.length > 0) {
-        md.push(`## ⚠️ Open / Partial Issues (${failureLessons.length})`, ``);
-        for (const l of failureLessons) md.push(formatLesson(l));
-      }
-
-      if (ctxEntries.length > 0) {
-        md.push(`## 📁 Context Entries (${ctxEntries.length})`, ``);
-        for (const e of ctxEntries) {
-          md.push(`### \`${e.key}\``, ``, e.value.slice(0, 500) + (e.value.length > 500 ? '\n\n_[truncated]_' : ''), ``);
-        }
-      }
-
-      md.push(
-        `---`,
-        ``,
-        `_Exported from [cachly AI Brain](https://cachly.dev) · Re-import with \`npx @cachly-dev/mcp-server@latest setup\`_`,
-      );
-
-      return md.join('\n');
-    }
-
-    // ── invite_link ───────────────────────────────────────────────────────────
-    case 'invite_link': {
-      const { instance_id, label = '' } = args as { instance_id: string; label?: string };
-
-      // Generate a share token via API
-      let shareToken = '';
-      let inviteUrl  = '';
-      try {
-        const res = await apiFetch<{ token?: string; url?: string }>(
-          `/api/v1/instances/${instance_id}/invite`,
-          { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ label }) }
-        );
-        shareToken = res.token ?? '';
-        inviteUrl  = res.url  ?? '';
-      } catch {
-        // API doesn't support invite yet — generate a local share snippet instead
-      }
-
-      // Build the join command
-      const joinCmd = shareToken
-        ? `npx @cachly-dev/mcp-server@latest join ${shareToken}`
-        : `npx @cachly-dev/mcp-server@latest setup`;
-
-      const lines = [
-        `🔗 **Team Invite — ${label || instance_id.slice(0, 8) + '…'}**`,
-        ``,
-        `Share this command with your teammate:`,
-        ``,
-        `\`\`\`bash`,
-        joinCmd,
-        `\`\`\``,
-        ``,
-        `**What happens when they run it:**`,
-        `  1. Browser opens → they sign in (free, 30 seconds)`,
-        `  2. Their Brain is auto-connected to this shared instance`,
-        `  3. All ${label ? `"${label}" ` : ''}lessons and context are instantly available`,
-        `  4. Editor configs written automatically — no copy-paste`,
-        ``,
-      ];
-
-      if (inviteUrl) {
-        lines.push(`**Or share the link directly:** ${inviteUrl}`, ``);
-      }
-
-      lines.push(
-        `💡 Teammates can also run \`session_start\` immediately to see all your lessons.`,
-        `   Use \`team_learn\` with an \`author\` param so everyone knows who learned what.`,
-      );
-
-      return lines.join('\n');
+        `🧬 **Team Brain Synthesis: \`${topic}\`**`,
+        `_${entries.length} entries from ${authors.length} author${authors.length === 1 ? '' : 's'}${hasMultiAuthor ? ` (${authors.join(', ')})` : ''} · ${successes.length} success · ${failures.length} failure · ${partials.length} partial_`,
+        '',
+        `**Canonical "what worked":**`,
+        `> ${canonicalWorked}`,
+        '',
+        allFailed.length > 0 ? `**Avoid (combined failures):**` : '',
+        ...allFailed.map(f => `> ❌ ${f}`),
+        allFailed.length > 0 ? '' : '',
+        `**Suggested canonical lesson:**`,
+        '```',
+        `learn_from_attempts(`,
+        `  topic       = "${topic}",`,
+        `  outcome     = "success",`,
+        `  what_worked = "${canonicalWorked.replace(/"/g, "'")}",`,
+        allFailed.length > 0 ? `  what_failed = "${allFailed[0].replace(/"/g, "'")}",` : '',
+        `  severity    = "${canonicalSeverity}",`,
+        `)`,
+        '```',
+        '',
+        hasMultiAuthor
+          ? `💡 _${authors.length} team members contributed to this synthesis. Store the canonical version to replace individual entries._`
+          : `💡 _Single author — more value when multiple team members contribute to the same topic._`,
+      ].filter(l => l !== undefined).join('\n');
+      return lines;
     }
 
     // ── brain_doctor ──────────────────────────────────────────────────────────
+    // ── memory_crystalize ─────────────────────────────────────────────────────
+    case 'memory_crystalize': {
+      const { instance_id, label: crystalLabel = '' } = args as { instance_id: string; label?: string };
+      const redis = await getConnection(instance_id);
+      const now = new Date();
+      const week = `${now.getFullYear()}-W${String(Math.ceil((now.getDate() - now.getDay() + 10) / 7)).padStart(2, '0')}`;
+      const effectiveLabel = crystalLabel || `${now.toISOString().slice(0, 7)} Crystal`;
+
+      // Read session history
+      const sessionHistory = await redis.lrange('cachly:session:history', 0, 49);
+
+      // Read all auto-learned lessons
+      const allLessonKeys: string[] = [];
+      const ls = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((res, rej) => {
+        ls.on('data', (b: string[]) => allLessonKeys.push(...b));
+        ls.on('end', res);
+        ls.on('error', rej);
+      });
+
+      type RawLesson = { topic: string; outcome: string; what_worked: string; severity?: string; ts: string; auto_learned?: boolean };
+      const allLessons: RawLesson[] = [];
+      for (const k of allLessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        try { allLessons.push(JSON.parse(raw) as RawLesson); } catch { /* skip */ }
+      }
+
+      // Group lessons by top-level category
+      const categoryMap = new Map<string, RawLesson[]>();
+      for (const l of allLessons) {
+        const cat = l.topic.split(':')[0] || 'misc';
+        if (!categoryMap.has(cat)) categoryMap.set(cat, []);
+        categoryMap.get(cat)!.push(l);
+      }
+
+      // Build top patterns (most frequent categories with a representative insight)
+      const topPatterns: Array<{ category: string; insight: string; count: number }> = [];
+      for (const [cat, catLessons] of [...categoryMap.entries()].sort((a, b) => b[1].length - a[1].length).slice(0, 8)) {
+        const successLessons = catLessons.filter(l => l.outcome === 'success');
+        const best = successLessons[0] ?? catLessons[0];
+        if (!best) continue;
+        topPatterns.push({
+          category: cat,
+          insight: best.what_worked.slice(0, 120),
+          count: catLessons.length,
+        });
+      }
+
+      const crystal = {
+        label: effectiveLabel,
+        ts: now.toISOString(),
+        session_count: sessionHistory.length,
+        lesson_count: allLessons.length,
+        top_patterns: topPatterns,
+        categories: [...categoryMap.keys()],
+        created_from: `${sessionHistory.length} sessions, ${allLessons.length} lessons`,
+      };
+
+      const crystalJson = JSON.stringify(crystal);
+      await redis.set('cachly:crystal:latest', crystalJson);
+      await redis.expire('cachly:crystal:latest', 90 * 86400);
+      await redis.set(`cachly:crystal:${week}`, crystalJson);
+      await redis.expire(`cachly:crystal:${week}`, 365 * 86400);
+
+      const lines = [
+        `💎 **Memory Crystal created: ${effectiveLabel}**`,
+        ``,
+        `📊 Compressed: **${sessionHistory.length} sessions** + **${allLessons.length} lessons** → ${topPatterns.length} top patterns`,
+        ``,
+        `**Top patterns by category:**`,
+        ...topPatterns.slice(0, 6).map(p => `  • **${p.category}** (${p.count}×): ${p.insight.slice(0, 90)}`),
+        ``,
+        `💡 This crystal will appear in every future \`session_start\` briefing.`,
+        `💡 Re-run \`memory_crystalize\` monthly to keep it fresh.`,
+      ];
+      return lines.join('\n');
+    }
+
     case 'brain_doctor': {
-      const { instance_id } = args as { instance_id: string };
+      const { instance_id, workspace_path: drWorkspacePath = '' } = args as { instance_id: string; workspace_path?: string };
       const redis = await getConnection(instance_id);
       const issues: string[] = [];
       const checks: string[] = [];
@@ -4278,15 +6047,16 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ctxStream.on('error', reject);
       });
 
-      // Load lessons for analysis — batch fetch
-      type Lesson = { topic: string; outcome: string; recall_count?: number; ts: string; severity?: string };
-      const lessons: Lesson[] = [];
-      if (lessonKeys.length > 0) {
-        const vals = await redis.mget(...lessonKeys);
-        for (const raw of vals) {
-          if (!raw) continue;
-          try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip */ }
-        }
+      // Load lessons for analysis
+      type DrLesson = {
+        topic: string; outcome: string; recall_count?: number; ts: string;
+        verified_at?: string; severity?: string; audit_trail?: unknown[];
+      };
+      const lessons: DrLesson[] = [];
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        try { lessons.push(JSON.parse(raw) as DrLesson); } catch { /* skip */ }
       }
 
       // Last session
@@ -4302,6 +6072,17 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       const unusedLessons = lessons.filter(l => (l.recall_count ?? 0) === 0);
       // Critical lessons
       const criticalLessons = lessons.filter(l => l.severity === 'critical');
+      // Confidence decay analysis
+      const staleLessons  = lessons.filter(l => l.outcome === 'success' && calculateConfidence(l) < CONFIDENCE_STALE_VALUE);
+      const warnLessons   = lessons.filter(l => l.outcome === 'success' && calculateConfidence(l) >= CONFIDENCE_STALE_VALUE && calculateConfidence(l) < CONFIDENCE_WARN_VALUE);
+      const withAudit     = lessons.filter(l => (l.audit_trail ?? []).length > 1);
+      // Team lessons
+      type DrLessonWithAuthor = DrLesson & { author?: string };
+      const teamLessons = (lessons as DrLessonWithAuthor[]).filter(l => l.author);
+      const uniqueAuthors = new Set((lessons as DrLessonWithAuthor[]).map(l => l.author).filter(Boolean));
+      // Effective IQ boost: total recalls / lessons (how much the brain actually helped)
+      const totalRecalls = lessons.reduce((sum, l) => sum + (l.recall_count ?? 0), 0);
+      const iqBoostPct = lessons.length > 0 ? Math.min(100, Math.round((totalRecalls / lessons.length) * 10)) : 0;
 
       // Quality score (0-100)
       let score = 50;
@@ -4313,12 +6094,67 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       if (openFailures.length === 0) score += 5;
       const unusedRatio = lessons.length > 0 ? unusedLessons.length / lessons.length : 0;
       if (unusedRatio < 0.5)       score += 10;
+      if (staleLessons.length === 0) score += 5;
+      if (uniqueAuthors.size >= 2) score += 5; // team collaboration bonus
 
       const scoreEmoji = score >= 80 ? '🟢' : score >= 50 ? '🟡' : '🔴';
+      const iqEmoji = iqBoostPct >= 50 ? '🚀' : iqBoostPct >= 20 ? '📈' : '💤';
 
       checks.push(`${scoreEmoji} **Brain Quality Score: ${score}/100**`);
-      checks.push(`📚 **Lessons:** ${lessonKeys.length} (${criticalLessons.length} critical)`);
+      checks.push(`${iqEmoji} **Effective IQ Boost: ${iqBoostPct}%** (${totalRecalls} recalls across ${lessons.length} lessons)`);
+      checks.push(`📚 **Lessons:** ${lessonKeys.length} (${criticalLessons.length} critical · ${withAudit.length} with audit trail · ${teamLessons.length} from team)`);
       checks.push(`💾 **Context entries:** ${ctxCount}`);
+      checks.push(`🎯 **Confidence:** ${lessons.length - staleLessons.length - warnLessons.length} fresh · ${warnLessons.length} warn · ${staleLessons.length} stale`);
+      checks.push(`⏱️ **Decay config:** warn after ${CONFIDENCE_WARN_DAYS}d · stale after ${CONFIDENCE_STALE_DAYS}d`);
+      if (uniqueAuthors.size >= 2) {
+        checks.push(`👥 **Team:** ${uniqueAuthors.size} contributors (${[...uniqueAuthors].join(', ')})`);
+      }
+
+      // Stale index detection
+      try {
+        const lastIndexRaw = await redis.get('cachly:index:last_run');
+        if (lastIndexRaw) {
+          const lastIndexAge = Math.round((Date.now() - new Date(lastIndexRaw).getTime()) / 86_400_000);
+          if (lastIndexAge > 7) {
+            issues.push(`🔄 Index is ${lastIndexAge}d stale — run \`index_project\` to re-sync semantic search`);
+          } else {
+            checks.push(`🗂️ **Semantic index:** ${lastIndexAge}d old (fresh)`);
+          }
+        } else {
+          issues.push(`💡 No semantic index — run \`index_project(dir="<your-src>")\` to enable semantic search`);
+        }
+      } catch { /* non-critical */ }
+
+      // Memory crystal status
+      try {
+        const crystalRaw = await redis.get('cachly:crystal:latest');
+        if (crystalRaw) {
+          const crystal = JSON.parse(crystalRaw) as { ts: string; label: string };
+          const crystalAge = Math.round((Date.now() - new Date(crystal.ts).getTime()) / 86_400_000);
+          checks.push(`💎 **Memory Crystal:** ${crystal.label} (${crystalAge}d ago)`);
+          if (crystalAge > 30) issues.push(`💡 Memory Crystal is ${crystalAge}d old — re-run \`memory_crystalize\` to compress new sessions`);
+        } else if (lessonKeys.length >= 10) {
+          issues.push(`💡 ${lessonKeys.length} lessons but no Memory Crystal — run \`memory_crystalize\` to compress wisdom`);
+        }
+      } catch { /* non-critical */ }
+
+      // openclaw cross-promo (check package.json in workspace)
+      if (drWorkspacePath) {
+        try {
+          const pkgPath = drWorkspacePath.replace(/\/$/, '') + '/package.json';
+          const pkgRaw = readFileSync(pkgPath, 'utf-8');
+          const pkg = JSON.parse(pkgRaw) as { dependencies?: Record<string, string>; devDependencies?: Record<string, string> };
+          const allDeps = { ...pkg.dependencies, ...pkg.devDependencies };
+          const hasLLMDep = ['openai', '@anthropic-ai/sdk', '@google/generative-ai', 'mistralai', 'cohere-ai'].some(d => d in allDeps);
+          const hasOpenclaw = '@cachly-dev/openclaw' in allDeps;
+          if (hasLLMDep && !hasOpenclaw) {
+            issues.push(`💡 **openclaw missing:** you use LLM APIs (${Object.keys(allDeps).filter(d => ['openai','@anthropic-ai/sdk'].includes(d)).join(', ')}) but not \`@cachly-dev/openclaw\``);
+            issues.push(`   → \`npm install @cachly-dev/openclaw\` cuts LLM costs 60–90% with 3 lines of code`);
+          } else if (hasOpenclaw) {
+            checks.push(`✅ **@cachly-dev/openclaw installed** (LLM cost caching active)`);
+          }
+        } catch { /* no package.json or unreadable */ }
+      }
 
       if (lastSession) {
         const ageMin = Math.round((Date.now() - new Date(lastSession.ts).getTime()) / 60000);
@@ -4334,12 +6170,25 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         issues.push(`💡 Only ${lessonKeys.length} lessons — add more after each problem solved`);
       }
 
+      if (iqBoostPct === 0 && lessons.length >= 5) {
+        issues.push(`💤 **IQ Boost is 0%** — lessons exist but are never recalled. Use \`recall_best_solution\` BEFORE tasks.`);
+      }
+
       if (ctxCount === 0) {
         issues.push('💡 No context — use `remember_context` to cache architecture docs, ADRs, etc.');
       }
 
       if (openFailures.length > 0) {
         issues.push(`⚠️ ${openFailures.length} unresolved failure${openFailures.length > 1 ? 's' : ''}: ${openFailures.slice(0, 3).map(l => `\`${l.topic}\``).join(', ')}`);
+      }
+
+      if (staleLessons.length > 0) {
+        issues.push(`🔴 ${staleLessons.length} STALE lesson${staleLessons.length > 1 ? 's' : ''} (>${CONFIDENCE_STALE_DAYS}d, confidence <${CONFIDENCE_STALE_VALUE * 100}%): ${staleLessons.slice(0, 3).map(l => `\`${l.topic}\``).join(', ')}`);
+        issues.push(`   → Re-verify with \`recall_best_solution\` to reset confidence clock`);
+      }
+
+      if (warnLessons.length > 0) {
+        issues.push(`⚠️ ${warnLessons.length} lesson${warnLessons.length > 1 ? 's' : ''} aging (>${CONFIDENCE_WARN_DAYS}d): ${warnLessons.slice(0, 3).map(l => `\`${l.topic}\``).join(', ')}`);
       }
 
       if (unusedRatio > 0.7 && lessons.length > 5) {
@@ -4353,6 +6202,77 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         lines.push('');
       } else {
         lines.push('  🎉 Brain looks healthy! Keep calling session_start/session_end.');
+      }
+      return lines.join('\n');
+    }
+
+    // ── recall_at — Brain Archaeology ────────────────────────────────────────
+    case 'recall_at': {
+      const { instance_id, topic, date } = args as { instance_id: string; topic: string; date: string };
+      const redis = await getConnection(instance_id);
+      const cutoff = new Date(date).getTime();
+      if (isNaN(cutoff)) return `❌ Invalid date "${date}". Use ISO format: "2026-01-15"`;
+
+      const listKey = `cachly:lessons:${topic}`;
+      const all = await redis.lrange(listKey, 0, -1);
+      if (all.length === 0) return `📭 No history found for \`${topic}\`. Lessons are stored via \`learn_from_attempts\`.`;
+
+      const before = all
+        .map(raw => { try { return JSON.parse(raw) as { ts: string; outcome?: string; what_worked?: string; what_failed?: string }; } catch { return null; } })
+        .filter((l): l is NonNullable<typeof l> => l !== null && new Date(l.ts).getTime() <= cutoff)
+        .sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+
+      if (before.length === 0) return `📭 No entries for \`${topic}\` found before **${date}**. Earliest entry: ${new Date(JSON.parse(all[0]).ts).toLocaleDateString('de-DE')}.`;
+
+      const lines = [
+        `🏺 **Brain Archaeology: \`${topic}\` before ${date}**`,
+        `_${before.length} of ${all.length} total entries shown_`,
+        '',
+      ];
+      for (const l of before.slice(-10)) {
+        const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
+        const d = new Date(l.ts).toLocaleDateString('de-DE');
+        lines.push(`**${d}** ${emoji} ${l.outcome}`);
+        if (l.what_worked) lines.push(`  → ${l.what_worked.slice(0, 100)}`);
+        lines.push('');
+      }
+      lines.push(`_Full evolution: ${all.map(r => { try { const l = JSON.parse(r) as { outcome?: string }; return l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌'; } catch { return '?'; } }).join(' → ')}_`);
+      return lines.join('\n');
+    }
+
+    // ── trace_dependency — Causal Chain ──────────────────────────────────────
+    case 'trace_dependency': {
+      const { instance_id, dependency, mark_review = false } = args as { instance_id: string; dependency: string; mark_review?: boolean };
+      const redis = await getConnection(instance_id);
+
+      const depKey = `cachly:dep:${dependency}`;
+      const raw = await redis.get(depKey);
+      if (!raw) return `📭 No lessons found that depend on \`${dependency}\`.\n\nAdd dependencies via: \`learn_from_attempts(..., depends_on=["${dependency}"])\``;
+
+      const topics: string[] = JSON.parse(raw);
+      const lines = [
+        `🔗 **Causal Chain: \`${dependency}\`** — ${topics.length} dependent lesson${topics.length === 1 ? '' : 's'}`,
+        '',
+      ];
+
+      for (const t of topics) {
+        const lessonRaw = await redis.get(`cachly:lesson:best:${t}`);
+        if (!lessonRaw) { lines.push(`  • \`${t}\` _(lesson deleted)_`); continue; }
+        const lesson = JSON.parse(lessonRaw) as { outcome?: string; severity?: string; needs_review?: boolean };
+        const emoji = lesson.outcome === 'success' ? '✅' : lesson.outcome === 'partial' ? '⚠️' : '❌';
+        const reviewBadge = lesson.needs_review ? ' 🔍 **needs_review**' : '';
+        lines.push(`  ${emoji} \`${t}\` (${lesson.severity ?? 'major'})${reviewBadge}`);
+
+        if (mark_review) {
+          const updated = { ...lesson, needs_review: true };
+          await redis.set(`cachly:lesson:best:${t}`, JSON.stringify(updated));
+        }
+      }
+
+      if (mark_review) {
+        lines.push('', `🔍 All ${topics.length} lessons marked as **needs_review** — verify they still work with the changed dependency.`);
+      } else {
+        lines.push('', `_Run with \`mark_review: true\` to flag all dependent lessons for re-verification._`);
       }
       return lines.join('\n');
     }
@@ -4593,280 +6513,6 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       return lines.join('\n');
     }
 
-    // ── brain_from_git ────────────────────────────────────────────────────────
-    case 'brain_from_git': {
-      const { instance_id, repo_path = process.cwd(), days = 180, max_commits = 500, dry_run = false } = args as {
-        instance_id: string; repo_path?: string; days?: number; max_commits?: number; dry_run?: boolean;
-      };
-
-      const { execSync } = await import('node:child_process');
-      const redis = dry_run ? null : await getConnection(instance_id);
-
-      // ── 1. Verify it's a git repo ──
-      try {
-        execSync(`git -C "${repo_path}" rev-parse --git-dir`, { timeout: 3000, stdio: 'pipe' });
-      } catch {
-        return `❌ No git repository found at ${repo_path}. Provide the correct repo_path.`;
-      }
-
-      const since = new Date(Date.now() - days * 86400000).toISOString().slice(0, 10);
-
-      // ── 2. Parse git log ──
-      let rawLog = '';
-      try {
-        rawLog = execSync(
-          `git -C "${repo_path}" log --format="%H|||%s|||%an|||%ad|||%b---END---" --date=short --since="${since}" -n ${max_commits}`,
-          { timeout: 15000, stdio: 'pipe' }
-        ).toString();
-      } catch {
-        return `❌ git log failed. Is the repo at ${repo_path}?`;
-      }
-
-      // ── 3. Find hotspot files (most frequently changed) ──
-      let hotspotRaw = '';
-      try {
-        hotspotRaw = execSync(
-          `git -C "${repo_path}" log --name-only --format="" --since="${since}" -n ${max_commits} | sort | uniq -c | sort -rn | head -20`,
-          { timeout: 10000, stdio: 'pipe' }
-        ).toString();
-      } catch { /* non-fatal */ }
-
-      // ── 4. Get per-commit file changes for path-aware topic extraction ──
-      let commitFiles: Map<string, string[]> = new Map();
-      try {
-        const filesLog = execSync(
-          `git -C "${repo_path}" log --name-only --format="COMMIT:%H" --since="${since}" -n ${max_commits}`,
-          { timeout: 15000, stdio: 'pipe' }
-        ).toString();
-        let currentHash = '';
-        for (const line of filesLog.split('\n')) {
-          if (line.startsWith('COMMIT:')) { currentHash = line.slice(7).trim(); commitFiles.set(currentHash, []); }
-          else if (line.trim() && currentHash) { commitFiles.get(currentHash)?.push(line.trim()); }
-        }
-      } catch { /* non-fatal — fall back to subject-only topics */ }
-
-      // ── 5. Parse CHANGELOG.md if present ──
-      type LessonCandidate = {
-        topic: string; outcome: 'success' | 'failure'; what_worked: string;
-        what_failed?: string; severity: 'critical' | 'major' | 'minor';
-        tags: string[]; author: string; date: string;
-      };
-      const seen = new Set<string>();
-      let changelogCandidates: LessonCandidate[] = [];
-      try {
-        const clPath = `${repo_path}/CHANGELOG.md`;
-        const clContent = execSync(`cat "${clPath}" 2>/dev/null`, { timeout: 3000, stdio: 'pipe' }).toString();
-        if (clContent) {
-          // Parse "### Fixed" and "### Breaking Changes" sections
-          const fixedMatches = clContent.matchAll(/###\s+Fixed\s*\n([\s\S]*?)(?=###|\n##\s|$)/g);
-          for (const m of fixedMatches) {
-            const items = m[1].split('\n').filter(l => l.match(/^[-*]\s+/)).slice(0, 5);
-            for (const item of items) {
-              const text = item.replace(/^[-*]\s+/, '').trim();
-              if (text.length < 10) continue;
-              const slug = text.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).slice(0, 4).join('-');
-              const topic = `changelog:${slug}`;
-              if (!seen.has(topic)) {
-                seen.add(topic);
-                changelogCandidates.push({ topic, outcome: 'success', what_worked: text, severity: 'major', tags: ['git-history', 'changelog'], author: 'changelog', date: '' });
-              }
-            }
-          }
-          const breakingMatches = clContent.matchAll(/###\s+Breaking\s+Changes?\s*\n([\s\S]*?)(?=###|\n##\s|$)/g);
-          for (const m of breakingMatches) {
-            const items = m[1].split('\n').filter(l => l.match(/^[-*]\s+/)).slice(0, 3);
-            for (const item of items) {
-              const text = item.replace(/^[-*]\s+/, '').trim();
-              if (text.length < 10) continue;
-              const slug = text.toLowerCase().replace(/[^a-z0-9\s]/g, '').split(/\s+/).slice(0, 4).join('-');
-              const topic = `breaking:${slug}`;
-              if (!seen.has(topic)) {
-                seen.add(topic);
-                changelogCandidates.push({ topic, outcome: 'failure', what_worked: `Breaking change: ${text}`, what_failed: text, severity: 'critical', tags: ['git-history', 'changelog', 'breaking'], author: 'changelog', date: '' });
-              }
-            }
-          }
-        }
-      } catch { /* no CHANGELOG */ }
-
-      // ── 6. Parse commits into lesson candidates ──
-      const candidates: LessonCandidate[] = [];
-
-      // Helper: infer scope from changed file paths when commit has no conventional scope
-      function scopeFromFiles(files: string[]): string {
-        if (!files.length) return '';
-        // Find common path prefix component: src/auth/foo.ts, src/auth/bar.ts → "auth"
-        const parts = files
-          .map(f => f.split('/').filter(p => p && p !== 'src' && p !== 'lib' && p !== 'app' && p !== 'pkg' && p !== 'internal' && !p.includes('.')))
-          .flat();
-        if (!parts.length) return '';
-        const freq = new Map<string, number>();
-        for (const p of parts) freq.set(p, (freq.get(p) ?? 0) + 1);
-        const top = [...freq.entries()].sort((a, b) => b[1] - a[1])[0];
-        return top && top[1] >= 1 ? top[0].toLowerCase().replace(/[^a-z0-9]/g, '-').slice(0, 20) : '';
-      }
-
-      const commits = rawLog.split('---END---').map(s => s.trim()).filter(Boolean);
-      for (const raw of commits) {
-        const [hash, subject = '', author = '', date = '', ...bodyParts] = raw.split('|||');
-        if (!hash || !subject) continue;
-        const body = bodyParts.join(' ').replace(/\n/g, ' ').trim();
-        const full = `${subject} ${body}`.toLowerCase();
-
-        // Skip pure merge commits that aren't reverts
-        const isMerge = /^merge (pull request|branch|remote)/i.test(subject);
-        const isRevert  = /^revert\b|^reverts?\s+"/.test(subject.toLowerCase());
-        const isFix     = /^fix[:(!\s]|^bug[:(!\s]|hotfix|patch/.test(subject.toLowerCase());
-        const isPerf    = /^perf[:(!\s]|^optim|performance/.test(subject.toLowerCase());
-        const isRefactor= /^refactor[:(!\s]|^cleanup|^chore:\s*(?:remove|delete|cleanup)/.test(subject.toLowerCase());
-        const isSecurity= /^security|^sec[:(!\s]|cve-|sql.inject|xss|csrf/.test(full);
-        const isBreaking= /breaking.change|breaking:|!:/.test(full);
-
-        if (isMerge && !isRevert) continue;
-        if (!isRevert && !isFix && !isPerf && !isRefactor && !isSecurity && !isBreaking) continue;
-
-        // Scope: prefer conventional commit scope, fall back to file-path inference
-        const scopeMatch = subject.match(/^[a-z]+\(([^)]+)\):/i);
-        const conventionalScope = scopeMatch?.[1]?.toLowerCase().replace(/[^a-z0-9]/g, '-') ?? '';
-        const files = commitFiles.get(hash.trim()) ?? [];
-        const scope = conventionalScope || scopeFromFiles(files);
-
-        const rest = subject.replace(/^[a-z]+(\([^)]+\))?:\s*/i, '').trim();
-        const slug = rest.toLowerCase()
-          .replace(/[^a-z0-9\s]/g, '')
-          .split(/\s+/).slice(0, 4).join('-')
-          .replace(/-+$/, '');
-
-        const category = isRevert ? 'revert' : isSecurity ? 'security' : isFix ? 'fix'
-          : isPerf ? 'perf' : isRefactor ? 'refactor' : 'breaking';
-        const topic = scope ? `${scope}:${slug}` : `${category}:${slug}`;
-
-        if (seen.has(topic)) continue;
-        seen.add(topic);
-
-        const severity: 'critical' | 'major' | 'minor' = isSecurity || isBreaking || isRevert ? 'critical'
-          : isFix ? 'major' : 'minor';
-
-        // Build context string including changed files
-        const fileCtx = files.length > 0 ? ` [${files.slice(0, 3).join(', ')}]` : '';
-
-        if (isRevert) {
-          const revertedSubject = subject.replace(/^revert\s+"?/i, '').replace(/"$/, '');
-          candidates.push({
-            topic, outcome: 'failure',
-            what_worked: `Reverted: "${revertedSubject}" — approach was rolled back${fileCtx}`,
-            what_failed: revertedSubject, severity,
-            tags: ['git-history', 'revert', ...(scope ? [scope] : [])],
-            author, date,
-          });
-        } else {
-          candidates.push({
-            topic, outcome: 'success',
-            what_worked: `${subject}${body.length > 20 ? ` — ${body.slice(0, 120)}` : ''}${fileCtx}`,
-            severity, tags: ['git-history', category, ...(scope ? [scope] : [])],
-            author, date,
-          });
-        }
-      }
-
-      // Merge changelog candidates (append, dedup already handled)
-      for (const c of changelogCandidates) {
-        if (!seen.has(c.topic)) { seen.add(c.topic); candidates.push(c); }
-      }
-
-      // ── 5. Hotspot files → context entry ──
-      const hotspots: string[] = [];
-      if (hotspotRaw) {
-        for (const line of hotspotRaw.split('\n').filter(Boolean)) {
-          const m = line.trim().match(/^\s*(\d+)\s+(.+)$/);
-          if (m && parseInt(m[1]) >= 5 && m[2].trim()) hotspots.push(`${m[2].trim()} (${m[1]} changes)`);
-        }
-      }
-
-      if (dry_run) {
-        const lines = [
-          `🔍 **Dry run — brain_from_git** (${repo_path})`,
-          `   Scanned: last ${days} days, ${commits.length} commits`,
-          `   Would import: ${candidates.length} lessons`,
-          `   Hotspot files: ${hotspots.length}`,
-          '',
-          `**Lesson preview:**`,
-          ...candidates.slice(0, 10).map(c => {
-            const sev = c.severity === 'critical' ? '🔴' : c.severity === 'major' ? '🟡' : '⚪';
-            const out = c.outcome === 'success' ? '✅' : '❌';
-            return `  ${out}${sev} \`${c.topic}\` — ${c.what_worked.slice(0, 80)}`;
-          }),
-          candidates.length > 10 ? `  … and ${candidates.length - 10} more` : '',
-          hotspots.length > 0 ? `\n**Top hotspot files:**\n${hotspots.slice(0, 5).map(h => `  📁 ${h}`).join('\n')}` : '',
-          '',
-          `Run without dry_run=true to import into brain.`,
-        ].filter(l => l !== '');
-        return lines.join('\n');
-      }
-
-      // ── 6. Write to brain ──
-      let stored = 0;
-      const pipeline = redis!.pipeline();
-      const now = new Date().toISOString();
-
-      for (const c of candidates) {
-        const key = `cachly:lesson:best:${c.topic}`;
-        const existing = await redis!.get(key);
-        if (existing) {
-          try {
-            const ex = JSON.parse(existing) as { tags?: string[] };
-            if ((ex.tags ?? []).includes('git-history')) continue; // already imported
-          } catch { /* overwrite */ }
-        }
-        const record = {
-          topic: c.topic, outcome: c.outcome, what_worked: c.what_worked,
-          ...(c.what_failed ? { what_failed: c.what_failed } : {}),
-          severity: c.severity, tags: c.tags,
-          ts: c.date ? new Date(c.date).toISOString() : now,
-          recall_count: 0, source: 'git-history', author: c.author,
-        };
-        pipeline.set(key, JSON.stringify(record));
-        stored++;
-      }
-
-      // Store hotspot context
-      if (hotspots.length > 0) {
-        pipeline.set(
-          'cachly:ctx:git-hotspots',
-          JSON.stringify({
-            key: 'git-hotspots', category: 'architecture',
-            content: `Most frequently changed files (fragile areas):\n${hotspots.slice(0, 10).join('\n')}`,
-            ts: now, source: 'git-history',
-          })
-        );
-      }
-
-      await pipeline.exec();
-
-      const byOutcome = { success: 0, failure: 0 };
-      for (const c of candidates) byOutcome[c.outcome]++;
-
-      return [
-        `🧠 **Brain bootstrapped from git history**`,
-        ``,
-        `📊 Scanned: ${commits.length} commits over last ${days} days`,
-        `✅ Success lessons: ${byOutcome.success}  ❌ Failure/revert lessons: ${byOutcome.failure}`,
-        `📁 Hotspot files tracked: ${hotspots.length}`,
-        `💾 Total stored: ${stored} new lessons`,
-        ``,
-        `**Top lessons extracted:**`,
-        ...candidates.slice(0, 6).map(c => {
-          const sev = c.severity === 'critical' ? '🔴' : c.severity === 'major' ? '🟡' : '⚪';
-          const out = c.outcome === 'success' ? '✅' : '❌';
-          return `  ${out}${sev} \`${c.topic}\` — ${c.what_worked.slice(0, 80)}`;
-        }),
-        candidates.length > 6 ? `  … and ${candidates.length - 6} more` : '',
-        ``,
-        `💡 Run \`session_start\` to see these lessons in your next briefing.`,
-        hotspots.length > 0 ? `💡 Hotspot files are saved as context — \`recall_context("git-hotspots")\` to see them.` : '',
-      ].filter(l => l !== '').join('\n');
-    }
-
     // ── setup_ai_memory ───────────────────────────────────────────────────────
     case 'setup_ai_memory': {
       const {
@@ -4912,64 +6558,147 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       // Generate copilot-instructions.md content
       const tier = inst.tier.toUpperCase();
       const smartRecallNote = hasVector
-        ? '3. Call `smart_recall` with keywords for semantic context search'
-        : '3. Call `recall_context` with relevant key patterns like "arch:*" or "file:*"';
+        ? '- `smart_recall("natural language query")` — semantic search (finds by meaning)'
+        : '- `recall_context("arch:*")` — exact/glob key lookup (upgrade to Speed/Business for smart_recall)';
       const layerNote = hasVector
-        ? `Layer 3 (Semantic): smart_recall uses pgvector HNSW on your ${tier} instance for meaning-based search`
-        : `Layer 3 (Autopilot): This file — upgrade to Speed/Business tier to unlock smart_recall`;
+        ? `Layer 3 (Semantic): smart_recall uses pgvector HNSW on your ${tier} instance`
+        : `Layer 3 (Autopilot): this file — upgrade to Speed/Business tier to unlock smart_recall`;
 
-      const copilotInstructions = `# cachly AI Memory — ${project_description}
+      const copilotInstructions = `# cachly AI Brain — ${project_description}
 
-## 3-Layer AI Memory System
+> AI memory system powered by [cachly.dev](https://cachly.dev). Works with GitHub Copilot, Claude Code, Cursor, Windsurf, Continue.dev, and any MCP-compatible editor.
 
-- **Layer 1 — Storage:** cachly instance \`${inst.name}\` (${tier}) — persistent Valkey brain, survives restarts
-- **Layer 2 — Tools:** learn_from_attempts · recall_best_solution · smart_recall — the memory API
-- **Layer 3 — Autopilot (this file):** instructs the AI to run memory tools automatically
+---
 
-## BEFORE every task — check memory first
+## 🔴 MANDATORY RULES — Always enforced, no exceptions
 
-1. Call \`recall_best_solution\` with the task topic to get known solutions
-   - \`recall_best_solution("deploy:web")\` → returns working deploy command
-   - \`recall_best_solution("debug:redis-tls")\` → returns root cause + fix
-   - If a solution exists, use it — do NOT re-discover from scratch
+### Rule 1 — Session Start (FIRST thing in every window)
+Call \`session_start\` **before reading any source files or making any changes**:
 
-2. Call \`recall_context\` with the area you're working in
-   - \`recall_context("arch:*")\` → cached architecture decisions
-   - \`recall_context("file:src/auth*")\` → cached file summaries
+\`\`\`
+session_start(
+  instance_id = "${instance_id}",
+  focus       = "<what you plan to work on today>",
+)
+\`\`\`
 
-${smartRecallNote}
-   - \`smart_recall("how does authentication work")\` → returns cached auth notes
+Returns: last session summary, handoff from previous window, recent lessons, open failures, brain health.
 
-4. If nothing is found, proceed normally — then save (see below)
+**If \`session_start\` is unavailable**, fall back:
+1. \`smart_recall("recent lessons <topic>")\`
+2. \`recall_best_solution("<topic>")\`
 
-## AFTER every non-trivial task — save to memory
+### Rule 2 — Learn After Every Fix/Deploy/Discovery (AUTOMATIC — no prompting needed)
+After **every** bug fix, deployment, failed attempt, or discovery — call \`learn_from_attempts\` immediately:
 
-1. Call \`learn_from_attempts\` for deploy/debug/fix tasks:
-   - Always set outcome = "success" | "failure" | "partial"
-   - Always include what_failed — it prevents future wasted time
-   - Example: \`learn_from_attempts(topic="deploy:api", outcome="success", what_worked="nohup docker compose up -d --build", what_failed="direct docker compose hangs on SSH timeout")\`
+\`\`\`
+learn_from_attempts(
+  instance_id = "${instance_id}",
+  topic       = "category:keyword",   # deploy:web | fix:auth | debug:db | infra:docker
+  outcome     = "success" | "failure" | "partial",
+  what_worked = "exact approach or command that worked",
+  what_failed = "what did NOT work (prevents future wasted time)",
+  severity    = "critical" | "major" | "minor",
+  commands    = ["exact command that worked"],
+  file_paths  = ["path/to/changed/file"],
+)
+\`\`\`
 
-2. Call \`remember_context\` for code/architecture findings:
-   - \`remember_context("arch:auth", "Uses Keycloak with JWT...", category="architecture")\`
-   - \`remember_context("file:src/index.ts", "Entry point, registers routes...", category="file_summary")\`
+**These events MUST automatically trigger \`learn_from_attempts\`:**
+- ✅ Successfully deployed → \`topic="deploy:<component>", outcome="success"\`
+- ✅ Fixed a bug → \`topic="fix:<description>", outcome="success"\`
+- ✅ Discovered root cause → \`topic="debug:<area>", outcome="partial"\`
+- ✅ Tried something that failed → \`topic="<area>", outcome="failure", what_failed="..."\`
+- ✅ Found a config quirk → \`topic="infra:<topic>", outcome="success"\`
+- ✅ Ran a working command → store it in \`commands=[...]\`
+
+### Rule 3 — Session Handoff (when closing window or task list > 3 items)
+\`\`\`
+session_handoff(
+  instance_id     = "${instance_id}",
+  completed_tasks = ["what was done"],
+  remaining_tasks = ["what is still to do"],
+  files_changed   = [{"path": "src/...", "status": "modified", "description": "what changed"}],
+  instructions    = "IMPORTANT: what the next window MUST know to not break things",
+  context_summary = "current state of the system",
+)
+\`\`\`
+
+The next \`session_start\` automatically includes this handoff. The new window sees exactly what's done, what remains, and what NOT to break.
+
+### Rule 4 — Session End (LAST thing before closing)
+\`\`\`
+session_end(
+  instance_id     = "${instance_id}",
+  summary         = "What was accomplished (2-3 sentences with specifics)",
+  files_changed   = ["list", "of", "changed", "files"],
+  lessons_learned = <number of learn_from_attempts calls made>,
+)
+\`\`\`
+
+> \`session_end\` **automatically extracts and stores lessons** from the summary text — no manual calls needed.
+
+### Rule 5 — Code Index Invalidation (AUTOMATIC)
+- \`index_project\` tracks MD5 hashes per file — **skips unchanged files automatically**
+- After code changes: next \`index_project\` run re-indexes only modified files
+- After delete/rename: run \`index_project\` again to sync
+- No manual invalidation needed
+
+---
+
+## Task-type trigger table
+
+| You're about to... | Call BEFORE | Call AFTER |
+|---|---|---|
+| Deploy anything | \`recall_best_solution("deploy:<component>")\` | \`learn_from_attempts(topic="deploy:...")\` |
+| Fix a bug | \`recall_best_solution("fix:<area>")\` | \`learn_from_attempts(topic="fix:...")\` |
+| Add a feature | \`session_start(focus="feat:<area>")\` | \`learn_from_attempts(topic="feat:...")\` |
+| Infra/server work | \`recall_best_solution("infra:<topic>")\` | \`learn_from_attempts(topic="infra:...")\` |
+| Debug an issue | \`smart_recall("<error message or symptom>")\` | \`learn_from_attempts(topic="debug:...")\` |
+
+---
+
+## Available Brain Tools
+
+| Tool | When to use |
+|------|-------------|
+| \`session_start\` | **FIRST** — mandatory at start of every session |
+| \`session_end\` | **LAST** — mandatory at end, auto-learns from summary |
+| \`session_handoff\` | When closing window with remaining tasks |
+| \`learn_from_attempts\` | **AUTOMATIC** after every fix/deploy/discovery |
+| \`recall_best_solution\` | Before any non-trivial task |
+| \`remember_context\` | After analyzing code — save findings for future sessions |
+${smartRecallNote ? `| \`smart_recall\` | Search brain by meaning/keywords |\n` : ''}\
+| \`recall_context\` | Get exact key (supports glob: \`arch:*\`, \`file:*\`) |
+| \`brain_search\` | BM25+ full-text search over all brain data |
+| \`auto_learn_session\` | Batch-learn from a list of observations (optional) |
+| \`index_project\` | Index source files (smart hash, skips unchanged files) |
+| \`list_remembered\` | See what's cached in the brain |
+| \`forget_context\` | Remove stale context |
+
+---
 
 ## Instance Details
 
-- Instance ID: \`${instance_id}\`
-- Instance name: ${inst.name}
-- Tier: ${tier}
-- ${layerNote}
-- Embedding provider: ${providerArg}
+- **Instance ID:** \`${instance_id}\`
+- **Instance name:** ${inst.name}
+- **Tier:** ${tier}
+- **${layerNote}**
+- **Embedding provider:** ${providerArg}
 
-## Quick reference
+---
+
+## How the 3-layer system works
 
 \`\`\`
-recall_best_solution("topic")        # before task
-smart_recall("natural language")     # find by meaning
-learn_from_attempts(...)             # after task
-remember_context("key", "content")   # save analysis
+Layer 1 — Storage:  Your cachly Valkey instance (${inst.name}) — persists forever
+Layer 2 — Tools:    learn_from_attempts · recall_best_solution · brain_search · session_start/end
+Layer 3 — Autopilot: This file — AI reads it and runs tools automatically every session
 \`\`\`
+
+Result: Your AI **never solves the same problem twice** and always picks up exactly where it left off. 🚀
 `;
+
 
       const lines: string[] = [
         `🧠 **cachly AI Memory Setup Complete**`,
@@ -4994,8 +6723,8 @@ remember_context("key", "content")   # save analysis
         `**Step 3 — copilot-instructions.md (Layer 3 Autopilot):**`,
         ``,
         ...(project_dir
-          ? [`Writing to \`${project_dir}/.github/copilot-instructions.md\`…`]
-          : [`Copy this to \`.github/copilot-instructions.md\` in your project:`]),
+          ? [`🔍 Detecting IDEs in \`${project_dir}\`…`]
+          : [`Copy this to \`.github/copilot-instructions.md\` (Copilot), \`CLAUDE.md\` (Claude Code), or \`.cursor/rules\` (Cursor) in your project:`]),
         ``,
         `\`\`\`markdown`,
         copilotInstructions,
@@ -5010,525 +6739,104 @@ remember_context("key", "content")   # save analysis
         `Result: Your AI never solves the same problem twice. 🚀`,
       ];
 
-      // Optionally write the file
+      // ── IDE auto-detection + file writing ────────────────────────────────
       if (project_dir) {
-        const { mkdir, writeFile } = await import('node:fs/promises');
-        const githubDir = join(project_dir, '.github');
-        await mkdir(githubDir, { recursive: true });
-        const filePath = join(githubDir, 'copilot-instructions.md');
-        await writeFile(filePath, copilotInstructions, 'utf-8');
-        lines.splice(lines.indexOf(`Writing to \`${project_dir}/.github/copilot-instructions.md\`…`) + 1, 0,
-          `✅ Written to \`${project_dir}/.github/copilot-instructions.md\``
-        );
-      }
+        const { mkdir, writeFile, access } = await import('node:fs/promises');
+        const { constants } = await import('node:fs');
 
-      return lines.join('\n');
-    }
+        const exists = async (p: string) => access(p, constants.F_OK).then(() => true).catch(() => false);
 
-    // ── memory_consolidate ────────────────────────────────────────────────────
-    case 'memory_consolidate': {
-      const { instance_id, dry_run = false, prune_stale = false } = args as {
-        instance_id: string; dry_run?: boolean; prune_stale?: boolean;
-      };
-      const redis = await getConnection(instance_id);
+        // Detect which IDEs are present based on marker files/dirs
+        interface IdeTarget { ide: string; path: string; content: string }
+        const targets: IdeTarget[] = [];
+        let stopHookWritten = false;
 
-      const lessonKeys: string[] = [];
-      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 500 });
-      await new Promise<void>((res, rej) => {
-        lStream.on('data', (b: string[]) => lessonKeys.push(...b));
-        lStream.on('end', res); lStream.on('error', rej);
-      });
+        // GitHub Copilot — always write (universal fallback)
+        targets.push({
+          ide: 'GitHub Copilot',
+          path: join(project_dir, '.github', 'copilot-instructions.md'),
+          content: copilotInstructions,
+        });
 
-      type Lesson = { topic: string; outcome: string; what_worked: string; what_failed?: string; severity?: string; ts: string; recall_count?: number };
-      const lessons: { key: string; lesson: Lesson }[] = [];
-      if (lessonKeys.length > 0) {
-        const vals = await redis.mget(...lessonKeys);
-        for (let i = 0; i < lessonKeys.length; i++) {
-          const raw = vals[i];
-          if (!raw) continue;
-          try { lessons.push({ key: lessonKeys[i], lesson: JSON.parse(raw) as Lesson }); } catch { continue; }
-        }
-      }
-
-      // Group by normalised topic base
-      const byBase = new Map<string, { key: string; lesson: Lesson }[]>();
-      for (const entry of lessons) {
-        const base = entry.lesson.topic.split(':').pop() ?? entry.lesson.topic;
-        if (!byBase.has(base)) byBase.set(base, []);
-        byBase.get(base)!.push(entry);
-      }
-
-      const contradictions: string[] = [];
-      const merged: string[] = [];
-      const pruned: string[] = [];
-      const staleFlags: string[] = [];
-      const now = Date.now();
-
-      for (const [base, entries] of byBase) {
-        const successes = entries.filter(e => e.lesson.outcome === 'success');
-        const failures  = entries.filter(e => e.lesson.outcome === 'failure');
-
-        if (successes.length > 0 && failures.length > 0) {
-          contradictions.push(`⚡ \`${base}\`: ${successes.length} success vs ${failures.length} failure memories — review manually`);
-        }
-
-        if (entries.length > 2) {
-          // Keep the best lesson (most recent success, or most recent if all same outcome)
-          const ranked = [...entries].sort((a, b) => {
-            const outcomeScore = (o: string) => o === 'success' ? 2 : o === 'partial' ? 1 : 0;
-            const ds = outcomeScore(b.lesson.outcome) - outcomeScore(a.lesson.outcome);
-            if (ds !== 0) return ds;
-            return new Date(b.lesson.ts).getTime() - new Date(a.lesson.ts).getTime();
+        // Claude Code — CLAUDE.md in project root
+        if (await exists(join(project_dir, 'CLAUDE.md')) || await exists(join(project_dir, '.claude'))) {
+          targets.push({
+            ide: 'Claude Code',
+            path: join(project_dir, 'CLAUDE.md'),
+            content: copilotInstructions,
           });
-          const toDelete = ranked.slice(1);
-          merged.push(`🔀 \`${base}\`: ${entries.length} duplicates → 1 canonical (kept: ${ranked[0].lesson.outcome})`);
-          if (!dry_run) {
-            for (const e of toDelete) await redis.del(e.key);
-          }
+
+          // Claude Code Stop-Hook — auto-saves checkpoint when Claude stops responding
+          const claudeDir = join(project_dir, '.claude');
+          await mkdir(claudeDir, { recursive: true });
+          const stopHook = {
+            hooks: {
+              Stop: [
+                {
+                  matcher: '',
+                  hooks: [
+                    {
+                      type: 'command',
+                      command: `npx --yes @cachly-dev/mcp-server@latest checkpoint --instance-id ${instance_id}`,
+                    },
+                  ],
+                },
+              ],
+            },
+          };
+          const settingsPath = join(claudeDir, 'settings.json');
+          let existingSettings: Record<string, unknown> = {};
+          try {
+            const { readFile: rf } = await import('node:fs/promises');
+            existingSettings = JSON.parse(await rf(settingsPath, 'utf-8'));
+          } catch { /* new file */ }
+          const merged = { ...existingSettings, hooks: (stopHook as Record<string, unknown>).hooks };
+          await writeFile(settingsPath, JSON.stringify(merged, null, 2), 'utf-8');
+          stopHookWritten = true;
         }
 
-        // Stale detection: older than 90d, recall_count === 0
-        for (const { key, lesson } of entries) {
-          const ageDays = (now - new Date(lesson.ts).getTime()) / 86_400_000;
-          if (ageDays > 90 && (lesson.recall_count ?? 0) === 0 && lesson.severity !== 'critical') {
-            if (prune_stale && !dry_run) {
-              await redis.del(key);
-              pruned.push(`🗑️ \`${lesson.topic}\` (${Math.round(ageDays)}d, 0 recalls)`);
-            } else {
-              staleFlags.push(`🕰️ \`${lesson.topic}\` (${Math.round(ageDays)}d old, never recalled)`);
-            }
-          }
+        // Cursor — .cursor/rules (new format) or .cursorrules (legacy)
+        if (
+          await exists(join(project_dir, '.cursor')) ||
+          await exists(join(project_dir, '.cursorrules'))
+        ) {
+          const cursorDir = join(project_dir, '.cursor');
+          await mkdir(cursorDir, { recursive: true });
+          targets.push({
+            ide: 'Cursor',
+            path: join(cursorDir, 'rules'),
+            content: copilotInstructions,
+          });
         }
-      }
 
-      const totalBefore = lessons.length;
-      const totalAfter  = totalBefore - merged.reduce((sum, _) => sum + 1, 0) - pruned.length; // approx
-      const healthScore = Math.max(0, 100 - contradictions.length * 15 - Math.min(staleFlags.length, 5) * 5);
-
-      const lines = [
-        `🧬 **Memory Consolidation** ${dry_run ? '(dry run — no changes applied)' : ''}`,
-        ``,
-        `📊 **Knowledge health: ${healthScore}/100** · ${totalBefore} memories → ~${totalAfter} after consolidation`,
-        `📦 Topics: ${byBase.size} · Contradictions: ${contradictions.length} · Merged: ${merged.length} · Stale: ${staleFlags.length + pruned.length}`,
-        ``,
-      ];
-
-      if (contradictions.length > 0) {
-        lines.push(`⚡ **${contradictions.length} Contradiction(s)** — same topic, conflicting outcomes:`);
-        contradictions.forEach(c => lines.push('  ' + c));
-        lines.push('');
-      }
-      if (merged.length > 0) {
-        lines.push(`🔀 **${merged.length} Merged** — duplicate topics consolidated:`);
-        merged.forEach(m => lines.push('  ' + m));
-        lines.push('');
-      }
-      if (pruned.length > 0) {
-        lines.push(`🗑️ **${pruned.length} Pruned** — stale, never-recalled lessons deleted:`);
-        pruned.slice(0, 8).forEach(p => lines.push('  ' + p));
-        lines.push('');
-      }
-      if (staleFlags.length > 0) {
-        lines.push(`🕰️ **${staleFlags.length} Potentially stale** (use \`prune_stale: true\` to delete):`);
-        staleFlags.slice(0, 8).forEach(s => lines.push('  ' + s));
-        if (staleFlags.length > 8) lines.push(`  … and ${staleFlags.length - 8} more`);
-        lines.push('');
-      }
-      if (contradictions.length === 0 && merged.length === 0 && staleFlags.length === 0 && pruned.length === 0) {
-        lines.push('✅ Knowledge base is pristine — no contradictions, duplicates, or stale memories found.');
-        lines.push('');
-      }
-      lines.push(dry_run ? `💡 Re-run without \`dry_run: true\` to apply all changes.` : `✅ Consolidation complete. Your AI's knowledge is now sharper.`);
-      return lines.join('\n');
-    }
-
-    // ── brain_diff ────────────────────────────────────────────────────────────
-    case 'brain_diff': {
-      const { instance_id, since_sessions = 1, since_days } = args as {
-        instance_id: string; since_sessions?: number; since_days?: number;
-      };
-      const redis = await getConnection(instance_id);
-
-      const historyRaw = await redis.lrange('cachly:session:history', 0, Math.max(since_sessions, 10) - 1);
-      type SessionRecord = { ts: string; summary: string; files_changed?: string[]; duration_min?: number };
-      const sessions = historyRaw.map(r => { try { return JSON.parse(r) as SessionRecord; } catch { return null; } }).filter(Boolean) as SessionRecord[];
-
-      const cutoffMs = since_days
-        ? Date.now() - since_days * 86_400_000
-        : sessions.length >= since_sessions
-          ? new Date(sessions[since_sessions - 1].ts).getTime()
-          : Date.now() - 7 * 86_400_000;
-
-      const lessonKeys: string[] = [];
-      const ls2 = redis.scanStream({ match: 'cachly:lesson:best:*', count: 500 });
-      await new Promise<void>((res, rej) => { ls2.on('data', (b: string[]) => lessonKeys.push(...b)); ls2.on('end', res); ls2.on('error', rej); });
-
-      type Lesson = { topic: string; outcome: string; what_worked: string; ts: string; recall_count?: number; severity?: string };
-      const allLessons: Lesson[] = [];
-      if (lessonKeys.length > 0) {
-        const vals = await redis.mget(...lessonKeys);
-        for (const raw of vals) { if (!raw) continue; try { allLessons.push(JSON.parse(raw) as Lesson); } catch { continue; } }
-      }
-
-      const newLessons     = allLessons.filter(l => new Date(l.ts).getTime() > cutoffMs);
-      const unchanged      = allLessons.filter(l => new Date(l.ts).getTime() <= cutoffMs);
-      const neverRecalled  = unchanged.filter(l => (l.recall_count ?? 0) === 0 && (Date.now() - new Date(l.ts).getTime()) / 86_400_000 > 14);
-
-      const periodLabel = since_days ? `${since_days}d` : `${since_sessions} session${since_sessions !== 1 ? 's' : ''}`;
-
-      const lines = [
-        `📊 **Brain Diff** — knowledge delta over last ${periodLabel}`,
-        ``,
-        `🧠 Total: ${allLessons.length} lessons · +${newLessons.length} new · ${unchanged.length} pre-existing`,
-        ``,
-      ];
-
-      const coveredSessions = sessions.slice(0, since_sessions);
-      if (coveredSessions.length > 0) {
-        lines.push(`📅 **Sessions in range:**`);
-        for (const s of coveredSessions.slice(0, 5)) {
-          const d = new Date(s.ts).toLocaleDateString('de-DE');
-          const dur = s.duration_min ? ` (${s.duration_min}m)` : '';
-          lines.push(`  • ${d}${dur} — ${s.summary?.slice(0, 80) ?? '—'}`);
+        // Windsurf — .windsurfrules
+        if (
+          await exists(join(project_dir, '.windsurfrules')) ||
+          await exists(join(project_dir, '.windsurf'))
+        ) {
+          targets.push({
+            ide: 'Windsurf',
+            path: join(project_dir, '.windsurfrules'),
+            content: copilotInstructions,
+          });
         }
-        lines.push('');
-      }
 
-      if (newLessons.length === 0) {
-        lines.push(`➕ **No new lessons** stored in this period.`);
-      } else {
-        lines.push(`➕ **${newLessons.length} new lesson${newLessons.length !== 1 ? 's' : ''} learned:**`);
-        const sorted = [...newLessons].sort((a, b) => {
-          const sev = (s?: string) => s === 'critical' ? 3 : s === 'major' ? 2 : 1;
-          return sev(b.severity) - sev(a.severity);
-        });
-        for (const l of sorted.slice(0, 10)) {
-          const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
-          const sev   = l.severity === 'critical' ? ' 🔴' : l.severity === 'major' ? ' 🟡' : '';
-          lines.push(`  ${emoji}${sev} \`${l.topic}\` — ${l.what_worked.slice(0, 70)}`);
+        // VS Code (Copilot) — already covered by .github/copilot-instructions.md above
+        // Continue.dev — .continue/config.json is JSON, not markdown — skip, copilot-instructions handles it
+
+        const written: string[] = [];
+        for (const target of targets) {
+          const dir = target.path.substring(0, target.path.lastIndexOf('/'));
+          await mkdir(dir, { recursive: true });
+          await writeFile(target.path, target.content, 'utf-8');
+          written.push(`✅ [${target.ide}] → \`${target.path.replace(project_dir, '.')}\``);
         }
-        if (newLessons.length > 10) lines.push(`  … and ${newLessons.length - 10} more`);
-      }
-      lines.push('');
 
-      if (neverRecalled.length > 0) {
-        lines.push(`⚠️ **${neverRecalled.length} lesson${neverRecalled.length !== 1 ? 's' : ''} never recalled** (stored but not yet used):`);
-        neverRecalled.slice(0, 5).forEach(l => lines.push(`  • \`${l.topic}\``));
-        if (neverRecalled.length > 5) lines.push(`  … and ${neverRecalled.length - 5} more`);
-        lines.push('');
-      }
-
-      lines.push(`📚 **${unchanged.length} lessons** in stable knowledge base (unchanged this period)`);
-      return lines.join('\n');
-    }
-
-    // ── causal_trace ──────────────────────────────────────────────────────────
-    case 'causal_trace': {
-      const { instance_id, problem, depth = 3 } = args as {
-        instance_id: string; problem: string; depth?: number;
-      };
-      const redis = await getConnection(instance_id);
-
-      const lessonKeys: string[] = [];
-      const ls3 = redis.scanStream({ match: 'cachly:lesson:best:*', count: 500 });
-      await new Promise<void>((res, rej) => { ls3.on('data', (b: string[]) => lessonKeys.push(...b)); ls3.on('end', res); ls3.on('error', rej); });
-
-      type Lesson = { topic: string; outcome: string; what_worked: string; what_failed?: string; ts: string; context?: string; severity?: string; file_paths?: string[] };
-      const allLessons: Lesson[] = [];
-      if (lessonKeys.length > 0) {
-        const vals = await redis.mget(...lessonKeys);
-        for (const raw of vals) { if (!raw) continue; try { allLessons.push(JSON.parse(raw) as Lesson); } catch { continue; } }
-      }
-
-      // Also search context entries
-      const ctxKeys: string[] = [];
-      const ctxStream = redis.scanStream({ match: 'cachly:context:*', count: 200 });
-      await new Promise<void>((res, rej) => { ctxStream.on('data', (b: string[]) => ctxKeys.push(...b)); ctxStream.on('end', res); ctxStream.on('error', rej); });
-      type CtxEntry = { key: string; value: string; ts: string };
-      const ctxEntries: CtxEntry[] = [];
-      if (ctxKeys.length > 0) {
-        const vals = await redis.mget(...ctxKeys);
-        for (let i = 0; i < ctxKeys.length; i++) {
-          const raw = vals[i];
-          if (!raw) continue;
-          try { ctxEntries.push(JSON.parse(raw) as CtxEntry); } catch {
-            ctxEntries.push({ key: ctxKeys[i].replace('cachly:context:', ''), value: raw, ts: new Date(0).toISOString() });
-          }
+        if (stopHookWritten) {
+          written.push(`✅ [Claude Code Stop-Hook] → \`.claude/settings.json\` (auto-checkpoint on stop)`);
         }
-      }
 
-      // Score lessons by keyword overlap
-      const problemWords = problem.toLowerCase().split(/\W+/).filter(w => w.length > 3);
-      const scored = allLessons.map(lesson => {
-        const text = `${lesson.topic} ${lesson.what_worked} ${lesson.what_failed ?? ''} ${lesson.context ?? ''}`.toLowerCase();
-        const score = problemWords.reduce((sum, w) => sum + (text.includes(w) ? 1 : 0), 0);
-        return { lesson, score };
-      }).filter(s => s.score > 0).sort((a, b) => b.score - a.score);
-
-      const failures  = scored.filter(s => s.lesson.outcome === 'failure').slice(0, depth + 1);
-      const successes = scored.filter(s => s.lesson.outcome === 'success').slice(0, 3);
-      const partials  = scored.filter(s => s.lesson.outcome === 'partial').slice(0, 2);
-
-      // Contextual entries that match
-      const relatedCtx = ctxEntries.filter(e => {
-        const text = `${e.key} ${e.value}`.toLowerCase();
-        return problemWords.some(w => text.includes(w));
-      }).slice(0, 3);
-
-      const lines = [
-        `🔍 **Causal Trace** — "${problem.slice(0, 70)}${problem.length > 70 ? '…' : ''}"`,
-        ``,
-        `Found **${scored.length} related memories** (${failures.length} failures · ${partials.length} partial · ${successes.length} fixes)`,
-        ``,
-      ];
-
-      if (failures.length > 0) {
-        lines.push(`❌ **Root causes / similar failures** (most → least relevant):`);
-        failures.forEach(({ lesson, score }, i) => {
-          const when = new Date(lesson.ts).toLocaleDateString('de-DE');
-          const sev  = lesson.severity === 'critical' ? ' 🔴' : lesson.severity === 'major' ? ' 🟡' : '';
-          lines.push(`  ${i + 1}. [${when}]${sev} \`${lesson.topic}\` (relevance ${score}/10)`);
-          if (lesson.what_failed) lines.push(`     ↳ ${lesson.what_failed.slice(0, 110)}`);
-        });
-        lines.push('');
-      }
-
-      if (partials.length > 0) {
-        lines.push(`⚠️ **Partial fixes attempted:**`);
-        partials.forEach(({ lesson }) => {
-          lines.push(`  • \`${lesson.topic}\` — ${lesson.what_worked.slice(0, 100)}`);
-        });
-        lines.push('');
-      }
-
-      if (successes.length > 0) {
-        lines.push(`✅ **What solved similar problems:**`);
-        successes.forEach(({ lesson }) => {
-          lines.push(`  • \`${lesson.topic}\` — ${lesson.what_worked.slice(0, 110)}`);
-        });
-        lines.push('');
-      }
-
-      if (relatedCtx.length > 0) {
-        lines.push(`📌 **Related context:**`);
-        relatedCtx.forEach(e => lines.push(`  • \`${e.key}\`: ${String(e.value).slice(0, 100)}`));
-        lines.push('');
-      }
-
-      if (scored.length === 0) {
-        lines.push(`ℹ️ No related memories found for this problem.`);
-        lines.push(`💡 Start building knowledge: \`learn_from_attempts\` after you solve it.`);
-      } else {
-        // Build causal chain summary
-        const likelyCause = failures[0]?.lesson.topic ?? 'unknown root cause';
-        const likelyFix   = successes[0]?.lesson.topic;
-        lines.push(`🧩 **Likely causal chain:**`);
-        lines.push(`  \`${likelyCause}\``);
-        if (failures[1]) lines.push(`    ↓ led to \`${failures[1].lesson.topic}\``);
-        if (failures[2]) lines.push(`    ↓ compounded by \`${failures[2].lesson.topic}\``);
-        lines.push(`    ↓ **current symptom**: ${problem.slice(0, 60)}`);
-        if (likelyFix) lines.push(`\n🎯 **Recommended fix:** apply \`${likelyFix}\` solution`);
-      }
-
-      return lines.join('\n');
-    }
-
-    // ── knowledge_decay ───────────────────────────────────────────────────────
-    case 'knowledge_decay': {
-      const { instance_id, threshold_days = 30, min_confidence = 70 } = args as {
-        instance_id: string; threshold_days?: number; min_confidence?: number;
-      };
-      const redis = await getConnection(instance_id);
-
-      const lessonKeys: string[] = [];
-      const ls4 = redis.scanStream({ match: 'cachly:lesson:best:*', count: 500 });
-      await new Promise<void>((res, rej) => { ls4.on('data', (b: string[]) => lessonKeys.push(...b)); ls4.on('end', res); ls4.on('error', rej); });
-
-      type Lesson = { topic: string; outcome: string; what_worked: string; ts: string; recall_count?: number; severity?: string };
-      const now = Date.now();
-      const decaying: { lesson: Lesson; ageDays: number; confidence: number }[] = [];
-      const healthyConf: number[] = [];
-
-      if (lessonKeys.length > 0) {
-        const vals = await redis.mget(...lessonKeys);
-        for (const raw of vals) {
-          if (!raw) continue;
-          let lesson: Lesson;
-          try { lesson = JSON.parse(raw) as Lesson; } catch { continue; }
-          const ageDays   = (now - new Date(lesson.ts).getTime()) / 86_400_000;
-          const recalls   = lesson.recall_count ?? 0;
-          // Decay rate: critical=0.2, major=0.5, minor=1.0 (% confidence lost per day)
-          const decayRate = lesson.severity === 'critical' ? 0.2 : lesson.severity === 'major' ? 0.5 : 1.0;
-          // Recall bonus: each recall adds 5% confidence, capped at +25%
-          const recallBonus = Math.min(recalls * 5, 25);
-          const confidence  = Math.max(0, Math.round(100 - ageDays * decayRate + recallBonus));
-
-          if (ageDays > threshold_days && confidence < min_confidence) {
-            decaying.push({ lesson, ageDays, confidence });
-          } else {
-            healthyConf.push(confidence);
-          }
-        }
-      }
-
-      decaying.sort((a, b) => a.confidence - b.confidence);
-      const avgConfidence = healthyConf.length > 0 ? Math.round(healthyConf.reduce((a, b) => a + b, 0) / healthyConf.length) : 100;
-      const brainAge = lessonKeys.length === 0 ? 0 : Math.round(
-        (now - Math.min(...(decaying.concat(decaying)).map(d => new Date(d.lesson.ts).getTime()).filter(Boolean))) / 86_400_000
-      );
-
-      const lines = [
-        `⏱️ **Knowledge Decay Analysis**`,
-        ``,
-        `🧠 ${lessonKeys.length} total memories · ${healthyConf.length} healthy (avg ${avgConfidence}% confidence) · ${decaying.length} decaying`,
-        ``,
-      ];
-
-      if (decaying.length === 0) {
-        lines.push(`✅ All knowledge is fresh — no memories below ${min_confidence}% confidence older than ${threshold_days}d.`);
-        lines.push('');
-        lines.push(`💡 Tip: recall lessons regularly with \`recall_best_solution\` to keep confidence high.`);
-      } else {
-        lines.push(`⚠️ **${decaying.length} memories need re-verification:**`);
-        lines.push('');
-        for (const { lesson, ageDays, confidence } of decaying.slice(0, 12)) {
-          const filled  = Math.round(confidence / 10);
-          const bar     = '█'.repeat(filled) + '░'.repeat(10 - filled);
-          const sev     = lesson.severity === 'critical' ? ' 🔴' : lesson.severity === 'major' ? ' 🟡' : '';
-          const recalls = lesson.recall_count ?? 0;
-          lines.push(`  ${bar} ${String(confidence).padStart(3)}%${sev} \`${lesson.topic}\` (${Math.round(ageDays)}d old · recalled ${recalls}×)`);
-        }
-        if (decaying.length > 12) lines.push(`  … and ${decaying.length - 12} more`);
-        lines.push('');
-        lines.push(`💡 Re-validate top decaying memories before using them in critical tasks.`);
-        lines.push(`   Run \`recall_best_solution\` on each topic to bump recall count + reset confidence.`);
-      }
-
-      return lines.join('\n');
-    }
-
-    // ── autopilot ─────────────────────────────────────────────────────────────
-    case 'autopilot': {
-      const {
-        instance_id,
-        project_dir,
-        project_name        = 'my project',
-        project_description = '',
-        write               = false,
-        ai_personality      = '',
-      } = args as {
-        instance_id: string; project_dir?: string; project_name?: string;
-        project_description?: string; write?: boolean; ai_personality?: string;
-      };
-      const redis = await getConnection(instance_id);
-
-      // Analyse current brain state to personalise the output
-      const lessonKeys2: string[] = [];
-      const ls5 = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
-      await new Promise<void>((res, rej) => { ls5.on('data', (b: string[]) => lessonKeys2.push(...b)); ls5.on('end', res); ls5.on('error', rej); });
-
-      const lastSessionRaw2 = await redis.get('cachly:session:last');
-      const lastSessionSummary = lastSessionRaw2
-        ? (() => { try { return (JSON.parse(lastSessionRaw2) as { summary: string }).summary; } catch { return null; } })()
-        : null;
-
-      const brainSize = lessonKeys2.length;
-      const isFreshBrain = brainSize === 0;
-
-      const personalityNote = ai_personality ? `\n## AI Style\n${ai_personality}\n` : '';
-      const projectDesc     = project_description ? `\n> ${project_description}\n` : '';
-      const lastSess        = lastSessionSummary ? `> Last session: ${lastSessionSummary}` : '> Fresh brain — this is session 1.';
-
-      const claudeMd = `# ${project_name} — cachly AI Brain (Autopilot)
-${projectDesc}
-> Brain instance: \`${instance_id}\` · ${brainSize} lessons stored
-${lastSess}
-${personalityNote}
-## Memory Protocol — follow these rules automatically, every session
-
-### 🚀 SESSION START (before any work)
-Always run these two commands first — takes <2 seconds, saves hours:
-\`\`\`
-mcp__cachly__compact_recover({"instance_id":"${instance_id}"})
-mcp__cachly__smart_recall({"instance_id":"${instance_id}","query":"<describe your task>"})
-\`\`\`
-If compact_recover shows an open TODO or checkpoint → resume that task first.
-
-### ⚡ DURING WORK (every 15-20 minutes or after each major action)
-Save a breadcrumb so any interruption is recoverable:
-\`\`\`
-mcp__cachly__session_ping({"instance_id":"${instance_id}","task":"<current task>","next_step":"<exact next action>"})
-\`\`\`
-
-### ✅ WHEN SOMETHING WORKS
-\`\`\`
-mcp__cachly__learn_from_attempts({"instance_id":"${instance_id}","topic":"<what-was-solved>","outcome":"success","what_worked":"<exact solution in one sentence>","severity":"major"})
-\`\`\`
-
-### ❌ WHEN SOMETHING FAILS
-\`\`\`
-mcp__cachly__learn_from_attempts({"instance_id":"${instance_id}","topic":"<what-failed>","outcome":"failure","what_worked":"<what was tried>","severity":"minor"})
-\`\`\`
-
-### 🔍 ROOT CAUSE ANALYSIS (before debugging)
-\`\`\`
-mcp__cachly__causal_trace({"instance_id":"${instance_id}","problem":"<describe the symptom>"})
-\`\`\`
-
-### 🧹 CONTEXT LIMIT WARNING (when told context is getting long)
-\`\`\`
-mcp__cachly__session_ping({"instance_id":"${instance_id}","task":"<exact task>","next_step":"<next action>"})
-\`\`\`
-Then continue — new context window will auto-recover via compact_recover on next start.
-
-### 🏁 SESSION END (always, even if no changes made)
-\`\`\`
-mcp__cachly__session_end({"instance_id":"${instance_id}","summary":"<one sentence: what was done>","files_changed":["<file1>","<file2>"]})
-\`\`\`
-
-## Brain maintenance (weekly)
-\`\`\`
-mcp__cachly__memory_consolidate({"instance_id":"${instance_id}"})
-mcp__cachly__knowledge_decay({"instance_id":"${instance_id}"})
-mcp__cachly__brain_diff({"instance_id":"${instance_id}","since_sessions":5})
-\`\`\`
-
-## Prime Directive
-**The brain is the source of truth.** If the brain says "X approach failed" — trust it.
-Never start a coding task without checking the brain. Never end a session without updating it.
-The goal: zero repeated mistakes, zero lost context, perfect continuity across sessions and model switches.
-`;
-
-      const lines = [
-        `🤖 **cachly Autopilot** — zero-config AI memory for ${project_name}`,
-        ``,
-        `Brain: **${brainSize} lessons** stored · Instance: \`${instance_id.slice(0, 8)}…\``,
-        isFreshBrain ? `ℹ️  Fresh brain — tip: run \`brain_from_git\` to bootstrap from git history instantly.` : '',
-        lastSessionSummary ? `📅 Last session: ${lastSessionSummary.slice(0, 80)}` : '',
-        ``,
-      ].filter(l => l !== '');
-
-      if (write && project_dir) {
-        const { writeFile, mkdir } = await import('node:fs/promises');
-        const githubDir = `${project_dir}/.github`;
-        await mkdir(githubDir, { recursive: true });
-        await writeFile(`${githubDir}/copilot-instructions.md`, claudeMd, 'utf8');
-        await writeFile(`${project_dir}/CLAUDE.md`, claudeMd, 'utf8');
-        lines.push(`✅ Written to:`);
-        lines.push(`   • \`${project_dir}/CLAUDE.md\``);
-        lines.push(`   • \`${project_dir}/.github/copilot-instructions.md\``);
-        lines.push('');
-        lines.push(`🎯 **Autopilot is live.** This AI — and any other AI on this project — will now manage memory automatically.`);
-      } else {
-        lines.push(`📋 **Add this to your \`CLAUDE.md\` and \`.github/copilot-instructions.md\`:**`);
-        lines.push(`   (or re-run with \`write: true, project_dir: "/path/to/project"\` to write automatically)`);
-        lines.push(``);
-        lines.push('```markdown');
-        lines.push(claudeMd);
-        lines.push('```');
-        lines.push(``);
-        lines.push(`🎯 Once added, this AI — and any other MCP-capable AI — will **never lose context again.**`);
-        lines.push(`   Works across: Claude · GPT-4 · Gemini · Cursor · Copilot · Windsurf · Continue.dev`);
+        lines.push(...written);
       }
 
       return lines.join('\n');
@@ -5656,6 +6964,894 @@ async function handleBulkLockStream(name: string, args: Record<string, unknown>)
       );
     }
 
+    // ── Roadmap ──────────────────────────────────────────────────────────────
+
+    case 'roadmap_add': {
+      const {
+        instance_id: rid,
+        title,
+        description: desc = '',
+        priority = 'medium',
+        tags: rtags = [],
+        milestone = '',
+      } = args as {
+        instance_id: string; title: string; description?: string;
+        priority?: string; tags?: string[]; milestone?: string;
+      };
+      const redis = await getConnection(rid);
+      const id = `rm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
+      const item = {
+        id, title, description: desc, priority, tags: rtags, milestone,
+        status: 'planned',
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+        notes: '',
+      };
+      await redis.hset(`cachly:roadmap:${rid}`, id, JSON.stringify(item));
+      const PRIORITY_ICON: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
+      return [
+        `📋 **Roadmap item added**`,
+        ``,
+        `  ID:       \`${id}\``,
+        `  Title:    ${title}`,
+        `  Priority: ${PRIORITY_ICON[priority] ?? '⚪'} ${priority}`,
+        `  Status:   planned`,
+        milestone ? `  Milestone: ${milestone}` : '',
+        rtags.length ? `  Tags:     ${rtags.join(', ')}` : '',
+        ``,
+        `💡 Use \`roadmap_update(id: "${id}", status: "in-progress")\` when you start working on it.`,
+      ].filter(Boolean).join('\n');
+    }
+
+    case 'roadmap_update': {
+      const {
+        instance_id: rid,
+        id: itemId,
+        status: newStatus,
+        priority: newPriority,
+        notes: newNotes,
+        title: newTitle,
+        description: newDesc,
+      } = args as {
+        instance_id: string; id: string; status?: string; priority?: string;
+        notes?: string; title?: string; description?: string;
+      };
+      const redis = await getConnection(rid);
+      const raw = await redis.hget(`cachly:roadmap:${rid}`, itemId);
+      if (!raw) return `⚠️ **roadmap_update** – Item \`${itemId}\` not found. Use \`roadmap_list\` to see all items.`;
+      const item = JSON.parse(raw) as Record<string, unknown>;
+      const oldStatus = item.status as string;
+      if (newStatus) item.status = newStatus;
+      if (newPriority) item.priority = newPriority;
+      if (newTitle) item.title = newTitle;
+      if (newDesc) item.description = newDesc;
+      if (newNotes) item.notes = item.notes ? `${item.notes}\n[${new Date().toISOString().slice(0, 10)}] ${newNotes}` : `[${new Date().toISOString().slice(0, 10)}] ${newNotes}`;
+      item.updated = new Date().toISOString();
+      await redis.hset(`cachly:roadmap:${rid}`, itemId, JSON.stringify(item));
+      const statusEmoji: Record<string, string> = { planned: '📋', 'in-progress': '⚡', done: '✅', blocked: '🚫', cancelled: '🗑️' };
+      return [
+        `${statusEmoji[newStatus ?? oldStatus] ?? '📋'} **Roadmap updated** \`${itemId}\``,
+        ``,
+        `  Title:  ${item.title}`,
+        oldStatus !== newStatus ? `  Status: ${oldStatus} → ${newStatus}` : `  Status: ${item.status}`,
+        newNotes ? `  Notes:  ${newNotes}` : '',
+      ].filter(Boolean).join('\n');
+    }
+
+    case 'roadmap_list': {
+      const {
+        instance_id: rid,
+        status: filterStatus = 'open',
+        tag: filterTag,
+        milestone: filterMilestone,
+        priority: filterPriority,
+      } = args as {
+        instance_id: string; status?: string; tag?: string;
+        milestone?: string; priority?: string;
+      };
+      const redis = await getConnection(rid);
+      const all = await redis.hgetall(`cachly:roadmap:${rid}`);
+      if (!all || Object.keys(all).length === 0) {
+        return '📋 **Roadmap is empty.**\n\nUse `roadmap_add` to create your first item.';
+      }
+      const PRIORITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+      const PRIORITY_ICON: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
+      const STATUS_ICON: Record<string, string> = { planned: '📋', 'in-progress': '⚡', done: '✅', blocked: '🚫', cancelled: '🗑️' };
+      const openStatuses = new Set(['planned', 'in-progress', 'blocked']);
+      let items = Object.values(all).map(v => JSON.parse(v as string) as Record<string, string | string[]>);
+      // Filter
+      if (filterStatus === 'open') items = items.filter(i => openStatuses.has(i.status as string));
+      else if (filterStatus) items = items.filter(i => i.status === filterStatus);
+      if (filterTag) items = items.filter(i => (i.tags as string[]).includes(filterTag));
+      if (filterMilestone) items = items.filter(i => i.milestone === filterMilestone);
+      if (filterPriority) items = items.filter(i => (PRIORITY_ORDER[i.priority as string] ?? 99) <= (PRIORITY_ORDER[filterPriority] ?? 99));
+      // Sort: priority asc, then created asc
+      items.sort((a, b) => {
+        const pa = PRIORITY_ORDER[a.priority as string] ?? 99;
+        const pb = PRIORITY_ORDER[b.priority as string] ?? 99;
+        return pa !== pb ? pa - pb : (a.created as string).localeCompare(b.created as string);
+      });
+      if (items.length === 0) return `📋 **No roadmap items** match the current filter (status: ${filterStatus}).`;
+      const grouped: Record<string, typeof items> = {};
+      for (const it of items) {
+        const st = it.status as string;
+        if (!grouped[st]) grouped[st] = [];
+        grouped[st].push(it);
+      }
+      const lines: string[] = [`📋 **Roadmap** (${items.length} item${items.length !== 1 ? 's' : ''})`, ''];
+      for (const [st, grp] of Object.entries(grouped)) {
+        lines.push(`**${STATUS_ICON[st] ?? '•'} ${st.toUpperCase()}** (${grp.length})`);
+        for (const it of grp) {
+          const tags = (it.tags as string[]).length ? ` [${(it.tags as string[]).join(', ')}]` : '';
+          const milestone = it.milestone ? ` · ${it.milestone}` : '';
+          lines.push(`  ${PRIORITY_ICON[it.priority as string] ?? '⚪'} \`${it.id}\` **${it.title}**${tags}${milestone}`);
+          if (it.description) lines.push(`      ${(it.description as string).slice(0, 120)}`);
+          if (it.notes) lines.push(`      📝 ${(it.notes as string).split('\n').pop()?.slice(0, 100)}`);
+        }
+        lines.push('');
+      }
+      lines.push(`💡 \`roadmap_update(id, status: "in-progress")\` to start · \`roadmap_next\` for top priority item`);
+      return lines.join('\n');
+    }
+
+    case 'roadmap_next': {
+      const { instance_id: rid, tag: filterTag } = args as { instance_id: string; tag?: string };
+      const redis = await getConnection(rid);
+      const all = await redis.hgetall(`cachly:roadmap:${rid}`);
+      if (!all || Object.keys(all).length === 0) {
+        return '📋 **Roadmap is empty.** Use `roadmap_add` to plan your first task.';
+      }
+      const PRIORITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+      const PRIORITY_ICON: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
+      let items = Object.values(all)
+        .map(v => JSON.parse(v as string) as Record<string, unknown>)
+        .filter(i => i.status === 'in-progress' || i.status === 'planned')
+        .filter(i => !filterTag || (i.tags as string[]).includes(filterTag));
+      if (items.length === 0) return '🎉 **No open roadmap items!** All tasks are done (or use `roadmap_list` to check).';
+      // in-progress first, then by priority
+      items.sort((a, b) => {
+        if (a.status === 'in-progress' && b.status !== 'in-progress') return -1;
+        if (b.status === 'in-progress' && a.status !== 'in-progress') return 1;
+        return (PRIORITY_ORDER[a.priority as string] ?? 99) - (PRIORITY_ORDER[b.priority as string] ?? 99);
+      });
+      const next = items[0];
+      const remaining = items.length - 1;
+      const tags = (next.tags as string[]).length ? `\nTags:      ${(next.tags as string[]).join(', ')}` : '';
+      const milestone = next.milestone ? `\nMilestone: ${next.milestone}` : '';
+      const notes = next.notes ? `\nNotes:     ${(next.notes as string).split('\n').pop()?.slice(0, 120)}` : '';
+      return [
+        `${next.status === 'in-progress' ? '⚡' : '📋'} **Next up: ${next.title}**`,
+        ``,
+        `ID:        \`${next.id}\``,
+        `Priority:  ${PRIORITY_ICON[next.priority as string] ?? '⚪'} ${next.priority}`,
+        `Status:    ${next.status}`,
+        next.description ? `\nWhat to do:\n${next.description}` : '',
+        tags, milestone, notes,
+        ``,
+        remaining > 0 ? `(+${remaining} more open item${remaining !== 1 ? 's' : ''} in roadmap)` : '(last open item)',
+        ``,
+        next.status === 'planned'
+          ? `💡 Start with: \`roadmap_update(id: "${next.id}", status: "in-progress")\``
+          : `💡 Finish with: \`roadmap_update(id: "${next.id}", status: "done", notes: "...")\``,
+      ].filter(s => s !== undefined).join('\n');
+    }
+
+    // ── v0.6 Cognitive Cache: memory_consolidate ─────────────────────────────
+    case 'memory_consolidate': {
+      const { instance_id, dry_run = false, stale_days = 90 } = args as {
+        instance_id: string; dry_run?: boolean; stale_days?: number;
+      };
+      const redis = await getConnection(instance_id);
+      const now = Date.now();
+      const staleMs = stale_days * 86400 * 1000;
+
+      // Scan all lessons
+      let cursor = 0;
+      const lessonKeys: string[] = [];
+      do {
+        const [next, keys] = await redis.scan(cursor, 'MATCH', 'cachly:lesson:best:*', 'COUNT', 200);
+        cursor = parseInt(next);
+        lessonKeys.push(...keys);
+      } while (cursor !== 0);
+
+      if (lessonKeys.length === 0) {
+        return '🧠 **Brain is empty** — no lessons to consolidate yet. Use `learn_from_attempts` after your next bug fix.';
+      }
+
+      type Lesson = { topic: string; outcome: string; what_worked?: string; what_failed?: string; ts: string; recall_count?: number; severity?: string; tags?: string[] };
+      const lessons: Map<string, Lesson> = new Map();
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        try { lessons.set(k, JSON.parse(raw) as Lesson); } catch { /* skip malformed */ }
+      }
+
+      // Detect duplicates: same topic prefix (e.g. deploy:api vs deploy:api-v2)
+      const duplicates: string[][] = [];
+      const topicGroups = new Map<string, string[]>();
+      for (const [k, l] of lessons) {
+        const prefix = l.topic.split(':')[0];
+        const group = topicGroups.get(prefix) ?? [];
+        group.push(k);
+        topicGroups.set(prefix, group);
+      }
+
+      // Detect contradictions: same exact topic, different outcomes
+      const contradictions: Array<{ topic: string; keys: string[] }> = [];
+      const exactTopics = new Map<string, string[]>();
+      for (const [k, l] of lessons) {
+        const arr = exactTopics.get(l.topic) ?? [];
+        arr.push(k);
+        exactTopics.set(l.topic, arr);
+      }
+      for (const [topic, keys] of exactTopics) {
+        const outcomes = new Set(keys.map(k => lessons.get(k)?.outcome));
+        if (outcomes.size > 1) contradictions.push({ topic, keys });
+      }
+
+      // Detect stale: not recalled in stale_days
+      const stale: string[] = [];
+      for (const [k, l] of lessons) {
+        const age = now - new Date(l.ts).getTime();
+        const recalls = l.recall_count ?? 0;
+        if (age > staleMs && recalls === 0) stale.push(k);
+      }
+
+      // Merge duplicates by prefix: keep the success/highest-severity one
+      let merged = 0;
+      if (!dry_run) {
+        for (const [, keys] of topicGroups) {
+          if (keys.length < 2) continue;
+          const bySuccess = keys.filter(k => lessons.get(k)?.outcome === 'success');
+          const winner = bySuccess[0] ?? keys[0];
+          for (const k of keys) {
+            if (k !== winner) { await redis.del(k); merged++; }
+          }
+        }
+        // Resolve contradictions: keep success, delete failure for same topic
+        for (const { keys } of contradictions) {
+          const success = keys.find(k => lessons.get(k)?.outcome === 'success');
+          if (success) {
+            for (const k of keys) {
+              if (k !== success) { await redis.del(k); }
+            }
+          }
+        }
+        // Flag stale entries with a TTL of 30 days (not deleted, just expiring)
+        for (const k of stale) {
+          await redis.expire(k, 86400 * 30);
+        }
+      }
+
+      const lines = [
+        `🔬 **Memory Consolidation Report** ${dry_run ? '(dry run — no changes made)' : '✅ Applied'}`,
+        ``,
+        `📊 **Before:** ${lessonKeys.length} lessons`,
+        ``,
+        `🔁 **Contradictions detected:** ${contradictions.length}`,
+        ...contradictions.slice(0, 5).map(c => `  → \`${c.topic}\`: ${c.keys.length} conflicting entries (kept: success)`),
+        contradictions.length > 5 ? `  … and ${contradictions.length - 5} more` : '',
+        ``,
+        `♻️ **Duplicate clusters:** ${Array.from(topicGroups.values()).filter(v => v.length > 1).length}` +
+          (merged > 0 ? ` → ${merged} entries merged` : ''),
+        ``,
+        `🕰️ **Stale entries (${stale_days}d, 0 recalls):** ${stale.length}` +
+          (stale.length > 0 && !dry_run ? ` → set to expire in 30 days` : ''),
+        ``,
+        `📊 **After:** ${dry_run ? lessonKeys.length : lessonKeys.length - merged} lessons`,
+        ``,
+        dry_run
+          ? `💡 Re-run without dry_run=true to apply changes.`
+          : `✨ Brain consolidated. Run \`brain_diff(since="1h")\` to see the delta.`,
+      ].filter(s => s !== '').join('\n');
+      return lines;
+    }
+
+    // ── v0.6 Cognitive Cache: brain_diff ─────────────────────────────────────
+    case 'brain_diff': {
+      const { instance_id, since = '7d', format = 'summary' } = args as {
+        instance_id: string; since?: string; format?: 'summary' | 'detailed';
+      };
+      const redis = await getConnection(instance_id);
+
+      // Parse since
+      let sinceMs: number;
+      const match = since.match(/^(\d+)([dhm])$/);
+      if (match) {
+        const n = parseInt(match[1]);
+        const unit = match[2];
+        const mult = unit === 'd' ? 86400000 : unit === 'h' ? 3600000 : 60000;
+        sinceMs = Date.now() - n * mult;
+      } else {
+        sinceMs = new Date(since).getTime() || Date.now() - 7 * 86400000;
+      }
+
+      // Scan all lessons
+      let cursor = 0;
+      const lessonKeys: string[] = [];
+      do {
+        const [next, keys] = await redis.scan(cursor, 'MATCH', 'cachly:lesson:best:*', 'COUNT', 200);
+        cursor = parseInt(next);
+        lessonKeys.push(...keys);
+      } while (cursor !== 0);
+
+      type Lesson = { topic: string; outcome: string; what_worked?: string; ts: string; recall_count?: number; severity?: string };
+      const added: Lesson[] = [];
+      const updated: Lesson[] = [];
+      const recalled: Lesson[] = [];
+      const total = lessonKeys.length;
+
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        try {
+          const l = JSON.parse(raw) as Lesson;
+          const ts = new Date(l.ts).getTime();
+          if (ts >= sinceMs) {
+            // Check history to determine add vs update
+            const histKey = `cachly:lesson:history:${l.topic}`;
+            const histLen = await redis.llen(histKey);
+            if (histLen <= 1) added.push(l);
+            else updated.push(l);
+          }
+          if ((l.recall_count ?? 0) > 0) {
+            // We can't easily know when last recalled without extra metadata, so include
+            // lessons with recalls as "active"
+            recalled.push(l);
+          }
+        } catch { /* skip */ }
+      }
+
+      const sinceLabel = match ? `last ${since}` : new Date(sinceMs).toLocaleDateString('de-DE');
+      const lines: string[] = [
+        `📊 **Brain Diff** — ${sinceLabel}`,
+        ``,
+        `Total lessons in brain: **${total}**`,
+        ``,
+        `✅ **New** (${added.length}):`,
+        ...added.slice(0, format === 'detailed' ? 20 : 5).map(l =>
+          `  + \`${l.topic}\` — ${l.outcome} ${l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟠' : '🟢'}`
+        ),
+        added.length > 5 && format === 'summary' ? `  … and ${added.length - 5} more` : '',
+        ``,
+        `🔄 **Updated** (${updated.length}):`,
+        ...updated.slice(0, format === 'detailed' ? 20 : 5).map(l =>
+          `  ~ \`${l.topic}\` — now: ${l.outcome}`
+        ),
+        updated.length > 5 && format === 'summary' ? `  … and ${updated.length - 5} more` : '',
+        ``,
+        `🔍 **Active** (recalled at least once): ${recalled.length}`,
+        ``,
+        `💡 Run \`memory_consolidate\` to merge duplicates · \`knowledge_decay\` to see confidence scores.`,
+      ].filter(s => s !== '');
+      return lines.join('\n');
+    }
+
+    // ── v0.6 Cognitive Cache: causal_trace ───────────────────────────────────
+    case 'causal_trace': {
+      const { instance_id, problem, max_depth = 5, tags: filterTags = [] } = args as {
+        instance_id: string; problem: string; max_depth?: number; tags?: string[];
+      };
+      const redis = await getConnection(instance_id);
+
+      // Normalize problem to keyword tokens
+      const tokens = problem.toLowerCase()
+        .replace(/[^a-z0-9\s\-_:]/g, ' ')
+        .split(/\s+/)
+        .filter(t => t.length > 2);
+
+      // Scan all lessons + history entries
+      let cursor = 0;
+      const lessonKeys: string[] = [];
+      do {
+        const [next, keys] = await redis.scan(cursor, 'MATCH', 'cachly:lesson:*', 'COUNT', 200);
+        cursor = parseInt(next);
+        lessonKeys.push(...keys);
+      } while (cursor !== 0);
+
+      type Lesson = {
+        topic: string; outcome: string; what_worked?: string; what_failed?: string;
+        ts: string; recall_count?: number; severity?: string; tags?: string[];
+        context?: string;
+      };
+
+      // Score each lesson by token overlap with problem description
+      const scored: Array<{ score: number; lesson: Lesson; key: string }> = [];
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        try {
+          const l = JSON.parse(raw) as Lesson;
+          // Skip if filter tags given and lesson has none of them
+          if (filterTags.length > 0 && !(l.tags ?? []).some((t: string) => filterTags.includes(t))) continue;
+          const haystack = [l.topic, l.what_failed ?? '', l.what_worked ?? '', l.context ?? '']
+            .join(' ').toLowerCase();
+          const score = tokens.reduce((s, t) => s + (haystack.includes(t) ? 1 : 0), 0);
+          if (score > 0) scored.push({ score, lesson: l, key: k });
+        } catch { /* skip */ }
+      }
+
+      scored.sort((a, b) => b.score - a.score);
+      const chain = scored.slice(0, max_depth);
+
+      if (chain.length === 0) {
+        return [
+          `🔍 **Causal Trace: "${problem}"**`,
+          ``,
+          `No matching lessons found in brain.`,
+          ``,
+          `💡 After you solve this, call:`,
+          `\`\`\``,
+          `learn_from_attempts(`,
+          `  instance_id = "${instance_id}",`,
+          `  topic       = "fix:${tokens[0] ?? 'issue'}",`,
+          `  outcome     = "success",`,
+          `  what_worked = "...",`,
+          `  what_failed = "${problem}",`,
+          `)`,
+          `\`\`\``,
+        ].join('\n');
+      }
+
+      // Build causal chain narrative: failures first → then successes
+      const failures = chain.filter(c => c.lesson.outcome !== 'success');
+      const solutions = chain.filter(c => c.lesson.outcome === 'success');
+
+      const SEV_ICON: Record<string, string> = { critical: '🔴', major: '🟠', minor: '🟡' };
+
+      const lines: string[] = [
+        `🔍 **Causal Trace: "${problem}"**`,
+        ``,
+        `Found **${chain.length}** related lessons. Reconstructed causal chain:`,
+        ``,
+      ];
+
+      if (failures.length > 0) {
+        lines.push(`**Root causes & failure chain:**`);
+        failures.forEach((c, i) => {
+          const l = c.lesson;
+          const sev = SEV_ICON[l.severity ?? 'minor'] ?? '🟡';
+          lines.push(`${i === 0 ? '  Root:' : '   → :'} ${sev} \`${l.topic}\``);
+          if (l.what_failed) lines.push(`          ↳ ${l.what_failed.slice(0, 120)}`);
+        });
+        lines.push('');
+      }
+
+      if (solutions.length > 0) {
+        lines.push(`**Solutions that worked before:**`);
+        solutions.forEach((c, i) => {
+          const l = c.lesson;
+          const date = new Date(l.ts).toLocaleDateString('de-DE');
+          lines.push(`  ${i + 1}. ✅ \`${l.topic}\` — ${date} · recalled ${l.recall_count ?? 0}× `);
+          if (l.what_worked) lines.push(`     ${l.what_worked.slice(0, 200)}`);
+        });
+        lines.push('');
+      }
+
+      const topSolution = solutions[0]?.lesson;
+      if (topSolution?.what_worked) {
+        lines.push(`**⚡ Most likely fix:**`);
+        lines.push(`\`\`\``);
+        lines.push(topSolution.what_worked.slice(0, 500));
+        lines.push(`\`\`\``);
+        lines.push('');
+      }
+
+      lines.push(`💡 After applying: \`learn_from_attempts(topic="fix:${tokens[0] ?? 'issue'}", outcome="success", ...)\``);
+      return lines.join('\n');
+    }
+
+    // ── v0.6 Cognitive Cache: knowledge_decay ────────────────────────────────
+    case 'knowledge_decay': {
+      const { instance_id, min_age_days = 0, show_top = 20 } = args as {
+        instance_id: string; min_age_days?: number; show_top?: number;
+      };
+      const redis = await getConnection(instance_id);
+      const now = Date.now();
+      const minAgeMs = min_age_days * 86400000;
+
+      let cursor = 0;
+      const lessonKeys: string[] = [];
+      do {
+        const [next, keys] = await redis.scan(cursor, 'MATCH', 'cachly:lesson:best:*', 'COUNT', 200);
+        cursor = parseInt(next);
+        lessonKeys.push(...keys);
+      } while (cursor !== 0);
+
+      type Lesson = { topic: string; outcome: string; ts: string; recall_count?: number; severity?: string };
+      type Scored = { topic: string; confidence: number; age_days: number; recalls: number; outcome: string };
+
+      const scores: Scored[] = [];
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        try {
+          const l = JSON.parse(raw) as Lesson;
+          const ageMs = now - new Date(l.ts).getTime();
+          if (ageMs < minAgeMs) continue;
+          const age_days = Math.floor(ageMs / 86400000);
+          const recalls = l.recall_count ?? 0;
+
+          // Confidence formula:
+          // base = 100 → decays by 1pt/day after 7 days, floored at 5
+          // boost: +5 per recall, capped at +50
+          // penalty: failure outcome → -20
+          const decayPts = Math.max(0, age_days - 7);
+          const base = Math.max(5, 100 - decayPts);
+          const recallBoost = Math.min(50, recalls * 5);
+          const outcomePenalty = l.outcome === 'failure' ? -20 : 0;
+          const confidence = Math.min(100, Math.max(0, base + recallBoost + outcomePenalty));
+
+          scores.push({ topic: l.topic, confidence, age_days, recalls, outcome: l.outcome });
+        } catch { /* skip */ }
+      }
+
+      // Sort by lowest confidence first
+      scores.sort((a, b) => a.confidence - b.confidence);
+      const shown = scores.slice(0, show_top);
+
+      function bar(pct: number): string {
+        const filled = Math.round(pct / 10);
+        return '█'.repeat(filled) + '░'.repeat(10 - filled) + ` ${pct}%`;
+      }
+
+      const avgConf = scores.length > 0
+        ? Math.round(scores.reduce((s, e) => s + e.confidence, 0) / scores.length)
+        : 0;
+      const critical = scores.filter(s => s.confidence < 30).length;
+      const healthy = scores.filter(s => s.confidence >= 70).length;
+
+      const lines: string[] = [
+        `🧪 **Knowledge Decay Report** — ${scores.length} lessons`,
+        ``,
+        `Average confidence: **${bar(avgConf)}**`,
+        `🔴 Critical (<30%): ${critical}  🟢 Healthy (≥70%): ${healthy}`,
+        ``,
+        `Lowest confidence lessons (fix these first):`,
+        ``,
+        ...shown.map((s, i) =>
+          `${(i + 1).toString().padStart(2)}. \`${s.topic}\`\n    ${bar(s.confidence)} · ${s.age_days}d old · ${s.recalls} recalls · ${s.outcome}`
+        ),
+        ``,
+        scores.length > show_top ? `… and ${scores.length - show_top} more lessons` : '',
+        ``,
+        critical > 0
+          ? `⚠️ ${critical} lessons are critically stale. Validate them and re-run \`learn_from_attempts\` with updated findings.`
+          : `✅ Brain confidence is healthy overall.`,
+        ``,
+        `💡 Run \`memory_consolidate\` to prune stale entries · \`causal_trace\` to find root causes.`,
+      ].filter(s => s !== '');
+      return lines.join('\n');
+    }
+
+    // ── v0.6 Cognitive Cache: autopilot ──────────────────────────────────────
+    case 'autopilot': {
+      const { instance_id, editor = 'claude', project_name = 'this project', style = 'full' } = args as {
+        instance_id: string; editor?: string; project_name?: string; style?: 'minimal' | 'full';
+      };
+
+      const minimal = `## Cachly AI Brain — Autopilot
+
+**Instance:** \`${instance_id}\`
+
+> Sessions are fully automatic. The Brain starts when you call any tool and saves a summary when you close.
+
+### MANDATORY hooks (always fire, no exceptions):
+- **Window opens** → call \`session_start(instance_id="${instance_id}", focus="<today's goal>")\`
+- **Bug fixed / deployed / discovered** → call \`learn_from_attempts(instance_id="${instance_id}", topic="fix:<area>", outcome="success", what_worked="...")\`
+- **Window closes** → call \`session_end(instance_id="${instance_id}", summary="...", files_changed=[...])\`
+`;
+
+      const full = `## Cachly AI Brain — Autopilot for ${project_name}
+
+**Instance:** \`${instance_id}\`
+
+---
+
+## 🔴 MANDATORY RULES — No exceptions, no prompting needed
+
+### Rule 1 — Session Start (FIRST thing in every window)
+\`\`\`
+session_start(
+  instance_id = "${instance_id}",
+  focus       = "<what you plan to work on today>",
+)
+\`\`\`
+Returns: last session summary, handoff tasks, recent lessons, open failures.
+
+### Rule 2 — Learn After Every Fix/Deploy/Discovery (AUTOMATIC)
+**After EVERY** bug fix, deployment, or technical discovery — call immediately:
+\`\`\`
+learn_from_attempts(
+  instance_id = "${instance_id}",
+  topic       = "category:keyword",
+  outcome     = "success" | "failure" | "partial",
+  what_worked = "exact command or approach",
+  what_failed = "what failed (if applicable)",
+  severity    = "critical" | "major" | "minor",
+  commands    = ["the exact command that worked"],
+  file_paths  = ["path/to/file"],
+  tags        = ["relevant", "tags"],
+)
+\`\`\`
+
+**Triggers:**
+- ✅ Deployed → \`topic="deploy:web", outcome="success"\`
+- ✅ Fixed bug → \`topic="fix:auth-race", outcome="success"\`
+- ✅ Got error → \`topic="debug:docker", outcome="partial"\`
+
+### Rule 3 — Session End (LAST thing before closing)
+\`\`\`
+session_end(
+  instance_id     = "${instance_id}",
+  summary         = "What was accomplished (2-3 sentences)",
+  files_changed   = ["list", "of", "changed", "files"],
+  lessons_learned = <number of learn_from_attempts calls>,
+)
+\`\`\`
+
+### Rule 4 — Before any non-trivial task
+\`\`\`
+smart_recall(
+  instance_id = "${instance_id}",
+  query       = "<describe what you are about to do>",
+)
+\`\`\`
+
+---
+
+## ⚡ Cognitive Tools (v0.6)
+
+| When | Call |
+|---|---|
+| Brain feeling cluttered | \`memory_consolidate(instance_id="${instance_id}")\` |
+| Weekly review | \`brain_diff(instance_id="${instance_id}", since="7d")\` |
+| Weird bug, no idea why | \`causal_trace(instance_id="${instance_id}", problem="<symptom>")\` |
+| Before big refactor | \`knowledge_decay(instance_id="${instance_id}")\` |
+
+---
+
+*Cachly v0.6 · Generated ${new Date().toISOString().slice(0, 10)}*
+`;
+
+      const content = style === 'minimal' ? minimal : full;
+      const filename = editor === 'copilot'
+        ? '.github/copilot-instructions.md'
+        : editor === 'continue'
+          ? '.continue/cachly-autopilot.md'
+          : 'CLAUDE.md';
+
+      return [
+        `🤖 **Autopilot instructions generated** for **${editor === 'all' ? 'all editors' : editor}**`,
+        ``,
+        `**File to create:** \`${filename}\``,
+        ``,
+        `\`\`\`markdown`,
+        content,
+        `\`\`\``,
+        ``,
+        `**How to apply:**`,
+        `\`\`\`bash`,
+        `# Copy to your project root:`,
+        `cat > ${filename} << 'EOF'`,
+        content,
+        `EOF`,
+        `\`\`\``,
+        ``,
+        `✨ Once this file is in place, **${editor === 'copilot' ? 'GitHub Copilot' : editor === 'continue' ? 'Continue.dev' : 'Claude/Cursor/Windsurf'}** will manage the Brain automatically — no manual calls needed, ever.`,
+      ].join('\n');
+    }
+
+    // ── v0.7 Knowledge Syndication: syndicate ────────────────────────────────
+    case 'syndicate': {
+      const { topic, outcome = 'success', what_worked, what_failed = '', severity = 'minor', tags = [], scope = 'public' } = args as {
+        topic: string; outcome?: string; what_worked: string; what_failed?: string; severity?: string; tags?: string[]; scope?: string;
+      };
+
+      if (!topic || !what_worked) {
+        throw new McpError(ErrorCode.InvalidParams, 'topic and what_worked are required');
+      }
+
+      const body = { topic, outcome, what_worked, what_failed, severity, tags, scope };
+      const res = await apiFetch<{ id: string; topic: string; outcome: string; message: string; deduped?: boolean }>(
+        '/api/v1/syndication/contribute',
+        { method: 'POST', body: JSON.stringify(body) }
+      );
+
+      const scopeLabel = scope === 'org' ? '🏢 org-private' : '🌐 global commons';
+      const dedupNote = res.deduped
+        ? `\n> ♻️ Duplicate detected — trust score incremented for the existing lesson.`
+        : '';
+
+      return [
+        `${scope === 'org' ? '🏢' : '🌐'} **Lesson syndicated to the ${scope === 'org' ? 'org Knowledge Commons' : 'global Knowledge Commons'}**${dedupNote}`,
+        ``,
+        `**ID:** \`${res.id}\``,
+        `**Topic:** \`${res.topic}\` · **Outcome:** ${res.outcome} · **Scope:** ${scopeLabel}`,
+        ``,
+        scope === 'org'
+          ? `This lesson is visible only within your organisation. Use \`syndicate_search(scope="org")\` to find it.`
+          : `Your lesson is now searchable by every AI brain in the network.`,
+        `When another instance confirms it works, its trust score rises — and so does your contributor reputation.`,
+        ``,
+        `**Tip:** Use \`syndicate_search(q="${topic}")\` to see all community lessons on this topic.`,
+      ].join('\n');
+    }
+
+    // ── v0.7 Knowledge Syndication: syndicate_search ─────────────────────────
+    case 'syndicate_search': {
+      const { q = '', limit = 20, category = '', scope = '' } = args as { q?: string; limit?: number; category?: string; scope?: string };
+
+      const params = new URLSearchParams();
+      if (q) params.set('q', q);
+      if (category) params.set('category', category);
+      if (scope) params.set('scope', scope);
+      params.set('limit', String(Math.min(Math.max(1, limit), 50)));
+
+      const res = await apiFetch<{ results: Array<{
+        id: string; topic: string; category: string; outcome: string;
+        what_worked: string; what_failed: string; severity: string;
+        confirm_count: number; created_at: string;
+      }>; count: number; query: string }>(`/api/v1/syndication/search?${params}`);
+
+      if (!res.results || res.results.length === 0) {
+        return q
+          ? `No lessons found for "${q}" in the global Knowledge Commons yet.\n\nBe the first to contribute: \`syndicate(topic="...", what_worked="...")\``
+          : `The global Knowledge Commons is empty. Be the first contributor:\n\`syndicate(topic="deploy:api", what_worked="...")\``;
+      }
+
+      const outcomeIcon = (o: string) => o === 'success' ? '✅' : o === 'failure' ? '❌' : '⚠️';
+      const severityLabel = (s: string) => s === 'critical' ? '🔴' : s === 'major' ? '🟡' : '🟢';
+      const confirmBar = (n: number) => {
+        const filled = Math.min(10, Math.round(n / 5));
+        return '█'.repeat(filled) + '░'.repeat(10 - filled) + ` ×${n}`;
+      };
+
+      const header = [q, category].filter(Boolean).join(' · ');
+      const lines: string[] = [
+        `## 🌐 Global Knowledge Commons${header ? ` — ${header}` : ' — Recent'}`,
+        `*${res.count} lesson${res.count === 1 ? '' : 's'} found*`,
+        ``,
+      ];
+
+      for (const lesson of res.results) {
+        lines.push(
+          `### ${outcomeIcon(lesson.outcome)} \`${lesson.topic}\` ${severityLabel(lesson.severity)}`,
+          `**Trust:** ${confirmBar(lesson.confirm_count)}`,
+          lesson.what_worked ? `**What worked:** ${lesson.what_worked}` : '',
+          lesson.what_failed ? `**What failed:** ${lesson.what_failed}` : '',
+          `*Contributed ${new Date(lesson.created_at).toLocaleDateString('de-DE')} · ID: \`${lesson.id}\`*`,
+          ``,
+        );
+      }
+
+      lines.push(
+        `---`,
+        `**Confirm** (this helped you): \`syndicate(topic="${res.results[0]?.topic ?? '...'}", what_worked="...")\` → auto-deduped, trust +1`,
+        `**Contribute your own:** \`syndicate(topic="fix:...", what_worked="...")\``,
+        `**Filter by category:** \`syndicate_search(category="fix")\``,
+      );
+
+      return lines.filter(l => l !== '').join('\n');
+    }
+
+    // ── v0.7 Knowledge Syndication: syndicate_stats ──────────────────────────
+    case 'syndicate_stats': {
+      const res = await apiFetch<{
+        total_lessons: number;
+        total_confirms: number;
+        added_last_7_days: number;
+        top_categories: Array<{ category: string; count: number }>;
+        most_trusted: Array<{
+          id: string; topic: string; outcome: string;
+          what_worked: string; confirm_count: number; created_at: string;
+        }>;
+      }>('/api/v1/syndication/stats');
+
+      const confirmBar = (n: number) => {
+        const filled = Math.min(10, Math.round(n / 5));
+        return '█'.repeat(filled) + '░'.repeat(10 - filled) + ` ×${n}`;
+      };
+
+      const lines: string[] = [
+        `## 🌐 Global Knowledge Commons — Stats`,
+        ``,
+        `| Metric | Value |`,
+        `|---|---|`,
+        `| Total lessons | **${res.total_lessons.toLocaleString()}** |`,
+        `| Total confirms | **${res.total_confirms.toLocaleString()}** |`,
+        `| Added last 7 days | **${res.added_last_7_days}** |`,
+        ``,
+        `### Top Categories`,
+      ];
+
+      for (const cat of res.top_categories ?? []) {
+        lines.push(`- \`${cat.category}\` — ${cat.count} lesson${cat.count === 1 ? '' : 's'}`);
+      }
+
+      lines.push(``, `### Most Trusted Lessons`);
+
+      for (const lesson of res.most_trusted ?? []) {
+        lines.push(
+          `**\`${lesson.topic}\`** ${confirmBar(lesson.confirm_count)}`,
+          `> ${lesson.what_worked.slice(0, 120)}${lesson.what_worked.length > 120 ? '…' : ''}`,
+          ``,
+        );
+      }
+
+      lines.push(
+        `---`,
+        `**Contribute:** \`syndicate(topic="...", what_worked="...")\`  |  **Search:** \`syndicate_search(q="your problem")\``,
+      );
+
+      // Top contributors (anonymous scores)
+      if ((res as any).top_contributors?.length) {
+        lines.push(``, `### 🏅 Top Contributors (anonymous)`);
+        for (const c of (res as any).top_contributors) {
+          lines.push(`- Trust **${c.trust_score}** · ${c.lessons_count} lesson${c.lessons_count === 1 ? '' : 's'} · ${c.confirms_received} confirms received`);
+        }
+      }
+
+      return lines.join('\n');
+    }
+
+    // ── v0.8 Knowledge Syndication: syndicate_trending ───────────────────────
+    case 'syndicate_trending': {
+      const { limit = 10 } = args as { limit?: number };
+
+      const params = new URLSearchParams({ limit: String(Math.min(Math.max(1, limit), 50)) });
+      const res = await apiFetch<{ results: Array<{
+        id: string; topic: string; category: string; outcome: string;
+        what_worked: string; what_failed: string; severity: string;
+        confirm_count: number; trend_score: number; created_at: string;
+      }>; count: number }>(`/api/v1/syndication/trending?${params}`);
+
+      if (!res.results || res.results.length === 0) {
+        return [
+          `## 📈 Trending in the Knowledge Commons`,
+          ``,
+          `No trending lessons yet (need at least 2 confirms in the last 7 days).`,
+          ``,
+          `Contribute and confirm lessons to see them trend: \`syndicate(topic="...", what_worked="...")\``,
+        ].join('\n');
+      }
+
+      const outcomeIcon = (o: string) => o === 'success' ? '✅' : o === 'failure' ? '❌' : '⚠️';
+      const severityLabel = (s: string) => s === 'critical' ? '🔴' : s === 'major' ? '🟡' : '🟢';
+      const confirmBar = (n: number) => {
+        const filled = Math.min(10, Math.round(n / 5));
+        return '█'.repeat(filled) + '░'.repeat(10 - filled) + ` ×${n}`;
+      };
+      const trendBar = (score: number) => {
+        const filled = Math.min(10, Math.round(score * 2));
+        return '▲'.repeat(filled) + '△'.repeat(10 - filled) + ` ${score.toFixed(2)}/day`;
+      };
+
+      const lines: string[] = [
+        `## 📈 Trending in the Knowledge Commons`,
+        `*Lessons with the fastest confirmation velocity in the last 7 days*`,
+        ``,
+      ];
+
+      for (const lesson of res.results) {
+        lines.push(
+          `### ${outcomeIcon(lesson.outcome)} \`${lesson.topic}\` ${severityLabel(lesson.severity)}`,
+          `**Trend:** ${trendBar(lesson.trend_score)}  |  **Trust:** ${confirmBar(lesson.confirm_count)}`,
+          lesson.what_worked ? `**What worked:** ${lesson.what_worked.slice(0, 200)}${lesson.what_worked.length > 200 ? '…' : ''}` : '',
+          `*ID: \`${lesson.id}\` · ${new Date(lesson.created_at).toLocaleDateString('de-DE')}*`,
+          ``,
+        );
+      }
+
+      lines.push(
+        `---`,
+        `**Confirm** (if this helped you): \`syndicate(topic="${res.results[0]?.topic ?? '...'}", what_worked="...")\` → auto-deduped, trust +1`,
+        `**All trending:** \`syndicate_trending(limit=50)\`  |  **Search:** \`syndicate_search(q="...")\``,
+      );
+
+      return lines.filter(l => l !== '').join('\n');
+    }
+
     default:
       return null;
   }
@@ -5664,14 +7860,81 @@ async function handleBulkLockStream(name: string, args: Record<string, unknown>)
 // ── Server setup ──────────────────────────────────────────────────────────────
 
 const server = new Server(
-  { name: 'cachly-mcp', version: '0.4.0' },
+  { name: 'cachly-mcp', version: CURRENT_VERSION },
   { capabilities: { tools: {} } }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
 
+// ── Auto-session management ───────────────────────────────────────────────────
+// Transparently starts a Brain session on the first tool call of a process
+// and saves a session_end summary on SIGTERM/exit so users never have to call
+// session_start/session_end manually.
+
+let _autoSessionInstanceId: string | null = null;
+let _autoSessionStarted = false;
+let _autoSessionToolCount = 0;
+
+async function autoStartSession(instanceId: string): Promise<void> {
+  if (_autoSessionStarted) return;
+  _autoSessionStarted = true;
+  _autoSessionInstanceId = instanceId;
+  try {
+    await handleTool('session_start', { instance_id: instanceId, focus: 'auto (MCP session)' });
+  } catch { /* non-fatal — session tracking is a best-effort feature */ }
+
+  // Auto-index the project if it hasn't been indexed in the last 24h.
+  // This is the main lever for growing token savings: more indexed code →
+  // more semantic cache hits → fewer LLM calls for repeated questions.
+  if (process.env.CACHLY_AUTO_INDEX !== 'false') {
+    try {
+      const redis = await getConnection(instanceId);
+      const lastIndexed = await redis.get(`cachly:index:last_indexed:${instanceId}`);
+      const staleMs = 24 * 60 * 60 * 1000;
+      const isStale = !lastIndexed || (Date.now() - parseInt(lastIndexed, 10)) > staleMs;
+      if (isStale) {
+        // Mark as indexing now to prevent concurrent re-runs.
+        await redis.set(`cachly:index:last_indexed:${instanceId}`, String(Date.now()), 'EX', 90000);
+        // Run in background — don't block the first tool call.
+        handleTool('index_project', {
+          instance_id: instanceId,
+          dir: process.cwd(),
+          max_files: 150,
+          ttl: 86400 * 7, // cache for 7 days
+          namespace: 'cachly:sem:code',
+        }).catch(() => undefined);
+      }
+    } catch { /* never block the session on indexing errors */ }
+  }
+}
+
+async function autoEndSession(): Promise<void> {
+  if (!_autoSessionStarted || !_autoSessionInstanceId) return;
+  _autoSessionStarted = false;
+  try {
+    await handleTool('session_end', {
+      instance_id: _autoSessionInstanceId,
+      summary: `Auto-ended after ${_autoSessionToolCount} tool call(s). Session was started automatically.`,
+      files_changed: [],
+      lessons_learned: 0,
+    });
+  } catch { /* non-fatal */ }
+}
+
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
+
+  // Auto-start brain session on first tool call that has an instance_id.
+  // Skip session management tools to avoid recursion.
+  const sessionTools = new Set(['session_start', 'session_end', 'auto_learn_session']);
+  if (!sessionTools.has(name) && !_autoSessionStarted) {
+    const instanceId = (args as Record<string, unknown>)?.instance_id as string | undefined;
+    if (instanceId) {
+      await autoStartSession(instanceId).catch(() => undefined);
+    }
+  }
+  if (!sessionTools.has(name)) _autoSessionToolCount++;
+
   try {
     const text = await handleTool(name, (args ?? {}) as Record<string, unknown>);
     return { content: [{ type: 'text', text }] };
@@ -5681,8 +7944,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// Graceful shutdown – close all Redis connections
+// Graceful shutdown – close all Redis connections + auto-end brain session
 process.on('SIGTERM', async () => {
+  await autoEndSession().catch(() => undefined);
+  for (const [, client] of pool) await client.quit().catch(() => undefined);
+  process.exit(0);
+});
+
+process.on('SIGINT', async () => {
+  await autoEndSession().catch(() => undefined);
   for (const [, client] of pool) await client.quit().catch(() => undefined);
   process.exit(0);
 });
@@ -5703,6 +7973,8 @@ const EDITOR_FILES: Record<string, string> = {
   windsurf: '.windsurf/mcp.json',
   copilot:  '.vscode/mcp.json',
   continue: '.continue/config.json',
+  cline:    '.vscode/mcp.json',              // Cline respects VS Code project MCP config
+  zed:      '.zed/settings.json',            // Zed project-level context_servers
 };
 
 const CLAUDE_MD_MARKER_START = '<!-- cachly-brain-start -->';
@@ -5719,6 +7991,20 @@ function buildMcpConfig(apiKey: string, instanceId: string, editor: string): str
       },
     }, null, 2);
   }
+  if (editor === 'zed') {
+    return JSON.stringify({
+      context_servers: {
+        cachly: {
+          command: {
+            path: 'npx',
+            args: ['-y', '@cachly-dev/mcp-server@latest'],
+            env: { CACHLY_API_URL: 'https://api.cachly.dev', CACHLY_JWT: apiKey, CACHLY_BRAIN_INSTANCE_ID: instanceId },
+          },
+          settings: {},
+        },
+      },
+    }, null, 2);
+  }
   return JSON.stringify({
     mcpServers: {
       cachly: {
@@ -5732,54 +8018,54 @@ function buildMcpConfig(apiKey: string, instanceId: string, editor: string): str
 
 function buildClaudeMdBlock(instanceId: string): string {
   return `${CLAUDE_MD_MARKER_START}
-## Cachly AI Brain — Persistent Memory
+## Cachly AI Brain
 
-Your AI Brain instance ID: \`${instanceId}\`
+The Cachly MCP server is available as tool \`cachly\`.
+Your instance ID: \`${instanceId}\`
 
-> The Brain gives you persistent memory across sessions, context compaction, and provider switches.
-> Every lesson, every bug fix, every decision — recalled instantly next time.
-> instance_id is pre-filled. Do NOT ask the user for it.
+> **Sessions are fully automatic** (MCP ≥ 0.5.3).
+> The Brain starts tracking when you call any tool for the first time and saves a summary when your editor closes. You never need to call \`session_start\` or \`session_end\` manually.
 
-<!-- cachly-lessons-start --><!-- cachly-lessons-end -->
+---
 
-### MANDATORY: Call at the START of every session
+### Before editing any file — WIP-registry (prevents half-finished code across sessions):
 \`\`\`
-session_start(instance_id="${instanceId}", focus="<what you're working on today>", workspace_path="$PWD", provider="claude-code")
+remember_context(
+  instance_id = "${instanceId}",
+  key         = "wip-registry",
+  content     = "EDITING: <file:line> — goal: <what you are implementing>",
+  category    = "bug",
+  ttl         = 86400,
+)
 \`\`\`
-Returns: last session summary, open TODOs, cross-provider checkpoint, and relevant lessons.
+After the edit is complete, update \`content\` to \`"DONE: <file> — <what was completed>"\`.
 
-### IMMEDIATELY after Claude Code context compaction
+### After fixing any bug or solving a tricky problem:
 \`\`\`
-compact_recover(instance_id="${instanceId}")
-\`\`\`
-Restores your working context in one call — checkpoint, open TODOs, critical lessons.
-
-### MANDATORY: Call at the END of every session
-\`\`\`
-session_end(instance_id="${instanceId}", summary="<2-3 sentences on what was done>", files_changed=["src/..."], lessons_learned=1, project_dir="$PWD")
-\`\`\`
-The project_dir parameter auto-refreshes CLAUDE.md with the latest lessons inline.
-
-### Every ~5 tool uses OR before switching providers
-\`\`\`
-session_ping(instance_id="${instanceId}", task="<what you're doing>", provider="claude-code", files=["..."], next_step="<what comes next>")
-\`\`\`
-
-### After fixing ANY bug or solving a hard problem
-\`\`\`
-learn_from_attempts(instance_id="${instanceId}", topic="category:keyword", outcome="success", what_worked="exact solution", severity="critical"|"major"|"minor")
-\`\`\`
-
-### Open TODOs that survive sessions and compaction
-\`\`\`
-todo_add(instance_id="${instanceId}", task="description", priority="high"|"medium"|"low")
-todo_done(instance_id="${instanceId}", id="<id from todo_add>")
+learn_from_attempts(
+  instance_id = "${instanceId}",
+  topic       = "category:keyword",
+  outcome     = "success",
+  what_worked = "...",
+  what_failed = "...",
+  severity    = "critical" | "major" | "minor",
+  file_paths  = ["path/to/file"],
+  commands    = ["the command that worked"],
+  tags        = ["tag1"],
+)
 \`\`\`
 
-### Before starting any non-trivial task
+### Before starting any task — recall relevant lessons first:
 \`\`\`
-recall_best_solution(instance_id="${instanceId}", topic="relevant:topic")
+smart_recall(
+  instance_id = "${instanceId}",
+  query       = "<describe what you are about to do>",
+)
 \`\`\`
+
+### Half-finished code rule:
+Never commit code that does not compile. Run \`tsc --noEmit\` / \`go build ./...\` before every commit.
+If a session ends mid-task, save the WIP-registry entry so the next session picks up exactly where you left off.
 ${CLAUDE_MD_MARKER_END}`;
 }
 
@@ -5856,10 +8142,16 @@ if (process.argv[2] === 'setup') {
   const { resolve, dirname } = await import('node:path');
   const { createInterface } = await import('node:readline');
 
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
-  const ask = (q: string): Promise<string> => new Promise(res => rl.question(q, ans => res(ans.trim())));
+  // --yes / -y → non-interactive mode (skips all prompts, picks defaults)
+  const nonInteractive = process.argv.includes('--yes') || process.argv.includes('-y');
 
-  console.log('\n🧠  cachly AI Brain — Interactive Setup');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const ask = (q: string, defaultVal = ''): Promise<string> => {
+    if (nonInteractive) { console.log(`${q}${defaultVal}`); return Promise.resolve(defaultVal); }
+    return new Promise(res => rl.question(q, ans => res(ans.trim() || defaultVal)));
+  };
+
+  console.log('\n🧠  cachly AI Brain — Setup');
   console.log('────────────────────────────────────────\n');
 
   // ── Step 1: Authenticate via OAuth Device Flow ────────────────────────────
@@ -5870,8 +8162,9 @@ if (process.argv[2] === 'setup') {
     const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
     const CLIENT_ID = 'cachly-cli';
 
-    console.log('Step 1: Sign in to cachly (free — no credit card required)\n');
+    console.log('Step 1: Sign in to cachly (free, no credit card)\n');
 
+    // Start device flow
     let deviceCode = '', userCode = '', verifyUri = '', pollInterval = 5000;
     try {
       const deviceRes = await fetch(`${AUTH_BASE}/auth/device`, {
@@ -5879,91 +8172,90 @@ if (process.argv[2] === 'setup') {
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `client_id=${CLIENT_ID}&scope=openid`,
       });
-      if (!deviceRes.ok) throw new Error(`HTTP ${deviceRes.status}`);
+      if (!deviceRes.ok) throw new Error(`Device flow error: HTTP ${deviceRes.status}`);
       const data = await deviceRes.json() as {
         device_code: string; user_code: string;
         verification_uri_complete: string; interval: number;
       };
-      deviceCode   = data.device_code;
-      userCode     = data.user_code;
-      verifyUri    = data.verification_uri_complete;
-      pollInterval = (data.interval ?? 5) * 1000;
+      deviceCode    = data.device_code;
+      userCode      = data.user_code;
+      verifyUri     = data.verification_uri_complete;
+      pollInterval  = (data.interval ?? 5) * 1000;
     } catch (e) {
-      console.error(`\nCould not reach auth service: ${(e as Error).message}`);
-      console.error('Fallback: sign in at https://cachly.dev and paste your API token.\n');
+      console.error(`\nFailed to start device flow: ${(e as Error).message}`);
+      console.error('Falling back: sign in at https://cachly.dev/setup-ai and paste your API token.\n');
       token = await ask('   Paste API token (cky_live_...): ');
-      if (!token) { console.error('\nToken required. Aborting.\n'); rl.close(); process.exit(1); }
-      deviceCode = '';
+      if (!token) { console.error('\nToken is required. Aborting.\n'); rl.close(); process.exit(1); }
+      console.log('');
+      deviceCode = ''; // mark as fallback so we skip polling
     }
 
-    if (deviceCode) {
-      console.log(`   Code: \x1b[1;33m${userCode}\x1b[0m`);
-      console.log(`   URL:  ${verifyUri}\n`);
+    if (deviceCode!) {
+      // Open browser
+      console.log(`   Code: \x1b[1;33m${userCode!}\x1b[0m`);
+      console.log(`   URL:  ${verifyUri!}\n`);
       try {
         const { execSync } = await import('node:child_process');
         const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-        execSync(`${openCmd} "${verifyUri}"`, { stdio: 'ignore' });
+        execSync(`${openCmd} "${verifyUri!}"`, { stdio: 'ignore' });
         console.log('   ✓  Browser opened — confirm the code above to continue...\n');
       } catch {
-        console.log('   👉  Open the URL above in your browser and confirm the code.\n');
+        console.log('   👉  Open the URL above in your browser and enter the code.\n');
       }
 
+      // Poll for token
       process.stdout.write('   Waiting for authorization');
-      const deadline = Date.now() + 10 * 60 * 1000;
+      const deadline = Date.now() + 10 * 60 * 1000; // 10 min
       while (Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, pollInterval));
+        await new Promise(r => setTimeout(r, pollInterval!));
         process.stdout.write('.');
         try {
           const tokenRes = await fetch(`${AUTH_BASE}/token`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: `client_id=${CLIENT_ID}&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${deviceCode}`,
+            body: `client_id=${CLIENT_ID}&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${deviceCode!}`,
           });
-          const td = await tokenRes.json() as { access_token?: string; error?: string };
-          if (td.access_token) {
-            token = td.access_token;
+          const tokenData = await tokenRes.json() as { access_token?: string; error?: string };
+          if (tokenData.access_token) {
+            token = tokenData.access_token;
             console.log(' \x1b[32m✓ Authorized!\x1b[0m\n');
             break;
           }
-          if (td.error === 'slow_down') pollInterval = Math.min(pollInterval + 2000, 15000);
-          else if (td.error && td.error !== 'authorization_pending') {
-            console.error(`\nAuth error: ${td.error}. Aborting.\n`);
+          // authorization_pending = keep polling; slow_down = increase interval
+          if (tokenData.error === 'slow_down') pollInterval = Math.min(pollInterval! + 2000, 15000);
+          else if (tokenData.error && tokenData.error !== 'authorization_pending') {
+            console.error(`\nAuth error: ${tokenData.error}. Aborting.\n`);
             rl.close(); process.exit(1);
           }
         } catch { /* network hiccup — keep polling */ }
       }
-      if (!token) { console.error('\nTimed out. Aborting.\n'); rl.close(); process.exit(1); }
-    }
-
-    // Exchange short-lived Keycloak JWT → long-lived cky_live_ API key
-    if (token.startsWith('eyJ')) {
-      process.stdout.write('⏳ Generating your API key...');
-      try {
-        const keyRes = await fetch(`${API_URL}/api/v1/api-keys`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ name: 'cachly-mcp-setup', scope: 'read_write' }),
-        });
-        if (!keyRes.ok) throw new Error(`HTTP ${keyRes.status}`);
-        const keyBody = await keyRes.json() as { key?: string };
-        if (keyBody.key) { token = keyBody.key; console.log(' ✓\n'); }
-        else throw new Error('no key in response');
-      } catch (e) {
-        console.log(` (skipped — JWT will be used directly)\n`);
-      }
+      if (!token) { console.error('\nTimed out waiting for authorization. Aborting.\n'); rl.close(); process.exit(1); }
+      console.log('');
     }
   }
 
-  // ── Step 1b: Auto-provision a Brain instance if none exist ─────────────────
-  // POST /api/v1/instances/auto is idempotent — returns existing or creates free Brain
-  let autoProvisioned = false;
-  try {
-    const autoRes = await fetch(`${API_URL}/api/v1/instances/auto`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-    });
-    if (autoRes.ok) autoProvisioned = true;
-  } catch { /* non-fatal */ }
+  // ── Step 1b: Exchange Keycloak JWT → long-lived cky_live_ API key ──────────
+  // Only do this when the token looks like a Keycloak JWT (starts with "eyJ"),
+  // not when the user already pasted a cky_live_ key directly.
+  if (token.startsWith('eyJ')) {
+    process.stdout.write('⏳ Generating your API key...');
+    try {
+      const keyRes = await fetch(`${API_URL}/api/v1/api-keys`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ name: 'cachly-mcp-setup', scope: 'read_write' }),
+      });
+      if (!keyRes.ok) throw new Error(`HTTP ${keyRes.status}`);
+      const keyBody = await keyRes.json() as { key: string };
+      if (!keyBody.key) throw new Error('no key in response');
+      token = keyBody.key; // swap JWT → cky_live_...
+      console.log(' ✓\n');
+    } catch (e) {
+      console.log(' (skipped)\n');
+      // Non-fatal: fall back to using the Keycloak JWT directly.
+      // It will expire but setup still works for now.
+    }
+  }
 
   // ── Step 2: Fetch & pick instance ─────────────────────────────────────────
   process.stdout.write('⏳ Fetching your instances...');
@@ -5976,66 +8268,103 @@ if (process.argv[2] === 'setup') {
     const body = await res.json() as { data: typeof instances };
     instances = (body.data ?? []).filter(i => i.status === 'running');
   } catch (e) {
-    console.error(`\n\nFailed to fetch instances: ${(e as Error).message}`);
-    console.error('Check your token and try again.\n');
+    const msg = (e as Error).message;
+    console.error(`\n\nFailed to fetch instances: ${msg}`);
+    if (msg.includes('401')) {
+      console.error('Token rejected. Get a valid token at https://cachly.dev/setup-ai\n');
+      try {
+        const { execSync } = await import('node:child_process');
+        const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+        execSync(`${openCmd} https://cachly.dev/setup-ai`, { stdio: 'ignore' });
+      } catch { /* ignore */ }
+    }
     rl.close(); process.exit(1);
   }
   console.log(` found ${instances.length}\n`);
 
   if (instances.length === 0) {
-    if (autoProvisioned) {
-      // Poll up to 10× every 3s (30s total) waiting for the Brain to start
-      process.stdout.write(' waiting for Brain to start');
-      for (let attempt = 0; attempt < 10 && instances.length === 0; attempt++) {
-        await new Promise(r => setTimeout(r, 3000));
-        process.stdout.write('.');
-        try {
-          const retry = await fetch(`${API_URL}/api/v1/instances`, { headers: { Authorization: `Bearer ${token}` } });
-          if (retry.ok) {
-            const b = await retry.json() as { data: typeof instances };
-            instances = (b.data ?? []).filter(i => i.status === 'running');
-          }
-        } catch { /* ignore */ }
+    // Auto-provision a free Brain instance so users don't have to visit the website.
+    process.stdout.write('⏳ Creating your free Brain instance...');
+    try {
+      const autoRes = await fetch(`${API_URL}/api/v1/instances/auto`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      });
+      if (!autoRes.ok) throw new Error(`HTTP ${autoRes.status}`);
+      const autoBody = await autoRes.json() as { instance?: { id: string; name: string; status: string; tier: string; region: string }; instance_id?: string; status?: string; created?: boolean };
+      if (autoBody.instance) {
+        // Returned an existing instance.
+        instances = [autoBody.instance];
+      } else if (autoBody.instance_id) {
+        // Newly created — poll until running or give up after 30 s.
+        const newId = autoBody.instance_id;
+        console.log(` ✓ created (${newId.slice(0, 8)}…)\n`);
+        process.stdout.write('⏳ Waiting for instance to start');
+        for (let attempt = 0; attempt < 15; attempt++) {
+          await new Promise(r => setTimeout(r, 2000));
+          process.stdout.write('.');
+          try {
+            const checkRes = await fetch(`${API_URL}/api/v1/instances/${newId}`, { headers: { Authorization: `Bearer ${token}` } });
+            if (checkRes.ok) {
+              const inst = await checkRes.json() as { id: string; name: string; status: string; tier: string; region: string };
+              if (inst.status === 'running') { instances = [inst]; break; }
+            }
+          } catch { /* keep polling */ }
+        }
+        console.log('');
       }
-      process.stdout.write(instances.length > 0 ? ' ready!\n' : '\n');
+    } catch (e) {
+      console.log(` failed: ${(e as Error).message}\n`);
     }
+
     if (instances.length === 0) {
-      console.error('\nBrain provisioning is taking longer than expected. Run setup again in a minute.\n');
+      console.error('\nCould not create an instance automatically. Opening https://cachly.dev/instances …\n');
+      try {
+        const { execSync } = await import('node:child_process');
+        const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+        execSync(`${openCmd} https://cachly.dev/instances`, { stdio: 'ignore' });
+      } catch { /* ignore */ }
       rl.close(); process.exit(1);
     }
   }
 
-  let instance = instances[0];
+  // Auto-pick the most recently created running instance — no prompt.
+  const instance = instances[0];
   if (instances.length > 1) {
-    console.log('Step 2: Pick your Brain instance:\n');
-    instances.forEach((inst, idx) =>
-      console.log(`   ${idx + 1}. ${inst.name.padEnd(24)} ${inst.tier.padEnd(10)} ${inst.region}`)
-    );
-    const raw = await ask(`\n   Pick [1-${instances.length}] (Enter = 1): `);
-    const idx = parseInt(raw || '1', 10) - 1;
-    instance = instances[Math.max(0, Math.min(instances.length - 1, idx))];
+    console.log(`ℹ️  Multiple instances found — using most recent: ${instance.name}`);
+    console.log(`   (Run with --instance-id <id> to use a different one)\n`);
   }
   console.log(`✓  Instance: ${instance.name} (${instance.id.slice(0, 8)}…)\n`);
 
   // ── Step 3: Detect editors ────────────────────────────────────────────────
   const cwd = process.cwd();
   const detected: string[] = [];
+  const { homedir } = await import('node:os');
+  const home = homedir();
   // Claude Code: always include (CLAUDE.md is universal)
   detected.push('claude');
   if (existsSync(resolve(cwd, '.cursor')))   detected.push('cursor');
   if (existsSync(resolve(cwd, '.windsurf'))) detected.push('windsurf');
   if (existsSync(resolve(cwd, '.vscode')))   detected.push('copilot');
   if (existsSync(resolve(cwd, '.continue'))) detected.push('continue');
+  // Cline: VS Code extension — detect via globalStorage on the machine
+  const clineGlobalDir = process.platform === 'darwin'
+    ? resolve(home, 'Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev')
+    : resolve(home, '.vscode/extensions');
+  if (existsSync(clineGlobalDir) && !detected.includes('copilot')) detected.push('cline');
+  else if (existsSync(clineGlobalDir)) detected.push('cline'); // both copilot + cline share .vscode/mcp.json — fine
+  // Zed editor — detect via app data dir
+  const zedDir = process.platform === 'darwin'
+    ? resolve(home, 'Library/Application Support/Zed')
+    : resolve(home, '.config/zed');
+  if (existsSync(zedDir)) detected.push('zed');
 
   const editorLabel = (e: string) =>
-    ({ claude: 'Claude Code', cursor: 'Cursor', windsurf: 'Windsurf', copilot: 'GitHub Copilot', continue: 'Continue.dev' })[e] ?? e;
+    ({ claude: 'Claude Code', cursor: 'Cursor', windsurf: 'Windsurf', copilot: 'GitHub Copilot', continue: 'Continue.dev', cline: 'Cline (VSCode)', zed: 'Zed' })[e] ?? e;
 
-  console.log(`Step 3: Detected editors: ${detected.map(editorLabel).join(', ')}`);
-  const editorsRaw = await ask(`   Configure for which? [all / ${detected.join('/')}] (Enter = all): `);
-  const editorsToSetup = !editorsRaw || editorsRaw.toLowerCase() === 'all'
-    ? detected
-    : editorsRaw.split(/[,\s]+/).map(s => s.toLowerCase()).filter(s => EDITOR_FILES[s]);
-  console.log('');
+  // Auto-configure all detected editors — no prompt needed.
+  const editorsToSetup = detected;
+  console.log(`Step 3: Configuring for: ${editorsToSetup.map(editorLabel).join(', ')}\n`);
 
   // ── Step 4: Write editor configs ──────────────────────────────────────────
   for (const editor of editorsToSetup) {
@@ -6049,321 +8378,109 @@ if (process.argv[2] === 'setup') {
   // ── Step 5: CLAUDE.md (always — idempotent) ───────────────────────────────
   const mdResult = await writeClaudeMd(cwd, instance.id);
   const mdLabel = mdResult === 'updated' ? '✅ Updated' : mdResult === 'appended' ? '✅ Appended to' : '✅ Written';
-  console.log(`${mdLabel}: CLAUDE.md`);
+  console.log(`${mdLabel}: CLAUDE.md\n`);
 
-  // ── Step 6: Claude Code Stop hook (auto-checkpoint before context window ends) ──
-  if (editorsToSetup.includes('claude')) {
-    try {
-      const { readFile: rf } = await import('node:fs/promises');
-      const claudeDir    = resolve(cwd, '.claude');
-      const settingsPath = resolve(claudeDir, 'settings.json');
-      await mkdir(claudeDir, { recursive: true });
-      let settings: Record<string, unknown> = {};
-      try { settings = JSON.parse(await rf(settingsPath, 'utf-8')); } catch { /* new file */ }
-      const hookCmd = 'npx @cachly-dev/mcp-server@latest ping';
-      const hooks = (settings.hooks ?? {}) as Record<string, unknown>;
-      const stopHooks = Array.isArray(hooks.Stop) ? hooks.Stop as unknown[] : [];
-      const alreadyAdded = stopHooks.some((h: unknown) =>
-        typeof h === 'object' && h !== null && (h as Record<string, unknown>).command === hookCmd
-      );
-      if (!alreadyAdded) {
-        stopHooks.push({ matcher: '', command: hookCmd });
-        hooks.Stop = stopHooks;
-        settings.hooks = hooks;
-        await writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-        console.log(`✅ Written: .claude/settings.json (Stop hook → auto session_ping)`);
+  // ── Step 6: Show Brain health (Aha moment) ────────────────────────────────
+  // Fetch brain health from the API to show the user what their agent will see.
+  process.stdout.write('\n⏳ Fetching your Brain health preview...');
+  try {
+    const brainRes = await fetch(`${API_URL}/api/v1/instances/${instance.id}/brain/stats`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (brainRes.ok) {
+      const brainData = await brainRes.json() as {
+        lesson_count?: number; context_count?: number;
+        open_failures?: number; quality_score?: number;
+      };
+      const lessons = brainData.lesson_count ?? 0;
+      const contexts = brainData.context_count ?? 0;
+      const score = brainData.quality_score ?? 0;
+      const level = lessons === 0 ? 'Intern 🌱' :
+        lessons < 10  ? 'Junior Dev 🔧' :
+        lessons < 30  ? 'Mid Dev ⚡' :
+        lessons < 60  ? 'Senior Dev 🧠' :
+        lessons < 100 ? 'Staff Eng 🚀' : 'Principal Eng 🏆';
+      console.log(' ✓\n');
+      console.log('┌──────────────────────────────────────────────────────┐');
+      console.log(`│  🧠  Brain Health Report                            │`);
+      console.log('├──────────────────────────────────────────────────────┤');
+      console.log(`│  Lessons stored    : ${String(lessons).padEnd(6)} │  Level: ${level.padEnd(20)}│`);
+      console.log(`│  Context entries   : ${String(contexts).padEnd(6)} │  Quality score: ${String(Math.round(score * 100)).padEnd(3)}%       │`);
+      if (lessons === 0) {
+        console.log('├──────────────────────────────────────────────────────┤');
+        console.log('│  Your Brain is empty and ready to learn.            │');
+        console.log('│  After your first coding session it will contain:   │');
+        console.log('│    • Lessons from every bug you fixed               │');
+        console.log('│    • Your project\'s indexed files                   │');
+        console.log('│    • A session summary for next time                │');
       }
-    } catch { /* non-fatal */ }
+      console.log('└──────────────────────────────────────────────────────┘');
+    } else {
+      console.log(' (skipped)');
+    }
+  } catch { console.log(' (skipped)'); }
+
+  console.log(`\n🧠  Done! Restart your editor — the \`cachly\` MCP tools will appear.`);
+  console.log(`   Your AI now has persistent memory across every session.\n`);
+  console.log(`   Dashboard: https://cachly.dev/instances/${instance.id}\n`);
+
+  // ── Step 7: Email opt-in (non-blocking — at the very end) ────────────────
+  if (!nonInteractive) {
+    const email = await ask('   📬 Stay in the loop? Email for release notes [Enter to skip]: ');
+    if (email && email.includes('@')) {
+      try {
+        await fetch(`${API_URL}/api/newsletter/subscribe`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: email.trim().toLowerCase(), source: 'mcp-setup' }),
+          signal: AbortSignal.timeout(5000),
+        });
+        console.log('   ✅ Subscribed — you\'ll only hear from us when it matters.\n');
+      } catch { /* fire and forget */ }
+    }
   }
 
   rl.close();
-  console.log(`\n🧠  Done! Restart your editor — the \`cachly\` MCP tools will appear.`);
-  console.log(`    Your AI now has persistent memory across every session.\n`);
   process.exit(0);
 }
 
-// ── CLI: cachly join <token> (team invite — zero friction) ────────────────────
-// Usage: npx @cachly-dev/mcp-server join <token>
-//
-// Connects the user to a shared Brain instance via an invite link.
-// Flow: resolve token → show instance info → Device Code auth → write configs.
+// ── CLI: cachly index <dir> ───────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest index [./path/to/project]
+// Indexes the project directory into the Brain — perfect for CI/CD cron jobs.
 
-if (process.argv[2] === 'join') {
-  const { writeFile, mkdir } = await import('node:fs/promises');
-  const { existsSync } = await import('node:fs');
-  const { resolve, dirname } = await import('node:path');
-
-  const inviteToken = process.argv[3] ?? '';
-  if (!inviteToken) {
-    console.error('\n❌  Usage: npx @cachly-dev/mcp-server@latest join <token>\n');
-    console.error('   Get a token from a teammate: invite_link() in their AI assistant.\n');
-    process.exit(1);
-  }
-
-  console.log('\n🧠  cachly AI Brain — Team Join');
-  console.log('──────────────────────────────────\n');
-
-  // Step 1: Resolve the invite token (public, no auth)
-  process.stdout.write('⏳ Resolving invite...');
-  let instanceId = '', instanceName = '', instanceTier = '';
-  try {
-    const infoRes = await fetch(`${API_URL}/api/invite/${inviteToken}`, {
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!infoRes.ok) {
-      console.error(`\n\n❌  Invite not found or expired (HTTP ${infoRes.status}).`);
-      console.error('    Ask your teammate to generate a new one with: invite_link()\n');
-      process.exit(1);
-    }
-    const info = await infoRes.json() as { instance_id: string; instance_name: string; tier: string; label?: string };
-    instanceId   = info.instance_id;
-    instanceName = info.instance_name;
-    instanceTier = info.tier ?? 'free';
-    console.log(` ✓\n`);
-    const label = info.label ? ` ("${info.label}")` : '';
-    console.log(`   Brain instance: \x1b[1m${instanceName}\x1b[0m${label} [${instanceTier}]`);
-    console.log(`   Instance ID:    ${instanceId}\n`);
-  } catch (e) {
-    console.error(`\n\n❌  Could not reach API: ${(e as Error).message}\n`);
-    process.exit(1);
-  }
-
-  // Step 2: Authenticate via Device Code Flow
-  const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
-  const CLIENT_ID = 'cachly-cli';
-
-  console.log('Step 1: Sign in to cachly (your own account — free, no credit card)\n');
-
-  let token = process.env.CACHLY_JWT ?? '';
-  if (token) {
-    console.log('✓  Using token from CACHLY_JWT env var\n');
-  } else {
-    let deviceCode = '', userCode = '', verifyUri = '', pollInterval = 5000;
-    try {
-      const deviceRes = await fetch(`${AUTH_BASE}/auth/device`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `client_id=${CLIENT_ID}&scope=openid`,
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!deviceRes.ok) throw new Error(`HTTP ${deviceRes.status}`);
-      const data = await deviceRes.json() as {
-        device_code: string; user_code: string;
-        verification_uri_complete: string; interval: number;
-      };
-      deviceCode   = data.device_code;
-      userCode     = data.user_code;
-      verifyUri    = data.verification_uri_complete;
-      pollInterval = (data.interval ?? 5) * 1000;
-    } catch (e) {
-      console.error(`\n❌  Auth service unreachable: ${(e as Error).message}`);
-      process.exit(1);
-    }
-
-    console.log(`   Code: \x1b[1;33m${userCode}\x1b[0m`);
-    console.log(`   URL:  ${verifyUri}\n`);
-    try {
-      const { execSync } = await import('node:child_process');
-      const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-      execSync(`${openCmd} "${verifyUri}"`, { stdio: 'ignore' });
-      console.log('   ✓  Browser opened — confirm the code above to continue...\n');
-    } catch {
-      console.log('   👉  Open the URL above in your browser and confirm the code.\n');
-    }
-
-    process.stdout.write('   Waiting for authorization');
-    const deadline = Date.now() + 10 * 60 * 1000;
-    while (Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, pollInterval));
-      process.stdout.write('.');
-      try {
-        const td = await (await fetch(`${AUTH_BASE}/token`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: `client_id=${CLIENT_ID}&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${deviceCode}`,
-        })).json() as { access_token?: string; error?: string };
-        if (td.access_token) { token = td.access_token; console.log(' \x1b[32m✓ Authorized!\x1b[0m\n'); break; }
-        if (td.error === 'slow_down') pollInterval = Math.min(pollInterval + 2000, 15000);
-        else if (td.error && td.error !== 'authorization_pending') {
-          console.error(`\n\n❌  Auth error: ${td.error}\n`); process.exit(1);
-        }
-      } catch { /* hiccup — keep polling */ }
-    }
-    if (!token) { console.error('\n\n❌  Timed out. Run the command again.\n'); process.exit(1); }
-
-    // Exchange Keycloak JWT → long-lived cky_live_ API key
-    if (token.startsWith('eyJ')) {
-      process.stdout.write('⏳ Generating your API key...');
-      try {
-        const keyBody = await (await fetch(`${API_URL}/api/v1/api-keys`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify({ name: 'cachly-mcp-join', scope: 'read_write' }),
-        })).json() as { key?: string };
-        if (keyBody.key) { token = keyBody.key; console.log(' ✓\n'); }
-        else throw new Error('no key in response');
-      } catch { console.log(' (skipped — JWT used directly)\n'); }
-    }
-  }
-
-  // Step 3: Detect editors and write configs
-  const cwd = process.cwd();
-  const detected: string[] = ['claude'];
-  if (existsSync(resolve(cwd, '.cursor')))   detected.push('cursor');
-  if (existsSync(resolve(cwd, '.windsurf'))) detected.push('windsurf');
-  if (existsSync(resolve(cwd, '.vscode')))   detected.push('copilot');
-  if (existsSync(resolve(cwd, '.continue'))) detected.push('continue');
-
-  console.log(`Step 2: Writing configs for: ${detected.join(', ')}\n`);
-
-  for (const editor of detected) {
-    const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
-    const configPath = resolve(cwd, configFile);
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(configPath, buildMcpConfig(token, instanceId, editor), 'utf-8');
-    console.log(`✅ Written: ${configFile}`);
-  }
-
-  const mdResult = await writeClaudeMd(cwd, instanceId);
-  const mdLabel = mdResult === 'updated' ? '✅ Updated' : mdResult === 'appended' ? '✅ Appended to' : '✅ Written';
-  console.log(`${mdLabel}: CLAUDE.md`);
-
-  // Write Claude Code Stop hook
-  if (detected.includes('claude')) {
-    try {
-      const { readFile: rf2, writeFile: wf2 } = await import('node:fs/promises');
-      const claudeDir    = resolve(cwd, '.claude');
-      const settingsPath = resolve(claudeDir, 'settings.json');
-      await mkdir(claudeDir, { recursive: true });
-      let settings: Record<string, unknown> = {};
-      try { settings = JSON.parse(await rf2(settingsPath, 'utf-8')); } catch { /* new file */ }
-      const hookCmd = 'npx @cachly-dev/mcp-server@latest ping';
-      const hooks = (settings.hooks ?? {}) as Record<string, unknown>;
-      const stopHooks = Array.isArray(hooks.Stop) ? hooks.Stop as unknown[] : [];
-      const alreadyAdded = stopHooks.some((h: unknown) =>
-        typeof h === 'object' && h !== null && (h as Record<string, unknown>).command === hookCmd
-      );
-      if (!alreadyAdded) {
-        stopHooks.push({ matcher: '', command: hookCmd });
-        hooks.Stop = stopHooks;
-        settings.hooks = hooks;
-        await wf2(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-        console.log(`✅ Written: .claude/settings.json (Stop hook → auto session_ping)`);
-      }
-    } catch { /* non-fatal */ }
-  }
-
-  console.log(`\n🧠  Joined! You're now connected to "${instanceName}".`);
-  console.log(`    Restart your editor — all ${instanceName} lessons are now available via session_start.\n`);
-  process.exit(0);
-}
-
-// ── CLI: cachly ping (Stop-hook — saves checkpoint when context window ends) ───
-// Called by Claude Code Stop hook. Silent on error — must not break the user's workflow.
-
-if (process.argv[2] === 'ping') {
-  const { readFile: rfp } = await import('node:fs/promises');
-  const { existsSync: ep } = await import('node:fs');
-  const { resolve: rp } = await import('node:path');
-  const cwd = process.cwd();
-
-  let instanceId = process.env.CACHLY_INSTANCE_ID ?? process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
-  let apiKey     = process.env.CACHLY_API_KEY ?? process.env.CACHLY_JWT ?? '';
-
-  if (!instanceId || !apiKey) {
-    for (const p of [rp(cwd, '.mcp.json'), rp(cwd, '.claude', 'mcp.json')]) {
-      if (ep(p)) {
-        try {
-          const cfg = JSON.parse(await rfp(p, 'utf-8'));
-          const srv = cfg?.mcpServers?.cachly?.env ?? cfg?.mcpServers?.['cachly-brain']?.env ?? {};
-          if (!instanceId) instanceId = srv.CACHLY_BRAIN_INSTANCE_ID ?? srv.CACHLY_INSTANCE_ID ?? '';
-          if (!apiKey)     apiKey     = srv.CACHLY_JWT ?? srv.CACHLY_API_KEY ?? '';
-          if (instanceId && apiKey) break;
-        } catch { /* ignore */ }
-      }
-    }
-  }
-  if (!instanceId || !apiKey) process.exit(0); // not configured — silent
-
-  let task = 'Auto-checkpoint (Stop hook)';
-  let files: string[] = [];
-  try {
-    const { execSync: exc } = await import('node:child_process');
-    const diff = exc('git diff --name-only HEAD 2>/dev/null', { timeout: 3000, cwd }).toString().trim();
-    if (diff) files = diff.split('\n').filter(Boolean).slice(0, 10);
-    const log = exc('git log --oneline -1 2>/dev/null', { timeout: 3000, cwd }).toString().trim();
-    if (log) task = `At: ${log}`;
-  } catch { /* no git */ }
-
-  try {
-    await fetch(`${API_URL}/api/v1/instances/${instanceId}/ping`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ task, provider: 'claude-code', files }),
-      signal: AbortSignal.timeout(5000),
-    });
-  } catch { /* offline — silent */ }
-
-  process.exit(0);
-}
-
-// ── CLI: cachly learn (terminal wrapper for brain_from_git) ───────────────────
-// Usage: npx @cachly-dev/mcp-server@latest learn [--days 180] [--dry-run]
-// Reads CACHLY_JWT + CACHLY_BRAIN_INSTANCE_ID from env or .mcp.json
-
-if (process.argv[2] === 'learn') {
-  const { readFile: rfl } = await import('node:fs/promises');
-  const { existsSync: efl } = await import('node:fs');
-  const { resolve: rpl } = await import('node:path');
-  const cwd = process.cwd();
-
-  let instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
-  let apiKey     = process.env.CACHLY_JWT ?? '';
-
-  if (!instanceId || !apiKey) {
-    for (const p of [rpl(cwd, '.mcp.json'), rpl(cwd, '.claude', 'mcp.json')]) {
-      if (efl(p)) {
-        try {
-          const cfg = JSON.parse(await rfl(p, 'utf-8'));
-          const srv = cfg?.mcpServers?.cachly?.env ?? {};
-          if (!instanceId) instanceId = srv.CACHLY_BRAIN_INSTANCE_ID ?? '';
-          if (!apiKey)     apiKey     = srv.CACHLY_JWT ?? '';
-          if (instanceId && apiKey) break;
-        } catch { /* ignore */ }
-      }
-    }
-  }
-
-  if (!instanceId || !apiKey) {
-    console.error('\n❌  No brain configured. Run: npx @cachly-dev/mcp-server@latest setup\n');
-    process.exit(1);
-  }
-
+if (process.argv[2] === 'index') {
+  const { resolve } = await import('node:path');
   const argv = process.argv.slice(3);
-  const flagVal = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
-  const days    = parseInt(flagVal('days') ?? '180', 10);
-  const dryRun  = argv.includes('--dry-run');
-  const maxC    = parseInt(flagVal('max-commits') ?? '500', 10);
+  const flag = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
 
-  console.log(`\n🧠  cachly — Learn from Git History`);
-  console.log(`────────────────────────────────────`);
-  console.log(`   Repo:     ${cwd}`);
-  console.log(`   History:  last ${days} days`);
-  if (dryRun) console.log(`   Mode:     dry-run (preview only)\n`);
-  else console.log(`   Mode:     import to brain\n`);
+  const dir        = resolve(flag('dir') ?? argv.find(a => !a.startsWith('--')) ?? '.');
+  const instanceId = flag('instance-id') ?? process.env.CACHLY_BRAIN_INSTANCE_ID;
+  const maxFiles   = parseInt(flag('max-files') ?? '500', 10);
+  const namespace  = flag('namespace') ?? 'cachly:sem:code';
+
+  if (!instanceId || !JWT) {
+    console.error('\n❌  CACHLY_BRAIN_INSTANCE_ID and CACHLY_JWT must be set\n');
+    console.error('   export CACHLY_BRAIN_INSTANCE_ID=<uuid>');
+    console.error('   export CACHLY_JWT=<cky_live_...>');
+    console.error('   npx @cachly-dev/mcp-server@latest index ./my-project\n');
+    process.exit(1);
+  }
+
+  console.log(`\n📂  Indexing: ${dir}`);
+  console.log(`    Instance: ${instanceId.slice(0, 8)}…  Max files: ${maxFiles}\n`);
 
   try {
-    const result = await handleTool('brain_from_git', {
+    const result = await handleTool('index_project', {
       instance_id: instanceId,
-      repo_path: cwd,
-      days,
-      max_commits: maxC,
-      dry_run: dryRun,
+      dir,
+      max_files: maxFiles,
+      ttl: 86400 * 7,
+      namespace,
     });
     console.log(result);
-    console.log('');
-  } catch (e) {
-    console.error('❌ Error:', (e as Error).message);
+    console.log('\n✅  Indexing complete.\n');
+  } catch (err) {
+    console.error(`\n❌  Indexing failed: ${(err as Error).message}\n`);
     process.exit(1);
   }
   process.exit(0);
@@ -6371,6 +8488,88 @@ if (process.argv[2] === 'learn') {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+// Warn on stderr when credentials are missing so the user sees a clear
+// actionable message in their editor's MCP log instead of silent failures.
+if (!JWT) {
+  process.stderr.write(
+    '\n' +
+    '╔══════════════════════════════════════════════════════════════════╗\n' +
+    '║  🧠  cachly AI Brain — Setup required                           ║\n' +
+    '╠══════════════════════════════════════════════════════════════════╣\n' +
+    '║                                                                  ║\n' +
+    '║  CACHLY_JWT is not set. Get your free credentials at:           ║\n' +
+    '║                                                                  ║\n' +
+    '║    👉  https://cachly.dev/setup-ai                              ║\n' +
+    '║                                                                  ║\n' +
+    '║  Then run the interactive setup wizard:                         ║\n' +
+    '║                                                                  ║\n' +
+    '║    npx @cachly-dev/mcp-server@latest setup                      ║\n' +
+    '║                                                                  ║\n' +
+    '║  Free tier — no credit card required.                           ║\n' +
+    '╚══════════════════════════════════════════════════════════════════╝\n' +
+    '\n',
+  );
+}
+
+// ── Update nudge (non-blocking, fire-and-forget) ─────────────────────────────
+// Check npm registry once per process start; if outdated, log to stderr so
+// the editor's MCP log shows an actionable one-liner. Skipped if opted out.
+if (!process.env.CACHLY_NO_UPDATE_CHECK) {
+  (async () => {
+    try {
+      const res = await fetch(
+        `https://registry.npmjs.org/@cachly-dev/mcp-server/latest`,
+        { signal: AbortSignal.timeout(4000) },
+      );
+      if (res.ok) {
+        const data = await res.json() as { version: string };
+        const latest = data?.version ?? '';
+        if (latest && latest !== CURRENT_VERSION) {
+          process.stderr.write(
+            `\n⚡ cachly update available: ${CURRENT_VERSION} → ${latest}\n` +
+            `   Run: npx @cachly-dev/mcp-server@latest setup\n\n`,
+          );
+        }
+      }
+    } catch { /* ignore – network unavailable or timeout */ }
+  })();
+}
+
+const httpPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;
+
+if (httpPort) {
+  // ── HTTP mode (Streamable HTTP transport) ───────────────────────────────
+  // Used for Smithery URL deployment: PORT=3000 node dist/index.js
+  const { createServer } = await import('node:http');
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+  await server.connect(transport);
+  const httpServer = createServer((req, res) => {
+    const url = new URL(req.url ?? '/', `http://localhost:${httpPort}`);
+    if (url.pathname === '/health') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        status: 'ok',
+        version: CURRENT_VERSION,
+        zeroResults: {
+          total: zeroResultsTotal,
+          last10: ZERO_RESULTS_LOG.slice(-10).map(e => ({ query: e.query, ts: new Date(e.ts).toISOString() })),
+        },
+      }));
+      return;
+    }
+    if (url.pathname === '/mcp' || url.pathname === '/') {
+      transport.handleRequest(req, res);
+      return;
+    }
+    res.writeHead(404);
+    res.end('not found');
+  });
+  httpServer.listen(httpPort, () => {
+    process.stderr.write(`cachly-mcp HTTP server listening on :${httpPort}\n`);
+  });
+} else {
+  // ── stdio mode (default for local editor use) ───────────────────────────
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
 
