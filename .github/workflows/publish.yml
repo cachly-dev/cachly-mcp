@@ -22,7 +22,21 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Check if version is already published
+        id: version_check
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          echo "version=$PKG_VERSION" >> $GITHUB_OUTPUT
+          if npm view "@cachly-dev/mcp-server@$PKG_VERSION" version &>/dev/null; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Version $PKG_VERSION already published — skipping."
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "Version $PKG_VERSION is new — will publish."
+          fi
+
       - name: Publish
+        if: steps.version_check.outputs.skip == 'false'
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
