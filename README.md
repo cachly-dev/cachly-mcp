@@ -201,10 +201,17 @@ knowledge_decay(threshold_days=30)
 ## Bootstrap from Git History
 
 ```bash
-npx @cachly-dev/mcp-server@latest learn
+# As a CLI command
+npx @cachly-dev/mcp-server@latest index .
 ```
 
-`brain_from_git` reads your git log and extracts lessons automatically:
+Or call directly from any AI session via the `brain_from_git` MCP tool:
+
+```
+brain_from_git(instance_id="...", workspace_path="/home/you/project", days=180)
+```
+
+Either way, your git log is read and lessons are extracted automatically:
 
 ```
 🧠 Brain bootstrapped from git history
@@ -222,7 +229,7 @@ Top lessons extracted:
 
 ---
 
-## 65 MCP Tools
+## 67 MCP Tools
 
 ### 🧠 Cognitive Cache
 
@@ -242,6 +249,13 @@ Top lessons extracted:
 | **`syndicate_search`** | Search solutions from every AI brain on the planet — ranked by `confirm_count` |
 | **`syndicate_stats`** | Your contribution stats to the global commons |
 | **`syndicate_trending`** | Most-confirmed lessons in the community this week |
+
+### 🔁 Context Recovery
+
+| Tool | What it does |
+|------|-------------|
+| **`compact_recover`** | **Call first after any context limit hit.** Returns last checkpoint, pending tasks, and top lessons — instantly. No full scan. |
+| **`brain_from_git`** | Bootstrap brain from git history: `brain_from_git(workspace_path=".", days=180)` → stores months of team knowledge in one call. |
 
 ### 🧩 Session & Memory
 
@@ -381,6 +395,7 @@ smart_recall("deploy") → finds デプロイ, 部署, 배포, نشر, פריס�
 
 ```markdown
 ## AI Brain Rules (cachly Autopilot)
+- If context was compacted: call compact_recover FIRST before anything else
 - Call session_start BEFORE reading any files or making changes
 - Call learn_from_attempts AFTER every fix, deploy, or discovery
 - Call causal_trace BEFORE long debugging sessions

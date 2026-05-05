@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cachly-dev/cachly-mcp",
-  "description": "The world's first Cognitive Cache — AI memory that thinks. 65 MCP tools: persistent sessions, causal root-cause tracing, knowledge decay scoring, brain diff, memory consolidation, knowledge syndication, zero-config autopilot. Works with Claude, Cursor, Copilot, Windsurf, Gemini. German servers, GDPR-native.",
+  "description": "The world's first Cognitive Cache — AI memory that thinks. 67 MCP tools: persistent sessions, causal root-cause tracing, knowledge decay scoring, brain diff, memory consolidation, knowledge syndication, zero-config autopilot. Works with Claude, Cursor, Copilot, Windsurf, Gemini. German servers, GDPR-native.",
   "repository": {
     "url": "https://github.com/cachly-dev/cachly-mcp",
     "source": "github"
   },
-  "version": "0.8.3",
+  "version": "0.9.0",
   "packages": [
     {
       "registryType": "npm",
       "name": "@cachly-dev/mcp-server",
       "identifier": "@cachly-dev/mcp-server",
-      "version": "0.8.3",
+      "version": "0.9.0",
       "transport": {
         "type": "stdio"
       }

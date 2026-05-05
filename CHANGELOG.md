@@ -7,6 +7,22 @@
 
 ---
 
+## [0.9.0] – 2026-05-05
+
+### ⚡ compact_recover + 🌱 brain_from_git — The two most-requested missing tools
+
+#### New Tools
+
+- **`compact_recover`** — Fast context recovery after Claude/Cursor/Copilot context window compaction. Call as the FIRST tool after any context limit hit. Returns: last checkpoint (task + files + next step), session handoff if any, top recalled lessons for the current focus. Unlike `session_start`, this is instant — no full brain scan, no streak logic. Designed to be the first line of every CLAUDE.md recovery protocol.
+
+- **`brain_from_git`** — Bootstrap the AI Brain from git history in one call. Scans the last N days of commits, extracts actionable knowledge (fixes, reverts, deploys, migrations), and bulk-loads them as lessons. Skips commits already in the Brain (safe to re-run). Supports author filtering for solo bootstrapping on team repos. The recommended first step for any new project: `brain_from_git(workspace_path=".", days=180)`.
+
+#### Why these were missing
+
+`compact_recover` was referenced in every CLAUDE.md template and Autopilot output but had no implementation — users were told to call it but it would fail silently. `brain_from_git` was the #1 marketed feature ("Turn your git history into an AI knowledge base") but only existed as ambient learning inside `session_end`. Both are now first-class MCP tools.
+
+---
+
 ## [0.7.0] – 2026-05-04
 
 ### 🌐 Knowledge Syndication — The Global AI Brain

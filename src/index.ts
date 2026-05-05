@@ -3556,6 +3556,62 @@ const TOOLS = [
       required: [],
     },
   },
+  // ── v0.9 — compact_recover ─────────────────────────────────────────────────
+  {
+    name: 'compact_recover',
+    description:
+      'FAST context recovery after Claude/Cursor/Copilot context window compaction. ' +
+      'Call this as the FIRST tool call after any context limit hit or window restart — before reading any files. ' +
+      'Returns: last checkpoint (task + files + next_step), session handoff if any, last 5 recalled lessons, open TODOs. ' +
+      'Unlike session_start, this is instant — no full brain scan, no streak logic, just the critical recovery data. ' +
+      'Typical use in CLAUDE.md: "If context is compacted, call compact_recover immediately."',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        focus: {
+          type: 'string',
+          description: 'What you are trying to recover context for — used to surface relevant lessons (optional)',
+        },
+      },
+      required: ['instance_id'],
+    },
+  },
+  // ── v0.9 — brain_from_git ─────────────────────────────────────────────────
+  {
+    name: 'brain_from_git',
+    description:
+      'Bootstrap the AI Brain from git history — reads commit messages and automatically stores lessons. ' +
+      'Scans the last N days of commits, extracts actionable knowledge (fixes, reverts, deploys, migrations), ' +
+      'and bulk-loads them into the Brain as lessons. ' +
+      'Run once to pre-load months of team knowledge before the first session_start. ' +
+      'Skips commits already in the Brain (safe to re-run). ' +
+      'Example: brain_from_git(instance_id="...", workspace_path="/home/you/project", days=180) ' +
+      '→ "📊 Scanned 342 commits · ✅ 28 lessons stored · ❌ 9 failure lessons · 0 duplicates skipped"',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        workspace_path: {
+          type: 'string',
+          description: 'Absolute path to the git repository root (e.g. "/home/you/myproject")',
+        },
+        days: {
+          type: 'number',
+          description: 'How many days of history to scan (default: 180, max: 365)',
+        },
+        max_commits: {
+          type: 'number',
+          description: 'Maximum number of commits to process (default: 200, max: 500)',
+        },
+        author: {
+          type: 'string',
+          description: 'Filter to commits by this git author email or name (optional — omit to scan all authors)',
+        },
+      },
+      required: ['instance_id', 'workspace_path'],
+    },
+  },
 ] as const;
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -7847,6 +7903,196 @@ smart_recall(
         `---`,
         `**Confirm** (if this helped you): \`syndicate(topic="${res.results[0]?.topic ?? '...'}", what_worked="...")\` → auto-deduped, trust +1`,
         `**All trending:** \`syndicate_trending(limit=50)\`  |  **Search:** \`syndicate_search(q="...")\``,
+      );
+
+      return lines.filter(l => l !== '').join('\n');
+    }
+
+    // ── v0.9 compact_recover — fast context recovery ──────────────────────────
+    case 'compact_recover': {
+      const { instance_id, focus = '' } = args as { instance_id: string; focus?: string };
+      const redis = await getConnection(instance_id);
+
+      const lines: string[] = ['⚡ **Context Recovered**', ''];
+
+      // 1. Latest checkpoint
+      const checkpointRaw = await redis.get('cachly:session:checkpoint');
+      if (checkpointRaw) {
+        try {
+          const cp = JSON.parse(checkpointRaw) as {
+            ts: string; task: string; files_touched?: string[]; next_step?: string; provider?: string;
+          };
+          const ago = Math.round((Date.now() - new Date(cp.ts).getTime()) / 60000);
+          const agoStr = ago < 60 ? `${ago}m ago` : `${Math.round(ago / 60)}h ago`;
+          lines.push(`📌 **Last checkpoint** (${agoStr}): ${cp.task}`);
+          if (cp.files_touched && cp.files_touched.length > 0) {
+            lines.push(`   Files: ${cp.files_touched.slice(0, 5).join(', ')}${cp.files_touched.length > 5 ? '…' : ''}`);
+          }
+          if (cp.next_step) lines.push(`📍 **Resume with:** ${cp.next_step}`);
+          lines.push('');
+        } catch { /* ignore corrupt */ }
+      }
+
+      // 2. Handoff (if any, from a different window)
+      const handoffRaw = await redis.get('cachly:session:handoff');
+      if (handoffRaw) {
+        try {
+          const hf = JSON.parse(handoffRaw) as { ts: string; remaining_tasks?: string[]; blocked_on?: string };
+          const remaining = hf.remaining_tasks ?? [];
+          if (remaining.length > 0) {
+            lines.push(`⏳ **Remaining tasks:**`);
+            remaining.slice(0, 5).forEach(t => lines.push(`  - ${t}`));
+            if (remaining.length > 5) lines.push(`  …and ${remaining.length - 5} more`);
+            lines.push('');
+          }
+          if (hf.blocked_on) { lines.push(`🚫 **Blocked on:** ${hf.blocked_on}`, ''); }
+        } catch { /* ignore */ }
+      }
+
+      // 3. Top recently recalled lessons (BM25 if focus, else recency)
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((resolve, reject) => {
+        lStream.on('data', (batch: string[]) => lessonKeys.push(...batch));
+        lStream.on('end', resolve);
+        lStream.on('error', reject);
+      });
+
+      type RecoverLesson = { topic: string; outcome: string; what_worked: string; ts: string; recall_count?: number; tags?: string[] };
+      const allLessons: RecoverLesson[] = [];
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        try { allLessons.push(JSON.parse(raw) as RecoverLesson); } catch { /* skip */ }
+      }
+
+      const focusTerms = focus.toLowerCase().split(/\s+/).filter(Boolean);
+      let topLessons = focusTerms.length > 0
+        ? allLessons.filter(l =>
+            focusTerms.some(t => l.topic.toLowerCase().includes(t) || (l.tags ?? []).some((tag: string) => tag.toLowerCase().includes(t)))
+          ).slice(0, 5)
+        : allLessons.sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0)).slice(0, 5);
+
+      if (topLessons.length > 0) {
+        lines.push(`🧠 **Top lessons${focus ? ` for "${focus}"` : ''}:**`);
+        for (const l of topLessons) {
+          const icon = l.outcome === 'success' ? '✅' : l.outcome === 'failure' ? '❌' : '⚠️';
+          lines.push(`  ${icon} \`${l.topic}\` — ${l.what_worked.slice(0, 120)}${l.what_worked.length > 120 ? '…' : ''}`);
+        }
+        lines.push('');
+      }
+
+      lines.push(`💡 Call \`session_start\` for the full briefing, or resume work directly.`);
+      return lines.filter(l => l !== '').join('\n');
+    }
+
+    // ── v0.9 brain_from_git — bulk-load git history as lessons ───────────────
+    case 'brain_from_git': {
+      const {
+        instance_id,
+        workspace_path,
+        days = 180,
+        max_commits = 200,
+        author = '',
+      } = args as { instance_id: string; workspace_path: string; days?: number; max_commits?: number; author?: string };
+
+      const redis = await getConnection(instance_id);
+      const { execSync } = await import('node:child_process');
+
+      const clampedDays = Math.min(Math.max(1, days), 365);
+      const clampedMax = Math.min(Math.max(1, max_commits), 500);
+
+      const authorArg = author ? `--author="${author}"` : '';
+      let gitRaw = '';
+      try {
+        gitRaw = execSync(
+          `git -C "${workspace_path}" log --since="${clampedDays} days ago" ${authorArg} --oneline --format="%H|||%s|||%ai|||%ae" -n ${clampedMax}`,
+          { timeout: 15000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+        ).trim();
+      } catch {
+        return `❌ **brain_from_git failed**: Could not read git log from \`${workspace_path}\`.\nMake sure the path exists and is a git repository.`;
+      }
+
+      if (!gitRaw) {
+        return `📭 **No commits found** in the last ${clampedDays} days${author ? ` by "${author}"` : ''}.\nTry increasing \`days\` or removing the \`author\` filter.`;
+      }
+
+      const commitLines = gitRaw.split('\n');
+      const now = new Date();
+
+      const actionRe = /\b(fix|add|remove|refactor|migrate|update|resolve|implement|improve|optimize|configure|create|delete|disable|enable|debug|patch|upgrade|rewrite|deploy|feat|revert|break|merge|bump)\b/i;
+      const failRe = /\b(revert|broken|broke|breaking|rollback|undo|hotfix|crash|oops|wrong|mistake|bad)\b/i;
+
+      let stored = 0;
+      let skipped = 0;
+      let failures = 0;
+      const topLessons: string[] = [];
+
+      for (const line of commitLines) {
+        const parts = line.split('|||');
+        if (parts.length < 2) continue;
+        const [hash, msg, dateStr] = parts;
+        if (!msg || !actionRe.test(msg)) continue;
+
+        const isFail = failRe.test(msg);
+        const cleanMsg = msg
+          .replace(/^(fix|feat|chore|docs|test|ci|perf|refactor|build|revert|hotfix|bump)[:(\s!]+/i, '')
+          .trim();
+        if (!cleanMsg || cleanMsg.length < 5) continue;
+
+        const slug = cleanMsg
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '')
+          .slice(0, 40);
+        if (!slug) continue;
+
+        const topic = `git:${slug}`;
+        const key = `cachly:lesson:best:${topic}`;
+        const existing = await redis.get(key);
+        if (existing) { skipped++; continue; }
+
+        const lesson = {
+          topic,
+          outcome: isFail ? ('failure' as const) : ('success' as const),
+          what_worked: isFail ? '' : cleanMsg.slice(0, 300),
+          what_failed: isFail ? cleanMsg.slice(0, 300) : undefined,
+          context: `Auto-learned from git commit ${(hash ?? '').slice(0, 7)}${dateStr ? ` at ${dateStr}` : ''} in ${workspace_path}${author ? ` (author: ${author})` : ''}`,
+          severity: 'minor' as const,
+          ts: dateStr ? new Date(dateStr).toISOString() : now.toISOString(),
+          recall_count: 0,
+          auto_learned: true,
+          source: 'brain_from_git',
+          version: 3,
+        };
+
+        await redis.set(key, JSON.stringify(lesson));
+        await redis.expire(key, 90 * 86400); // 90-day TTL for git-sourced lessons
+        stored++;
+        if (isFail) failures++;
+        if (topLessons.length < 5) topLessons.push(`  ${isFail ? '❌' : '✅'} \`${topic}\` — ${cleanMsg.slice(0, 80)}`);
+      }
+
+      const lines: string[] = [
+        `🧠 **Brain bootstrapped from git history**`,
+        ``,
+        `📊 **Scanned:** ${commitLines.filter(l => l.trim()).length} commits over last ${clampedDays} days`,
+        `✅ **Success lessons stored:** ${stored - failures}`,
+        `❌ **Failure/revert lessons:** ${failures}`,
+        skipped > 0 ? `⏭️  **Already in brain (skipped):** ${skipped}` : '',
+        ``,
+      ];
+
+      if (topLessons.length > 0) {
+        lines.push(`**Top lessons extracted:**`);
+        lines.push(...topLessons);
+        if (stored > 5) lines.push(`  …and ${stored - 5} more`);
+        lines.push('');
+      }
+
+      lines.push(
+        `💡 **Next step:** Call \`session_start(focus="...")\` to see these lessons in your briefing.`,
+        `🔄 **Re-run anytime** — duplicates are safely skipped.`,
       );
 
       return lines.filter(l => l !== '').join('\n');
