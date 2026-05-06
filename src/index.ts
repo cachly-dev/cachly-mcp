@@ -55,7 +55,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.9.7';
+const CURRENT_VERSION = '0.9.8';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -1960,18 +1960,20 @@ async function keywordSearch(
   query: string,
   topK = 10,
 ): Promise<KeywordMatch[]> {
-  // ── Step 1: Collect and tokenize all documents ──
-  const allKeys: string[] = [];
-  for (const pattern of patterns) {
-    const stream = redis.scanStream({ match: pattern, count: 200 });
-    await new Promise<void>((resolve, reject) => {
+  // ── Step 1: Collect all matching keys — patterns scanned in parallel ──
+  const keyBatches = await Promise.all(patterns.map(pattern => {
+    const keys: string[] = [];
+    const stream = redis.scanStream({ match: pattern, count: 500 });
+    return new Promise<string[]>((resolve, reject) => {
       stream.on('data', (batch: string[]) => {
-        allKeys.push(...batch.filter((k: string) => !k.endsWith(':meta')));
+        keys.push(...batch.filter((k: string) => !k.endsWith(':meta')));
       });
-      stream.on('end', resolve);
+      stream.on('end', () => resolve(keys));
       stream.on('error', reject);
     });
-  }
+  }));
+  // Deduplicate across patterns (a key may match multiple globs)
+  const allKeys = [...new Set(keyBatches.flat())];
 
   if (allKeys.length === 0) return [];
 
@@ -2312,8 +2314,10 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     );
   }
 
+  const timeoutMs = Number(process.env.CACHLY_API_TIMEOUT_MS ?? 15_000);
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
+    signal: AbortSignal.timeout(timeoutMs),
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${JWT}`,

@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.9.7",
+  "version": "0.9.8",
   "mcpName": "io.github.cachly-dev/cachly-mcp",
   "description": "Your AI forgets everything between sessions. cachly fixes that permanently. A causal brain that learns WHY things break — built from every bug fix, git commit, and CI run, without any explicit calls. Arrives pre-briefed each session. Predicts failures before they happen. Never re-researches the same problem. 63 MCP tools · Claude Code · Cursor · GitHub Copilot · Windsurf · Free tier · EU servers.",
   "type": "module",
