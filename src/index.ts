@@ -2486,7 +2486,11 @@ const TOOLS = [
     name: 'cache_get',
     description:
       'Get a value from a running cache instance by key. ' +
-      'Returns the value (string or JSON) or null if the key does not exist.',
+      'Returns the stored value (string or deserialized JSON object) or null if the key does not exist or has expired. ' +
+      'Read-only — no side effects. ' +
+      'Use cache_mget when you need multiple keys in one round-trip. ' +
+      'Use cache_exists to check existence without retrieving the value. ' +
+      'Use semantic_search when you need fuzzy/vector search across stored values.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2558,12 +2562,16 @@ const TOOLS = [
   },
   {
     name: 'cache_ttl',
-    description: 'Get the remaining time-to-live (TTL) of a key in seconds. Returns -1 if no TTL, -2 if the key does not exist.',
+    description:
+      'Get the remaining time-to-live (TTL) of a key in seconds. ' +
+      'Returns -1 if the key exists but has no expiry, -2 if the key does not exist. ' +
+      'Read-only — no side effects. ' +
+      'Use cache_set with a ttl parameter to set or update the expiry.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string' },
-        key: { type: 'string' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance (from list_instances)' },
+        key: { type: 'string', description: 'Cache key to inspect' },
       },
       required: ['instance_id', 'key'],
     },
@@ -2753,7 +2761,11 @@ const TOOLS = [
     description:
       'Set multiple key-value pairs in a single pipeline round-trip. ' +
       'Supports per-key TTL – unlike native MSET. ' +
-      'Uses one TCP round-trip for N keys via Redis pipeline.',
+      'Uses one TCP round-trip for N keys via Redis pipeline. ' +
+      'Each item overwrites any existing value for that key. ' +
+      'On partial failure the successfully pipelined keys are committed; a per-key error list is returned for any that failed. ' +
+      'Returns a summary: { set: N, errors: [...] }. ' +
+      'Use cache_set for a single key; use cache_stream_set for large streaming payloads.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2841,8 +2853,11 @@ const TOOLS = [
       'Perfect for caching: codebase overviews, file summaries, project structure, ' +
       'frequently-accessed data, or "thinking" results like dependency analysis. ' +
       'The AI assistant can use this to avoid re-reading the entire codebase every time. ' +
+      'Overwrites any existing value stored under the same key. ' +
+      'Returns { key, stored_at, ttl } confirming the saved context. ' +
       'Example: remember_context("project overview", "This is a Next.js app with...") ' +
-      'then later: recall_context("project overview")',
+      'then later: recall_context("project overview"). ' +
+      'Use recall_context to retrieve; use list_remembered to see all stored keys.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3441,7 +3456,11 @@ const TOOLS = [
     description:
       'Publish a lesson to the Cachly Public Brain (anonymized community knowledge base). ' +
       'Published lessons can be imported by other developers via import_public_brain. ' +
-      'PII is stripped automatically. Visible under the framework/category tag.',
+      'PII is stripped automatically. Visible under the framework/category tag. ' +
+      'Returns { lesson_id, topic, framework, published_at } confirming the publish. ' +
+      'Irreversible — once published to the public brain, lessons cannot be deleted via the MCP interface. ' +
+      'Use learn_from_attempts or global_learn for private lessons; ' +
+      'use syndicate for anonymized global sharing without framework tagging.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3757,7 +3776,10 @@ const TOOLS = [
       'This is how individual knowledge becomes collective intelligence. ' +
       'Call this AFTER every learn_from_attempts that is worth sharing universally ' +
       '(critical bugs, deployment gotchas, architecture discoveries). ' +
-      'Use scope="org" to keep the lesson private to your organisation.',
+      'If a lesson with the same topic already exists in the commons, it is updated in place (idempotent). ' +
+      'Returns { key, confirm_count, scope } confirming the stored lesson. ' +
+      'Use scope="org" to keep the lesson private to your organisation. ' +
+      'Do NOT use for secrets or PII — content is stored in a shared knowledge base.',
     inputSchema: {
       type: 'object',
       properties: {
