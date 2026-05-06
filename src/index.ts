@@ -6133,6 +6133,111 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         }
       } catch { /* non-critical */ }
 
+      // ── 🔮 PPE: Predictive Pre-fetch — CKG-powered risk detection ────────────
+      // Layer 4: Before starting any work, scan the CKG for nodes matching focus
+      // tokens and traverse causal edges to surface predicted failure points inline.
+      // This is the PPE "pre-fetch" that was previously only available via brain_predict.
+      if (focus && focus.length > 3) {
+        try {
+          const ppeFocusTokens = focus.toLowerCase().replace(/[^a-z0-9\s\-_:]/g, ' ').split(/\s+/).filter(t => t.length > 2).slice(0, 5);
+          type PPEPrediction = { concept: string; edgeType: string; target: string; confidence: number; lesson?: { what_worked?: string; topic: string } };
+          const ppePredictions: PPEPrediction[] = [];
+
+          for (const token of ppeFocusTokens) {
+            const nodeKeys: string[] = [];
+            const nStream = redis.scanStream({ match: `cachly:ckg:node:*${token}*`, count: 20 });
+            await new Promise<void>((res, rej) => { nStream.on('data', (b: string[]) => nodeKeys.push(...b)); nStream.on('end', res); nStream.on('error', rej); });
+
+            for (const nk of nodeKeys.slice(0, 3)) {
+              const nodeRaw = await redis.get(nk);
+              if (!nodeRaw) continue;
+              const node: CKGNode = JSON.parse(nodeRaw);
+              const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${node.id}`);
+              for (const ek of edgeKeys.slice(0, 15)) {
+                const edgeRaw = await redis.get(ek);
+                if (!edgeRaw) continue;
+                const edge: CKGEdge = JSON.parse(edgeRaw);
+                if (edge.edgeType !== 'causes' && edge.edgeType !== 'co-occurs' && edge.edgeType !== 'fixes') continue;
+                if (edge.confidence < 0.35) continue;
+                // For "fixes" edges, the lesson is on the "from" node (fix for "to")
+                // For "causes" edges, target is the failure mode
+                const lessonKey = edge.edgeType === 'fixes' ? `cachly:lesson:best:${edge.from}` : `cachly:lesson:best:${edge.to}`;
+                const lessonRaw = await redis.get(lessonKey);
+                const lesson = lessonRaw ? JSON.parse(lessonRaw) : undefined;
+                ppePredictions.push({ concept: node.id, edgeType: edge.edgeType, target: edge.to, confidence: edge.confidence, lesson });
+              }
+            }
+          }
+
+          const ppeSeen = new Set<string>();
+          const ppeUniq = ppePredictions
+            .filter(p => { const k = `${p.concept}:${p.target}`; if (ppeSeen.has(k)) return false; ppeSeen.add(k); return true; })
+            .sort((a, b) => b.confidence - a.confidence)
+            .slice(0, 4);
+
+          if (ppeUniq.length > 0) {
+            lines.push(`🔮 **Predicted risks for "${focus}"** (PPE pre-fetch):`);
+            for (const p of ppeUniq) {
+              const confPct = Math.round(p.confidence * 100);
+              const icon = p.edgeType === 'causes' ? '⚡' : p.edgeType === 'fixes' ? '🔧' : '🔄';
+              lines.push(`  ${icon} **${confPct}%** \`${p.concept}\` ${p.edgeType} \`${p.target}\``);
+              if (p.lesson?.what_worked) lines.push(`     ✅ ${(p.lesson.what_worked as string).slice(0, 110)}`);
+            }
+            lines.push(`  _Full analysis: \`brain_predict(context="${focus}")\`_`);
+            lines.push('');
+          }
+        } catch { /* non-critical — never block session start */ }
+      }
+
+      // ── 📐 MCM Confidence Calibration — 30-day accuracy pass ─────────────────
+      // Layer 7: Periodically check if high-confidence lessons are actually reliable.
+      // If last calibration was >30 days ago (or never), run a quick pass.
+      // Measures: of recalled lessons with confidence > 0.85, what % had outcome=success?
+      try {
+        const calRaw = await redis.get('cachly:mcm:calibration:last');
+        const lastCalMs = calRaw ? JSON.parse(calRaw).ts : 0;
+        const daysSinceCal = (Date.now() - lastCalMs) / 86_400_000;
+        if (daysSinceCal >= 30 && lessons.length >= 5) {
+          // Quick calibration pass on recalled lessons (recall_count > 0, outcome=success)
+          const recalledSuccess = lessons.filter(l => l.outcome === 'success' && (l.recall_count ?? 0) > 0);
+          const recalledAll     = lessons.filter(l => (l.recall_count ?? 0) > 0);
+          if (recalledAll.length >= 3) {
+            const precision = recalledAll.length > 0 ? recalledSuccess.length / recalledAll.length : 1;
+            const lowPrecisionDomains: string[] = [];
+            // Per-domain breakdown
+            const domCalMap = new Map<string, { success: number; total: number }>();
+            for (const l of recalledAll) {
+              const dom = l.topic.split(':')[0] ?? 'other';
+              if (!domCalMap.has(dom)) domCalMap.set(dom, { success: 0, total: 0 });
+              const d = domCalMap.get(dom)!;
+              d.total++;
+              if (l.outcome === 'success') d.success++;
+            }
+            for (const [dom, d] of domCalMap) {
+              if (d.total >= 2 && d.success / d.total < 0.6) lowPrecisionDomains.push(dom);
+            }
+            // Save calibration result
+            await redis.set('cachly:mcm:calibration:last', JSON.stringify({
+              ts: Date.now(),
+              precision: precision,
+              recalled: recalledAll.length,
+              low_precision_domains: lowPrecisionDomains,
+            }));
+            if (lowPrecisionDomains.length > 0 || precision < 0.7) {
+              lines.push(`📐 **MCM Calibration** (30-day pass — ${recalledAll.length} recalled lessons):`);
+              lines.push(`  Overall precision: **${(precision * 100).toFixed(0)}%** recalled lessons actually worked`);
+              if (lowPrecisionDomains.length > 0) {
+                lines.push(`  ⚠️ Low-precision domains: ${lowPrecisionDomains.map(d => `\`${d}\``).join(', ')} — consider revisiting these lessons`);
+              }
+              lines.push(`  💡 Use \`learn_from_attempts\` to update stale lessons and improve accuracy.`);
+              lines.push('');
+            }
+          }
+          // Even if no issues, stamp the date so we don't re-check for 30d
+          await redis.set('cachly:mcm:calibration:last', JSON.stringify({ ts: Date.now(), precision: 1, recalled: 0 }), 'EX', 35 * 86400);
+        }
+      } catch { /* non-critical */ }
+
       // ── 🌍 Knowledge Commons — community stats banner ───────────────────────
       // Fetch syndication stats and show a 1-liner: total lessons + confirms + weekly growth.
       // Non-fatal: never blocks session start if the API call fails.
