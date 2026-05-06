@@ -2243,9 +2243,25 @@ interface SemanticSearchResponse {
 
 /** Reuse Redis connections across tool calls (keyed by instance_id). */
 const pool = new Map<string, Redis>();
+const POOL_MAX = 200;
+
+/** Evict the oldest pool entry to stay under POOL_MAX. */
+function evictOldestPoolEntry(): void {
+  const oldest = pool.keys().next().value;
+  if (oldest) {
+    pool.get(oldest)?.quit().catch(() => undefined);
+    pool.delete(oldest);
+  }
+}
 
 async function getConnection(instance_id: string): Promise<Redis> {
-  if (pool.has(instance_id)) return pool.get(instance_id)!;
+  if (pool.has(instance_id)) {
+    // Move to end (most-recently-used) by re-inserting
+    const client = pool.get(instance_id)!;
+    pool.delete(instance_id);
+    pool.set(instance_id, client);
+    return client;
+  }
 
   const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
   if (inst.status !== 'running') {
@@ -2300,6 +2316,7 @@ async function getConnection(instance_id: string): Promise<Redis> {
     );
   }
 
+  if (pool.size >= POOL_MAX) evictOldestPoolEntry();
   pool.set(instance_id, client);
   return client;
 }
@@ -9792,18 +9809,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// Graceful shutdown – close all Redis connections + auto-end brain session
-process.on('SIGTERM', async () => {
-  await autoEndSession().catch(() => undefined);
-  for (const [, client] of pool) await client.quit().catch(() => undefined);
-  process.exit(0);
-});
+// Graceful shutdown – close all Redis connections + auto-end brain session.
+// 10s total budget: if session_end takes longer the process exits anyway.
+async function gracefulShutdown(): Promise<void> {
+  const budget = new Promise<void>(r => setTimeout(r, 10_000));
+  await Promise.race([autoEndSession().catch(() => undefined), budget]);
+  await Promise.all([...pool.values()].map(c => c.quit().catch(() => undefined)));
+}
 
-process.on('SIGINT', async () => {
-  await autoEndSession().catch(() => undefined);
-  for (const [, client] of pool) await client.quit().catch(() => undefined);
-  process.exit(0);
-});
+process.on('SIGTERM', async () => { await gracefulShutdown(); process.exit(0); });
+process.on('SIGINT',  async () => { await gracefulShutdown(); process.exit(0); });
 
 // Safety net: log unhandled rejections instead of crashing the MCP process.
 // The MCP server must stay alive even if a single tool call hits an unexpected error.
