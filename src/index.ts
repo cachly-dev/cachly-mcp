@@ -2500,11 +2500,15 @@ const TOOLS = [
     name: 'cache_set',
     description:
       'Set a key-value pair in a running cache instance. ' +
-      'Value can be a string or a JSON-serialized object. Optionally set a TTL in seconds.',
+      'Overwrites any existing value at the key — not idempotent for new data. ' +
+      'Returns "OK" on success; returns an error if the instance_id is invalid or the instance is paused. ' +
+      'Value can be a string or a JSON-serialized object. Optionally set a TTL in seconds (omit for no expiry). ' +
+      'Use cache_mset instead for setting multiple keys in a single pipeline round-trip. ' +
+      'Use cache_stream_set instead for caching LLM token streams (ordered string chunks).',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance (from list_instances)' },
         key: { type: 'string', description: 'Cache key' },
         value: { type: 'string', description: 'Value to store (string or JSON)' },
         ttl: { type: 'number', description: 'Time-to-live in seconds (optional, omit for no expiry)' },
@@ -2600,13 +2604,17 @@ const TOOLS = [
     name: 'semantic_search',
     description:
       'Find cached entries that are semantically similar to a natural-language query. ' +
-      'Powered by pgvector HNSW index on cachly infrastructure — embeddings never leave Germany. ' +
-      'Requires OPENAI_API_KEY (or compatible) and the Speed/Business tier with CACHLY_VECTOR_URL. ' +
-      'Example: "find all cached responses about password reset" or "what did we answer about pricing?"',
+      'Read-only — no side effects. ' +
+      'Returns an array of objects, each with: key, value, similarity_score (0–1), and namespace. ' +
+      'Returns an empty array if no entries meet the similarity threshold. ' +
+      'Requires OPENAI_API_KEY (or compatible provider) and the Speed/Business tier with CACHLY_VECTOR_URL. ' +
+      'Embeddings are computed server-side and never leave Germany (pgvector HNSW index). ' +
+      'Example: "find all cached responses about password reset" or "what did we answer about pricing?". ' +
+      'Use cache_get for exact key lookup; use smart_recall for brain lessons.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance (from list_instances)' },
         query: { type: 'string', description: 'Natural-language query to find similar cached content' },
         threshold: {
           type: 'number',
@@ -3392,9 +3400,12 @@ const TOOLS = [
     name: 'global_learn',
     description:
       'Store a lesson that applies across ALL your projects (cross-project knowledge). ' +
+      'Idempotent: if a lesson with the same topic already exists, it is updated in place — no duplicates are created. ' +
+      'Returns a confirmation with the stored lesson key. No rate limits. ' +
       'Global lessons are stored with the prefix cachly:global:lesson: and recalled from any instance via global_recall. ' +
       'Use for tool preferences, personal workflows, platform quirks, and universal gotchas. ' +
-      'Example: global_learn(topic="bash:macos-arrays", lesson="Arrays work differently on macOS bash 3.2")',
+      'Example: global_learn(topic="bash:macos-arrays", lesson="Arrays work differently on macOS bash 3.2"). ' +
+      'Use learn_from_attempts for project-specific session lessons; use team_learn to share lessons with your team.',
     inputSchema: {
       type: 'object',
       properties: {
