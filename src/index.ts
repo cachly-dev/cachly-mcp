@@ -9739,14 +9739,18 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 let _autoSessionInstanceId: string | null = null;
 let _autoSessionStarted = false;
 let _autoSessionToolCount = 0;
+let _autoSessionStarting = false; // guard against concurrent session_start race
 
 async function autoStartSession(instanceId: string): Promise<void> {
-  if (_autoSessionStarted) return;
+  if (_autoSessionStarted || _autoSessionStarting) return;
+  _autoSessionStarting = true;
   _autoSessionStarted = true;
   _autoSessionInstanceId = instanceId;
   try {
     await handleTool('session_start', { instance_id: instanceId, focus: 'auto (MCP session)' });
-  } catch { /* non-fatal — session tracking is a best-effort feature */ }
+  } catch { /* non-fatal — session tracking is a best-effort feature */ } finally {
+    _autoSessionStarting = false;
+  }
 
   // Auto-index the project if it hasn't been indexed in the last 24h.
   // This is the main lever for growing token savings: more indexed code →
