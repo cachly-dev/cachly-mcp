@@ -5243,6 +5243,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       } catch { /* non-critical */ }
 
       // ── Layer 1+2: CKG update (Causal Knowledge Graph + Belief Update Engine) ──
+      // BUE: Bayesian confidence, contradiction detection, second-degree propagation, decay
+      let beliefConflict: string | null = null;
       try {
         const conceptId = ckgSlug(topic);
         const domain = topic.split(':')[0] ?? 'unknown';
@@ -5285,6 +5287,68 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
             await ckgUpdateEdge(redis, conceptId, 'causes', causeId, false);
           }
         }
+
+        // ── BUE: Contradiction detection ──────────────────────────────────────
+        // If this topic previously had a confirmed 'fixes' edge (confidence > 0.7)
+        // and now outcome=failure → flag belief_conflict
+        if (outcome === 'failure') {
+          const existingEdgeKeys = await redis.smembers(`cachly:ckg:idx:from:${conceptId}`);
+          for (const ek of existingEdgeKeys) {
+            const er = await redis.get(ek);
+            if (!er) continue;
+            const existEdge: CKGEdge = JSON.parse(er);
+            if (existEdge.edgeType === 'fixes' && existEdge.confidence > 0.7 && existEdge.trials >= 3) {
+              beliefConflict = `⚠️ **belief_conflict** on \`${topic}\`: previously confirmed fix (confidence ${existEdge.confidence.toFixed(2)}, n=${existEdge.trials}) now reports failure. Both beliefs retained as \`contested\`. Use \`ckg_inspect(concept="${conceptId}")\` to review.`;
+              // Store conflict marker
+              const conflictKey = `cachly:ckg:conflict:${conceptId}`;
+              await redis.set(conflictKey, JSON.stringify({ topic, detected_at: new Date().toISOString(), fix_confidence: existEdge.confidence, fix_trials: existEdge.trials, failure_outcome: outcome }), 'EX', 60 * 60 * 24 * 90);
+            }
+          }
+        }
+
+        // ── BUE: Second-degree propagation ────────────────────────────────────
+        // When a 'fixes' edge gets stronger, boost co-occurring second-degree edges slightly
+        if (outcome === 'success' && (domain === 'fix' || domain === 'debug')) {
+          const fromEdgeKeys = await redis.smembers(`cachly:ckg:idx:from:${conceptId}`);
+          for (const ek of fromEdgeKeys.slice(0, 10)) {
+            const er = await redis.get(ek);
+            if (!er) continue;
+            const e2: CKGEdge = JSON.parse(er);
+            if (e2.edgeType !== 'fixes') continue;
+            // Boost second-degree: edges from e2.to get a small fractional success
+            const secondKeys = await redis.smembers(`cachly:ckg:idx:from:${e2.to}`);
+            for (const sk of secondKeys.slice(0, 5)) {
+              const sr = await redis.get(sk);
+              if (!sr) continue;
+              const se: CKGEdge = JSON.parse(sr);
+              if (se.edgeType !== 'co-occurs') continue;
+              // Add 0.1 fractional success (second-degree signal)
+              se.successes = (se.successes || 0) + 0.1;
+              se.trials = (se.trials || 0) + 0.1;
+              se.confidence = (se.successes + 1) / (se.trials + 2);
+              se.last_updated = new Date().toISOString();
+              await redis.set(sk, JSON.stringify(se));
+            }
+          }
+        }
+
+        // ── BUE: Stale edge decay ─────────────────────────────────────────────
+        // Edges older than 90 days with < 3 trials decay by 10% confidence.
+        // Only run probabilistically (1% of calls) to avoid per-call overhead.
+        if (Math.random() < 0.01) {
+          const decayCutoff = Date.now() - 90 * 24 * 60 * 60 * 1000;
+          const fromEdgeKeys = await redis.smembers(`cachly:ckg:idx:from:${conceptId}`);
+          for (const ek of fromEdgeKeys) {
+            const er = await redis.get(ek);
+            if (!er) continue;
+            const de: CKGEdge = JSON.parse(er);
+            if (de.trials < 3 && de.last_updated && new Date(de.last_updated).getTime() < decayCutoff) {
+              de.confidence = de.confidence * 0.9;
+              de.last_updated = new Date().toISOString();
+              await redis.set(ek, JSON.stringify(de));
+            }
+          }
+        }
       } catch { /* CKG updates are non-critical */ }
 
       const emoji = outcome === 'success' ? '✅' : outcome === 'partial' ? '⚠️' : '❌';
@@ -5292,6 +5356,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       const action = isUpdate ? 'updated' : 'stored';
       return [
         `${emoji} **Lesson ${action}:** \`${topic}\` (${outcome}) ${sevEmoji} ${severity}`,
+        beliefConflict ?? '',
         ``,
         `**What worked:** ${what_worked}`,
         what_failed ? `**What failed:** ${what_failed}` : '',
@@ -5836,6 +5901,22 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         }
       }
 
+      // ── Layer 7 MCM: Active belief conflicts ─────────────────────────────────
+      try {
+        const conflictKeys: string[] = [];
+        const cfStream = redis.scanStream({ match: 'cachly:ckg:conflict:*', count: 50 });
+        await new Promise<void>((res, rej) => { cfStream.on('data', (b: string[]) => conflictKeys.push(...b)); cfStream.on('end', res); cfStream.on('error', rej); });
+        if (conflictKeys.length > 0) {
+          lines.push(`⚡ **Active belief conflicts (${conflictKeys.length}):**`);
+          for (const ck of conflictKeys.slice(0, 3)) {
+            const cr = await redis.get(ck);
+            if (!cr) continue;
+            const cf = JSON.parse(cr) as { topic: string; fix_confidence: number; fix_trials: number };
+            lines.push(`  ⚠️ \`${cf.topic}\` — previously confirmed fix (${(cf.fix_confidence * 100).toFixed(0)}%, n=${cf.fix_trials}) now contradicted. Use \`ckg_inspect(concept="${ckgSlug(cf.topic)}")\``);
+          }
+          lines.push('');
+        }
+      } catch { /* non-critical */ }
 
       if (focusLessons.length > 0) {
         lines.push(`🎯 **Relevant for "${focus}":**`);
@@ -9517,6 +9598,9 @@ smart_recall(
       const repoDir = resolve(repo_path);
       const maxCommits = Math.min(Number(limit) || 100, 500);
 
+      // Semaphore: max 10 concurrent git subprocesses per MCP process
+      await _gitSemAcquire();
+      try {
       // Verify it's a git repo
       try {
         execSync('git rev-parse --git-dir', { cwd: repoDir, stdio: 'pipe' });
@@ -9620,6 +9704,9 @@ smart_recall(
         `💡 As you confirm them via \`learn_from_attempts\`, confidence rises automatically.`,
         `🔍 Explore: \`brain_search(query="fix")\`  |  \`ckg_inspect(concept="deploy")\``,
       ].join('\n');
+      } finally {
+        _gitSemRelease();
+      }
     }
 
     // ── brain_predict_failures ─────────────────────────────────────────────────
@@ -9774,15 +9861,37 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 
 let _autoSessionInstanceId: string | null = null;
 let _autoSessionStarted = false;
+let _autoSessionStarting: Promise<void> | null = null; // guard against double-start race
 let _autoSessionToolCount = 0;
+
+// ── brain_from_git concurrency limiter ────────────────────────────────────────
+// Spawning many `git log` subprocesses in parallel can fork-bomb the host.
+// This simple semaphore caps concurrent brain_from_git calls to 10 per process.
+let _gitSemCount = 0;
+const _GIT_SEM_MAX = 10;
+const _gitSemQueue: Array<() => void> = [];
+function _gitSemAcquire(): Promise<void> {
+  if (_gitSemCount < _GIT_SEM_MAX) { _gitSemCount++; return Promise.resolve(); }
+  return new Promise(resolve => _gitSemQueue.push(resolve));
+}
+function _gitSemRelease(): void {
+  const next = _gitSemQueue.shift();
+  if (next) { next(); } else { _gitSemCount--; }
+}
 
 async function autoStartSession(instanceId: string): Promise<void> {
   if (_autoSessionStarted) return;
-  _autoSessionStarted = true;
-  _autoSessionInstanceId = instanceId;
-  try {
-    await handleTool('session_start', { instance_id: instanceId, focus: 'auto (MCP session)' });
-  } catch { /* non-fatal — session tracking is a best-effort feature */ }
+  // If another call already started the session, await it instead of double-starting.
+  if (_autoSessionStarting) { await _autoSessionStarting; return; }
+  _autoSessionStarting = (async () => {
+    _autoSessionStarted = true;
+    _autoSessionInstanceId = instanceId;
+    try {
+      await handleTool('session_start', { instance_id: instanceId, focus: 'auto (MCP session)' });
+    } catch { /* non-fatal — session tracking is a best-effort feature */ }
+    _autoSessionStarting = null;
+  })();
+  await _autoSessionStarting;
 
   // Auto-index the project if it hasn't been indexed in the last 24h.
   // This is the main lever for growing token savings: more indexed code →
@@ -9828,11 +9937,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   // Auto-start brain session on first tool call that has an instance_id.
   // Skip session management tools to avoid recursion.
   const sessionTools = new Set(['session_start', 'session_end', 'auto_learn_session']);
-  if (!sessionTools.has(name) && !_autoSessionStarted) {
+  if (!sessionTools.has(name) && !_autoSessionStarted && !_autoSessionStarting) {
     const instanceId = (args as Record<string, unknown>)?.instance_id as string | undefined;
     if (instanceId) {
       await autoStartSession(instanceId).catch(() => undefined);
     }
+  } else if (_autoSessionStarting) {
+    // Another concurrent call is mid-start — wait for it before proceeding.
+    await _autoSessionStarting.catch(() => undefined);
   }
   if (!sessionTools.has(name)) _autoSessionToolCount++;
 
@@ -10028,6 +10140,41 @@ if (process.argv[2] === 'init') {
   const result = await writeClaudeMd(projectDir, instanceId);
   const action = result === 'updated' ? '✅ Updated' : result === 'appended' ? '✅ Appended to' : '✅ Written';
   console.log(`${action}: CLAUDE.md`);
+
+  // ── CLS Phase 4: Auto-install git post-commit hook ─────────────────────────
+  try {
+    const { existsSync } = await import('node:fs');
+    const gitHookDir = resolve(projectDir, '.git', 'hooks');
+    const hookPath   = resolve(gitHookDir, 'post-commit');
+    if (existsSync(resolve(projectDir, '.git'))) {
+      await mkdir(gitHookDir, { recursive: true });
+      const hookScript = [
+        `#!/bin/sh`,
+        `# cachly CLS — Continuous Learning Stream (installed by cachly init)`,
+        `# Runs silently on every commit to keep your brain up to date.`,
+        `CACHLY_INSTANCE="${instanceId}"`,
+        `SHA=$(git rev-parse HEAD 2>/dev/null || echo "")`,
+        `MSG=$(git log -1 --pretty=%B 2>/dev/null | head -1 | tr '"' "'" | cut -c1-200)`,
+        `FILES=$(git diff-tree --no-commit-id -r --name-only HEAD 2>/dev/null | tr '\\n' ',' | sed 's/,$//')`,
+        `node -e "try{require('child_process').execSync('npx @cachly-dev/mcp-server@latest cls-ingest \\''+ JSON.stringify({instance_id:'$CACHLY_INSTANCE',source:'git_commit',payload:{message:'$MSG',sha:'$SHA',files:'$FILES'.split(',').filter(Boolean)}})+'\\'' ,{stdio:'ignore',timeout:5000})}catch(e){}" 2>/dev/null &`,
+        `exit 0`,
+      ].join('\n');
+      let existing = '';
+      try { const { readFile } = await import('node:fs/promises'); existing = await readFile(hookPath, 'utf-8'); } catch { /* no existing hook */ }
+      if (existing && !existing.includes('cachly CLS')) {
+        // Append to existing hook
+        await writeFile(hookPath, existing.trimEnd() + '\n\n' + hookScript + '\n', 'utf-8');
+        console.log(`✅ Appended: .git/hooks/post-commit (CLS hook)`);
+      } else if (!existing) {
+        await writeFile(hookPath, hookScript + '\n', 'utf-8');
+        const { chmod } = await import('node:fs/promises');
+        await chmod(hookPath, 0o755);
+        console.log(`✅ Written: .git/hooks/post-commit (CLS hook)`);
+      } else {
+        console.log(`✓  CLS hook already present in .git/hooks/post-commit`);
+      }
+    }
+  } catch { /* non-critical — git hook is a best-effort feature */ }
 
   console.log(`\n🧠 Cachly AI Brain configured for ${editor === 'claude' ? 'Claude Code' : editor}!`);
   console.log(`   Restart your editor — the \`cachly\` MCP tools will appear.\n`);
@@ -10340,6 +10487,39 @@ if (process.argv[2] === 'setup') {
       } catch { /* fire and forget */ }
     }
   }
+
+  // ── CLS Phase 4: Auto-install git post-commit hook in setup flow ─────────
+  try {
+    const { existsSync } = await import('node:fs');
+    const { writeFile: wf2, mkdir: mk2, chmod: ch2, readFile: rf2 } = await import('node:fs/promises');
+    const { resolve: res2 } = await import('node:path');
+    const setupProjectDir = process.cwd();
+    const gitHookDir2 = res2(setupProjectDir, '.git', 'hooks');
+    const hookPath2   = res2(gitHookDir2, 'post-commit');
+    if (existsSync(res2(setupProjectDir, '.git'))) {
+      await mk2(gitHookDir2, { recursive: true });
+      const hs2 = [
+        `#!/bin/sh`,
+        `# cachly CLS — Continuous Learning Stream (installed by cachly setup)`,
+        `CACHLY_INSTANCE="${instance.id}"`,
+        `SHA=$(git rev-parse HEAD 2>/dev/null || echo "")`,
+        `MSG=$(git log -1 --pretty=%B 2>/dev/null | head -1 | tr '"' "'" | cut -c1-200)`,
+        `FILES=$(git diff-tree --no-commit-id -r --name-only HEAD 2>/dev/null | tr '\\n' ',' | sed 's/,$//')`,
+        `node -e "try{require('child_process').execSync('npx @cachly-dev/mcp-server@latest cls-ingest \\''+ JSON.stringify({instance_id:'$CACHLY_INSTANCE',source:'git_commit',payload:{message:'$MSG',sha:'$SHA',files:'$FILES'.split(',').filter(Boolean)}})+'\\'' ,{stdio:'ignore',timeout:5000})}catch(e){}" 2>/dev/null &`,
+        `exit 0`,
+      ].join('\n');
+      let ex2 = '';
+      try { ex2 = await rf2(hookPath2, 'utf-8'); } catch { /* no existing */ }
+      if (!ex2) {
+        await wf2(hookPath2, hs2 + '\n', 'utf-8');
+        await ch2(hookPath2, 0o755);
+        console.log(`\n✅  CLS git hook installed — your brain will learn from every commit.`);
+      } else if (!ex2.includes('cachly CLS')) {
+        await wf2(hookPath2, ex2.trimEnd() + '\n\n' + hs2 + '\n', 'utf-8');
+        console.log(`\n✅  CLS git hook appended to existing post-commit.`);
+      }
+    }
+  } catch { /* non-critical */ }
 
   rl.close();
   process.exit(0);
