@@ -606,3 +606,269 @@ describe('Brain E2E: learn → CKG → recall', () => {
     expect(lastAttempt.outcome).toBe('failure');
   });
 });
+
+// ── Extended Brain Flow Scenarios ─────────────────────────────────────────────
+
+describe('Brain Flow: advanced scenarios', () => {
+  let redis: MockRedis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  describe('recall_count and lesson update flow', () => {
+    it('partial outcome can later be upgraded to success', async () => {
+      await storeLessonInRedis(redis, {
+        topic: 'fix:timeout',
+        outcome: 'partial',
+        what_worked: 'increase timeout to 15s',
+        severity: 'major',
+        commands: [],
+        tags: [],
+        file_paths: [],
+      });
+      // Upgrade to success
+      await storeLessonInRedis(redis, {
+        topic: 'fix:timeout',
+        outcome: 'success',
+        what_worked: 'increase timeout to 30s + add retry logic',
+        severity: 'major',
+        commands: ['--timeout 30s', '--retry 3'],
+        tags: ['reliability'],
+        file_paths: [],
+      });
+
+      const best = JSON.parse((await redis.get('cachly:lesson:best:fix:timeout'))!) as LessonObj;
+      expect(best.outcome).toBe('success');
+      expect(best.what_worked).toContain('retry logic');
+
+      const history = await redis.lrange('cachly:lessons:fix:timeout', 0, -1);
+      expect(history).toHaveLength(2);
+    });
+
+    it('lesson version is always 3', async () => {
+      await storeLessonInRedis(redis, {
+        topic: 'deploy:mcp',
+        outcome: 'success',
+        what_worked: 'npm publish --access public',
+        severity: 'minor',
+        commands: [],
+        tags: [],
+        file_paths: [],
+      });
+      const lesson = JSON.parse((await redis.get('cachly:lesson:best:deploy:mcp'))!) as LessonObj;
+      expect(lesson.version).toBe(3);
+    });
+
+    it('verified_at is set for success/partial outcomes', async () => {
+      await storeLessonInRedis(redis, {
+        topic: 'infra:ssl',
+        outcome: 'success',
+        what_worked: 'certbot renew',
+        severity: 'critical',
+        commands: [],
+        tags: [],
+        file_paths: [],
+      });
+      const lesson = JSON.parse((await redis.get('cachly:lesson:best:infra:ssl'))!) as LessonObj;
+      expect(lesson.verified_at).toBeDefined();
+      expect(new Date(lesson.verified_at!).getTime()).toBeLessThanOrEqual(Date.now());
+    });
+
+    it('verified_at is NOT set for failure outcomes', async () => {
+      await storeLessonInRedis(redis, {
+        topic: 'infra:ssl',
+        outcome: 'failure',
+        what_worked: '',
+        severity: 'critical',
+        commands: [],
+        tags: [],
+        file_paths: [],
+      });
+      const lesson = JSON.parse((await redis.get('cachly:lesson:best:infra:ssl'))!) as LessonObj;
+      expect(lesson.verified_at).toBeUndefined();
+    });
+  });
+
+  describe('multi-topic lesson management', () => {
+    it('different topics do not interfere with each other', async () => {
+      const topics = [
+        { topic: 'deploy:api',   what_worked: 'docker compose up api' },
+        { topic: 'deploy:web',   what_worked: 'rsync + docker build web' },
+        { topic: 'deploy:mcp',   what_worked: 'npm publish mcp server' },
+        { topic: 'infra:nginx',  what_worked: 'nginx -t && systemctl reload' },
+        { topic: 'fix:memory',   what_worked: 'increase heap to 4G' },
+      ];
+
+      for (const t of topics) {
+        await storeLessonInRedis(redis, { ...t, outcome: 'success', severity: 'minor', commands: [], tags: [], file_paths: [] });
+      }
+
+      for (const t of topics) {
+        const raw = await redis.get(`cachly:lesson:best:${t.topic}`);
+        expect(raw, `lesson for ${t.topic} should exist`).not.toBeNull();
+        const lesson = JSON.parse(raw!) as LessonObj;
+        expect(lesson.what_worked).toBe(t.what_worked);
+      }
+    });
+
+    it('all topics are reachable via scanStream', async () => {
+      const topics = ['alpha:test', 'beta:test', 'gamma:test', 'delta:test'];
+      for (const t of topics) {
+        await storeLessonInRedis(redis, { topic: t, outcome: 'success', what_worked: 'x', severity: 'minor', commands: [], tags: [], file_paths: [] });
+      }
+
+      const keys: string[] = [];
+      await new Promise<void>((resolve, reject) => {
+        const stream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 100 });
+        stream.on('data', (batch: string[]) => keys.push(...batch));
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+
+      expect(keys).toHaveLength(4);
+      for (const t of topics) {
+        expect(keys.some(k => k.endsWith(t))).toBe(true);
+      }
+    });
+
+    it('pipeline fetches all lessons in a single batch', async () => {
+      const topics = ['a:1', 'b:2', 'c:3'];
+      for (const t of topics) {
+        await storeLessonInRedis(redis, { topic: t, outcome: 'success', what_worked: 'fix', severity: 'minor', commands: [], tags: [], file_paths: [] });
+      }
+
+      const keys = topics.map(t => `cachly:lesson:best:${t}`);
+      const pipeline = redis.pipeline();
+      for (const k of keys) pipeline.get(k);
+      const results = await pipeline.exec();
+
+      expect(results).toHaveLength(3);
+      for (const [err, val] of results) {
+        expect(err).toBeNull();
+        expect(val).not.toBeNull();
+        const lesson = JSON.parse(val as string) as LessonObj;
+        expect(lesson.outcome).toBe('success');
+      }
+    });
+  });
+
+  describe('BM25 recency boost integration', () => {
+    it('newer lesson with same content ranks higher than older', async () => {
+      // Seed two similar lessons — same keywords, different age
+      const oldTs = new Date(Date.now() - 30 * 86400000).toISOString(); // 30 days ago
+
+      // Store "old" lesson manually with backdated timestamp
+      const oldLesson: LessonObj = {
+        topic: 'deploy:old',
+        outcome: 'success',
+        what_worked: 'docker compose deploy redis service restart',
+        what_failed: undefined,
+        context: undefined,
+        severity: 'minor',
+        commands: [],
+        tags: [],
+        file_paths: [],
+        recall_count: 0,
+        ts: oldTs,
+        verified_at: oldTs,
+        confidence: 1.0,
+        audit_trail: [{ ts: oldTs, action: 'created' }],
+        version: 3,
+      };
+      await redis.rpush('cachly:lessons:deploy:old', JSON.stringify(oldLesson));
+      await redis.set('cachly:lesson:best:deploy:old', JSON.stringify(oldLesson));
+
+      // Store "new" lesson with current timestamp (similar content, different service)
+      await storeLessonInRedis(redis, {
+        topic: 'deploy:new',
+        outcome: 'success',
+        what_worked: 'docker compose deploy redis service restart',
+        severity: 'minor',
+        commands: [],
+        tags: [],
+        file_paths: [],
+      });
+
+      const results = await keywordSearch(
+        redis as unknown as Redis,
+        ['cachly:lesson:best:*'],
+        'docker compose redis restart',
+        5,
+      );
+
+      // Both should match; newer should rank higher or equal
+      expect(results.length).toBe(2);
+      const newIdx = results.findIndex(r => r.key.includes('deploy:new'));
+      const oldIdx = results.findIndex(r => r.key.includes('deploy:old'));
+      expect(newIdx).toBeLessThanOrEqual(oldIdx); // new ≤ old (higher rank = lower index)
+    });
+
+    it('lesson with matching topic-keyword gets higher BM25 score', async () => {
+      await storeLessonInRedis(redis, {
+        topic: 'fix:ssl-certificate',
+        outcome: 'success',
+        what_worked: 'renew SSL certificate via certbot on Nginx',
+        severity: 'critical',
+        commands: ['certbot renew'],
+        tags: ['ssl', 'nginx'],
+        file_paths: [],
+      });
+      await storeLessonInRedis(redis, {
+        topic: 'deploy:api',
+        outcome: 'success',
+        what_worked: 'docker compose up -d api',
+        severity: 'minor',
+        commands: [],
+        tags: [],
+        file_paths: [],
+      });
+
+      const results = await keywordSearch(
+        redis as unknown as Redis,
+        ['cachly:lesson:best:*'],
+        'ssl certificate nginx renew',
+        5,
+      );
+
+      expect(results.length).toBeGreaterThan(0);
+      expect(results[0].content.toLowerCase()).toContain('ssl');
+    });
+  });
+
+  describe('CKG multi-edge scenarios', () => {
+    it('same node can have multiple typed edges to different targets', async () => {
+      const r = redis as unknown as Redis;
+      await ckgUpsertNode(r, 'api-service', 'backend', 'concept');
+      await ckgUpdateEdge(r, 'api-service', 'depends_on', 'postgres', true);
+      await ckgUpdateEdge(r, 'api-service', 'depends_on', 'redis', true);
+      await ckgUpdateEdge(r, 'api-service', 'deployed_with', 'docker', true);
+
+      const fromIdx = await redis.smembers('cachly:ckg:idx:from:api-service');
+      expect(fromIdx).toHaveLength(3);
+      expect(fromIdx.some(k => k.includes('postgres'))).toBe(true);
+      expect(fromIdx.some(k => k.includes('redis'))).toBe(true);
+      expect(fromIdx.some(k => k.includes('docker'))).toBe(true);
+    });
+
+    it('same edge accumulates confidence across multiple successes', async () => {
+      const r = redis as unknown as Redis;
+      for (let i = 0; i < 10; i++) {
+        await ckgUpdateEdge(r, 'problem', 'solved_by', 'solution', true);
+      }
+      const edge = JSON.parse((await redis.get('cachly:ckg:edge:problem:solved_by:solution'))!);
+      // After 10 successes: (10+1)/(10+2) = 11/12 ≈ 0.9167
+      expect(edge.confidence).toBeGreaterThan(0.9);
+      expect(edge.trials).toBe(10);
+      expect(edge.successes).toBe(10);
+    });
+
+    it('mixed success/failure converges to true rate', async () => {
+      const r = redis as unknown as Redis;
+      // 6 success, 4 failure = 60% actual rate
+      for (let i = 0; i < 6; i++) await ckgUpdateEdge(r, 'X', 'leads_to', 'Y', true);
+      for (let i = 0; i < 4; i++) await ckgUpdateEdge(r, 'X', 'leads_to', 'Y', false);
+      const edge = JSON.parse((await redis.get('cachly:ckg:edge:X:leads_to:Y'))!);
+      // Beta(6+1, 10+2) = 7/12 ≈ 0.583 — close to 60%
+      expect(edge.confidence).toBeGreaterThan(0.5);
+      expect(edge.confidence).toBeLessThan(0.75);
+    });
+  });
+});
