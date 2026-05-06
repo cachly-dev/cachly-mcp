@@ -7,102 +7,62 @@
 
 ---
 
-## [0.9.7] – 2026-05-06
+## [0.9.3] – 2026-05-06
 
-### 🔮 Crystal View + Compact Recover + Brain-from-Git + Predict Failures
+### 🧠 10x Vision Phase 2 — Layers 3, 5 & 6
 
-Four high-impact tools completing the 10x Vision roadmap:
+#### Layer 3 — Multi-Agent Deliberation Chamber (MADC)
 
-- **`crystal_view`** — Inspect the current Memory Crystal: age indicator, top patterns by category, freshness status. Previously crystals were write-only.
-- **`compact_recover`** — Reconstruct full context from Crystal + last session + handoff + WIP registry + roadmap. The single command to call when context window compacts.
-- **`brain_from_git`** — Parse git log, classify commits (fix/feat/refactor/perf/security/deploy/test/chore), store lessons at confidence 0.55, update CKG edges. Cold-start bootstrap for new brains.
-- **`brain_predict_failures`** — Query CKG `causes`/`degrades_under` edges + failure-outcome lessons, rank by probability percentage. Returns pre-loaded fixes. Before every deploy: know what will break.
+New tool: **`madc_deliberate`** — When conflicting lessons exist for a topic, run deliberation between 6 specialist expert agents (InfraAgent, AuthAgent, DeployAgent, DatabaseAgent, DebugAgent, APIAgent). Each agent votes based on its CKG domain coverage. Unanimous → loser superseded. Split → contested flag. Resolutions stored as permanent CKG nodes.
 
-### Description update
-New npm description: *"Your AI forgets everything between sessions. cachly fixes that permanently. A causal brain that learns WHY things break."*
+Auto-trigger: `learn_from_attempts` now detects contradictions, writes a `contradicts` CKG edge, and suggests `madc_deliberate` automatically.
 
----
+#### Layer 5 — Continuous Learning Stream (CLS)
 
-## [0.9.6] – 2026-05-05
+Two new tools for learning **without `session_end`**:
 
-### 🔗 Repo URL fix + OAuth Device Flow
+- **`cls_ingest`** — Ingest learning signals from 3 sources: `git_commit` (commit message + files → CKG edges + lesson), `ci_outcome` (green after red → confirmed fix at 75% confidence), `ide_diagnostic` (compiler error + fix pair → instant lesson + CKG `fixes` edge).
 
-- **server.json**: repo URL corrected to `cachly-dev/cachly-mcp` (public repo, Glama-readable)
-- **package.json**: repository + bugs URLs updated
-- OAuth Device Flow: zero-credential install, auto-starts on first tool call
+- **`cls_install_hooks`** — Outputs a ready-to-paste git post-commit hook + GitHub Actions step. Once installed: every commit and CI run feeds the brain automatically. Zero `session_end` required.
 
----
+#### Layer 6 — Federation Protocol (FedBrain)
 
-## [0.9.5] – 2026-05-05
+Four new tools for AI-to-AI knowledge transfer with cryptographic provenance:
 
-### 🔑 Zero-credential install + Glama ownership
+- **`fedbrain_contribute`** — Contribute a lesson to the global commons with a HMAC-signed knowledge certificate (domain fingerprint + confidence + outcome chain hash).
 
-- **OAuth Device Flow**: MCP server auto-starts sign-in on first tool call with no JWT set
-- **smithery.yaml**: 0 required fields — users only need to click the sign-in link
-- `glama.json` added for ownership claim
+- **`fedbrain_search`** — Context-weighted search: your domain fingerprint (from contributed lessons + `context_hints`) weights results from brains with matching tech stacks higher. Shows Gold Standard badges (10+ confirms).
 
----
+- **`fedbrain_confirm`** — Confirm that a syndicated lesson worked. Propagates back to global commons (increments `confirm_count`). Updates local CKG confidence. At 10 independent confirmations → 🏆 Gold Standard.
 
-## [0.9.4] – 2026-05-05
+- **`fedbrain_status`** — Dashboard: contributed lessons, confirm history, Gold Standard count, pending propagations.
 
-### ⚡ Auto-instance resolution + 1-field setup
+#### Summary
 
-- `resolveDefaultInstanceId()`: auto-fetches running instance when only JWT is set
-- `handleTool`: auto-injects default `instance_id` for all tools when env absent
-- smithery.yaml: only 1 required field (JWT)
+| Layer | Tool(s) | What it does |
+|-------|---------|--------------|
+| 3 (MADC) | `madc_deliberate` | Expert agent voting on contradicting beliefs |
+| 5 (CLS) | `cls_ingest`, `cls_install_hooks` | Continuous learning without session_end |
+| 6 (FedBrain) | `fedbrain_contribute`, `fedbrain_search`, `fedbrain_confirm`, `fedbrain_status` | Federated knowledge with crypto certificates |
+
+Total tools: **63** (was 54 in v0.9.2)
 
 ---
 
-## [0.9.3] – 2026-05-05
+## [0.9.2] – 2026-05-06
 
-### 🧠 MADC + CLS + FedBrain (63 tools)
+### 🧠 10x Vision Phase 1 — Layers 1, 2, 4 & 7
 
-- **`madc_deliberate`**: Multi-Agent Deliberation Chamber — resolves belief conflicts
-- **`cls_ingest`** + **`cls_install_hooks`**: Continuous Learning Stream from git/CI
-- **`fedbrain_contribute`** / **`fedbrain_search`** / **`fedbrain_confirm`** / **`fedbrain_status`**: Federation Protocol with cryptographic provenance and context-weighted search
-
----
-
-## [0.9.2] – 2026-05-04
-
-### 🕸️ CKG + BUE + PPE + MCM (54 tools)
-
-- **`ckg_inspect`**: Inspect Causal Knowledge Graph — typed edges with Bayesian confidence
-- **`brain_predict`**: Predictive Pre-fetch — predict likely failures from current context
-- **`brain_search`**: BM25+ full-text search over all brain data
-- **`knowledge_decay`**: Manually trigger confidence decay for stale beliefs
+- **Layer 1 (CKG):** Redis-backed Causal Knowledge Graph. Typed edges: `fixes`, `requires`, `co-occurs`, `causes`, `contradicts`.
+- **Layer 2 (BUE):** `learn_from_attempts` now writes CKG edges with Bayesian confidence `(s+1)/(t+2)`.
+- **Layer 4 (PPE):** `brain_predict` — CKG traversal + text fallback for failure prediction.
+- **Layer 7 (MCM):** Domain coverage map in `session_start` with confidence bars.
+- New: `brain_search` (BM25+ over all brain data), `ckg_inspect` (BFS with confidence bars).
+- `causal_trace` upgraded: CKG graph-first, text similarity fallback.
 
 ---
 
-## [0.9.1] – 2026-05-05
 
-### 💎 Memory Crystals — Properly surfaced
-
-Memory Crystals were implemented but invisible. Now they're first-class:
-
-- **`crystal_view`** — New tool: inspect the current Crystal (patterns by category, freshness status, when to refresh). Previously there was no way to see Crystal contents without triggering a full `session_start`.
-- **`session_end` Crystal reminder** — After saving a session, `session_end` now checks Crystal age. If no Crystal exists, or it's ≥ 30 days old, it reminds you to run `memory_crystalize`. Zero friction — the Brain tells you when it needs a refresh.
-- **`autopilot` updated** — Generated CLAUDE.md now includes: `compact_recover` rule (context compaction), monthly crystal schedule, `syndicate_search` rule (unknown errors), and full Cognitive Tools table. Updated to v0.9.
-
----
-
-## [0.9.0] – 2026-05-05
-
-### ⚡ compact_recover + 🌱 brain_from_git — The two most-requested missing tools
-
-#### New Tools
-
-- **`compact_recover`** — Fast context recovery after Claude/Cursor/Copilot context window compaction. Call as the FIRST tool after any context limit hit. Returns: last checkpoint (task + files + next step), session handoff if any, top recalled lessons for the current focus. Unlike `session_start`, this is instant — no full brain scan, no streak logic. Designed to be the first line of every CLAUDE.md recovery protocol.
-
-- **`brain_from_git`** — Bootstrap the AI Brain from git history in one call. Scans the last N days of commits, extracts actionable knowledge (fixes, reverts, deploys, migrations), and bulk-loads them as lessons. Skips commits already in the Brain (safe to re-run). Supports author filtering for solo bootstrapping on team repos. The recommended first step for any new project: `brain_from_git(workspace_path=".", days=180)`.
-
-#### Why these were missing
-
-`compact_recover` was referenced in every CLAUDE.md template and Autopilot output but had no implementation — users were told to call it but it would fail silently. `brain_from_git` was the #1 marketed feature ("Turn your git history into an AI knowledge base") but only existed as ambient learning inside `session_end`. Both are now first-class MCP tools.
-
----
-
-## [0.7.0] – 2026-05-04
 
 ### 🌐 Knowledge Syndication — The Global AI Brain
 

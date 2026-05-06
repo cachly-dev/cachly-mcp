@@ -11,8 +11,6 @@ COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts
 COPY --from=builder /app/dist/ ./dist/
 ENV NODE_ENV=production
-ENV CACHLY_JWT=""
-ENV CACHLY_BRAIN_INSTANCE_ID=""
-ENV CACHLY_NO_TELEMETRY=1
-ENV CACHLY_NO_UPDATE_CHECK=1
+ENV PORT=3000
+EXPOSE 3000
 ENTRYPOINT ["node", "dist/index.js"]

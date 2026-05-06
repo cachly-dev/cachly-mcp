@@ -1,12 +1,12 @@
-# cachly — The World's First Cognitive Cache
+# 🔮 cachly AI Brain — MCP Server
 
-> **A cache that thinks.**  
-> Not just managed Redis. The universal AI memory layer — persistent, self-managing, cross-model.  
-> One command. Your AI never forgets again.
+> **Persistent memory for Claude Code, Cursor, GitHub Copilot, Windsurf, Cline & Zed.**  
+> Your AI remembers every lesson, every fix, every architecture decision — forever.  
+> **Now with Live 3D Brain Visualizer — watch your knowledge galaxy grow in real time.**
 
 <p align="center">
-  <a href="https://github.com/cachly-dev/cachly-mcp/stargazers">
-    <img src="https://img.shields.io/github/stars/cachly-dev/cachly-mcp?style=social" alt="GitHub Stars" />
+  <a href="https://github.com/cachly-dev/mcp-server/stargazers">
+    <img src="https://img.shields.io/github/stars/cachly-dev/mcp-server?style=social" alt="GitHub Stars" />
   </a>
   &nbsp;
   <a href="https://www.npmjs.com/package/@cachly-dev/mcp-server">
@@ -30,21 +30,19 @@
 
 ---
 
-## 🆕 What is a Cognitive Cache?
+## 🆕 v0.6 — Cognitive Cache: Your AI Brain now *thinks* about what it knows
 
-Every cache stores data. cachly stores **meaning** — and now reasons over it.
+> Redis stores bytes. LangChain stores text. **cachly v0.6 reasons over knowledge.**
 
-**Seven capabilities no other memory system has ever had:**
+### The 5 tools no other memory system has:
 
-| Capability | What it does | Why it matters |
-|-----------|-------------|----------------|
-| **`memory_consolidate`** | Garbage collection for knowledge — detect contradictions, merge duplicates, prune stale | Like `git gc` for your AI brain |
-| **`brain_diff`** | `git log` for your AI brain — what changed this week? | See your AI's learning velocity |
-| **`causal_trace`** | Root cause analysis through memory — problem → chain → fix | **No other system can do this** |
-| **`knowledge_decay`** | Confidence per lesson: `████░░░░ 40%` | Old knowledge rots. Now you know which. |
-| **`autopilot`** | Generates CLAUDE.md that makes any AI self-managing, forever | Zero manual calls. One command. Done. |
-| **`syndicate`** | Contribute verified lessons to the global AI Knowledge Commons | Anonymous (HMAC). Every AI learns. |
-| **`syndicate_search`** | Search solutions discovered by every AI brain on the planet | Community trust scores: `████████░░ ×47` |
+| Tool | What it does | Why it's different |
+|---|---|---|
+| `memory_consolidate` | Weekly garbage collector — detects contradictions, merges duplicates, expires stale | Like `git gc` for knowledge |
+| `brain_diff` | `git log` for your AI Brain — what changed this week? | See your AI's learning velocity |
+| `causal_trace` | Root Cause Analysis through memory: problem → chain → solution | **No other system can do this** |
+| `knowledge_decay` | Confidence score per lesson: `████░░░░ 40%` | Old knowledge rots. Now you know which |
+| `autopilot` | Generates CLAUDE.md that makes any AI self-managing, forever | Zero manual calls. One command. Done. |
 
 **The `causal_trace` moment:**
 ```
@@ -63,7 +61,7 @@ causal_trace(problem="auth breaks after restart")
 Every morning, you open your AI coding assistant. It doesn't remember yesterday.  
 You explain your architecture. You explain the deployment process. You explain the bug you fixed last week.
 
-**The average developer wastes 45 minutes/day re-establishing context.**
+**The average developer wastes 45 minutes/day re-establishing context.** That's €15,000+ in lost productivity per engineer per year.
 
 ## The Fix — One Command
 
@@ -74,316 +72,28 @@ npx @cachly-dev/mcp-server@latest setup
 The interactive wizard:
 1. Signs you in (free, no credit card required)
 2. Picks or creates your AI Brain instance
-3. **Auto-detects** Cursor, Windsurf, VS Code, Claude Code, Continue.dev, Cline & Zed
+3. **Auto-detects** Cursor, Windsurf, VS Code, Claude Code, Continue.dev, **Cline & Zed**
 4. Writes the correct MCP config for every detected editor
 5. Creates `CLAUDE.md` with memory rules pre-filled
+6. Shows your Brain Health snapshot right in the terminal
 
 **Index your project** into the Brain for instant semantic search:
 ```bash
 npx @cachly-dev/mcp-server@latest index .
 ```
 
----
-
-## What it looks like
-
-Every session starts with a briefing instead of a blank slate:
-
-```
-🧠 Session Briefing
-
-📅 Last session (2h ago): Fixed auth redirect loop in Next.js middleware
-   Duration: 47 min · Files: middleware.ts, auth.config.ts, .env.local
-
-📊 Brain: 23 lessons · 5 context entries · 38 recalls · ~9.5h saved
-
-🎯 Relevant for "auth":
-  ✅ next:middleware-auth — matcher must exclude /_next/static paths (negative lookahead)
-  ✅ keycloak:refresh-token — use httpOnly cookie, not localStorage — Safari blocks third-party
-  ❌ oauth:pkce — PKCE + CORS broken in Safari 16.3, still unresolved
-
-🕐 Recent lessons:
-  ✅ redis:pipeline-batching — pipeline() for N writes, 10× faster than sequential
-  ✅ deploy:healthcheck — readinessProbe.failureThreshold must be ≥ 10 on cold starts
-```
-
-Your AI arrives pre-briefed. No repeating yourself.
+**Result:** Your AI remembers everything. Always.
 
 ---
 
-## Cognitive Cache in Action
+## Quick Start (Manual)
 
-### Root Cause Analysis Through Memory
+**Step 1 — Get your free credentials** at [cachly.dev](https://cachly.dev) (25 MB free, forever, no credit card).
 
-```
-causal_trace(problem="auth fails after namespace restart")
-
-🔍 Causal Trace — "auth fails after namespace restart"
-
-Found 7 related memories (3 failures · 1 partial · 2 fixes)
-
-❌ Root causes / similar failures:
-  1. [12.03.2025] 🔴 k8s:namespace-terminating (relevance 9/10)
-     ↳ Cannot create resources in Terminating namespace — must wait for full deletion
-  2. [08.02.2025] 🟡 keycloak:jwks-cache-race (relevance 6/10)
-     ↳ Concurrent JWKS map access panics under load — needs RWMutex
-
-✅ What solved similar problems:
-  • k8s:namespace-wait — PollUntilContextTimeout 3min loop until NotFound
-  • auth:jwks-singleton — double-checked locking pattern, init once on startup
-
-🧩 Likely causal chain:
-  k8s:namespace-terminating
-    ↓ led to keycloak:jwks-cache-race
-    ↓ current symptom: auth fails after namespace restart
-
-🎯 Recommended fix: apply k8s:namespace-wait solution
-```
-
-### Knowledge Syndication — The Global AI Brain
-
-```
-syndicate_search(query="k8s namespace stuck terminating")
-
-🌐 Global Knowledge Commons — "k8s namespace stuck terminating"
-
-Found 3 community solutions (ranked by trust):
-
-  ████████░░ ×47  [VERIFIED] k8s:namespace-force-delete
-    → kubectl get namespace <ns> -o json | jq '.spec.finalizers=[]' | kubectl replace --raw ...
-    → Confirmed by 47 independent AI brains across 12 countries
-
-  ██████░░░░ ×23  [VERIFIED] k8s:namespace-finalizer-patch
-    → PATCH /api/v1/namespaces/<ns>/finalize with empty finalizers array
-    → 23 confirmations, 0 contradictions
-
-  ████░░░░░░ ×9   k8s:pvc-blocking-termination
-    → PVCs with retain policy block namespace deletion
-    → 9 confirmations
-```
-
-### Knowledge Decay — Trust What's Still True
-
-```
-knowledge_decay(threshold_days=30)
-
-⏱️ Knowledge Decay Analysis
-
-🧠 31 total memories · 24 healthy (avg 88% confidence) · 7 decaying
-
-⚠️ 7 memories need re-verification:
-
-  ██████████ 100% — auth:jwt-refresh (3d old · recalled 5×)
-  ████████░░  80% 🟡 k8s:resource-limits (45d old · recalled 1×)
-  █████░░░░░  52%    deploy:docker-compose (78d old · recalled 0×)
-  ███░░░░░░░  31% 🔴 stripe:webhook-secret (112d old · recalled 0×)
-
-💡 Re-validate top decaying memories before critical tasks.
-```
-
----
-
-## Before vs. After
-
-| Situation | Without cachly | With cachly |
-|-----------|----------------|-------------|
-| Session start | "What's your architecture?" | Briefed in 2s — lessons, last session, open failures |
-| Bug hits again | Re-researches from scratch (20–40 min) | "You fixed this on March 12, exact command: `kubectl rollout restart`" |
-| "Why is X broken?" | Manual investigation | `causal_trace` traces root cause through memory in seconds |
-| "Can I trust this lesson?" | No way to know | `knowledge_decay` shows confidence % per memory |
-| Unknown bug | Google + Stack Overflow | `syndicate_search` — 47 AI brains already solved it |
-| After holiday | Context completely dead | Full context restored, team lessons visible |
-| New team member | Weeks to onboard | `session_start` gives full codebase context instantly |
-| Model switch | Start over | Brain is model-agnostic — Claude, GPT-4, Gemini share one brain |
-
----
-
-## Bootstrap from Git History
-
-```bash
-# As a CLI command
-npx @cachly-dev/mcp-server@latest index .
-```
-
-Or call directly from any AI session via the `brain_from_git` MCP tool:
-
-```
-brain_from_git(instance_id="...", workspace_path="/home/you/project", days=180)
-```
-
-Either way, your git log is read and lessons are extracted automatically:
-
-```
-🧠 Brain bootstrapped from git history
-
-📊 Scanned: 342 commits over last 180 days
-✅ Success lessons: 28  ❌ Failure/revert lessons: 9
-📁 Hotspot files tracked: 12
-💾 Total stored: 31 new lessons
-
-Top lessons extracted:
-  ✅🟡 auth:jwt-refresh-token — Use httpOnly cookie, not localStorage
-  ❌🔴 deploy:docker-compose-detach — Reverted: "blocks SSH terminal"
-  ✅🟡 redis:connection-pool-timeout — connectTimeout:5000 prevents hangs
-```
-
----
-
-## 68 MCP Tools
-
-### 🧠 Cognitive Cache
-
-| Tool | What it does |
-|------|-------------|
-| **`memory_consolidate`** | Distill knowledge base: contradictions, duplicates, pruned stale. Health score 0–100. |
-| **`brain_diff`** | Git-style diff — what was learned, updated, or went stale since N sessions |
-| **`causal_trace`** | Root cause analysis: given a problem, traces backwards through memory to find cause + fix |
-| **`knowledge_decay`** | Temporal confidence per memory — decay by age, recover by recall frequency |
-| **`autopilot`** | Generates and optionally writes CLAUDE.md that makes any AI fully self-managing |
-
-### 🌐 Knowledge Syndication
-
-| Tool | What it does |
-|------|-------------|
-| **`syndicate`** | Contribute a verified lesson to the global Knowledge Commons (anonymous, HMAC-hashed) |
-| **`syndicate_search`** | Search solutions from every AI brain on the planet — ranked by `confirm_count` |
-| **`syndicate_stats`** | Your contribution stats to the global commons |
-| **`syndicate_trending`** | Most-confirmed lessons in the community this week |
-
-### 🔁 Context Recovery
-
-| Tool | What it does |
-|------|-------------|
-| **`compact_recover`** | **Call first after any context limit hit.** Returns last checkpoint, pending tasks, and top lessons — instantly. No full scan. |
-| **`brain_from_git`** | Bootstrap brain from git history: `brain_from_git(workspace_path=".", days=180)` → stores months of team knowledge in one call. |
-
-### 🧩 Session & Memory
-
-| Tool | What it does |
-|------|-------------|
-| **`session_start`** | Full briefing: last session, open failures, recent lessons, brain stats |
-| **`session_end`** | Save session + auto-extract lessons from ambient git log |
-| **`session_ping`** | Cross-provider checkpoint — switch Claude↔Copilot↔Cursor seamlessly |
-| **`session_handoff`** | Hand off remaining tasks to next window with full context |
-| **`auto_learn_session`** | Batch-store multiple observations at session end |
-| **`learn_from_attempts`** | Store lessons after any fix, deploy, or discovery |
-| **`recall_best_solution`** | Best known fix for a topic — with full success/failure history |
-| **`recall_at`** | Recall a lesson at a specific point in time |
-| **`smart_recall`** | BM25+ full-text search across all brain data — 11 languages |
-| **`remember_context`** / **`recall_context`** | Cache/retrieve architecture findings, file summaries, ADRs |
-| **`list_remembered`** / **`forget_context`** | List/remove cached context entries |
-| **`sync_file_changes`** | Track file change history, surface related lessons per file |
-| **`setup_ai_memory`** | Interactive wizard to configure AI memory |
-
-### 💎 Memory Crystals
-
-Memory Crystals distill **everything** your AI brain has learned into a permanent, compact snapshot — injected into every `session_start` automatically.
-
-```
-memory_crystalize(instance_id="...", label="May 2026")
-
-💎 Memory Crystal created: May 2026
-
-📊 Compressed: 47 sessions + 89 lessons → 8 top patterns
-
-Top patterns by category:
-  • auth (12×): Use httpOnly cookie for refresh token — Safari blocks third-party localStorage
-  • k8s (9×): PollUntilContextTimeout 3min before namespace recreate
-  • deploy (8×): readinessProbe.failureThreshold must be ≥ 10 on cold starts
-  • redis (6×): pipeline() for N writes, 10× faster than sequential
-  …and 4 more
-
-💡 This crystal will appear in every future session_start briefing.
-💡 Re-run memory_crystalize monthly to keep it fresh.
-```
-
-| Tool | What it does |
-|------|-------------|
-| **`memory_crystalize`** | Distill all sessions + lessons into a Crystal. Run monthly or after every major milestone. |
-| **`crystal_view`** | Inspect the current Crystal: all patterns, freshness status, when to refresh. |
-
-**`session_end` reminds you** automatically when the Crystal is missing or 30+ days old.  
-**`autopilot`** now generates CLAUDE.md with the monthly crystal schedule pre-wired.
-
----
-
-### 🗺️ Roadmap
-
-| Tool | What it does |
-|------|-------------|
-| **`roadmap_add`** | Add a feature/task to the persistent project roadmap |
-| **`roadmap_update`** | Mark progress, change status, update priority |
-| **`roadmap_list`** | View all roadmap items — shown at every `session_start` |
-| **`roadmap_next`** | Pick the highest-priority open item to work on next |
-
-### 👥 Team Brain
-
-| Tool | What it does |
-|------|-------------|
-| **`team_learn`** / **`team_recall`** | Share lessons across the whole team on a shared instance |
-| **`team_synthesize`** | Consolidate multiple lessons into one authoritative version |
-| **`memory_crystalize`** | Distill all lessons into a Crystal snapshot for instant team context |
-| **`brain_doctor`** | Health check: lesson quality, IQ boost %, open failures, recommendations |
-| **`global_learn`** / **`global_recall`** | Cross-project universal lessons |
-| **`publish_lesson`** / **`import_public_brain`** | Share/import community knowledge |
-| **`trace_dependency`** | Find all lessons affected by a dependency change |
-| **`list_orgs`** / **`create_org`** | Manage team organizations |
-| **`invite_member`** / **`get_org_plan`** | Invite a developer to your org by email |
-
-### 🔍 Multilingual Brain — Search in Any Language
-
-`smart_recall` understands **11 languages natively** — no configuration required.
-
-| Script | Languages | Tokenization |
-|--------|-----------|-------------|
-| Latin | EN, DE, FR, ES, IT, PT | Whitespace + stopwords |
-| CJK | Chinese, Japanese, Korean | Character bigrams |
-| RTL | Arabic, Hebrew | Word tokenization + Arabic light stemming |
-
-**Romanization matching** — store in Japanese, search in romaji:
-```
-smart_recall("depuroi") → finds デプロイ docs
-smart_recall("kontena") → finds コンテナ docs
-```
-
-**Cross-language retrieval** — 130+ tech term synonyms EN↔JA↔ZH↔KO↔AR↔HE:
-```
-smart_recall("deploy") → finds デプロイ, 部署, 배포, نشر, פריסה
-```
-
-### ⚙️ Instance Management
-
-| Tool | What it does |
-|------|-------------|
-| `list_instances` / `create_instance` | List or spin up cache instances |
-| `get_instance` / `delete_instance` | Get details or remove an instance |
-| `get_connection_string` | Get the `redis://` URL for your own app |
-
-### 🗄️ Cache Operations
-
-| Tool | What it does |
-|------|-------------|
-| `cache_get` / `cache_set` / `cache_delete` | Standard cache operations |
-| `cache_exists` / `cache_ttl` / `cache_keys` | Key inspection |
-| `cache_mget` / `cache_mset` | Bulk pipeline (single round-trip) |
-| `cache_stats` | Memory, hit rate, ops/sec, keyspace info |
-| `cache_lock_acquire` / `cache_lock_release` | Distributed Redlock-lite |
-| `cache_stream_set` / `cache_stream_get` | Cache streaming LLM responses in chunks |
-| `cache_warmup` / `index_project` | Pre-warm cache or index a project directory |
-
-### 🔭 Semantic Search
-
-| Tool | What it does |
-|------|-------------|
-| `semantic_search` | Find cached entries by meaning (pgvector HNSW, EU-hosted) |
-| `detect_namespace` | Auto-classify prompt into code/qa/summary/translation/creative |
-
----
-
-## Manual Setup
+**Step 2 — Add to your editor's MCP config:**
 
 <details>
-<summary>Claude Code (<code>~/.claude/mcp.json</code> or <code>.mcp.json</code>)</summary>
+<summary><b>Claude Code</b> (<code>~/.claude/mcp.json</code> or <code>.mcp.json</code>)</summary>
 
 ```json
 {
@@ -393,8 +103,56 @@ smart_recall("deploy") → finds デプロイ, 部署, 배포, نشر, פריס�
       "command": "npx",
       "args": ["-y", "@cachly-dev/mcp-server@latest"],
       "env": {
-        "CACHLY_JWT": "your-api-key",
-        "CACHLY_BRAIN_INSTANCE_ID": "your-instance-id"
+        "CACHLY_JWT": "your-jwt-token",
+        "CACHLY_INSTANCE_ID": "your-instance-id"
+
+Every morning, you open your AI coding assistant. It doesn't remember yesterday.  
+You explain your architecture. You explain the deployment process. You explain the bug you fixed last week.
+
+**The average developer wastes 45 minutes/day re-establishing context.** That's €15,000+ in lost productivity per engineer per year.
+
+## The Fix — One Command
+
+```bash
+npx @cachly-dev/mcp-server@latest setup
+```
+
+The interactive wizard:
+1. Signs you in (free, no credit card required)
+2. Picks or creates your AI Brain instance
+3. **Auto-detects** Cursor, Windsurf, VS Code, Claude Code, Continue.dev, **Cline & Zed**
+4. Writes the correct MCP config for every detected editor
+5. Creates `CLAUDE.md` with memory rules pre-filled
+6. Shows your Brain Health snapshot right in the terminal
+
+**Index your project** into the Brain for instant semantic search:
+```bash
+npx @cachly-dev/mcp-server@latest index .
+```
+
+**Result:** Your AI remembers everything. Always.
+
+---
+
+## Quick Start (Manual)
+
+**Step 1 — Get your free credentials** at [cachly.dev](https://cachly.dev) (25 MB free, forever, no credit card).
+
+**Step 2 — Add to your editor's MCP config:**
+
+<details>
+<summary><b>Claude Code</b> (<code>~/.claude/mcp.json</code> or <code>.mcp.json</code>)</summary>
+
+```json
+{
+  "mcpServers": {
+    "cachly": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@cachly-dev/mcp-server@latest"],
+      "env": {
+        "CACHLY_JWT": "your-jwt-token",
+        "CACHLY_INSTANCE_ID": "your-instance-id"
       }
     }
   }
@@ -403,7 +161,7 @@ smart_recall("deploy") → finds デプロイ, 部署, 배포, نشر, פריס�
 </details>
 
 <details>
-<summary>Cursor / Windsurf / VS Code (<code>.cursor/mcp.json</code> or <code>.mcp.json</code>)</summary>
+<summary><b>Cursor / Windsurf / VS Code</b> (<code>.cursor/mcp.json</code> / <code>.mcp.json</code>)</summary>
 
 ```json
 {
@@ -413,8 +171,8 @@ smart_recall("deploy") → finds デプロイ, 部署, 배포, نشر, פריס�
       "command": "npx",
       "args": ["-y", "@cachly-dev/mcp-server@latest"],
       "env": {
-        "CACHLY_JWT": "your-api-key",
-        "CACHLY_BRAIN_INSTANCE_ID": "your-instance-id"
+        "CACHLY_JWT": "your-jwt-token",
+        "CACHLY_INSTANCE_ID": "your-instance-id"
       }
     }
   }
@@ -422,19 +180,122 @@ smart_recall("deploy") → finds デプロイ, 部署, 배포, نشر, פריס�
 ```
 </details>
 
-<details>
-<summary>Autopilot CLAUDE.md (generated by <code>autopilot</code> tool)</summary>
+**Step 3 — Add to `CLAUDE.md` / `.github/copilot-instructions.md`:**
 
 ```markdown
-## AI Brain Rules (cachly Autopilot)
-- If context was compacted: call compact_recover FIRST before anything else
+## AI Brain Rules (cachly)
 - Call session_start BEFORE reading any files or making changes
 - Call learn_from_attempts AFTER every fix, deploy, or discovery
-- Call causal_trace BEFORE long debugging sessions
-- Call syndicate_search BEFORE investigating any unknown error
 - Call session_end when closing the window
 ```
-</details>
+
+---
+
+## With vs. Without cachly
+
+| Situation | Without cachly | With cachly |
+|-----------|----------------|-------------|
+| Session start | "What's your architecture?" | "Ready. 23 lessons, last session: deployed API." |
+| Known bug hits again | Re-researches from scratch | "You fixed this on March 12, here's the exact command" |
+| After holiday / team handoff | Context dead | Fully briefed in < 10 seconds |
+| Repeated LLM patterns | Pays for each re-discovery | Cached by meaning, ~1,200 tokens saved per hit |
+| New team member | Weeks to onboard | `session_start` gives full context instantly |
+
+---
+
+## 51 MCP Tools
+
+### 🧠 Session & Memory (most used)
+
+| Tool | What it does |
+|------|-------------|
+| **`session_start`** | Full briefing: last session summary, open failures, recent lessons, brain health |
+| **`session_end`** | Save what you built, auto-extract lessons from summary + ambient git log |
+| **`session_handoff`** | Hand off remaining tasks to next window, with context |
+| **`auto_learn_session`** | Batch-learn from a list of observations |
+| **`sync_file_changes`** | Sync changed files into brain index |
+| **`learn_from_attempts`** | Store structured lessons after any fix, deploy, or discovery |
+| **`recall_best_solution`** | Best known solution for a topic — with success/failure history |
+| **`recall_at`** | Recall a lesson at a specific point in time |
+| **`remember_context`** | Cache architecture findings, decisions, file summaries |
+| **`recall_context`** | Get exact context by key (supports glob) |
+| **`list_remembered`** | See all cached context entries |
+| **`forget_context`** | Remove stale context |
+| **`smart_recall`** | BM25+ full-text search across all brain data — multilingual: EN, DE, FR, ES, IT, PT, ZH, JA, KO, **AR, HE** |
+| **`setup_ai_memory`** | Interactive wizard to configure AI memory |
+
+### 🌍 Multilingual Brain — Search in Any Language
+
+The Brain's search engine understands **11 languages natively** — no configuration required.
+
+| Script | Languages | Tokenization |
+|--------|-----------|-------------|
+| Latin | EN, DE, FR, ES, IT, PT | Whitespace + stopwords |
+| CJK | Chinese (ZH), Japanese (JA), Korean (KO) | Character bigrams |
+| RTL | Arabic (AR), Hebrew (HE) | Word tokenization + light stemming |
+
+**Romanization matching** — store lessons in Japanese, search in romaji:
+```
+smart_recall("kontena") → finds コンテナ docs
+smart_recall("depuroi") → finds デプロイ docs
+```
+
+**Cross-language retrieval** — 130+ tech term synonyms EN↔JA↔ZH↔KO↔AR↔HE:
+```
+smart_recall("deploy")    → finds デプロイ, 部署, 배포, نشر, פריסה
+smart_recall("デプロイ")  → finds "deploy", "deployment"
+smart_recall("خطأ")       → finds "error", エラー, 错误
+```
+
+### 💡 Legendary Brain Features
+
+| Feature | How it works |
+|---------|-------------|
+| **Team Telepathy** | Multi-dev Brain: the `author` param on `learn_from_attempts` shares fixes across the whole team. Every `session_start` shows colleagues' lessons. |
+| **Ambient Git Learning** | Pass `workspace_path` to `session_end` — it auto-reads `git log`, stores recent commits as Brain lessons. Zero extra calls. |
+| **Memory Crystals** | `memory_crystalize` distills all lessons into a compact Crystal injected at every `session_start`. AI arrives pre-loaded with team knowledge. |
+| **IQ Boost** | `brain_doctor` reports `iq_boost_pct` — how much smarter your AI gets vs. baseline from cached lessons. |
+
+### ⚙️ Instance Management
+
+| Tool | What it does |
+|------|-------------|
+| `list_instances` | List all your cache instances |
+| `create_instance` | Spin up a new instance (free or paid) |
+| `get_connection_string` | Get the `redis://` URL for your app |
+| `delete_instance` | Remove an instance |
+| `get_real_time_stats` | Memory, hit rate, ops/sec |
+
+### 🗄️ Cache Operations
+
+| Tool | What it does |
+|------|-------------|
+| `cache_get` / `cache_set` / `cache_delete` | Standard cache operations |
+| `cache_mget` / `cache_mset` | Bulk pipeline (single round-trip) |
+| `cache_lock_acquire` / `cache_lock_release` | Distributed Redlock-lite |
+| `cache_stream_set` / `cache_stream_get` | LLM token stream caching |
+
+### 🔍 Semantic Cache
+
+| Tool | What it does |
+|------|-------------|
+| `semantic_search` | Find cached entries by meaning (pgvector HNSW, EU-hosted) |
+| `semantic_warmup` | Pre-warm cache with prompt/response pairs |
+| `detect_namespace` | Auto-classify prompt into code/qa/summary/translation/creative |
+
+### 👥 Team Brain
+
+| Tool | What it does |
+|------|-------------|
+| `team_learn` / `team_recall` | Share lessons across the team |
+| `team_synthesize` | Consolidate multiple lessons into one authoritative version |
+| `memory_crystalize` | Distill all lessons into a Crystal snapshot for instant team context |
+| `brain_doctor` | Health check: lesson count, IQ boost %, open failures, quality score |
+| `global_learn` / `global_recall` | Cross-project universal lessons |
+| `publish_lesson` / `import_public_brain` | Share/import community knowledge |
+| `trace_dependency` | Causal chain — find lessons affected by a dependency change |
+| `list_orgs` / `create_org` | Manage team organizations |
+| `invite_member` / `get_org_plan` | Invite a developer to your org by email |
 
 ---
 
@@ -442,13 +303,13 @@ smart_recall("deploy") → finds デプロイ, 部署, 배포, نشر, פריס�
 
 | Tier | RAM | Price | Best for |
 |------|-----|-------|----------|
-| **Free** | 25 MB | **€0/mo forever** | Side projects & solo devs |
+| **Free** | 25 MB | **€0/mo forever** | Dev & side projects |
 | **Dev** | 200 MB | €19/mo | Individual developers |
-| **Pro** | 900 MB | €49/mo | Teams (shared brain) |
-| **Speed** | 900 MB + Dragonfly + Semantic | €79/mo | AI-heavy workloads |
+| **Pro** | 900 MB | €49/mo | Teams |
+| **Speed** | 900 MB + Dragonfly + Semantic Cache | €79/mo | AI-heavy workloads |
 | **Business** | 7 GB | €199/mo | Scale-ups |
 
-✅ All plans: **German servers · GDPR-compliant · 99.9% SLA · no credit card for Free**
+✅ All plans: **German servers · GDPR-compliant · 99.9% SLA · No credit card for Free tier**
 
 ---
 
@@ -456,28 +317,30 @@ smart_recall("deploy") → finds デプロイ, 部署, 배포, نشر, פריס�
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CACHLY_JWT` | — | **Required.** API key from [cachly.dev](https://cachly.dev) |
-| `CACHLY_BRAIN_INSTANCE_ID` | — | Default instance UUID — set once, works in all tools |
+| `CACHLY_JWT` | — | **Required.** Your API token from [cachly.dev](https://cachly.dev) |
+| `CACHLY_INSTANCE_ID` | — | Default instance UUID (optional if you pass per-call) |
 | `CACHLY_API_URL` | `https://api.cachly.dev` | Override for self-hosted |
-| `CACHLY_EMBED_PROVIDER` | auto-detect | `openai` \| `gemini` \| `mistral` \| `cohere` \| `ollama` \| `cachly` |
-| `CACHLY_NO_TELEMETRY` | unset | Set to `1` to opt out of anonymous usage pings |
+| `CACHLY_NO_TELEMETRY` | unset | Set to `1` to disable anonymous usage pings |
+| `CACHLY_NO_UPDATE_CHECK` | unset | Set to `1` to disable the version-check on startup |
 
 ---
 
-## Ecosystem
+## 🛠️ Ecosystem
 
 | Package | What it does |
 |---------|-------------|
-| **[`@cachly-dev/mcp-server`](https://www.npmjs.com/package/@cachly-dev/mcp-server)** | ← you are here — Cognitive Cache MCP for Claude, Cursor, Copilot, Windsurf |
-| **[`cachly-brain` (VS Code)](https://marketplace.visualstudio.com/items?itemName=cachly.cachly-brain)** | VS Code extension — status bar, CodeLens lessons, one-click setup |
-| **[`@cachly-dev/openclaw`](https://www.npmjs.com/package/@cachly-dev/openclaw)** | JS/TS SDK — cut LLM costs 60–90% with semantic cache in your own app |
-| **[`@cachly-dev/sdk`](https://www.npmjs.com/package/@cachly-dev/sdk)** | Node.js SDK — managed Redis, semantic cache & AI memory in your app |
+| **[`@cachly-dev/mcp-server`](https://www.npmjs.com/package/@cachly-dev/mcp-server)** | ← you are here — AI Brain MCP tools for Claude Code, Cursor, Copilot, Windsurf |
+| **[`@cachly-dev/openclaw`](https://www.npmjs.com/package/@cachly-dev/openclaw)** | JS/TS SDK — cut LLM costs 60–90% with semantic cache + BM25 in your own app, 3 lines of code |
+| **[`@cachly-dev/init`](https://www.npmjs.com/package/@cachly-dev/init)** | One-command setup wizard: auto-detects all your editors and writes the correct MCP config — `npx @cachly-dev/init` |
+| **[`@cachly-dev/cli`](https://www.npmjs.com/package/@cachly-dev/cli)** | Terminal CLI — manage instances, cache data, brain lessons: `npm i -g @cachly-dev/cli` |
+| **[`@cachly-dev/sdk`](https://www.npmjs.com/package/@cachly-dev/sdk)** | Node.js/TypeScript SDK — use managed Redis, semantic cache & AI memory directly in your app |
 
 ---
 
 ## Links
 
 - 🌐 [cachly.dev](https://cachly.dev) — Dashboard & free signup
-- 📖 [Docs](https://cachly.dev/docs/ai-memory) — Full documentation
-- 💬 [Issues](https://github.com/cachly-dev/cachly-mcp/issues) — Bug reports & feature requests
-- ⭐ [Star on GitHub](https://github.com/cachly-dev/cachly-mcp) — If cachly saves you time, a star means a lot!
+- 📖 [AI Brain docs](https://cachly.dev/docs/ai-memory) — Full documentation
+- 💬 [GitHub Issues](https://github.com/cachly-dev/mcp-server/issues) — Bug reports & feature requests
+- ⭐ [Star on GitHub](https://github.com/cachly-dev/mcp-server) — If cachly saves you time, a star means a lot!
+- 📦 [npm](https://www.npmjs.com/package/@cachly-dev/mcp-server)
