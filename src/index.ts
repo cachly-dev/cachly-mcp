@@ -262,25 +262,6 @@ function detectEmbedProvider(): string {
  * Note: Brain works fully WITHOUT embedding (keyword search + exact keys).
  *       Embedding is an OPTIONAL boost for semantic_search and index_project.
  */
-
-async function withEmbedRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
-  let lastErr: unknown;
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await fn();
-    } catch (err) {
-      lastErr = err;
-      const msg = String(err);
-      // Only retry on transient errors (network / 5xx / timeout). Auth/config errors fail fast.
-      const isTransient = msg.includes('fetch') || msg.includes('timeout') ||
-        msg.includes('ECONNRESET') || msg.includes('5');
-      if (!isTransient || i === attempts - 1) throw err;
-      await new Promise(r => setTimeout(r, 300 * 2 ** i)); // 300ms, 600ms
-    }
-  }
-  throw lastErr;
-}
-
 async function computeEmbedding(text: string): Promise<number[]> {
   switch (EMBED_PROVIDER) {
     case 'cachly': {
@@ -297,14 +278,14 @@ async function computeEmbedding(text: string): Promise<number[]> {
       const url = `${API_URL}/api/v1/embed`;
       const body: Record<string, string> = { text };
       if (EMBED_MODEL) body.model = EMBED_MODEL;
-      const res = await withEmbedRetry(() => fetch(url, {
+      const res = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${JWT}`,
         },
         body: JSON.stringify(body),
-      }));
+      });
       if (!res.ok) {
         const errBody = await res.text();
         throw new Error(`Cachly embed API error ${res.status}: ${errBody}`);
@@ -2243,25 +2224,9 @@ interface SemanticSearchResponse {
 
 /** Reuse Redis connections across tool calls (keyed by instance_id). */
 const pool = new Map<string, Redis>();
-const POOL_MAX = 200;
-
-/** Evict the oldest pool entry to stay under POOL_MAX. */
-function evictOldestPoolEntry(): void {
-  const oldest = pool.keys().next().value;
-  if (oldest) {
-    pool.get(oldest)?.quit().catch(() => undefined);
-    pool.delete(oldest);
-  }
-}
 
 async function getConnection(instance_id: string): Promise<Redis> {
-  if (pool.has(instance_id)) {
-    // Move to end (most-recently-used) by re-inserting
-    const client = pool.get(instance_id)!;
-    pool.delete(instance_id);
-    pool.set(instance_id, client);
-    return client;
-  }
+  if (pool.has(instance_id)) return pool.get(instance_id)!;
 
   const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
   if (inst.status !== 'running') {
@@ -2316,7 +2281,6 @@ async function getConnection(instance_id: string): Promise<Redis> {
     );
   }
 
-  if (pool.size >= POOL_MAX) evictOldestPoolEntry();
   pool.set(instance_id, client);
   return client;
 }
@@ -2444,7 +2408,13 @@ const TOOLS = [
   // ── Instance Management ──────────────────────────────────────────────────
   {
     name: 'list_instances',
-    description: 'List all your cachly cache instances with their status and connection details.',
+    description:
+      'List all your cachly cache instances with their status and connection details. ' +
+      'Read-only. Returns an array of instance objects — each with id, name, tier, status, region, RAM, ' +
+      'and redis:// connection string. Returns an empty array if no instances exist. ' +
+      'No pagination: all instances are returned in one call (typical accounts have < 20). ' +
+      'Use this first to discover instance UUIDs required by get_instance, cache_get, cache_set, ' +
+      'and all other cache tools. Use get_instance to retrieve full metadata for a single instance.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   {
@@ -2469,7 +2439,12 @@ const TOOLS = [
   },
   {
     name: 'get_instance',
-    description: 'Get details and the Redis connection string for a specific cache instance.',
+    description:
+      'Get full metadata for a specific cache instance: name, tier, status (provisioning / running / paused), ' +
+      'region, RAM limit, Redis connection string, created_at, and expiry. Read-only. ' +
+      'Returns an error if the instance_id is not found or belongs to another account. ' +
+      'Call list_instances first to discover valid UUIDs. ' +
+      'Use get_connection_string instead if you only need the redis:// URL for your app config.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2539,15 +2514,21 @@ const TOOLS = [
   },
   {
     name: 'cache_delete',
-    description: 'Delete one or more keys from a running cache instance.',
+    description:
+      'Permanently delete one or more keys from a running cache instance (uses Redis DEL). ' +
+      'This operation is destructive and irreversible — deleted keys cannot be recovered. ' +
+      'Deleting a non-existent key is safe and returns 0 for that key (no error). ' +
+      'Returns the count of keys that were actually deleted (existing keys only). ' +
+      'Use this to explicitly remove stale entries; prefer cache_set with a short TTL for auto-expiring data. ' +
+      'Do NOT use this to clear an entire instance — use the dashboard or delete_instance for that.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance to delete keys from (get from list_instances)' },
         keys: {
           type: 'array',
           items: { type: 'string' },
-          description: 'One or more cache keys to delete',
+          description: 'One or more cache keys to delete. Accepts exact keys only (no glob patterns — use cache_keys to list first).',
         },
       },
       required: ['instance_id', 'keys'],
@@ -2555,12 +2536,18 @@ const TOOLS = [
   },
   {
     name: 'cache_exists',
-    description: 'Check whether one or more keys exist in the cache. Returns a count of existing keys.',
+    description:
+      'Check whether one or more keys exist in a running cache instance (uses Redis EXISTS). ' +
+      'Read-only — no side effects. Returns the count of keys that currently exist (integer 0 to N). ' +
+      'If none of the keys exist, returns 0. If all exist, returns the total key count passed in. ' +
+      'Duplicate keys in the input array are each counted separately (Redis behavior). ' +
+      'Use this to check presence before a cache_get to avoid null handling, or to verify a cache warm-up completed. ' +
+      'Use cache_get instead if you also need the value; use cache_ttl if you need expiry info.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string' },
-        keys: { type: 'array', items: { type: 'string' }, description: 'Keys to check' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance to check (get from list_instances)' },
+        keys: { type: 'array', items: { type: 'string' }, description: 'Keys to check for existence. Accepts exact keys only (no glob patterns).' },
       },
       required: ['instance_id', 'keys'],
     },
@@ -2596,11 +2583,15 @@ const TOOLS = [
     name: 'cache_stats',
     description:
       'Get real-time stats for a cache instance: memory usage, hit/miss rate, commands/sec, ' +
-      'connected clients, keyspace info, and uptime.',
+      'connected clients, keyspace info, and uptime. Read-only — no side effects. ' +
+      'The instance_id identifies the target instance (obtain from list_instances). ' +
+      'Use this for monitoring, capacity planning, or debugging performance issues — ' +
+      'not for reading cached values (use cache_get for that). ' +
+      'Use cache_exists or cache_ttl if you only need key-level information.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance (from list_instances)' },
       },
       required: ['instance_id'],
     },
@@ -3419,8 +3410,12 @@ const TOOLS = [
   {
     name: 'global_recall',
     description:
-      'Recall cross-project lessons stored via global_learn. ' +
-      'Returns all global lessons or those matching a topic filter.',
+      'Read-only retrieval of cross-project lessons stored via global_learn. No side effects. ' +
+      'Returns a list of matching global lesson objects, each with topic, lesson text, severity, and tags. ' +
+      'If no topic is provided, returns all global lessons (up to 50). ' +
+      'If topic is provided, returns all lessons whose topic key contains that string (partial match). ' +
+      'Use this for lessons that apply universally across all projects (tool quirks, shell gotchas, platform behavior). ' +
+      'Use recall_best_solution instead for project-specific lessons; use team_recall for org-scoped lessons.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3452,8 +3447,12 @@ const TOOLS = [
     name: 'import_public_brain',
     description:
       'Import community lessons from the Cachly Public Brain for a framework. ' +
-      'Loads battle-tested, community-curated lessons into your brain instance. ' +
-      'Available: nextjs, fastapi, go, docker, kubernetes, react, typescript, python, rust, laravel, rails, spring.',
+      'Non-destructive: existing lessons with the same topic key are not overwritten. ' +
+      'Returns the count of lessons imported and their topic slugs. ' +
+      'Available frameworks: nextjs, fastapi, go, docker, kubernetes, react, typescript, python, rust, laravel, rails, spring. ' +
+      'Use this to bootstrap a new brain with battle-tested community knowledge before your first session_start. ' +
+      'Use publish_lesson to contribute your own lessons to the Public Brain; ' +
+      'use learn_from_attempts for storing lessons from your own sessions.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3673,12 +3672,16 @@ const TOOLS = [
   {
     name: 'causal_trace',
     description:
-      'Root Cause Analysis through memory — the most powerful debugging tool in your AI Brain. ' +
-      'Given a problem description, traces the causal chain from root cause through intermediate ' +
-      'failures to the current symptom, then surfaces the exact solution that worked before. ' +
+      'Root Cause Analysis through memory: given a problem description, traces the causal chain ' +
+      'from root cause through intermediate failures to the current symptom, then surfaces the ' +
+      'exact solution that worked before. Read-only — does not modify any stored data. ' +
+      'Requires prior learning: brain must have lessons stored via learn_from_attempts or brain_from_git. ' +
+      'Returns an ordered chain of concepts with confidence scores plus the matching solution; ' +
+      'returns an empty chain with a message if no causal path is found. ' +
       'Example: causal_trace(problem="auth breaks after restart") → ' +
-      '"Root: k8s:namespace-terminating → keycloak:jwks-race → Solution from March 12: PollUntilContextTimeout 3min" ' +
-      'No other memory system can do this. Replaces 30 minutes of git blame + log archaeology.',
+      '"Root: k8s:namespace-terminating → keycloak:jwks-race → Solution: PollUntilContextTimeout 3min". ' +
+      'Use recall_best_solution for direct topic lookup, syndicate_search for community patterns, ' +
+      'and causal_trace when you have a symptom and need the full root-cause chain.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -3711,12 +3714,16 @@ const TOOLS = [
   {
     name: 'autopilot',
     description:
-      'The endgame: generate a CLAUDE.md / copilot-instructions.md that turns any AI into a ' +
-      'self-managing brain operator. Zero manual session_start / session_end calls forever. ' +
-      'The generated file instructs Claude, Cursor, Copilot, Windsurf, or Gemini to ' +
-      'automatically call session_start at window open, learn_from_attempts after every fix, ' +
-      'and session_end before closing — without being asked. ' +
-      'One command. Every AI. Always on.',
+      'Generate a CLAUDE.md / copilot-instructions.md that makes any AI self-managing forever. ' +
+      'Writes a configuration file to disk — will overwrite an existing file at the target path. ' +
+      'No auth required beyond a valid instance_id. ' +
+      'The generated file instructs Claude, Cursor, Copilot, Windsurf, or Gemini to automatically ' +
+      'call session_start at window open, learn_from_attempts after every fix, and session_end ' +
+      'before closing — without being asked. ' +
+      'Returns the generated file content as a string and the path where it was written. ' +
+      'Use style="minimal" for just the three hooks; style="full" for the complete ruleset with examples. ' +
+      'One command. Every AI. Always on. ' +
+      'Use setup_ai_memory instead if you want an interactive one-shot setup that also creates an instance.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -4529,13 +4536,9 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ``,
       ];
 
-      const validHits = results.filter(h => h.found && h.id);
-      const values = await Promise.all(
-        validHits.map(h => redis.get(`${namespace}:val:${h.id!}`))
-      );
-      for (let i = 0; i < validHits.length; i++) {
-        const hit = validHits[i];
-        const value = values[i];
+      for (const hit of results) {
+        if (!hit.found || !hit.id) continue;
+        const value = await redis.get(`${namespace}:val:${hit.id}`);
         lines.push(
           `**Match** (similarity: ${((hit.similarity ?? 0) * 100).toFixed(1)}%)`,
           `  Prompt: _"${hit.prompt ?? '(unknown)'}"_`,
@@ -9739,18 +9742,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 let _autoSessionInstanceId: string | null = null;
 let _autoSessionStarted = false;
 let _autoSessionToolCount = 0;
-let _autoSessionStarting = false; // guard against concurrent session_start race
 
 async function autoStartSession(instanceId: string): Promise<void> {
-  if (_autoSessionStarted || _autoSessionStarting) return;
-  _autoSessionStarting = true;
+  if (_autoSessionStarted) return;
   _autoSessionStarted = true;
   _autoSessionInstanceId = instanceId;
   try {
     await handleTool('session_start', { instance_id: instanceId, focus: 'auto (MCP session)' });
-  } catch { /* non-fatal — session tracking is a best-effort feature */ } finally {
-    _autoSessionStarting = false;
-  }
+  } catch { /* non-fatal — session tracking is a best-effort feature */ }
 
   // Auto-index the project if it hasn't been indexed in the last 24h.
   // This is the main lever for growing token savings: more indexed code →
@@ -9813,16 +9812,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 });
 
-// Graceful shutdown – close all Redis connections + auto-end brain session.
-// 10s total budget: if session_end takes longer the process exits anyway.
-async function gracefulShutdown(): Promise<void> {
-  const budget = new Promise<void>(r => setTimeout(r, 10_000));
-  await Promise.race([autoEndSession().catch(() => undefined), budget]);
-  await Promise.all([...pool.values()].map(c => c.quit().catch(() => undefined)));
-}
+// Graceful shutdown – close all Redis connections + auto-end brain session
+process.on('SIGTERM', async () => {
+  await autoEndSession().catch(() => undefined);
+  for (const [, client] of pool) await client.quit().catch(() => undefined);
+  process.exit(0);
+});
 
-process.on('SIGTERM', async () => { await gracefulShutdown(); process.exit(0); });
-process.on('SIGINT',  async () => { await gracefulShutdown(); process.exit(0); });
+process.on('SIGINT', async () => {
+  await autoEndSession().catch(() => undefined);
+  for (const [, client] of pool) await client.quit().catch(() => undefined);
+  process.exit(0);
+});
 
 // Safety net: log unhandled rejections instead of crashing the MCP process.
 // The MCP server must stay alive even if a single tool call hits an unexpected error.

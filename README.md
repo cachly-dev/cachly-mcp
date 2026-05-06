@@ -30,7 +30,7 @@
 
 ---
 
-## 🆕 v0.9.8 — Predictive Brain: Your AI knows what will break *before* it does
+## 🆕 v0.9.9 — Predictive Brain: Your AI knows what will break *before* it does
 
 > Redis stores bytes. LangChain stores text. **cachly v0.9 reasons over knowledge and predicts failures.**
 
