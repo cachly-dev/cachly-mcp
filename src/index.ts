@@ -262,6 +262,25 @@ function detectEmbedProvider(): string {
  * Note: Brain works fully WITHOUT embedding (keyword search + exact keys).
  *       Embedding is an OPTIONAL boost for semantic_search and index_project.
  */
+
+async function withEmbedRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const msg = String(err);
+      // Only retry on transient errors (network / 5xx / timeout). Auth/config errors fail fast.
+      const isTransient = msg.includes('fetch') || msg.includes('timeout') ||
+        msg.includes('ECONNRESET') || msg.includes('5');
+      if (!isTransient || i === attempts - 1) throw err;
+      await new Promise(r => setTimeout(r, 300 * 2 ** i)); // 300ms, 600ms
+    }
+  }
+  throw lastErr;
+}
+
 async function computeEmbedding(text: string): Promise<number[]> {
   switch (EMBED_PROVIDER) {
     case 'cachly': {
@@ -278,14 +297,14 @@ async function computeEmbedding(text: string): Promise<number[]> {
       const url = `${API_URL}/api/v1/embed`;
       const body: Record<string, string> = { text };
       if (EMBED_MODEL) body.model = EMBED_MODEL;
-      const res = await fetch(url, {
+      const res = await withEmbedRetry(() => fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${JWT}`,
         },
         body: JSON.stringify(body),
-      });
+      }));
       if (!res.ok) {
         const errBody = await res.text();
         throw new Error(`Cachly embed API error ${res.status}: ${errBody}`);
@@ -4493,9 +4512,13 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ``,
       ];
 
-      for (const hit of results) {
-        if (!hit.found || !hit.id) continue;
-        const value = await redis.get(`${namespace}:val:${hit.id}`);
+      const validHits = results.filter(h => h.found && h.id);
+      const values = await Promise.all(
+        validHits.map(h => redis.get(`${namespace}:val:${h.id!}`))
+      );
+      for (let i = 0; i < validHits.length; i++) {
+        const hit = validHits[i];
+        const value = values[i];
         lines.push(
           `**Match** (similarity: ${((hit.similarity ?? 0) * 100).toFixed(1)}%)`,
           `  Prompt: _"${hit.prompt ?? '(unknown)'}"_`,
