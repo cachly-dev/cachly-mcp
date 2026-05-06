@@ -1158,9 +1158,12 @@ const TOOLS = [
   {
     name: 'invite_member',
     description:
+      'MUTATION — sends an invite email immediately and cannot be undone via MCP. ' +
       'Invite a team member to a Cachly organization by email. ' +
-      'They will receive an invite email and can join via the dashboard. ' +
-      'Roles: owner (full access), admin (manage members + instances), member (read + cache ops).',
+      'Requires the caller to be an admin or owner of the organization. ' +
+      'Valid roles: admin (manage members + instances), member (read + cache ops). Default role: member. ' +
+      'Returns an error if the email is already a member or has a pending invite.',
+    // NOTE: schema intentionally omits 'owner' — owners can only be set via the billing portal.
     inputSchema: {
       type: 'object',
       properties: {
@@ -1474,9 +1477,12 @@ const TOOLS = [
   {
     name: 'brain_predict',
     description:
-      'Predictive Pre-fetch Engine (PPE): given your current context (what you\'re working on), traverses the CKG ' +
-      'to predict likely failures and pre-load relevant fixes. Returns top predicted pitfalls + highest-confidence fixes. ' +
-      'Call at session_start when working on a specific feature or debugging area.',
+      'READ-ONLY — no side effects, no writes, no external network calls. ' +
+      'Predictive Pre-fetch Engine (PPE): given your current context, reads the CKG in your Redis instance ' +
+      'to predict likely failures and return the highest-confidence fixes. ' +
+      '"Pre-load" means results are returned inline — nothing is cached or persisted. ' +
+      'Requires a valid instance_id (your Redis brain). No rate limits. ' +
+      'Call at session start when working on a specific feature or debugging area.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1537,9 +1543,12 @@ const TOOLS = [
   {
     name: 'cls_install_hooks',
     description:
-      'Output a ready-to-install git post-commit hook + GitHub Actions step for Continuous Learning. ' +
-      'Once installed, every git commit and CI build automatically feeds the brain — no session_end needed. ' +
-      'Run once per repository.',
+      'READ-ONLY — outputs text only, writes no files, makes no network calls, has no side effects. ' +
+      'Generates ready-to-paste shell scripts: a git post-commit hook and/or a GitHub Actions step. ' +
+      'You must manually copy and install the output. ' +
+      'Once the generated scripts are installed, each git commit or CI run will make outbound HTTPS calls ' +
+      'to api.cachly.dev to feed learning signals to your brain. ' +
+      'No auth required to call this tool — only an instance_id. Run once per repository.',
     inputSchema: {
       type: 'object',
       properties: {
