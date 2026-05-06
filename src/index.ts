@@ -4033,6 +4033,27 @@ const TOOLS = [
     },
   },
   {
+    name: 'brain_federate',
+    description:
+      'FedBrain Layer 6 — Private org knowledge transfer: copy CKG edges + lessons from a source brain ' +
+      'into your brain for a specific domain (e.g. "billing", "auth", "deploy"). ' +
+      'The new hire use case: one command gives you the senior engineer\'s 5 years of typed, confidence-weighted ' +
+      'knowledge in your domain. Unlike syndicate_search (global, anonymous), brain_federate is org-private — ' +
+      'both brains must be in the same Cachly org, or the source instance_id must be explicitly shared. ' +
+      'Example: brain_federate(source="prod-brain-id", domain="billing", min_confidence=0.6)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Your brain instance ID (destination)' },
+        source: { type: 'string', description: 'Source brain instance ID to federate from' },
+        domain: { type: 'string', description: 'Domain to transfer, e.g. "billing", "auth", "deploy", "infra". Use "*" for all domains.' },
+        min_confidence: { type: 'number', description: 'Minimum edge confidence to transfer (default: 0.6)' },
+        dry_run: { type: 'boolean', description: 'Preview what would be transferred without writing (default: false)' },
+      },
+      required: ['instance_id', 'source', 'domain'],
+    },
+  },
+  {
     name: 'crystal_view',
     description:
       'Inspect the current Memory Crystal — the compressed wisdom distilled from all past sessions. ' +
@@ -5302,6 +5323,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
               // Store conflict marker
               const conflictKey = `cachly:ckg:conflict:${conceptId}`;
               await redis.set(conflictKey, JSON.stringify({ topic, detected_at: new Date().toISOString(), fix_confidence: existEdge.confidence, fix_trials: existEdge.trials, failure_outcome: outcome }), 'EX', 60 * 60 * 24 * 90);
+              // Auto-trigger MADC deliberation in background — never blocks learn_from_attempts
+              handleTool('madc_deliberate', { instance_id, topic }).catch(() => undefined);
             }
           }
         }
@@ -5917,6 +5940,34 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
           lines.push('');
         }
       } catch { /* non-critical */ }
+
+      // ── Layer 7 MCM: Blind Spot Detection ────────────────────────────────────
+      // If the focus mentions a domain that has no CKG node → surface blind spot
+      if (focus && focus.length > 3) {
+        try {
+          const focusTokens = focus.toLowerCase().replace(/[^a-z0-9\s:_-]/g, ' ').split(/\s+/).filter(t => t.length > 3);
+          const blindSpots: string[] = [];
+          for (const token of focusTokens.slice(0, 6)) {
+            const nodeExists = await redis.exists(`cachly:ckg:node:${token}`);
+            if (!nodeExists) {
+              // Check if any node starts with this token (prefix match)
+              const prefixKeys: string[] = [];
+              const psStream = redis.scanStream({ match: `cachly:ckg:node:${token}*`, count: 10 });
+              await new Promise<void>((res, rej) => { psStream.on('data', (b: string[]) => prefixKeys.push(...b)); psStream.on('end', res); psStream.on('error', rej); });
+              if (prefixKeys.length === 0) blindSpots.push(token);
+            }
+          }
+          if (blindSpots.length > 0) {
+            lines.push(`🔭 **Blind spots detected for this focus:**`);
+            for (const bs of blindSpots.slice(0, 3)) {
+              lines.push(`  ⬜ \`${bs}\` — no CKG knowledge. Suggestions:`);
+              lines.push(`     • \`brain_from_git(instance_id="...", concept="${bs}")\` — bootstrap from commits`);
+              lines.push(`     • \`fedbrain_search(query="${bs}")\` — search global commons`);
+            }
+            lines.push('');
+          }
+        } catch { /* non-critical */ }
+      }
 
       if (focusLessons.length > 0) {
         lines.push(`🎯 **Relevant for "${focus}":**`);
@@ -8071,8 +8122,51 @@ async function handleBulkLockStream(name: string, args: Record<string, unknown>)
         ``,
         `🔍 **Active** (recalled at least once): ${recalled.length}`,
         ``,
-        `💡 Run \`memory_consolidate\` to merge duplicates · \`knowledge_decay\` to see confidence scores.`,
       ].filter(s => s !== '');
+
+      // ── 10X brain_diff extensions ──────────────────────────────────────────
+      // 1. Contested → Established (resolution nodes created in window)
+      const resolutionKeys: string[] = [];
+      const rsStream = redis.scanStream({ match: 'cachly:ckg:node:resolution-*', count: 100 });
+      await new Promise<void>((res, rej) => { rsStream.on('data', (b: string[]) => resolutionKeys.push(...b)); rsStream.on('end', res); rsStream.on('error', rej); });
+      const recentResolutions: Array<{ topic: string; resolution: string; ts: string }> = [];
+      for (const rk of resolutionKeys) {
+        const rr = await redis.get(rk);
+        if (!rr) continue;
+        try {
+          const rn = JSON.parse(rr) as { topic?: string; resolution?: string; ts?: string };
+          if (rn.ts && new Date(rn.ts).getTime() >= sinceMs) recentResolutions.push({ topic: rn.topic ?? rk, resolution: rn.resolution ?? 'unknown', ts: rn.ts });
+        } catch { /* skip */ }
+      }
+      if (recentResolutions.length > 0) {
+        lines.push(`🗳️ **MADC Resolutions** (${recentResolutions.length} contested beliefs resolved):`);
+        for (const r of recentResolutions.slice(0, 5)) {
+          const rIcon = r.resolution === 'unanimous_success' ? '✅' : r.resolution === 'unanimous_failure' ? '❌' : '⚠️';
+          lines.push(`  ${rIcon} \`${r.topic}\` → ${r.resolution}`);
+        }
+        lines.push('');
+      }
+
+      // 2. New domains bootstrapped (domains in added lessons that weren't in older lessons)
+      const existingDomains = new Set(updated.concat(recalled).map(l => l.topic.split(':')[0]));
+      const newDomains = [...new Set(added.map(l => l.topic.split(':')[0]))].filter(d => !existingDomains.has(d));
+      if (newDomains.length > 0) {
+        lines.push(`🌱 **New domains bootstrapped:** ${newDomains.map(d => `\`${d}\``).join(', ')}`, '');
+      }
+
+      // 3. FedBrain transfers received in window
+      const fedHistRaw = await redis.lrange('cachly:fedbrain:federations', -20, -1);
+      const recentFeds = fedHistRaw.map(r => { try { return JSON.parse(r) as { source: string; domain: string; transferred_at: string; nodes: number; edges: number }; } catch { return null; } })
+        .filter(f => f && new Date(f!.transferred_at).getTime() >= sinceMs) as Array<{ source: string; domain: string; transferred_at: string; nodes: number; edges: number }>;
+      if (recentFeds.length > 0) {
+        lines.push(`🧠 **FedBrain transfers received (${recentFeds.length}):**`);
+        for (const f of recentFeds.slice(0, 3)) {
+          lines.push(`  📥 domain \`${f.domain}\` from \`${f.source.slice(0, 16)}…\` — ${f.nodes} nodes, ${f.edges} edges`);
+        }
+        lines.push('');
+      }
+
+      lines.push(`💡 Run \`memory_consolidate\` to merge duplicates · \`knowledge_decay\` to see confidence scores.`);
       return lines.join('\n');
     }
 
@@ -8975,9 +9069,34 @@ smart_recall(
       };
       await redis.set(`cachly:ckg:node:${resNodeId}`, JSON.stringify(resNode));
 
-      // Write contradicts edge if contested
+      // Write contradicts edge if contested; decay loser confidence to 0.1 if unanimous
       if (resolution === 'contested') {
         await ckgUpdateEdge(redis, ckgSlug(topic), 'contradicts', resNodeId, false);
+      } else {
+        // Unanimous — demote the losing side's edges to near-zero confidence
+        const loserOutcome = resolution === 'unanimous_success' ? 'failure' : 'success';
+        const loserLessons = (loserOutcome === 'failure' ? failureLessons : successLessons);
+        if (loserLessons.length > 0) {
+          // Decay all 'fixes' edges from this concept that contradict the resolution
+          const fromKeys = await redis.smembers(`cachly:ckg:idx:from:${ckgSlug(topic)}`);
+          for (const fk of fromKeys) {
+            const er = await redis.get(fk);
+            if (!er) continue;
+            try {
+              const edge: CKGEdge = JSON.parse(er);
+              if (edge.edgeType === 'fixes' && edge.confidence > 0.15) {
+                if (resolution === 'unanimous_failure') {
+                  // Fix was wrong — decay to 0.1
+                  edge.confidence = 0.1;
+                  edge.last_updated = new Date().toISOString();
+                  await redis.set(fk, JSON.stringify(edge));
+                }
+              }
+            } catch { /* skip corrupt edges */ }
+          }
+        }
+        // Remove the conflict marker — deliberation resolved it
+        await redis.del(`cachly:ckg:conflict:${ckgSlug(topic)}`);
       }
 
       const lines = [
@@ -9433,6 +9552,118 @@ smart_recall(
         `**Search:** \`fedbrain_search(query="...")\``,
         `**Confirm:** \`fedbrain_confirm(topic="...", outcome="worked")\``,
       );
+      return lines.join('\n');
+    }
+
+    // ── Layer 6: FedBrain — brain_federate ───────────────────────────────────
+    case 'brain_federate': {
+      const { instance_id, source, domain, min_confidence = 0.6, dry_run = false } = args as {
+        instance_id: string; source: string; domain: string;
+        min_confidence?: number; dry_run?: boolean;
+      };
+      if (instance_id === source) return `❌ Source and destination cannot be the same brain.`;
+
+      const destRedis = await getConnection(instance_id);
+      const srcRedis = await getConnection(source);
+
+      const domainPattern = domain === '*' ? 'cachly:ckg:node:*' : `cachly:ckg:node:${domain}*`;
+
+      // Scan source CKG nodes matching the domain
+      const nodeKeys: string[] = [];
+      const nStream = srcRedis.scanStream({ match: domainPattern, count: 100 });
+      await new Promise<void>((res, rej) => { nStream.on('data', (b: string[]) => nodeKeys.push(...b)); nStream.on('end', res); nStream.on('error', rej); });
+
+      if (nodeKeys.length === 0) {
+        return [
+          `🧠 **brain_federate: "${domain}"**`, '',
+          `No CKG nodes found in source brain for domain \`${domain}\`.`,
+          `The source brain may not have knowledge in this area yet.`,
+          `Try: \`fedbrain_search(query="${domain}")\` to find global commons knowledge instead.`,
+        ].join('\n');
+      }
+
+      // Transfer nodes + their outgoing edges
+      let nodesTransferred = 0;
+      let edgesTransferred = 0;
+      let lessonsTransferred = 0;
+      let skippedLowConf = 0;
+      const transferLog: string[] = [];
+
+      for (const nk of nodeKeys) {
+        const nodeRaw = await srcRedis.get(nk);
+        if (!nodeRaw) continue;
+        let node: CKGNode;
+        try { node = JSON.parse(nodeRaw); } catch { continue; }
+
+        if (!dry_run) await destRedis.set(nk, nodeRaw);
+        nodesTransferred++;
+
+        // Transfer outgoing edges for this node
+        const edgeKeys = await srcRedis.smembers(`cachly:ckg:idx:from:${node.id}`);
+        for (const ek of edgeKeys) {
+          const edgeRaw = await srcRedis.get(ek);
+          if (!edgeRaw) continue;
+          let edge: CKGEdge;
+          try { edge = JSON.parse(edgeRaw); } catch { continue; }
+          if (edge.confidence < (min_confidence as number)) { skippedLowConf++; continue; }
+          if (!dry_run) {
+            await destRedis.set(ek, edgeRaw);
+            await destRedis.sadd(`cachly:ckg:idx:from:${edge.from}`, ek);
+            await destRedis.sadd(`cachly:ckg:idx:to:${edge.to}`, ek);
+          }
+          edgesTransferred++;
+        }
+
+        // Transfer best-lesson for the same topic slug
+        const lessonKey = `cachly:lesson:best:${node.id}`;
+        const lessonRaw = await srcRedis.get(lessonKey);
+        if (lessonRaw) {
+          if (!dry_run) await destRedis.set(lessonKey, lessonRaw);
+          lessonsTransferred++;
+          if (transferLog.length < 8) {
+            try {
+              const l = JSON.parse(lessonRaw) as { topic: string; outcome: string; what_worked?: string };
+              const icon = l.outcome === 'success' ? '✅' : l.outcome === 'failure' ? '❌' : '⚠️';
+              transferLog.push(`  ${icon} \`${l.topic}\` — ${(l.what_worked ?? '').slice(0, 80)}`);
+            } catch { /* skip */ }
+          }
+        }
+      }
+
+      // Record federation provenance
+      if (!dry_run) {
+        const provEntry = JSON.stringify({
+          source, domain, transferred_at: new Date().toISOString(),
+          nodes: nodesTransferred, edges: edgesTransferred, lessons: lessonsTransferred,
+        });
+        await destRedis.rpush('cachly:fedbrain:federations', provEntry);
+        await destRedis.ltrim('cachly:fedbrain:federations', -50, -1);
+      }
+
+      const dryTag = dry_run ? ' (DRY RUN — no writes)' : '';
+      const lines = [
+        `🧠 **brain_federate: "${domain}"**${dryTag}`, '',
+        `📤 Source: \`${source}\``,
+        `📥 Destination: \`${instance_id}\``,
+        `🔍 Domain filter: \`${domain}\`  |  min_confidence: ${min_confidence}`,
+        '',
+        `### Transfer Summary`,
+        `  🕸️ CKG nodes:  ${nodesTransferred}`,
+        `  🔗 CKG edges:  ${edgesTransferred}  (${skippedLowConf} skipped, confidence < ${min_confidence})`,
+        `  📚 Lessons:    ${lessonsTransferred}`,
+        '',
+      ];
+      if (transferLog.length > 0) {
+        lines.push(`### Sample lessons transferred:`, ...transferLog);
+        if (lessonsTransferred > transferLog.length) lines.push(`  _... and ${lessonsTransferred - transferLog.length} more_`);
+        lines.push('');
+      }
+      if (dry_run) {
+        lines.push(`💡 Run without \`dry_run: true\` to apply the transfer.`);
+      } else {
+        lines.push(`✅ Transfer complete. Your brain now has the \`${domain}\` knowledge from \`${source}\`.`);
+        lines.push(`🔍 Explore: \`ckg_inspect(concept="${domain}")\`  |  \`recall_best_solution(topic="${domain}:...")\``);
+      }
       return lines.join('\n');
     }
 
