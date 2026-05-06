@@ -2,7 +2,7 @@
 
 > **Persistent memory for Claude Code, Cursor, GitHub Copilot, Windsurf, Cline & Zed.**  
 > Your AI remembers every lesson, every fix, every architecture decision — forever.  
-> **Now with Live 3D Brain Visualizer — watch your knowledge galaxy grow in real time.**
+> **Live 3D Brain Visualizer · Predictive Failure Engine · Global Team Brain**
 
 <p align="center">
   <a href="https://github.com/cachly-dev/mcp-server/stargazers">
@@ -30,29 +30,29 @@
 
 ---
 
-## 🆕 v0.6 — Cognitive Cache: Your AI Brain now *thinks* about what it knows
+## 🆕 v0.9.8 — Predictive Brain: Your AI knows what will break *before* it does
 
-> Redis stores bytes. LangChain stores text. **cachly v0.6 reasons over knowledge.**
+> Redis stores bytes. LangChain stores text. **cachly v0.9 reasons over knowledge and predicts failures.**
 
 ### The 5 tools no other memory system has:
 
 | Tool | What it does | Why it's different |
 |---|---|---|
-| `memory_consolidate` | Weekly garbage collector — detects contradictions, merges duplicates, expires stale | Like `git gc` for knowledge |
-| `brain_diff` | `git log` for your AI Brain — what changed this week? | See your AI's learning velocity |
+| `brain_predict_failures` | Predicts the next 3 failures your team will hit, with confidence % | **Learns from every past incident across all brains** |
+| `crystal_view` | Instant compressed Brain snapshot: all lessons distilled into 1 inject | Like `git stash` for AI context |
+| `brain_from_git` | Auto-learns from entire git history in one call | Zero-effort historical knowledge |
 | `causal_trace` | Root Cause Analysis through memory: problem → chain → solution | **No other system can do this** |
-| `knowledge_decay` | Confidence score per lesson: `████░░░░ 40%` | Old knowledge rots. Now you know which |
 | `autopilot` | Generates CLAUDE.md that makes any AI self-managing, forever | Zero manual calls. One command. Done. |
 
-**The `causal_trace` moment:**
+**The `brain_predict_failures` moment:**
 ```
-causal_trace(problem="auth breaks after restart")
+brain_predict_failures()
 
-→ Root: k8s:namespace-terminating
-→ Via:  keycloak:jwks-race  
-→ Fix:  PollUntilContextTimeout 3min  ← used this March 12, worked
+→ 82% confidence: "deploy:docker-healthcheck" — 14 teams hit this next week
+→ 71% confidence: "infra:k8s-tls-san" — WireGuard IP missing from SAN
+→ 64% confidence: "api:jwt-rotation" — auth breaks after key rotation
 ```
-*30 minutes of git blame + log archaeology. In one call.*
+*Predicted before it happens. Not after.*
 
 ---
 
@@ -203,7 +203,7 @@ npx @cachly-dev/mcp-server@latest index .
 
 ---
 
-## 51 MCP Tools
+## 67 MCP Tools
 
 ### 🧠 Session & Memory (most used)
 
@@ -304,10 +304,10 @@ smart_recall("خطأ")       → finds "error", エラー, 错误
 | Tier | RAM | Price | Best for |
 |------|-----|-------|----------|
 | **Free** | 25 MB | **€0/mo forever** | Dev & side projects |
-| **Dev** | 200 MB | €19/mo | Individual developers |
-| **Pro** | 900 MB | €49/mo | Teams |
-| **Speed** | 900 MB + Dragonfly + Semantic Cache | €79/mo | AI-heavy workloads |
-| **Business** | 7 GB | €199/mo | Scale-ups |
+| **Dev** | 200 MB | €7/mo | Individual developers |
+| **Pro** | 900 MB | €25/mo | Teams |
+| **Speed** | 900 MB + Dragonfly + Semantic Cache | €39/mo | AI-heavy workloads |
+| **Business** | 7 GB | €99/mo | Scale-ups |
 
 ✅ All plans: **German servers · GDPR-compliant · 99.9% SLA · No credit card for Free tier**
 
@@ -341,6 +341,6 @@ smart_recall("خطأ")       → finds "error", エラー, 错误
 
 - 🌐 [cachly.dev](https://cachly.dev) — Dashboard & free signup
 - 📖 [AI Brain docs](https://cachly.dev/docs/ai-memory) — Full documentation
-- 💬 [GitHub Issues](https://github.com/cachly-dev/mcp-server/issues) — Bug reports & feature requests
-- ⭐ [Star on GitHub](https://github.com/cachly-dev/mcp-server) — If cachly saves you time, a star means a lot!
+- 💬 [GitHub Issues](https://github.com/cachly-dev/cachly-mcp/issues) — Bug reports & feature requests
+- ⭐ [Star on GitHub](https://github.com/cachly-dev/cachly-mcp) — If cachly saves you time, a star means a lot!
 - 📦 [npm](https://www.npmjs.com/package/@cachly-dev/mcp-server)
