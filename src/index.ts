@@ -1,10 +1,7 @@
 #!/usr/bin/env node
-import { randomUUID } from 'node:crypto';
-import { createHash, createHmac } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
-import { join, relative, extname } from 'node:path';
+import { join } from 'node:path';
 /**
  * cachly MCP Server v0.4.0
  *
