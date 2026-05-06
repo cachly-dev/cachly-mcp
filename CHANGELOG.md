@@ -7,6 +7,73 @@
 
 ---
 
+## [0.9.7] – 2026-05-06
+
+### 🔮 Crystal View + Compact Recover + Brain-from-Git + Predict Failures
+
+Four high-impact tools completing the 10x Vision roadmap:
+
+- **`crystal_view`** — Inspect the current Memory Crystal: age indicator, top patterns by category, freshness status. Previously crystals were write-only.
+- **`compact_recover`** — Reconstruct full context from Crystal + last session + handoff + WIP registry + roadmap. The single command to call when context window compacts.
+- **`brain_from_git`** — Parse git log, classify commits (fix/feat/refactor/perf/security/deploy/test/chore), store lessons at confidence 0.55, update CKG edges. Cold-start bootstrap for new brains.
+- **`brain_predict_failures`** — Query CKG `causes`/`degrades_under` edges + failure-outcome lessons, rank by probability percentage. Returns pre-loaded fixes. Before every deploy: know what will break.
+
+### Description update
+New npm description: *"Your AI forgets everything between sessions. cachly fixes that permanently. A causal brain that learns WHY things break."*
+
+---
+
+## [0.9.6] – 2026-05-05
+
+### 🔗 Repo URL fix + OAuth Device Flow
+
+- **server.json**: repo URL corrected to `cachly-dev/cachly-mcp` (public repo, Glama-readable)
+- **package.json**: repository + bugs URLs updated
+- OAuth Device Flow: zero-credential install, auto-starts on first tool call
+
+---
+
+## [0.9.5] – 2026-05-05
+
+### 🔑 Zero-credential install + Glama ownership
+
+- **OAuth Device Flow**: MCP server auto-starts sign-in on first tool call with no JWT set
+- **smithery.yaml**: 0 required fields — users only need to click the sign-in link
+- `glama.json` added for ownership claim
+
+---
+
+## [0.9.4] – 2026-05-05
+
+### ⚡ Auto-instance resolution + 1-field setup
+
+- `resolveDefaultInstanceId()`: auto-fetches running instance when only JWT is set
+- `handleTool`: auto-injects default `instance_id` for all tools when env absent
+- smithery.yaml: only 1 required field (JWT)
+
+---
+
+## [0.9.3] – 2026-05-05
+
+### 🧠 MADC + CLS + FedBrain (63 tools)
+
+- **`madc_deliberate`**: Multi-Agent Deliberation Chamber — resolves belief conflicts
+- **`cls_ingest`** + **`cls_install_hooks`**: Continuous Learning Stream from git/CI
+- **`fedbrain_contribute`** / **`fedbrain_search`** / **`fedbrain_confirm`** / **`fedbrain_status`**: Federation Protocol with cryptographic provenance and context-weighted search
+
+---
+
+## [0.9.2] – 2026-05-04
+
+### 🕸️ CKG + BUE + PPE + MCM (54 tools)
+
+- **`ckg_inspect`**: Inspect Causal Knowledge Graph — typed edges with Bayesian confidence
+- **`brain_predict`**: Predictive Pre-fetch — predict likely failures from current context
+- **`brain_search`**: BM25+ full-text search over all brain data
+- **`knowledge_decay`**: Manually trigger confidence decay for stale beliefs
+
+---
+
 ## [0.9.1] – 2026-05-05
 
 ### 💎 Memory Crystals — Properly surfaced
