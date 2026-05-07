@@ -6,6 +6,7 @@ import { calculateConfidence, confidenceBadge, CONFIDENCE_WARN_VALUE, CONFIDENCE
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { keywordSearch, tokenize } from '../search.js';
+import { safeJsonParse } from '../utils.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // Git concurrency semaphore (for brain_from_git parallel workers)
@@ -397,7 +398,8 @@ export async function handleFedbrainTool(
       const raw = await redis.get(`cachly:lesson:best:${lesson_key}`);
       if (!raw) return `❌ Lesson \`${lesson_key}\` not found. Store it first with \`learn_from_attempts\`.`;
 
-      const lesson = JSON.parse(raw) as { topic: string; outcome: string; what_worked: string; what_failed?: string; tags?: string[]; commands?: string[]; severity?: string; ts?: string };
+      const lesson = safeJsonParse(raw, null as null | { topic: string; outcome: string; what_worked: string; what_failed?: string; tags?: string[]; commands?: string[]; severity?: string; ts?: string });
+      if (!lesson) return `❌ Lesson \`${lesson_key}\` data is corrupted. Re-store with \`learn_from_attempts\`.`;
 
       const domainTokens = [lesson.topic.split(':')[0], ...(lesson.tags ?? [])].filter(Boolean);
       const domainFingerprint = [...new Set(domainTokens)].sort().join(',');
@@ -747,7 +749,8 @@ export async function handleFedbrainTool(
       }
 
       type Crystal = { label: string; ts: string; session_count: number; lesson_count: number; top_patterns: Array<{ category: string; insight: string; count: number }>; categories: string[]; created_from: string };
-      const crystal: Crystal = JSON.parse(raw);
+      const crystal = safeJsonParse<Crystal | null>(raw, null);
+      if (!crystal) return `❌ Memory Crystal data is corrupted. Re-create with \`memory_crystalize()\`.`;
       const age = Math.floor((Date.now() - new Date(crystal.ts).getTime()) / 86400000);
       const freshEmoji = age <= 7 ? '🟢' : age <= 30 ? '🟡' : '🔴';
 
@@ -784,49 +787,55 @@ export async function handleFedbrainTool(
       const crystalRaw = await redis.get('cachly:crystal:latest');
       if (crystalRaw) {
         type Crystal = { label: string; ts: string; session_count: number; lesson_count: number; top_patterns: Array<{ category: string; insight: string; count: number }> };
-        const crystal: Crystal = JSON.parse(crystalRaw);
-        lines.push(`### 💎 Memory Crystal: ${crystal.label}`);
-        lines.push(`Compressed from ${crystal.session_count} sessions, ${crystal.lesson_count} lessons.`);
-        const topN = focus
-          ? crystal.top_patterns.filter(p => p.category.toLowerCase().includes(focus.toLowerCase()) || p.insight.toLowerCase().includes(focus.toLowerCase())).slice(0, 4)
-          : crystal.top_patterns.slice(0, 4);
-        for (const p of topN) lines.push(`  • **${p.category}**: ${p.insight.slice(0, 100)}`);
-        lines.push('');
+        const crystal = safeJsonParse<Crystal | null>(crystalRaw, null);
+        if (crystal) {
+          lines.push(`### 💎 Memory Crystal: ${crystal.label}`);
+          lines.push(`Compressed from ${crystal.session_count} sessions, ${crystal.lesson_count} lessons.`);
+          const topN = focus
+            ? crystal.top_patterns.filter(p => p.category.toLowerCase().includes(focus.toLowerCase()) || p.insight.toLowerCase().includes(focus.toLowerCase())).slice(0, 4)
+            : crystal.top_patterns.slice(0, 4);
+          for (const p of topN) lines.push(`  • **${p.category}**: ${p.insight.slice(0, 100)}`);
+          lines.push('');
+        }
       }
 
       // 2. Last session summary
       const lastSession = await redis.get('cachly:session:last');
       if (lastSession) {
         type Session = { summary?: string; ts?: string; focus?: string };
-        const sess: Session = JSON.parse(lastSession);
-        lines.push(`### 🕐 Last Session`);
-        if (sess.focus) lines.push(`Focus: _${sess.focus}_`);
-        if (sess.summary) lines.push(`Summary: ${sess.summary.slice(0, 300)}`);
-        lines.push('');
+        const sess = safeJsonParse<Session | null>(lastSession, null);
+        if (sess) {
+          lines.push(`### 🕐 Last Session`);
+          if (sess.focus) lines.push(`Focus: _${sess.focus}_`);
+          if (sess.summary) lines.push(`Summary: ${sess.summary.slice(0, 300)}`);
+          lines.push('');
+        }
       }
 
       // 3. Session handoff
       const handoff = await redis.get('cachly:session:handoff');
       if (handoff) {
         type Handoff = { remaining_tasks?: string[]; instructions?: string; context_summary?: string; blocked_on?: string };
-        const h: Handoff = JSON.parse(handoff);
-        lines.push(`### 📋 Handoff (from last window)`);
-        if (h.context_summary) lines.push(`Context: ${h.context_summary.slice(0, 200)}`);
-        if (h.remaining_tasks?.length) {
-          lines.push(`Remaining tasks:`);
-          for (const t of h.remaining_tasks.slice(0, 5)) lines.push(`  • ${t}`);
+        const h = safeJsonParse<Handoff | null>(handoff, null);
+        if (h) {
+          lines.push(`### 📋 Handoff (from last window)`);
+          if (h.context_summary) lines.push(`Context: ${h.context_summary.slice(0, 200)}`);
+          if (h.remaining_tasks?.length) {
+            lines.push(`Remaining tasks:`);
+            for (const t of h.remaining_tasks.slice(0, 5)) lines.push(`  • ${t}`);
+          }
+          if (h.instructions) lines.push(`⚠️ Instructions: ${h.instructions.slice(0, 200)}`);
+          if (h.blocked_on) lines.push(`🚧 Blocked on: ${h.blocked_on}`);
+          lines.push('');
         }
-        if (h.instructions) lines.push(`⚠️ Instructions: ${h.instructions.slice(0, 200)}`);
-        if (h.blocked_on) lines.push(`🚧 Blocked on: ${h.blocked_on}`);
-        lines.push('');
       }
 
       // 4. WIP registry
       const wipRaw = await redis.get('cachly:ctx:wip-registry');
       if (wipRaw) {
         type Ctx = { content?: string };
-        const wip: Ctx = JSON.parse(wipRaw);
-        if (wip.content) {
+        const wip = safeJsonParse<Ctx | null>(wipRaw, null);
+        if (wip?.content) {
           lines.push(`### 🔧 WIP Registry`);
           lines.push(wip.content.slice(0, 400));
           lines.push('');
@@ -1026,12 +1035,14 @@ export async function handleFedbrainTool(
         for (const nk of nodeKeys.slice(0, 5)) {
           const nodeRaw = await redis.get(nk);
           if (!nodeRaw) continue;
-          const node: CKGNode = JSON.parse(nodeRaw);
+          const node = safeJsonParse<CKGNode | null>(nodeRaw, null);
+          if (!node) continue;
           const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${node.id}`);
           for (const ek of edgeKeys.slice(0, 20)) {
             const edgeRaw = await redis.get(ek);
             if (!edgeRaw) continue;
-            const edge: CKGEdge = JSON.parse(edgeRaw);
+            const edge = safeJsonParse<CKGEdge | null>(edgeRaw, null);
+            if (!edge) continue;
             if (edge.edgeType !== 'causes' && edge.edgeType !== 'degrades_under') continue;
 
             // Look up fix for this failure from CKG 'fixes' edges
@@ -1040,12 +1051,13 @@ export async function handleFedbrainTool(
             for (const fek of fixEdgeKeys.slice(0, 10)) {
               const feRaw = await redis.get(fek);
               if (!feRaw) continue;
-              const fe: CKGEdge = JSON.parse(feRaw);
+              const fe = safeJsonParse<CKGEdge | null>(feRaw, null);
+              if (!fe) continue;
               if (fe.edgeType === 'fixes') {
                 const lessonRaw = await redis.get(`cachly:lesson:best:${fe.from}`);
                 if (lessonRaw) {
-                  const lesson = JSON.parse(lessonRaw) as { what_worked?: string };
-                  fix = lesson.what_worked?.slice(0, 120);
+                  const lesson = safeJsonParse(lessonRaw, null as null | { what_worked?: string });
+                  fix = lesson?.what_worked?.slice(0, 120);
                   break;
                 }
               }

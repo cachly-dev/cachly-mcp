@@ -3,6 +3,7 @@ import type { Redis } from 'ioredis';
 import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
          CONFIDENCE_WARN_VALUE, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_DAYS } from '../confidence.js';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge } from '../ckg.js';
+import { safeJsonParse } from '../utils.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
          ZERO_RESULTS_LOG, zeroResultsTotal, indexVocab as _indexVocab } from '../search.js';
@@ -266,7 +267,8 @@ export async function handleBrainTool(
           for (const ek of existingEdgeKeys) {
             const er = await redis.get(ek);
             if (!er) continue;
-            const existEdge: CKGEdge = JSON.parse(er);
+            const existEdge = safeJsonParse<CKGEdge | null>(er, null);
+            if (!existEdge) continue;
             if (existEdge.edgeType === 'fixes' && existEdge.confidence > 0.7 && existEdge.trials >= 3) {
               beliefConflict = `⚠️ **belief_conflict** on \`${topic}\`: previously confirmed fix (confidence ${existEdge.confidence.toFixed(2)}, n=${existEdge.trials}) now reports failure. Both beliefs retained as \`contested\`. Use \`ckg_inspect(concept="${conceptId}")\` to review.`;
               // Store conflict marker
@@ -286,14 +288,16 @@ export async function handleBrainTool(
           for (const ek of fromEdgeKeys.slice(0, 10)) {
             const er = await redis.get(ek);
             if (!er) continue;
-            const e2: CKGEdge = JSON.parse(er);
+            const e2 = safeJsonParse<CKGEdge | null>(er, null);
+            if (!e2) continue;
             if (e2.edgeType !== 'fixes') continue;
             // Boost second-degree: edges from e2.to get a small fractional success
             const secondKeys = await redis.smembers(`cachly:ckg:idx:from:${e2.to}`);
             for (const sk of secondKeys.slice(0, 5)) {
               const sr = await redis.get(sk);
               if (!sr) continue;
-              const se: CKGEdge = JSON.parse(sr);
+              const se = safeJsonParse<CKGEdge | null>(sr, null);
+              if (!se) continue;
               if (se.edgeType !== 'co-occurs') continue;
               // Add 0.1 fractional success (second-degree signal)
               se.successes = (se.successes || 0) + 0.1;
@@ -314,7 +318,8 @@ export async function handleBrainTool(
           for (const ek of fromEdgeKeys) {
             const er = await redis.get(ek);
             if (!er) continue;
-            const de: CKGEdge = JSON.parse(er);
+            const de = safeJsonParse<CKGEdge | null>(er, null);
+            if (!de) continue;
             if (de.trials < 3 && de.last_updated && new Date(de.last_updated).getTime() < decayCutoff) {
               de.confidence = de.confidence * 0.9;
               de.last_updated = new Date().toISOString();
@@ -356,12 +361,13 @@ export async function handleBrainTool(
       // Try exact best-solution key first
       const best = await redis.get(`cachly:lesson:best:${topic}`);
       if (best) {
-        const lesson = JSON.parse(best) as {
+        const lesson = safeJsonParse(best, null as null | {
           topic: string; outcome: string; what_worked: string; what_failed?: string;
           context?: string; ts: string; verified_at?: string; severity?: string;
           file_paths?: string[]; commands?: string[]; tags?: string[];
           recall_count?: number; audit_trail?: unknown[];
-        };
+        });
+        if (!lesson) return `⚠️ Lesson data for \`${topic}\` is corrupted. Re-store it with \`learn_from_attempts\`.`;
 
         // ── Confidence decay check ───────────────────────────────────────────
         const confidence = calculateConfidence(lesson);
@@ -424,7 +430,7 @@ export async function handleBrainTool(
         const histKey = `cachly:lessons:${topic}`;
         const all = await redis.lrange(histKey, -3, -1);
         if (all.length > 0) {
-          const parsed = all.map(e => JSON.parse(e) as { outcome: string; what_worked: string; ts: string });
+          const parsed = all.map(e => safeJsonParse(e, null as null | { outcome: string; what_worked: string; ts: string })).filter(Boolean) as Array<{ outcome: string; what_worked: string; ts: string }>;
           const lines = parsed.map(p => `- ${p.outcome === 'success' ? '✅' : '❌'} ${p.what_worked.slice(0, 120)} (${new Date(p.ts).toLocaleDateString('de-DE')})`);
           return `⚠️ No successful solution for \`${topic}\` yet. Last attempts:\n\n${lines.join('\n')}`;
         }
@@ -436,7 +442,8 @@ export async function handleBrainTool(
       for (const k of matching.slice(0, 5)) {
         const raw = await redis.get(k);
         if (!raw) continue;
-        const lesson = JSON.parse(raw) as { topic: string; what_worked: string; context?: string; ts: string };
+        const lesson = safeJsonParse(raw, null as null | { topic: string; what_worked: string; context?: string; ts: string });
+        if (!lesson) continue;
         results.push(`**\`${lesson.topic}\`** — ${lesson.what_worked.slice(0, 200)}`);
       }
       return `🔍 **Partial matches for \`${topic}\`:**\n\n${results.join('\n\n')}`;

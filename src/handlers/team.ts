@@ -5,6 +5,7 @@ import type { Redis } from 'ioredis';
 import { calculateConfidence, confidenceBadge, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_VALUE,
          CONFIDENCE_WARN_DAYS, CONFIDENCE_STALE_DAYS, simpleHash } from '../confidence.js';
 import type { Instance } from './brain.js';
+import { safeJsonParse } from '../utils.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -56,7 +57,8 @@ export async function handleTeamTool(
       for (const k of lessonKeys) {
         const raw = await redis.get(k);
         if (!raw) continue;
-        const lesson = JSON.parse(raw) as Lesson;
+        const lesson = safeJsonParse<Lesson | null>(raw, null);
+        if (!lesson) continue;
         // Match by file_paths stored in lesson OR by topic keywords matching file name
         const topicWords = lesson.topic.toLowerCase().split(/[:\-_]/);
         const fileMatches = changed_files.some(f => {
@@ -536,7 +538,11 @@ export async function handleTeamTool(
         .filter((l): l is NonNullable<typeof l> => l !== null && new Date(l.ts).getTime() <= cutoff)
         .sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
 
-      if (before.length === 0) return `📭 No entries for \`${topic}\` found before **${date}**. Earliest entry: ${new Date(JSON.parse(all[0]).ts).toLocaleDateString('de-DE')}.`;
+      if (before.length === 0) {
+        const first = safeJsonParse(all[0] ?? null, null as null | { ts?: string });
+        const earliest = first?.ts ? new Date(first.ts).toLocaleDateString('de-DE') : 'unknown';
+        return `📭 No entries for \`${topic}\` found before **${date}**. Earliest entry: ${earliest}.`;
+      }
 
       const lines = [
         `🏺 **Brain Archaeology: \`${topic}\` before ${date}**`,
@@ -563,7 +569,7 @@ export async function handleTeamTool(
       const raw = await redis.get(depKey);
       if (!raw) return `📭 No lessons found that depend on \`${dependency}\`.\n\nAdd dependencies via: \`learn_from_attempts(..., depends_on=["${dependency}"])\``;
 
-      const topics: string[] = JSON.parse(raw);
+      const topics: string[] = safeJsonParse<string[]>(raw, []);
       const lines = [
         `🔗 **Causal Chain: \`${dependency}\`** — ${topics.length} dependent lesson${topics.length === 1 ? '' : 's'}`,
         '',
@@ -572,7 +578,8 @@ export async function handleTeamTool(
       for (const t of topics) {
         const lessonRaw = await redis.get(`cachly:lesson:best:${t}`);
         if (!lessonRaw) { lines.push(`  • \`${t}\` _(lesson deleted)_`); continue; }
-        const lesson = JSON.parse(lessonRaw) as { outcome?: string; severity?: string; needs_review?: boolean };
+        const lesson = safeJsonParse(lessonRaw, null as null | { outcome?: string; severity?: string; needs_review?: boolean });
+        if (!lesson) { lines.push(`  • \`${t}\` _(lesson corrupted)_`); continue; }
         const emoji = lesson.outcome === 'success' ? '✅' : lesson.outcome === 'partial' ? '⚠️' : '❌';
         const reviewBadge = lesson.needs_review ? ' 🔍 **needs_review**' : '';
         lines.push(`  ${emoji} \`${t}\` (${lesson.severity ?? 'major'})${reviewBadge}`);
@@ -614,8 +621,8 @@ export async function handleTeamTool(
       // Preserve recall_count on update
       const existing = await redis.get(key);
       if (existing) {
-        const prev = JSON.parse(existing) as { recall_count?: number };
-        record.recall_count = prev.recall_count ?? 0;
+        const prev = safeJsonParse(existing, null as null | { recall_count?: number });
+        record.recall_count = prev?.recall_count ?? 0;
       }
       await redis.set(key, JSON.stringify(record));
       return `🌐 **Global lesson stored**: \`${topic}\`\n\n${lesson}\n\nRecallable from any project via \`global_recall(topic="${topic}")\`.`;
@@ -655,7 +662,8 @@ export async function handleTeamTool(
         const k = `cachly:global:lesson:${l.topic}`;
         const raw = await redis.get(k);
         if (raw) {
-          const rec = JSON.parse(raw) as { recall_count?: number };
+          const rec = safeJsonParse(raw, null as null | { recall_count?: number });
+          if (!rec) continue;
           rec.recall_count = (rec.recall_count ?? 0) + 1;
           await redis.set(k, JSON.stringify(rec));
         }
