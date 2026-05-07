@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { jwtExpiryMs, checkJwt, handleApiError } from './auth.js';
 import { readFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -354,33 +355,8 @@ async function getConnection(instance_id: string): Promise<Redis> {
 
 // ── API helper ────────────────────────────────────────────────────────────────
 
-function jwtExpiryMs(token: string): number | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as { exp?: number };
-    return payload.exp ? payload.exp * 1000 : null;
-  } catch { return null; }
-}
-
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
-  if (!JWT) {
-    throw new McpError(
-      ErrorCode.InvalidRequest,
-      'CACHLY_JWT env var not set.\n\nGet your token at https://cachly.dev/setup-ai and add it to your MCP config:\n  CACHLY_JWT=<your-token>'
-    );
-  }
-
-  // Detect token expiry before making the network call — gives a clearer error
-  const expMs = jwtExpiryMs(JWT);
-  if (expMs !== null && expMs < Date.now()) {
-    const expiredAt = new Date(expMs).toISOString();
-    throw new McpError(
-      ErrorCode.InvalidRequest,
-      `CACHLY_JWT expired at ${expiredAt}.\n\nGet a fresh token at https://cachly.dev/setup-ai and update CACHLY_JWT in your MCP config.`
-    );
-  }
-
+  checkJwt(JWT);
   const timeoutMs = Number(process.env.CACHLY_API_TIMEOUT_MS ?? 15_000);
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
@@ -394,22 +370,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     const detail = (body as { error?: string }).error ?? res.statusText;
-    if (res.status === 401) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `Authentication failed (401): ${detail}\n\nYour CACHLY_JWT may be expired or invalid. Get a fresh token at https://cachly.dev/setup-ai`
-      );
-    }
-    if (res.status === 403) {
-      throw new McpError(
-        ErrorCode.InvalidRequest,
-        `Access denied (403): ${detail}\n\nCheck that your CACHLY_JWT belongs to an account with access to this resource.`
-      );
-    }
-    throw new McpError(
-      ErrorCode.InternalError,
-      `cachly API error ${res.status}: ${detail}`
-    );
+    handleApiError(res.status, detail);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
