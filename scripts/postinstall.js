@@ -7,7 +7,6 @@ const c = {
   violet: "\x1b[35m",
   green: "\x1b[32m",
   cyan: "\x1b[36m",
-  yellow: "\x1b[33m",
   dim: "\x1b[2m",
 };
 
@@ -15,22 +14,13 @@ const line = `${c.dim}───────────────────�
 
 console.log(`
 ${line}
-  ${c.bold}${c.violet}🧠 Cachly Brain MCP Server${c.reset} ${c.dim}v${process.env.npm_package_version ?? ""}${c.reset}
+  ${c.bold}${c.violet}🧠 cachly AI Brain${c.reset} ${c.dim}v${process.env.npm_package_version ?? ""}${c.reset}
 
-  ${c.bold}Give your AI assistant persistent memory in 30 seconds:${c.reset}
+  ${c.bold}Give your AI persistent memory — 30 seconds:${c.reset}
 
-  ${c.cyan}1.${c.reset} Get a free Brain instance at ${c.bold}cachly.dev/setup-ai${c.reset}
-  ${c.cyan}2.${c.reset} Add to Claude Code / Cursor / Copilot / Windsurf:
-     ${c.dim}npx @cachly-dev/mcp-server@latest init${c.reset}
+  ${c.cyan}npx @cachly-dev/mcp-server@latest setup${c.reset}
 
-  ${c.green}✅ Free tier · GDPR · German servers · No credit card${c.reset}
-
-  ${c.dim}──────────────────────────────────────────────────────${c.reset}
-  ${c.yellow}📦 Related packages:${c.reset}
-  ${c.cyan}@cachly-dev/openclaw${c.reset}   Cut LLM costs 60–90% in JS/TS apps
-                         ${c.dim}npm install @cachly-dev/openclaw${c.reset}
-  ${c.cyan}cachly${c.reset}                 CLI to manage your Brain instances
-                         ${c.dim}npm install -g cachly${c.reset}
+  Signs you in · detects your editors · writes the config.
+  ${c.green}Free tier · GDPR · German servers · No credit card${c.reset}
 
 ${line}`);
-
