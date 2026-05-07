@@ -75,10 +75,12 @@ async function resolveDefaultInstanceId(): Promise<string> {
     });
     if (!res.ok) return '';
     const data = await res.json() as { data?: Array<{ id: string; status: string }> };
-    const running = (data?.data ?? []).filter(i => i.status === 'running');
-    if (running.length > 0) {
-      _defaultInstanceId = running[0].id;
-      _defaultInstanceLastAttempt = 0; // clear cooldown — future calls short-circuit on _defaultInstanceId
+    const instances = (data?.data ?? []) as Array<{ id: string; status: string }>;
+    // Prefer running, fall back to provisioning so the ID is resolved even during startup.
+    const best = instances.find(i => i.status === 'running') ?? instances.find(i => i.status === 'provisioning');
+    if (best) {
+      _defaultInstanceId = best.id;
+      _defaultInstanceLastAttempt = 0;
       return _defaultInstanceId;
     }
   } catch { /* transient error — will retry after cooldown */ }
@@ -156,23 +158,54 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
       JWT = apiKey;
       setEmbedJwt(apiKey); // keep embeddings.ts in sync
       _deviceFlow = null;
-      // Auto-provision instance
-      _defaultInstanceLastAttempt = 0; // reset cooldown so resolveDefaultInstanceId retries immediately
+      // Auto-provision: find or create the user's brain instance.
+      _defaultInstanceLastAttempt = 0;
       await resolveDefaultInstanceId();
       if (!_defaultInstanceId) {
-        // Try auto-provision
         try {
           const autoRes = await fetch(`${API_URL}/api/v1/instances/auto`, {
             method: 'POST',
             headers: { Authorization: `Bearer ${JWT}`, 'Content-Type': 'application/json' },
-            signal: AbortSignal.timeout(10000),
+            signal: AbortSignal.timeout(12000),
           });
           if (autoRes.ok) {
-            const body = await autoRes.json() as { instance?: { id: string }; instance_id?: string };
+            const body = await autoRes.json() as {
+              instance?: { id: string; status?: string };
+              instance_id?: string;
+              status?: string;
+            };
             const id = body.instance?.id ?? body.instance_id;
             if (id) _defaultInstanceId = id;
           }
         } catch { /* non-fatal */ }
+      }
+      // Give a provisioning instance a head-start so getConnection's wait is shorter.
+      // The instance is almost always ready by the time the user's tool re-enters.
+      if (_defaultInstanceId) {
+        try {
+          const checkRes = await fetch(`${API_URL}/api/v1/instances/${_defaultInstanceId}`, {
+            headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' },
+            signal: AbortSignal.timeout(4000),
+          });
+          if (checkRes.ok) {
+            const checkInst = await checkRes.json() as { status?: string };
+            if (checkInst.status === 'provisioning') {
+              // Wait up to 20s here so the re-entered tool call lands on a running instance.
+              const pDeadline = Date.now() + 20_000;
+              while (checkInst.status === 'provisioning' && Date.now() < pDeadline) {
+                await new Promise(r => setTimeout(r, 3000));
+                const rr = await fetch(`${API_URL}/api/v1/instances/${_defaultInstanceId}`, {
+                  headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' },
+                  signal: AbortSignal.timeout(4000),
+                }).catch(() => null);
+                if (rr?.ok) {
+                  const ri = await rr.json() as { status?: string };
+                  (checkInst as { status?: string }).status = ri.status;
+                } else { break; }
+              }
+            }
+          }
+        } catch { /* non-fatal — getConnection will handle the wait if still provisioning */ }
       }
       return 'done';
     }
@@ -235,16 +268,29 @@ async function getConnection(instance_id: string): Promise<Redis> {
 
   if (pool.has(instance_id)) return pool.get(instance_id)!;
 
-  const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
+  // Fetch instance, waiting up to 25 s if it is still provisioning.
+  // This covers the zero-friction path: device-flow auth → auto-provision → first tool call
+  // all happen in quick succession and the instance isn't running yet.
+  let inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
+  if (inst.status === 'provisioning') {
+    const deadline = Date.now() + 25_000;
+    while (inst.status === 'provisioning' && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 3000));
+      inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
+    }
+  }
+
   if (inst.status !== 'running') {
-    throw new McpError(
-      ErrorCode.InvalidRequest,
-      `Instance "${inst.name}" is not running (status: ${inst.status}). ` +
-        `It may still be provisioning or awaiting payment.`
-    );
+    const hint = inst.status === 'provisioning'
+      ? `⏳ Brain instance "${inst.name}" is still starting up.\n\nThis usually finishes within 30 seconds. Please try again in a moment.`
+      : `Brain instance "${inst.name}" is not reachable (status: ${inst.status}).\n\n` +
+        `• View your instance at: https://cachly.dev/instances\n` +
+        `• Run \`get_api_status\` for a full diagnostic.`;
+    throw new McpError(ErrorCode.InvalidRequest, hint);
   }
   if (!inst.host || !inst.port) {
-    throw new McpError(ErrorCode.InternalError, `Instance "${inst.name}" has no host/port yet.`);
+    throw new McpError(ErrorCode.InternalError,
+      `Instance "${inst.name}" is running but has no host/port — contact support@cachly.dev.`);
   }
 
   // Fetch connection details (includes password) from the dedicated endpoint.
@@ -257,7 +303,7 @@ async function getConnection(instance_id: string): Promise<Redis> {
     password = conn.password ?? undefined;
     tlsEnabled = conn.tls_enabled !== false;
   } catch {
-    // Fallback: no password, use TLS default from instance
+    // Fallback: use TLS flag from instance metadata
   }
 
   const client = new Redis({
@@ -265,18 +311,16 @@ async function getConnection(instance_id: string): Promise<Redis> {
     port: inst.port,
     password: password || undefined,
     ...(tlsEnabled ? { tls: {} } : {}),
-    lazyConnect: true,          // don't auto-connect — we connect explicitly below
+    lazyConnect: true,
     enableReadyCheck: true,
-    connectTimeout: 5000,
+    connectTimeout: 8000,
     retryStrategy: () => null,  // fail fast, no reconnect loops in MCP context
   });
 
   const evict = () => pool.delete(instance_id);
   client.on('error', evict);
-  client.on('end', evict);   // fires when retryStrategy returns null and connection closes
+  client.on('end', evict);
 
-  // Connect explicitly so we can catch connection errors as a proper rejected
-  // Promise instead of an unhandled 'error' event that would kill the process.
   try {
     await client.connect();
   } catch (err: unknown) {
@@ -284,7 +328,10 @@ async function getConnection(instance_id: string): Promise<Redis> {
     const msg = err instanceof Error ? err.message : String(err);
     throw new McpError(
       ErrorCode.InternalError,
-      `Could not connect to instance "${inst.name}" (${inst.host}:${inst.port}): ${msg}`
+      `Could not reach Brain instance "${inst.name}" (${inst.host}:${inst.port}).\n\n` +
+      `• Check your network connection\n` +
+      `• Run \`get_api_status\` to verify instance status\n` +
+      `• Technical detail: ${msg}`
     );
   }
 
