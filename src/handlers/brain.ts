@@ -289,7 +289,7 @@ export async function handleBrainTool(
               await redis.set(conflictKey, JSON.stringify({ topic, detected_at: new Date().toISOString(), fix_confidence: existEdge.confidence, fix_trials: existEdge.trials, failure_outcome: outcome }), 'EX', 60 * 60 * 24 * 90);
               // Auto-trigger MADC deliberation in background — never blocks learn_from_attempts
               // Note: fire-and-forget; madc_deliberate is handled elsewhere in the switch
-              apiFetch(`/api/v1/instances/${instance_id}`).catch(() => undefined); // keep apiFetch warm
+              // (conflict marker stored above — no warm-up call needed)
             }
           }
         }
@@ -868,7 +868,8 @@ export async function handleBrainTool(
           for (const ck of conflictKeys.slice(0, 3)) {
             const cr = await redis.get(ck);
             if (!cr) continue;
-            const cf = JSON.parse(cr) as { topic: string; fix_confidence: number; fix_trials: number };
+            const cf = safeJsonParse<{ topic: string; fix_confidence: number; fix_trials: number } | null>(cr, null);
+            if (!cf) continue;
             lines.push(`  ⚠️ \`${cf.topic}\` — previously confirmed fix (${(cf.fix_confidence * 100).toFixed(0)}%, n=${cf.fix_trials}) now contradicted. Use \`ckg_inspect(concept="${ckgSlug(cf.topic)}")\``);
           }
           lines.push('');
@@ -1023,17 +1024,17 @@ export async function handleBrainTool(
       try {
         const crystalRaw = await redis.get('cachly:crystal:latest');
         if (crystalRaw) {
-          const crystal = JSON.parse(crystalRaw) as {
-            label: string; ts: string; session_count: number;
-            top_patterns: Array<{ category: string; insight: string; count: number }>;
-          };
-          const crystalAge = Math.round((Date.now() - new Date(crystal.ts).getTime()) / 86_400_000);
-          if (crystalAge <= 90) {
-            lines.push(`💎 **Memory Crystal** (${crystal.label} · ${crystal.session_count} sessions compressed):`);
-            for (const p of crystal.top_patterns.slice(0, 3)) {
-              lines.push(`  • **${p.category}** (${p.count}×): ${p.insight.slice(0, 90)}`);
+          type CrystalData = { label: string; ts: string; session_count: number; top_patterns: Array<{ category: string; insight: string; count: number }> };
+          const crystal = safeJsonParse<CrystalData | null>(crystalRaw, null);
+          if (crystal) {
+            const crystalAge = Math.round((Date.now() - new Date(crystal.ts).getTime()) / 86_400_000);
+            if (crystalAge <= 90) {
+              lines.push(`💎 **Memory Crystal** (${crystal.label} · ${crystal.session_count} sessions compressed):`);
+              for (const p of crystal.top_patterns.slice(0, 3)) {
+                lines.push(`  • **${p.category}** (${p.count}×): ${p.insight.slice(0, 90)}`);
+              }
+              lines.push('');
             }
-            lines.push('');
           }
         }
       } catch { /* non-critical */ }
@@ -1045,7 +1046,10 @@ export async function handleBrainTool(
           const PRIORITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
           const PRIORITY_ICON: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
           const openStatuses = new Set(['planned', 'in-progress', 'blocked']);
-          const allItems = Object.values(roadmapAll).map(v => JSON.parse(v as string) as Record<string, unknown>);
+          const allItems = Object.values(roadmapAll).flatMap(v => {
+            const item = safeJsonParse<Record<string, unknown> | null>(v as string, null);
+            return item ? [item] : [];
+          });
           const openItems = allItems
             .filter(i => openStatuses.has(i.status as string))
             .sort((a, b) => {
@@ -1085,20 +1089,20 @@ export async function handleBrainTool(
             for (const nk of nodeKeys.slice(0, 3)) {
               const nodeRaw = await redis.get(nk);
               if (!nodeRaw) continue;
-              const node: CKGNode = JSON.parse(nodeRaw);
+              const node = safeJsonParse<CKGNode | null>(nodeRaw, null);
+              if (!node) continue;
               const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${node.id}`);
               for (const ek of edgeKeys.slice(0, 15)) {
                 const edgeRaw = await redis.get(ek);
                 if (!edgeRaw) continue;
-                const edge: CKGEdge = JSON.parse(edgeRaw);
+                const edge = safeJsonParse<CKGEdge | null>(edgeRaw, null);
+                if (!edge) continue;
                 if (edge.edgeType !== 'causes' && edge.edgeType !== 'co-occurs' && edge.edgeType !== 'fixes') continue;
                 if (edge.confidence < 0.35) continue;
-                // For "fixes" edges, the lesson is on the "from" node (fix for "to")
-                // For "causes" edges, target is the failure mode
                 const lessonKey = edge.edgeType === 'fixes' ? `cachly:lesson:best:${edge.from}` : `cachly:lesson:best:${edge.to}`;
                 const lessonRaw = await redis.get(lessonKey);
-                const lesson = lessonRaw ? JSON.parse(lessonRaw) : undefined;
-                ppePredictions.push({ concept: node.id, edgeType: edge.edgeType, target: edge.to, confidence: edge.confidence, lesson });
+                const lesson = safeJsonParse<{ what_worked?: string; topic: string } | null>(lessonRaw, null);
+                ppePredictions.push({ concept: node.id, edgeType: edge.edgeType, target: edge.to, confidence: edge.confidence, lesson: lesson ?? undefined });
               }
             }
           }
@@ -1129,7 +1133,7 @@ export async function handleBrainTool(
       // Measures: of recalled lessons with confidence > 0.85, what % had outcome=success?
       try {
         const calRaw = await redis.get('cachly:mcm:calibration:last');
-        const lastCalMs = calRaw ? JSON.parse(calRaw).ts : 0;
+        const lastCalMs = safeJsonParse<{ ts?: number } | null>(calRaw, null)?.ts ?? 0;
         const daysSinceCal = (Date.now() - lastCalMs) / 86_400_000;
         if (daysSinceCal >= 30 && lessons.length >= 5) {
           // Quick calibration pass on recalled lessons (recall_count > 0, outcome=success)

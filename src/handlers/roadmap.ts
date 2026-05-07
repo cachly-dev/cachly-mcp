@@ -1,4 +1,5 @@
 import type { Redis } from 'ioredis';
+import { safeJsonParse } from '../utils.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -67,7 +68,8 @@ export async function handleRoadmapTool(
       const redis = await getConnection(rid);
       const raw = await redis.hget(`cachly:roadmap:${rid}`, itemId);
       if (!raw) return `⚠️ **roadmap_update** – Item \`${itemId}\` not found. Use \`roadmap_list\` to see all items.`;
-      const item = JSON.parse(raw) as Record<string, unknown>;
+      const item = safeJsonParse<Record<string, unknown> | null>(raw, null);
+      if (!item) return `⚠️ **roadmap_update** – Item \`${itemId}\` data is corrupted. Re-add with \`roadmap_add\`.`;
       const oldStatus = item.status as string;
       if (newStatus) item.status = newStatus;
       if (newPriority) item.priority = newPriority;
@@ -106,7 +108,10 @@ export async function handleRoadmapTool(
       const PRIORITY_ICON: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
       const STATUS_ICON: Record<string, string> = { planned: '📋', 'in-progress': '⚡', done: '✅', blocked: '🚫', cancelled: '🗑️' };
       const openStatuses = new Set(['planned', 'in-progress', 'blocked']);
-      let items = Object.values(all).map(v => JSON.parse(v as string) as Record<string, string | string[]>);
+      let items = Object.values(all).flatMap(v => {
+        const item = safeJsonParse<Record<string, string | string[]> | null>(v as string, null);
+        return item ? [item] : [];
+      });
       // Filter
       if (filterStatus === 'open') items = items.filter(i => openStatuses.has(i.status as string));
       else if (filterStatus) items = items.filter(i => i.status === filterStatus);
