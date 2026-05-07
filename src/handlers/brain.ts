@@ -1177,18 +1177,23 @@ export async function handleBrainTool(
       // Calculate duration from session_start marker
       let durationMin: number | undefined;
       const currentRaw = await redis.get('cachly:session:current');
-      if (currentRaw) {
-        try {
-          const current = JSON.parse(currentRaw) as { started: string };
-          durationMin = Math.round((now.getTime() - new Date(current.started).getTime()) / 60000);
-        } catch { /* ignore */ }
+      if (!currentRaw) {
+        return `⚠️ No active session found.\n\nRun \`session_start\` first to begin tracking a session, then call \`session_end\` when you're done.`;
+      }
+      const current = safeJsonParse<{ started: string } | null>(currentRaw, null);
+      if (current?.started) {
+        durationMin = Math.round((now.getTime() - new Date(current.started).getTime()) / 60000);
       }
 
       // ── Session Replay: capture decision log ─────────────────────────────
-      let decisionLog: Array<{ ts: string; topic: string; outcome: string; what_worked: string }> = [];
+      type DecisionEntry = { ts: string; topic: string; outcome: string; what_worked: string };
+      let decisionLog: DecisionEntry[] = [];
       try {
         const dlEntries = await redis.lrange('cachly:session:decision-log', 0, -1);
-        decisionLog = dlEntries.map(e => JSON.parse(e) as { ts: string; topic: string; outcome: string; what_worked: string });
+        decisionLog = dlEntries.flatMap(e => {
+          const entry = safeJsonParse<DecisionEntry | null>(e, null);
+          return entry ? [entry] : [];
+        });
         await redis.del('cachly:session:decision-log');
       } catch { /* non-critical */ }
 

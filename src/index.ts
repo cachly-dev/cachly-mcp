@@ -582,8 +582,9 @@ async function autoStartSession(instanceId: string): Promise<void> {
     _autoSessionInstanceId = instanceId;
     try {
       await handleTool('session_start', { instance_id: instanceId, focus: 'auto (MCP session)' });
-    } catch { /* non-fatal — session tracking is a best-effort feature */ }
-    _autoSessionStarting = null;
+    } catch { /* non-fatal — session tracking is a best-effort feature */ } finally {
+      _autoSessionStarting = null;
+    }
   })();
   await _autoSessionStarting;
 

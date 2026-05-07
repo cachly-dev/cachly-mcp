@@ -54,8 +54,8 @@ export async function handleTeamTool(
 
       type Lesson = { topic: string; what_worked: string; outcome: string; file_paths?: string[] };
       const relevant: string[] = [];
-      for (const k of lessonKeys) {
-        const raw = await redis.get(k);
+      const sfRaws = lessonKeys.length > 0 ? await redis.mget(...lessonKeys) : [];
+      for (const raw of sfRaws) {
         if (!raw) continue;
         const lesson = safeJsonParse<Lesson | null>(raw, null);
         if (!lesson) continue;
@@ -148,10 +148,12 @@ export async function handleTeamTool(
         author?: string; tags?: string[];
       };
       let lessons: TeamLesson[] = [];
-      for (const k of lessonKeys) {
-        const raw = await redis.get(k);
-        if (!raw) continue;
-        try { lessons.push(JSON.parse(raw) as TeamLesson); } catch { /* skip */ }
+      if (lessonKeys.length > 0) {
+        const raws = await redis.mget(...lessonKeys);
+        for (const raw of raws) {
+          const l = safeJsonParse<TeamLesson | null>(raw ?? null, null);
+          if (l) lessons.push(l);
+        }
       }
 
       // Filter
@@ -280,10 +282,12 @@ export async function handleTeamTool(
 
       type RawLesson = { topic: string; outcome: string; what_worked: string; severity?: string; ts: string; auto_learned?: boolean };
       const allLessons: RawLesson[] = [];
-      for (const k of allLessonKeys) {
-        const raw = await redis.get(k);
-        if (!raw) continue;
-        try { allLessons.push(JSON.parse(raw) as RawLesson); } catch { /* skip */ }
+      if (allLessonKeys.length > 0) {
+        const raws = await redis.mget(...allLessonKeys);
+        for (const raw of raws) {
+          const l = safeJsonParse<RawLesson | null>(raw ?? null, null);
+          if (l) allLessons.push(l);
+        }
       }
 
       // Group lessons by top-level category
@@ -369,18 +373,17 @@ export async function handleTeamTool(
         verified_at?: string; severity?: string; audit_trail?: unknown[];
       };
       const lessons: DrLesson[] = [];
-      for (const k of lessonKeys) {
-        const raw = await redis.get(k);
-        if (!raw) continue;
-        try { lessons.push(JSON.parse(raw) as DrLesson); } catch { /* skip */ }
+      if (lessonKeys.length > 0) {
+        const raws = await redis.mget(...lessonKeys);
+        for (const raw of raws) {
+          const l = safeJsonParse<DrLesson | null>(raw ?? null, null);
+          if (l) lessons.push(l);
+        }
       }
 
       // Last session
       const lastSessionRaw = await redis.get('cachly:session:last');
-      let lastSession: { ts: string; summary: string } | null = null;
-      if (lastSessionRaw) {
-        try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ }
-      }
+      const lastSession = safeJsonParse<{ ts: string; summary: string } | null>(lastSessionRaw, null);
 
       // Open failures
       const openFailures = lessons.filter(l => l.outcome === 'failure' || l.outcome === 'partial');
@@ -642,10 +645,12 @@ export async function handleTeamTool(
 
       type GlobalLesson = { topic: string; lesson: string; severity?: string; ts: string; recall_count?: number };
       let lessons: GlobalLesson[] = [];
-      for (const k of keys) {
-        const raw = await redis.get(k);
-        if (!raw) continue;
-        try { lessons.push(JSON.parse(raw) as GlobalLesson); } catch { /* skip */ }
+      if (keys.length > 0) {
+        const raws = await redis.mget(...keys);
+        for (const raw of raws) {
+          const l = safeJsonParse<GlobalLesson | null>(raw ?? null, null);
+          if (l) lessons.push(l);
+        }
       }
 
       if (topic) {
