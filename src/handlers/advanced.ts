@@ -4,6 +4,7 @@ import { calculateConfidence, confidenceBadge, CONFIDENCE_STALE_VALUE, CONFIDENC
 import { ckgSlug, ckgUpdateEdge } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { keywordSearch } from '../search.js';
+import { safeJsonParse } from '../utils.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -45,7 +46,8 @@ export async function handleAdvancedTool(
       for (const k of lessonKeys) {
         const raw = await redis.get(k);
         if (!raw) continue;
-        try { lessons.set(k, JSON.parse(raw) as Lesson); } catch { /* skip malformed */ }
+        const lesson = safeJsonParse<Lesson | null>(raw, null);
+        if (lesson) lessons.set(k, lesson);
       }
 
       // Detect duplicates: same topic prefix (e.g. deploy:api vs deploy:api-v2)
@@ -166,8 +168,9 @@ export async function handleAdvancedTool(
       for (const k of lessonKeys) {
         const raw = await redis.get(k);
         if (!raw) continue;
-        try {
-          const l = JSON.parse(raw) as Lesson;
+        {
+          const l = safeJsonParse<Lesson | null>(raw, null);
+          if (!l) continue;
           const ts = new Date(l.ts).getTime();
           if (ts >= sinceMs) {
             // Check history to determine add vs update
@@ -181,7 +184,7 @@ export async function handleAdvancedTool(
             // lessons with recalls as "active"
             recalled.push(l);
           }
-        } catch { /* skip */ }
+        }
       }
 
       const sinceLabel = match ? `last ${since}` : new Date(sinceMs).toLocaleDateString('de-DE');
@@ -215,10 +218,10 @@ export async function handleAdvancedTool(
       for (const rk of resolutionKeys) {
         const rr = await redis.get(rk);
         if (!rr) continue;
-        try {
-          const rn = JSON.parse(rr) as { topic?: string; resolution?: string; ts?: string };
-          if (rn.ts && new Date(rn.ts).getTime() >= sinceMs) recentResolutions.push({ topic: rn.topic ?? rk, resolution: rn.resolution ?? 'unknown', ts: rn.ts });
-        } catch { /* skip */ }
+        {
+          const rn = safeJsonParse<{ topic?: string; resolution?: string; ts?: string } | null>(rr, null);
+          if (rn?.ts && new Date(rn.ts).getTime() >= sinceMs) recentResolutions.push({ topic: rn.topic ?? rk, resolution: rn.resolution ?? 'unknown', ts: rn.ts });
+        }
       }
       if (recentResolutions.length > 0) {
         lines.push(`🗳️ **MADC Resolutions** (${recentResolutions.length} contested beliefs resolved):`);
@@ -238,8 +241,10 @@ export async function handleAdvancedTool(
 
       // 3. FedBrain transfers received in window
       const fedHistRaw = await redis.lrange('cachly:fedbrain:federations', -20, -1);
-      const recentFeds = fedHistRaw.map(r => { try { return JSON.parse(r) as { source: string; domain: string; transferred_at: string; nodes: number; edges: number }; } catch { return null; } })
-        .filter(f => f && new Date(f!.transferred_at).getTime() >= sinceMs) as Array<{ source: string; domain: string; transferred_at: string; nodes: number; edges: number }>;
+      type FedEntry = { source: string; domain: string; transferred_at: string; nodes: number; edges: number };
+      const recentFeds = fedHistRaw
+        .map(r => safeJsonParse<FedEntry | null>(r, null))
+        .filter((f): f is FedEntry => f !== null && new Date(f.transferred_at).getTime() >= sinceMs);
       if (recentFeds.length > 0) {
         lines.push(`🧠 **FedBrain transfers received (${recentFeds.length}):**`);
         for (const f of recentFeds.slice(0, 3)) {
@@ -282,27 +287,30 @@ export async function handleAdvancedTool(
           for (const nodeKey of nodeKeys.slice(0, 10)) {
             const nodeRaw = await redis.get(nodeKey);
             if (!nodeRaw) continue;
-            const node: CKGNode = JSON.parse(nodeRaw);
+            const node = safeJsonParse<CKGNode | null>(nodeRaw, null);
+            if (!node) continue;
             // Get edges from this node
             const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${node.id}`);
             for (const ek of edgeKeys.slice(0, 20)) {
               const edgeRaw = await redis.get(ek);
               if (!edgeRaw) continue;
-              const edge: CKGEdge = JSON.parse(edgeRaw);
+              const edge = safeJsonParse<CKGEdge | null>(edgeRaw, null);
+              if (!edge) continue;
               if (edge.edgeType !== 'fixes' && edge.edgeType !== 'requires') continue;
               // Find lesson for this concept
               const lessonRaw = await redis.get(`cachly:lesson:best:${edge.from.replace(/-/g, ':').replace(/^fix:/, 'fix:')}`);
-              const lesson = lessonRaw ? JSON.parse(lessonRaw) : undefined;
-              ckgResults.push({ conceptId: node.id, edge, lesson });
+              const lesson = lessonRaw ? safeJsonParse<{ topic: string; what_worked?: string; ts: string; outcome: string; recall_count?: number; severity?: string } | null>(lessonRaw, null) ?? undefined : undefined;
+              ckgResults.push({ conceptId: node.id, edge, lesson: lesson ?? undefined });
             }
           }
           for (const ek of [...fromKeys, ...toKeys].slice(0, 20)) {
             const edgeRaw = await redis.get(ek);
             if (!edgeRaw) continue;
-            const edge: CKGEdge = JSON.parse(edgeRaw);
+            const edge = safeJsonParse<CKGEdge | null>(edgeRaw, null);
+            if (!edge) continue;
             const lessonRaw = await redis.get(`cachly:lesson:best:${edge.from}`);
-            const lesson = lessonRaw ? JSON.parse(lessonRaw) : undefined;
-            ckgResults.push({ conceptId: edge.from, edge, lesson });
+            const lesson = lessonRaw ? safeJsonParse<{ topic: string; what_worked?: string; ts: string; outcome: string; recall_count?: number; severity?: string } | null>(lessonRaw, null) ?? undefined : undefined;
+            ckgResults.push({ conceptId: edge.from, edge, lesson: lesson ?? undefined });
           }
         }
       } catch { /* CKG traversal non-critical */ }
@@ -336,14 +344,15 @@ export async function handleAdvancedTool(
       for (const k of lessonKeys) {
         const raw = await redis.get(k);
         if (!raw) continue;
-        try {
-          const l = JSON.parse(raw) as Lesson;
+        {
+          const l = safeJsonParse<Lesson | null>(raw, null);
+          if (!l) continue;
           if (filterTags.length > 0 && !(l.tags ?? []).some((t: string) => filterTags.includes(t))) continue;
           const haystack = [l.topic, l.what_failed ?? '', l.what_worked ?? '', l.context ?? '']
             .join(' ').toLowerCase();
           const score = tokens.reduce((s, t) => s + (haystack.includes(t) ? 1 : 0), 0);
           if (score > 0) scored.push({ score, lesson: l, key: k });
-        } catch { /* skip */ }
+        }
       }
       scored.sort((a, b) => b.score - a.score);
       const chain = scored.slice(0, max_depth);
@@ -452,8 +461,9 @@ export async function handleAdvancedTool(
       for (const k of lessonKeys) {
         const raw = await redis.get(k);
         if (!raw) continue;
-        try {
-          const l = JSON.parse(raw) as Lesson;
+        {
+          const l = safeJsonParse<Lesson | null>(raw, null);
+          if (!l) continue;
           const ageMs = now - new Date(l.ts).getTime();
           if (ageMs < minAgeMs) continue;
           const age_days = Math.floor(ageMs / 86400000);
@@ -470,7 +480,7 @@ export async function handleAdvancedTool(
           const confidence = Math.min(100, Math.max(0, base + recallBoost + outcomePenalty));
 
           scores.push({ topic: l.topic, confidence, age_days, recalls, outcome: l.outcome });
-        } catch { /* skip */ }
+        }
       }
 
       // Sort by lowest confidence first

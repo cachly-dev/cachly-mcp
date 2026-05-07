@@ -4,6 +4,7 @@ import { calculateConfidence } from '../confidence.js';
 import { ckgSlug, ckgUpdateEdge } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { keywordSearch, tokenize } from '../search.js';
+import { safeJsonParse } from '../utils.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -292,7 +293,8 @@ export async function handleSyndicateTool(
         for (const ek of [...fromKeys, ...toKeys].slice(0, 50)) {
           const raw = await redis.get(ek);
           if (!raw) continue;
-          const edge: CKGEdge = JSON.parse(raw);
+          const edge = safeJsonParse<CKGEdge | null>(raw, null);
+          if (!edge) continue;
           allEdges.push(edge);
           if (hop < max_hops) {
             if (!visited.has(edge.from)) queue.push({ id: edge.from, hop: hop + 1 });
@@ -366,16 +368,18 @@ export async function handleSyndicateTool(
         for (const nk of nodeKeys.slice(0, 5)) {
           const nodeRaw = await redis.get(nk);
           if (!nodeRaw) continue;
-          const node: CKGNode = JSON.parse(nodeRaw);
+          const node = safeJsonParse<CKGNode | null>(nodeRaw, null);
+          if (!node) continue;
           const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${node.id}`);
           for (const ek of edgeKeys.slice(0, 20)) {
             const edgeRaw = await redis.get(ek);
             if (!edgeRaw) continue;
-            const edge: CKGEdge = JSON.parse(edgeRaw);
+            const edge = safeJsonParse<CKGEdge | null>(edgeRaw, null);
+            if (!edge) continue;
             // Only interested in fixes and co-occurs for prediction
             if (edge.edgeType !== 'fixes' && edge.edgeType !== 'co-occurs' && edge.edgeType !== 'causes') continue;
             const lessonRaw = await redis.get(`cachly:lesson:best:${edge.from}`);
-            const lesson = lessonRaw ? JSON.parse(lessonRaw) : undefined;
+            const lesson = lessonRaw ? safeJsonParse<{ what_worked?: string; topic: string } | null>(lessonRaw, null) ?? undefined : undefined;
             predictions.push({ concept: node.id, edgeType: edge.edgeType, target: edge.to, confidence: edge.confidence, lesson });
           }
         }
@@ -389,15 +393,17 @@ export async function handleSyndicateTool(
       for (const k of lessonKeys) {
         const raw = await redis.get(k);
         if (!raw) continue;
-        try {
-          const l = JSON.parse(raw) as { topic: string; what_worked?: string; what_failed?: string; outcome: string; severity?: string; ts: string; verified_at?: string; recall_count?: number };
+        {
+          type PredLesson = { topic: string; what_worked?: string; what_failed?: string; outcome: string; severity?: string; ts: string; verified_at?: string; recall_count?: number };
+          const l = safeJsonParse<PredLesson | null>(raw, null);
+          if (!l) continue;
           const haystack = [l.topic, l.what_failed ?? '', l.what_worked ?? ''].join(' ').toLowerCase();
           const score = ctxTokens.reduce((s, t) => s + (haystack.includes(t) ? 1 : 0), 0);
           if (score >= 1 && l.outcome !== 'failure') {
             const conf = calculateConfidence(l);
             textPredictions.push({ ...l, confidence: conf });
           }
-        } catch { /* skip */ }
+        }
       }
       textPredictions.sort((a, b) => b.confidence - a.confidence);
 
