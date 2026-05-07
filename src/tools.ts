@@ -437,10 +437,11 @@ const TOOLS = [
   {
     name: 'get_api_status',
     description:
-      'Check the cachly API health and your authentication status. ' +
-      'Returns whether the JWT is valid, your user ID (sub claim), ' +
-      'token expiry, and the auth provider (keycloak). ' +
-      'Use this to debug connection issues or verify your CACHLY_JWT is correct.',
+      'Full diagnostic for your cachly Brain — call this FIRST whenever anything is not working. ' +
+      'Returns: API reachability, JWT validity + expiry, your user ID, ' +
+      'all Brain instances with live status (🟢 running / 🟡 provisioning / 🔴 stopped), ' +
+      'Redis ping on the active connection, and actionable fix steps for every issue found. ' +
+      'Workflow: run get_api_status → read the issue it flags → fix it → retry your tool.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
   // ── Thinking/Context Cache (for AI assistants) ────────────────────────────

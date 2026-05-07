@@ -11,6 +11,19 @@ import type { KeywordMatch } from '../search.js';
 import { computeEmbedding, hasEmbedProvider, embedProviderHint, EMBED_PROVIDER } from '../embeddings.js';
 import { detectNamespace } from '../namespace.js';
 
+// ── Changelog (shown once per version in session_start) ──────────────────────
+const MCP_VERSION = '0.10.0';
+const WHATS_NEW: Record<string, string[]> = {
+  '0.10.0': [
+    `🆕 **What's new in v${MCP_VERSION}:**`,
+    `  ✅ Zero-friction setup — auto-provisions your Brain, no manual config needed`,
+    `  ✅ 10× faster briefings — batch Redis fetches replace per-key loops`,
+    `  ✅ Crash-proof data reads — corrupted cache entries no longer break tools`,
+    `  ✅ \`session_end\` warns when called without an active session`,
+    `  ✅ \`get_api_status\` now shows live Redis ping + all instance statuses`,
+  ],
+};
+
 // Shared types used in brain handlers
 export interface Instance {
   id: string; name: string; tier: string; status: string; region: string;
@@ -626,10 +639,8 @@ export async function handleBrainTool(
 
       // 4. Last session
       const lastSessionRaw = await redis.get('cachly:session:last');
-      let lastSession: { summary: string; ts: string; files_changed?: string[]; duration_min?: number } | null = null;
-      if (lastSessionRaw) {
-        try { lastSession = JSON.parse(lastSessionRaw); } catch { /* ignore */ }
-      }
+      type LastSession = { summary: string; ts: string; files_changed?: string[]; duration_min?: number };
+      const lastSession = safeJsonParse<LastSession | null>(lastSessionRaw, null);
 
       // 5. Focus filtering
       const focusTerms = focus.toLowerCase().split(/\s+/).filter(Boolean);
@@ -689,6 +700,34 @@ export async function handleBrainTool(
       const providerLabel = provider ? ` · ${provider}` : '';
       const lines: string[] = [`🧠 **Session Briefing**${providerLabel}`, ''];
       if (streakMessage) lines.push(streakMessage, '');
+
+      // ── What's New (shown once per version update) ──────────────────────────
+      try {
+        const seenVersion = await redis.get('cachly:mcp:version:last_seen');
+        if (seenVersion !== MCP_VERSION) {
+          await redis.set('cachly:mcp:version:last_seen', MCP_VERSION, 'EX', 365 * 86400);
+          const changelog = WHATS_NEW[MCP_VERSION];
+          if (changelog) { lines.push(...changelog, ''); }
+        }
+      } catch { /* non-critical */ }
+
+      // ── First-time welcome (empty brain) ───────────────────────────────────
+      const isFirstSession = !lastSession && lessons.length === 0 && ctxCount === 0;
+      if (isFirstSession) {
+        lines.push('🎉 **Welcome! Your AI Brain is live.**', '');
+        lines.push('It learns from your work automatically. After your first session it will look like this:', '');
+        lines.push('  ✅ `api:auth` — Bearer token in header, not cookie; 401 on missing scope');
+        lines.push('  ✅ `database:migrations` — always run migrations before deploy');
+        lines.push('  ⚠️ `docker:build` — ARG changes bust all subsequent cache layers');
+        lines.push('');
+        lines.push('**3 steps to grow your brain:**');
+        lines.push('  1. Fix something → `learn_from_attempts(topic="bug:name", outcome="success", what_worked="...")`');
+        lines.push('  2. Save context → `remember_context(key="arch", value="...")`');
+        lines.push('  3. End session → `session_end(summary="What I did")`');
+        lines.push('');
+        lines.push('💡 Run `brain_doctor` for a setup health-check and personalised tips.');
+        lines.push('');
+      }
 
       // Handoff from previous window (if any)
       const handoffRaw = await redis.get('cachly:session:handoff');
@@ -1134,8 +1173,6 @@ export async function handleBrainTool(
       } catch { /* non-critical */ }
 
       // ── 🌍 Knowledge Commons — community stats banner ───────────────────────
-      // Fetch syndication stats and show a 1-liner: total lessons + confirms + weekly growth.
-      // Non-fatal: never blocks session start if the API call fails.
       try {
         const commonsStats = await apiFetch<{
           total_lessons: number;
@@ -1151,6 +1188,17 @@ export async function handleBrainTool(
           lines.push('');
         }
       } catch { /* non-critical — never block session start */ }
+
+      // ── Brain Doctor hint (Punkt 6) — surface when brain needs attention ───
+      const hasOpenFailures = lessons.filter(l => l.outcome === 'failure' || l.outcome === 'partial').length > 0;
+      const hasStaleLessons = lessons.some(l => l.outcome === 'success' && calculateConfidence(l) < CONFIDENCE_WARN_VALUE);
+      if (lessons.length === 0 || hasOpenFailures || hasStaleLessons) {
+        const reasons: string[] = [];
+        if (lessons.length === 0) reasons.push('brain is empty');
+        if (hasOpenFailures) reasons.push('open failures');
+        if (hasStaleLessons) reasons.push('stale lessons');
+        lines.push(`🩺 _Run \`brain_doctor\` to fix: ${reasons.join(', ')}._`);
+      }
 
       return lines.join('\n');
     }

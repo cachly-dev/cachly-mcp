@@ -514,13 +514,24 @@ export async function handleTeamTool(
         issues.push(`💡 ${unusedLessons.length} lessons never recalled — verify topics match your workflow`);
       }
 
-      const lines = ['🩺 **Brain Doctor Report**', '', ...checks.map(c => '  ' + c), ''];
+      const divider = '─'.repeat(48);
+      const lines = [
+        `🩺 **Brain Doctor**`,
+        `\`${divider}\``,
+        '',
+        '**📊 Health Checks**',
+        ...checks.map(c => '  ' + c),
+        '',
+      ];
       if (issues.length > 0) {
-        lines.push('**Issues to fix:**');
-        for (const i of issues) lines.push('  ' + i);
+        lines.push(`**🔧 Action Items** (${issues.length} issue${issues.length > 1 ? 's' : ''})`);
+        issues.forEach((item, idx) => lines.push(`  ${idx + 1}. ${item}`));
         lines.push('');
+        lines.push(`_Fix the action items above, then re-run \`brain_doctor\` to verify._`);
       } else {
-        lines.push('  🎉 Brain looks healthy! Keep calling session_start/session_end.');
+        lines.push('**✅ All checks passed** — Brain is healthy!');
+        lines.push('');
+        lines.push('_Keep the brain sharp: `session_start` → work → `learn_from_attempts` → `session_end`_');
       }
       return lines.join('\n');
     }

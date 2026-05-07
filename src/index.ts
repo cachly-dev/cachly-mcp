@@ -52,7 +52,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.9.17';
+const CURRENT_VERSION = '0.10.0';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -281,6 +281,13 @@ async function getConnection(instance_id: string): Promise<Redis> {
   }
 
   if (inst.status !== 'running') {
+    // Telemetry: unreachable instance so the team can proactively investigate
+    void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(JWT ? { Authorization: `Bearer ${JWT}` } : {}) },
+      body: JSON.stringify({ event: 'instance_not_reachable', instance_id, status: inst.status, version: CURRENT_VERSION }),
+      signal: AbortSignal.timeout(3000),
+    }).catch(() => {});
     const hint = inst.status === 'provisioning'
       ? `⏳ Brain instance "${inst.name}" is still starting up.\n\nThis usually finishes within 30 seconds. Please try again in a moment.`
       : `Brain instance "${inst.name}" is not reachable (status: ${inst.status}).\n\n` +
@@ -326,6 +333,12 @@ async function getConnection(instance_id: string): Promise<Redis> {
   } catch (err: unknown) {
     client.disconnect();
     const msg = err instanceof Error ? err.message : String(err);
+    void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(JWT ? { Authorization: `Bearer ${JWT}` } : {}) },
+      body: JSON.stringify({ event: 'redis_connect_failed', instance_id, host: inst.host, port: inst.port, error: msg, version: CURRENT_VERSION }),
+      signal: AbortSignal.timeout(3000),
+    }).catch(() => {});
     throw new McpError(
       ErrorCode.InternalError,
       `Could not reach Brain instance "${inst.name}" (${inst.host}:${inst.port}).\n\n` +
