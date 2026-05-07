@@ -168,7 +168,7 @@ export async function handleBrainTool(
       for (const dep of depends_on) {
         const depKey = `cachly:dep:${dep}`;
         const existing = await redis.get(depKey);
-        const depTopics: string[] = existing ? JSON.parse(existing) : [];
+        const depTopics: string[] = safeJsonParse<string[]>(existing, []);
         if (!depTopics.includes(topic)) depTopics.push(topic);
         await redis.set(depKey, JSON.stringify(depTopics));
       }
@@ -604,10 +604,12 @@ export async function handleBrainTool(
         tags?: string[]; confidence?: number; audit_trail?: unknown[];
       };
       const lessons: Lesson[] = [];
-      for (const k of lessonKeys) {
-        const raw = await redis.get(k);
-        if (!raw) continue;
-        try { lessons.push(JSON.parse(raw) as Lesson); } catch { /* skip corrupt */ }
+      if (lessonKeys.length > 0) {
+        const raws = await redis.mget(...lessonKeys);
+        for (const raw of raws) {
+          const l = safeJsonParse<Lesson | null>(raw ?? null, null);
+          if (l) lessons.push(l);
+        }
       }
       lessons.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
 
@@ -646,7 +648,7 @@ export async function handleBrainTool(
       let streakMessage = '';
       try {
         const streakRaw = await redis.get('cachly:streak:current');
-        const streak = streakRaw ? JSON.parse(streakRaw) as { days: number; last_date: string; record: number } : null;
+        const streak = safeJsonParse<{ days: number; last_date: string; record: number } | null>(streakRaw, null);
         const today = new Date().toISOString().slice(0, 10);
         if (streak) {
           const lastDate = streak.last_date;
