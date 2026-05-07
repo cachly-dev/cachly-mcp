@@ -58,13 +58,16 @@ const CURRENT_VERSION = '0.9.17';
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
 // When neither is set, we auto-fetch the first running instance once per process.
 let _defaultInstanceId: string = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
-let _defaultInstanceFetched = false;
+// Timestamp of last failed fetch — retries after 30 s (not permanently blocked).
+let _defaultInstanceLastAttempt = 0;
 
 async function resolveDefaultInstanceId(): Promise<string> {
   if (_defaultInstanceId) return _defaultInstanceId;
-  if (_defaultInstanceFetched) return '';
-  _defaultInstanceFetched = true;
   if (!JWT) return '';
+  // Cooldown: don't hammer the API on every tool call after a transient failure.
+  const now = Date.now();
+  if (_defaultInstanceLastAttempt > 0 && now - _defaultInstanceLastAttempt < 30_000) return '';
+  _defaultInstanceLastAttempt = now;
   try {
     const res = await fetch(`${API_URL}/api/v1/instances`, {
       headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' },
@@ -73,8 +76,12 @@ async function resolveDefaultInstanceId(): Promise<string> {
     if (!res.ok) return '';
     const data = await res.json() as { data?: Array<{ id: string; status: string }> };
     const running = (data?.data ?? []).filter(i => i.status === 'running');
-    if (running.length > 0) { _defaultInstanceId = running[0].id; return _defaultInstanceId; }
-  } catch { /* non-fatal — caller will surface missing instance_id error */ }
+    if (running.length > 0) {
+      _defaultInstanceId = running[0].id;
+      _defaultInstanceLastAttempt = 0; // clear cooldown — future calls short-circuit on _defaultInstanceId
+      return _defaultInstanceId;
+    }
+  } catch { /* transient error — will retry after cooldown */ }
   return '';
 }
 
@@ -150,7 +157,7 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
       setEmbedJwt(apiKey); // keep embeddings.ts in sync
       _deviceFlow = null;
       // Auto-provision instance
-      _defaultInstanceFetched = false;
+      _defaultInstanceLastAttempt = 0; // reset cooldown so resolveDefaultInstanceId retries immediately
       await resolveDefaultInstanceId();
       if (!_defaultInstanceId) {
         // Try auto-provision
@@ -216,6 +223,16 @@ interface SemanticSearchResponse {
 const pool = new Map<string, Redis>();
 
 async function getConnection(instance_id: string): Promise<Redis> {
+  if (!instance_id) {
+    throw new McpError(
+      ErrorCode.InvalidRequest,
+      'No instance_id provided and no running instance could be resolved automatically.\n\n' +
+      '• Set CACHLY_BRAIN_INSTANCE_ID in your MCP config, or\n' +
+      '• Pass instance_id explicitly to the tool, or\n' +
+      '• Run `list_instances` to see your available instances.'
+    );
+  }
+
   if (pool.has(instance_id)) return pool.get(instance_id)!;
 
   const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
@@ -254,9 +271,9 @@ async function getConnection(instance_id: string): Promise<Redis> {
     retryStrategy: () => null,  // fail fast, no reconnect loops in MCP context
   });
 
-  client.on('error', () => {
-    pool.delete(instance_id); // remove stale connection on error
-  });
+  const evict = () => pool.delete(instance_id);
+  client.on('error', evict);
+  client.on('end', evict);   // fires when retryStrategy returns null and connection closes
 
   // Connect explicitly so we can catch connection errors as a proper rejected
   // Promise instead of an unhandled 'error' event that would kill the process.
@@ -537,6 +554,44 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         authInfo = '❌ JWT decode failed – check CACHLY_JWT format';
       }
 
+      // List instances + connectivity
+      let instanceInfo = '';
+      try {
+        const listRes = await apiFetch<{ data: Instance[] }>('/api/v1/instances');
+        const instances = listRes.data ?? [];
+        if (instances.length === 0) {
+          instanceInfo = '\n\n🧠 **Brain Instances:** none — create one at https://cachly.dev/instances';
+        } else {
+          const lines: string[] = ['\n\n🧠 **Brain Instances:**'];
+          for (const inst of instances) {
+            const badge = inst.status === 'running' ? '🟢' : inst.status === 'provisioning' ? '🟡' : '🔴';
+            const defaultMark = inst.id === _defaultInstanceId ? ' ← active' : '';
+            lines.push(`  ${badge} **${inst.name}** (\`${inst.id}\`) · ${inst.status}${defaultMark}`);
+            if (inst.status === 'running' && inst.host) {
+              // Try a quick ping on the cached connection
+              const pooled = pool.get(inst.id);
+              if (pooled) {
+                try {
+                  await pooled.ping();
+                  lines.push(`     💓 Redis: connected`);
+                } catch {
+                  lines.push(`     ⚠️  Redis: pooled but ping failed — will reconnect on next use`);
+                }
+              } else {
+                lines.push(`     💤 Redis: not connected yet (connects on first tool use)`);
+              }
+            } else if (inst.status === 'provisioning') {
+              lines.push(`     ⏳ Still provisioning — check back in ~30 s`);
+            } else if (inst.status !== 'running') {
+              lines.push(`     ❌ Not reachable (status: ${inst.status})`);
+            }
+          }
+          instanceInfo = lines.join('\n');
+        }
+      } catch (e) {
+        instanceInfo = `\n\n🧠 **Brain Instances:** could not fetch — ${(e as Error).message}`;
+      }
+
       return [
         `📡 **cachly API Status**`,
         ``,
@@ -545,6 +600,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ``,
         `🔑 **Auth:**`,
         authInfo,
+        instanceInfo,
       ].join('\n');
     }
 
@@ -633,7 +689,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   // Skip session management tools to avoid recursion.
   const sessionTools = new Set(['session_start', 'session_end', 'auto_learn_session']);
   if (!sessionTools.has(name) && !_autoSessionStarted && !_autoSessionStarting) {
-    const instanceId = (args as Record<string, unknown>)?.instance_id as string | undefined;
+    const instanceId = ((args as Record<string, unknown>)?.instance_id as string | undefined)
+      || _defaultInstanceId
+      || process.env.CACHLY_BRAIN_INSTANCE_ID;
     if (instanceId) {
       await autoStartSession(instanceId).catch(() => undefined);
     }
