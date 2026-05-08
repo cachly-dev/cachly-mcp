@@ -7,6 +7,48 @@
 
 ---
 
+## [0.10.0] – 2026-05-08
+
+### Zero-Friction Onboarding
+
+- **Global Claude Code config** — `setup` now writes `~/.claude/mcp.json` (global) in addition to project-level `.mcp.json`. cachly is available in every Claude Code project after running setup once — no per-project re-configuration needed. Existing MCP servers in the global config are preserved (merge, not overwrite).
+
+- **Device Flow authentication** — No credentials required in MCP config. On the first tool call without a `CACHLY_JWT`, the server starts an OAuth Device Flow: the AI shows a one-click sign-in URL in chat, polls for completion, exchanges the token for a long-lived API key, and auto-provisions a Brain instance. Fully transparent to the user.
+
+- **Fully automatic sessions** — `session_start` and `session_end` are called automatically (on first tool call and on SIGTERM). Users never need to call them manually.
+
+- **Auto project indexing** — On session start, the project is indexed in the background if the last index is older than 24 hours. Zero extra calls.
+
+### CLAUDE.md Rules — Mandatory Brain Behavior
+
+The CLAUDE.md block written by `setup` now instructs the AI with binding rules (not suggestions):
+
+- `smart_recall` before every task
+- `causal_trace` before grepping/reading files when debugging
+- `brain_predict` before deploys, migrations, and dependency upgrades
+- `remember_context` before editing any file (WIP registry)
+- `learn_from_attempts` after every fix, deploy, or discovery
+
+### SEO & Search AI Optimization
+
+- **`llms.txt`** added — AI crawler standard file with complete tool catalog (89 tools + descriptions), competitor comparison, architecture overview. Indexed by Perplexity, ChatGPT Search, Claude web search.
+- **README** — FAQ section, competitor table (cachly vs mem0 vs MemGPT vs CLAUDE.md), `autopilot` tool documented prominently.
+- **GitHub topics** set: `mcp`, `mcp-server`, `ai-memory`, `persistent-memory`, `claude-code`, `cursor`, `github-copilot`, `causal-trace`, `developer-tools`, `typescript`.
+- **package.json** — description and keywords updated: `causal-trace`, `root-cause-analysis`, `failure-prediction`, `long-term-memory`, `llm-memory`, `claude-code-memory`.
+
+### Auth Module
+
+- `jwtExpiryMs`, `checkJwt`, `handleApiError` extracted from `index.ts` into `src/auth.ts`
+- 23 unit tests added for auth module (Vitest)
+- Publish workflow now runs tests before building
+
+### Bug Fixes
+
+- `safeJsonParse` applied to all `JSON.parse` calls in `advanced.ts` and `syndicate.ts`
+- Removed dead warm-up code
+
+---
+
 ## [0.9.3] – 2026-05-06
 
 ### 🧠 10x Vision Phase 2 — Layers 3, 5 & 6
