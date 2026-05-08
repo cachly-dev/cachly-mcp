@@ -429,6 +429,10 @@ export async function handleAdvancedTool(
           lines.push(topSolution.what_worked.slice(0, 500));
           lines.push(`\`\`\``);
           lines.push('');
+
+          // Track estimated time saved — causal_trace finding a known fix is worth 1-4h
+          const savedMins = topSolution.severity === 'critical' ? 240 : topSolution.severity === 'major' ? 120 : 60;
+          redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
         }
       }
 

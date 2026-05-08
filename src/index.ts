@@ -1219,6 +1219,25 @@ if (process.argv[2] === 'setup') {
   const mdLabel = mdResult === 'updated' ? '✅ Updated' : mdResult === 'appended' ? '✅ Appended to' : '✅ Written';
   console.log(`${mdLabel}: CLAUDE.md\n`);
 
+  // ── Step 5b: Bootstrap Brain from git history ─────────────────────────────
+  // Pre-populates the Brain with real lessons so the first session_start shows
+  // actual project knowledge instead of an empty brain.
+  if (existsSync(resolve(cwd, '.git'))) {
+    process.stdout.write('⏳ Bootstrapping Brain from git history (~10s)...');
+    try {
+      JWT = token; // set global JWT so handleTool can authenticate
+      const gitResult = await handleTool('brain_from_git', {
+        instance_id: instance.id,
+        dir: cwd,
+        max_commits: 100,
+      });
+      const match = gitResult.match(/(\d+) lesson/);
+      console.log(` ✓  ${match ? match[1] + ' lessons' : 'done'} extracted from git history`);
+    } catch (e) {
+      console.log(` (skipped: ${(e as Error).message.slice(0, 80)})`);
+    }
+  }
+
   // ── Step 6: Show Brain health (Aha moment) ────────────────────────────────
   // Fetch brain health from the API to show the user what their agent will see.
   process.stdout.write('\n⏳ Fetching your Brain health preview...');

@@ -397,6 +397,10 @@ export async function handleBrainTool(
         };
         await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
 
+        // Track estimated time saved (30m minor · 60m major · 240m critical)
+        const savedMins = lesson.severity === 'critical' ? 240 : lesson.severity === 'major' ? 60 : 30;
+        redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
+
         const sevEmoji = lesson.severity === 'critical' ? '🔴' : lesson.severity === 'major' ? '🟡' : lesson.severity ? '🟢' : '';
         const auditSummary = (lesson.audit_trail ?? []).length > 1
           ? `_Audit: ${(lesson.audit_trail ?? []).length} changes · stored ${new Date(lesson.ts).toLocaleDateString('de-DE')}_`
@@ -696,10 +700,25 @@ export async function handleBrainTool(
         provider,
       }), 'EX', 86400); // auto-expire after 24h if session_end never called
 
+      // 8. Time saved counter
+      let timeSavedMins = 0;
+      try {
+        const raw = await redis.get(`cachly:stats:time_saved_mins:${instance_id}`);
+        timeSavedMins = parseFloat(raw ?? '0');
+      } catch { /* non-critical */ }
+
       // ── Build briefing ──────────────────────────────────────────────────────
       const providerLabel = provider ? ` · ${provider}` : '';
       const lines: string[] = [`🧠 **Session Briefing**${providerLabel}`, ''];
       if (streakMessage) lines.push(streakMessage, '');
+
+      // Time saved (only show when meaningful — 30+ minutes)
+      if (timeSavedMins >= 30) {
+        const h = Math.floor(timeSavedMins / 60);
+        const m = Math.round(timeSavedMins % 60);
+        const timeStr = h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
+        lines.push(`⏱️ **Brain saved you ~${timeStr} total** (time not re-researching known fixes)`, '');
+      }
 
       // ── What's New (shown once per version update) ──────────────────────────
       try {
@@ -926,6 +945,15 @@ export async function handleBrainTool(
         lines.push('');
       } else {
         lines.push('📭 No lessons yet. Use `learn_from_attempts` after solving tasks.', '');
+      }
+
+      // Team invite prompt — fires once after 10th lesson if no team use yet
+      if (lessons.length >= 10) {
+        const hasTeamUse = lessons.some(l => (l as typeof l & { author?: string }).author);
+        if (!hasTeamUse) {
+          lines.push(`🤝 **Your Brain has ${lessons.length} lessons — your team could benefit instantly.**`);
+          lines.push(`   Share: **cachly.dev/invite** · or run \`team_learn\` after the next fix.`, '');
+        }
       }
 
       // Open failures (lessons whose best-key has outcome != success)
