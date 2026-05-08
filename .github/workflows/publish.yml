@@ -8,6 +8,8 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # needed to create GitHub Releases
     steps:
       - uses: actions/checkout@v4
 
@@ -38,8 +40,33 @@ jobs:
             echo "Version $PKG_VERSION is new — will publish."
           fi
 
+      - name: Extract CHANGELOG notes
+        if: steps.version_check.outputs.skip == 'false'
+        id: changelog
+        run: |
+          VERSION="${{ steps.version_check.outputs.version }}"
+          # Extract section for this version from CHANGELOG.md
+          NOTES=$(awk "/^## \[?${VERSION}\]?/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md | sed '/^[[:space:]]*$/d' | head -60)
+          if [ -z "$NOTES" ]; then
+            NOTES="See [CHANGELOG.md](https://github.com/cachly-dev/cachly-mcp/blob/main/CHANGELOG.md) for details."
+          fi
+          # Write to file to avoid env var quoting issues
+          echo "$NOTES" > /tmp/release-notes.md
+          echo "See the [CHANGELOG](https://github.com/cachly-dev/cachly-mcp/blob/main/CHANGELOG.md) for full details." >> /tmp/release-notes.md
+
       - name: Publish
         if: steps.version_check.outputs.skip == 'false'
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub Release
+        if: steps.version_check.outputs.skip == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version_check.outputs.version }}"
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes-file /tmp/release-notes.md \
+            --latest

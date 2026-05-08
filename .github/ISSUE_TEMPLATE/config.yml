@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://cachly.dev/docs/mcp
+    about: Read the full MCP server docs
+  - name: Discord / Community
+    url: https://cachly.dev/discord
+    about: Ask questions and share what you've built

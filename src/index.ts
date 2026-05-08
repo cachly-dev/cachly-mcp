@@ -1274,6 +1274,33 @@ if (process.argv[2] === 'setup') {
         console.log('│    • A session summary for next time                │');
       }
       console.log('└──────────────────────────────────────────────────────┘');
+
+      // ── Step 6b: brain_predict preview (only if we have real lessons) ───────
+      if (lessons >= 5) {
+        process.stdout.write('\n⏳ Running predictive risk scan...');
+        try {
+          const predictResult = await handleTool('brain_predict', {
+            instance_id: instance.id,
+            context: 'starting a new development session',
+          });
+          const predictLines = predictResult
+            .split('\n')
+            .filter((l: string) => l.trim())
+            .slice(0, 6);
+          if (predictLines.length > 0) {
+            console.log(' ✓\n');
+            console.log('┌──────────────────────────────────────────────────────┐');
+            console.log('│  🔮  Brain Risk Preview (brain_predict)              │');
+            console.log('├──────────────────────────────────────────────────────┤');
+            for (const pl of predictLines) {
+              console.log(`│  ${pl.slice(0, 51).padEnd(51)} │`);
+            }
+            console.log('└──────────────────────────────────────────────────────┘');
+          } else {
+            console.log(' (no risks found — clean slate!)');
+          }
+        } catch { console.log(' (skipped)'); }
+      }
     } else {
       console.log(' (skipped)');
     }
