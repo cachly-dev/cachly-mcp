@@ -952,7 +952,7 @@ export async function handleBrainTool(
         const hasTeamUse = lessons.some(l => (l as typeof l & { author?: string }).author);
         if (!hasTeamUse) {
           lines.push(`🤝 **Your Brain has ${lessons.length} lessons — your team could benefit instantly.**`);
-          lines.push(`   Share: **cachly.dev/invite** · or run \`team_learn\` after the next fix.`, '');
+          lines.push(`   Share: **cachly.dev/team** · or run \`team_learn\` after the next fix.`, '');
         }
       }
 
