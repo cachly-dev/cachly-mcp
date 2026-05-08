@@ -32,20 +32,62 @@ You explain your architecture. You explain the deployment process. You explain t
 
 **The average developer wastes 45 minutes/day re-establishing context.**
 
-## The Fix — One Command
+---
 
-```bash
-npx @cachly-dev/mcp-server@latest setup
+## Setup — No Credentials Required
+
+Add to your editor's MCP config and restart. **No account, no token, no credit card needed upfront.**  
+On the first `session_start` call, your AI walks you through a one-click sign-in — right inside the chat.
+
+### Claude Code
+
+`~/.claude/mcp.json` or **Settings → MCP**:
+
+```json
+{
+  "mcpServers": {
+    "cachly": {
+      "command": "npx",
+      "args": ["-y", "@cachly-dev/mcp-server@latest"]
+    }
+  }
+}
 ```
 
-The wizard handles everything:
-1. Signs you in (free, no credit card required)
-2. Picks or creates your AI Brain instance
-3. **Auto-detects** Claude Code, Cursor, Windsurf, VS Code, Copilot, Cline & Zed
-4. Writes the correct MCP config for every detected editor
-5. Creates `CLAUDE.md` with memory rules pre-filled
+### Cursor / Windsurf
 
-**After setup, restart your editor.** Your AI arrives pre-briefed from now on.
+`.cursor/mcp.json` or `.mcp.json`:
+
+```json
+{
+  "servers": {
+    "cachly": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@cachly-dev/mcp-server@latest"]
+    }
+  }
+}
+```
+
+### VS Code / Copilot / Cline / Zed
+
+`.vscode/mcp.json` or editor MCP settings:
+
+```json
+{
+  "servers": {
+    "cachly": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@cachly-dev/mcp-server@latest"]
+    }
+  }
+}
+```
+
+After adding the config, **restart your editor**, then call `session_start`.  
+Your AI will prompt you to sign in — takes about 10 seconds.
 
 ---
 
@@ -83,53 +125,7 @@ causal_trace(problem="auth breaks after restart")
 
 ---
 
-## Manual Setup (if you prefer)
-
-**Step 1 — Get your free credentials** at [cachly.dev](https://cachly.dev) (25 MB free, forever, no credit card).
-
-**Step 2 — Add to your editor's MCP config:**
-
-<details>
-<summary><b>Claude Code</b> (<code>~/.claude/mcp.json</code> or <code>.mcp.json</code>)</summary>
-
-```json
-{
-  "mcpServers": {
-    "cachly": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@cachly-dev/mcp-server@latest"],
-      "env": {
-        "CACHLY_JWT": "your-jwt-token",
-        "CACHLY_BRAIN_INSTANCE_ID": "your-instance-id"
-      }
-    }
-  }
-}
-```
-</details>
-
-<details>
-<summary><b>Cursor / Windsurf / VS Code</b> (<code>.cursor/mcp.json</code> / <code>.mcp.json</code>)</summary>
-
-```json
-{
-  "servers": {
-    "cachly": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@cachly-dev/mcp-server@latest"],
-      "env": {
-        "CACHLY_JWT": "your-jwt-token",
-        "CACHLY_BRAIN_INSTANCE_ID": "your-instance-id"
-      }
-    }
-  }
-}
-```
-</details>
-
-**Step 3 — Add to `CLAUDE.md` / `.github/copilot-instructions.md`:**
+## Add to `CLAUDE.md` / `.github/copilot-instructions.md`
 
 ```markdown
 ## AI Brain Rules (cachly)
@@ -203,9 +199,11 @@ smart_recall("deploy")   → finds デプロイ, 部署, 배포, نشر, פרי�
 
 ## Environment Variables
 
+These are **optional** — device flow sets them automatically on first use.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CACHLY_JWT` | — | **Required.** Your API token from [cachly.dev](https://cachly.dev) |
+| `CACHLY_JWT` | — | API token (set automatically by device flow, or get from cachly.dev) |
 | `CACHLY_BRAIN_INSTANCE_ID` | — | Default instance UUID (optional if passed per-call) |
 | `CACHLY_API_URL` | `https://api.cachly.dev` | Override for self-hosted |
 | `CACHLY_NO_TELEMETRY` | unset | Set to `1` to disable anonymous usage pings |
