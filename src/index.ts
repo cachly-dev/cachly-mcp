@@ -952,7 +952,7 @@ if (process.argv[2] === 'init') {
 // Usage: npx @cachly-dev/mcp-server setup
 
 if (process.argv[2] === 'setup') {
-  const { writeFile, mkdir } = await import('node:fs/promises');
+  const { writeFile, mkdir, readFile } = await import('node:fs/promises');
   const { existsSync } = await import('node:fs');
   const { resolve, dirname } = await import('node:path');
   const { createInterface } = await import('node:readline');
@@ -1181,13 +1181,37 @@ if (process.argv[2] === 'setup') {
   const editorsToSetup = detected;
   console.log(`Step 3: Configuring for: ${editorsToSetup.map(editorLabel).join(', ')}\n`);
 
-  // ── Step 4: Write editor configs ──────────────────────────────────────────
+  // ── Step 4: Write editor configs (project-level) ─────────────────────────
   for (const editor of editorsToSetup) {
     const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
     const configPath = resolve(cwd, configFile);
     await mkdir(dirname(configPath), { recursive: true });
     await writeFile(configPath, buildMcpConfig(token, instance.id, editor), 'utf-8');
     console.log(`✅ Written: ${configFile}`);
+  }
+
+  // ── Step 4b: Write global Claude Code config (~/.claude/mcp.json) ─────────
+  // Merges cachly into the existing global config so it works in every project,
+  // without removing other MCP servers the user may have configured.
+  const globalClaudePath = resolve(home, '.claude', 'mcp.json');
+  try {
+    await mkdir(dirname(globalClaudePath), { recursive: true });
+    let globalConfig: { mcpServers?: Record<string, unknown> } = {};
+    if (existsSync(globalClaudePath)) {
+      try {
+        globalConfig = JSON.parse(await readFile(globalClaudePath, 'utf-8')) as typeof globalConfig;
+      } catch { /* corrupt — start fresh */ }
+    }
+    globalConfig.mcpServers ??= {};
+    globalConfig.mcpServers['cachly'] = {
+      command: 'npx',
+      args: ['-y', '@cachly-dev/mcp-server@latest'],
+      env: { CACHLY_API_URL: 'https://api.cachly.dev', CACHLY_JWT: token, CACHLY_BRAIN_INSTANCE_ID: instance.id },
+    };
+    await writeFile(globalClaudePath, JSON.stringify(globalConfig, null, 2), 'utf-8');
+    console.log(`✅ Written: ~/.claude/mcp.json  (global — works in every project)`);
+  } catch (e) {
+    console.log(`⚠️  Could not write ~/.claude/mcp.json: ${(e as Error).message}`);
   }
 
   // ── Step 5: CLAUDE.md (always — idempotent) ───────────────────────────────

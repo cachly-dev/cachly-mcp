@@ -102,6 +102,9 @@ causal_trace(problem="auth breaks after restart")
 ```
 *30 minutes of git blame in one call.*
 
+**The `autopilot` command:**  
+Run `autopilot` once and it generates a fully self-managing `CLAUDE.md` or `copilot-instructions.md` — tailored to your actual Brain content. Every AI (Claude, Cursor, Copilot, Windsurf, Gemini) gets the full ruleset for your project. No copy-paste, no manual writing. As the Brain learns more, re-run `autopilot` to upgrade the file.
+
 ---
 
 ## cachly vs. alternatives
@@ -148,6 +151,7 @@ causal_trace(problem="auth breaks after restart")
 | `madc_deliberate` | 6 specialist AI agents vote to resolve contradictory lessons |
 | `memory_crystalize` | Distill all lessons into a Crystal for instant team context |
 | `brain_doctor` | Health check: lesson count, IQ boost %, open failures |
+| `autopilot` | Generate a self-managing `CLAUDE.md` / `copilot-instructions.md` from Brain content |
 | `global_learn` / `global_recall` | Cross-project universal lessons |
 | `publish_lesson` / `import_public_brain` | Share/import community knowledge |
 

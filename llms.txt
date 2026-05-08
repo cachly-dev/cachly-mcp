@@ -93,6 +93,9 @@ Claude Code, Cursor, Windsurf, VS Code, GitHub Copilot, Cline, Zed, Continue.dev
 - cls_ingest: Ingest learning signals from git commits, CI runs, IDE diagnostics without session_end
 - cls_install_hooks: Generate git post-commit hook and GitHub Actions step for automatic learning
 
+### Autopilot — self-managing AI instructions
+- autopilot: Generate a CLAUDE.md / copilot-instructions.md / .github/copilot-instructions.md from actual Brain content. Supports Claude, Cursor, Copilot, Windsurf, Gemini. style="minimal" for just the hooks, style="full" for complete ruleset with examples. Re-run as the Brain learns more to continuously upgrade the instructions file.
+
 ### Roadmap & Planning
 - roadmap_add: Add item to persistent project roadmap stored in Brain
 - roadmap_update: Update roadmap item status, priority, details
