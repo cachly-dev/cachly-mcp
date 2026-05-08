@@ -52,17 +52,18 @@ Run it once. It handles everything:
 
 ---
 
-## What happens after setup
+## What happens after setup — everything is automatic
 
-Everything runs automatically. You never type a command again:
+You never type another command. The Brain runs entirely in the background:
 
-| Trigger | What the Brain does |
-|---------|-------------------|
-| First tool call | Session starts, project gets indexed |
-| Before every task | AI recalls relevant past lessons automatically |
-| During debugging | AI traces root causes through memory |
+| Trigger | What the Brain does automatically |
+|---------|----------------------------------|
+| First tool call | Session starts, project gets indexed in background |
+| Before every task | AI recalls relevant past lessons |
+| During debugging | AI traces root causes through causal memory |
 | Before deploys | AI predicts failure risks from past patterns |
-| After every fix | AI stores the lesson automatically |
+| After every fix | AI stores the lesson with commands and file paths |
+| Every git commit | Hook extracts lessons from commit message |
 | Editor closes | Session summary saved for next time |
 
 ---
@@ -75,6 +76,7 @@ Everything runs automatically. You never type a command again:
 | Known bug hits again | Re-researches from scratch | "You fixed this March 12, here's the exact command" |
 | After holiday / handoff | Context dead | Fully briefed in < 10 seconds |
 | New team member | Weeks to onboard | `setup` gives full context instantly |
+| Pre-deploy check | Hope nothing breaks | Brain predicts failures before they happen |
 
 ---
 
@@ -82,12 +84,13 @@ Everything runs automatically. You never type a command again:
 
 | Feature | What it does |
 |---------|-------------|
-| **`causal_trace`** | Root Cause Analysis through memory: problem → chain → solution. **No other system can do this.** |
+| **`causal_trace`** | Root Cause Analysis through memory: problem → chain → solution. **No other system does this.** |
 | **`memory_consolidate`** | Weekly garbage collector — detects contradictions, merges duplicates, expires stale lessons |
 | **`brain_predict`** | Predicts failures before they happen based on past patterns |
-| **Team Brain** | `learn_from_attempts` with `author` param shares fixes across your whole team |
+| **Team Brain** | Shared lessons across your whole team with author attribution |
 | **Ambient Git** | git hook auto-extracts lessons from every commit. Zero extra calls. |
-| **Memory Crystals** | Distills all lessons into a compact snapshot injected at every session start |
+| **Memory Crystals** | Distills all lessons into a compact snapshot for instant session briefing |
+| **11 languages** | BM25+ search in EN, DE, FR, ES, IT, PT, ZH, JA, KO, AR, HE — no config |
 
 **The `causal_trace` moment:**
 ```
@@ -101,14 +104,31 @@ causal_trace(problem="auth breaks after restart")
 
 ---
 
-## MCP Tools
+## cachly vs. alternatives
+
+| | cachly | mem0 | MemGPT / Letta | Plain CLAUDE.md |
+|--|--------|------|----------------|-----------------|
+| Persistent memory | ✅ | ✅ | ✅ | Manual |
+| MCP server (no code changes) | ✅ | ✅ | ❌ | ✅ |
+| Causal root cause analysis | ✅ | ❌ | ❌ | ❌ |
+| Fully automatic (no explicit calls) | ✅ | ❌ | ❌ | ❌ |
+| Failure prediction | ✅ | ❌ | ❌ | ❌ |
+| Team knowledge sharing | ✅ | Paid | ❌ | ❌ |
+| Git-ambient learning | ✅ | ❌ | ❌ | ❌ |
+| 11-language search | ✅ | ❌ | ❌ | ❌ |
+| GDPR / EU servers | ✅ | ❌ | ❌ | ✅ |
+| Free tier forever | ✅ | Limited | ❌ | ✅ |
+
+---
+
+## MCP Tools (89 total)
 
 ### 🧠 Session & Memory (most used)
 
 | Tool | What it does |
 |------|-------------|
 | **`session_start`** | Full briefing: last session summary, open failures, recent lessons, brain health |
-| **`session_end`** | Save what you built, auto-extract lessons from summary + ambient git log |
+| **`session_end`** | Save what you built, auto-extract lessons from summary + git log |
 | **`learn_from_attempts`** | Store structured lessons after any fix, deploy, or discovery |
 | **`recall_best_solution`** | Best known solution for a topic — with success/failure history |
 | **`remember_context`** | Cache architecture findings, decisions, file summaries |
@@ -117,40 +137,80 @@ causal_trace(problem="auth breaks after restart")
 | **`causal_trace`** | Root cause analysis through memory |
 | **`brain_predict`** | Predict likely failures before they happen |
 | **`memory_consolidate`** | Deduplicate and expire stale lessons |
-
-### 🌍 Multilingual Brain — Search in Any Language
-
-Search in 11 languages natively (EN, DE, FR, ES, IT, PT, ZH, JA, KO, AR, HE) — no configuration.
-
-```
-smart_recall("kontena")  → finds コンテナ docs
-smart_recall("deploy")   → finds デプロイ, 部署, 배포, نشر, פריסה
-```
+| **`compact_recover`** | Full context recovery after hitting context window limit |
 
 ### 👥 Team Brain
 
 | Tool | What it does |
 |------|-------------|
-| `team_learn` / `team_recall` | Share lessons across the team |
-| `memory_crystalize` | Distill all lessons into a Crystal snapshot for instant team context |
+| `team_learn` / `team_recall` | Share lessons across the team with author attribution |
+| `team_synthesize` | Merge conflicting lessons into one canonical version |
+| `madc_deliberate` | 6 specialist AI agents vote to resolve contradictory lessons |
+| `memory_crystalize` | Distill all lessons into a Crystal for instant team context |
 | `brain_doctor` | Health check: lesson count, IQ boost %, open failures |
 | `global_learn` / `global_recall` | Cross-project universal lessons |
 | `publish_lesson` / `import_public_brain` | Share/import community knowledge |
 
-### ⚙️ Instance & Cache Management
+### 🌍 Knowledge Commons (Global)
 
 | Tool | What it does |
 |------|-------------|
-| `list_instances` / `create_instance` / `delete_instance` | Manage cache instances |
+| `syndicate` | Contribute verified lesson to global Knowledge Commons |
+| `syndicate_search` | Search community solutions by tech stack |
+| `fedbrain_contribute` | Contribute with cryptographic provenance certificate |
+| `fedbrain_search` | Context-weighted global search |
+
+### ⚙️ Cache & Infrastructure
+
+| Tool | What it does |
+|------|-------------|
+| `list_instances` / `create_instance` / `delete_instance` | Manage Brain instances |
 | `cache_get` / `cache_set` / `cache_delete` | Standard cache operations |
 | `cache_mget` / `cache_mset` | Bulk pipeline (single round-trip) |
 | `semantic_search` | Find cached entries by meaning |
+| `index_project` | Index source files for semantic retrieval |
+
+### 📋 Roadmap & Planning
+
+| Tool | What it does |
+|------|-------------|
+| `roadmap_add` / `roadmap_update` | Persistent project roadmap stored in Brain |
+| `roadmap_list` / `roadmap_next` | List items or get the single most important next action |
+
+---
+
+## FAQ
+
+**Does my AI need to call `session_start` manually?**  
+No. Sessions start and end automatically on the first tool call and when the editor closes.
+
+**What happens to memory if I switch projects?**  
+Memory is scoped per Brain instance. You can have one instance per project, or one shared instance across projects.
+
+**Can my whole team share the same Brain?**  
+Yes. `team_learn` / `team_recall` share lessons with author attribution. `memory_crystalize` gives any new team member instant full context.
+
+**What is a Memory Crystal?**  
+A compressed snapshot of all lessons distilled into a compact briefing. Injected at every session start so the AI arrives pre-briefed even with a cold context window.
+
+**What is causal_trace and why is it unique?**  
+Given any error or problem, `causal_trace` walks the Causal Knowledge Graph (CKG) to find: the root cause, intermediate causes, and the exact fix that worked — including the date and commands used. No other memory system builds or queries a causal graph.
+
+**How does cachly learn from git commits?**  
+The `setup` wizard installs a git post-commit hook. After each commit, the hook calls `cls_ingest` with the commit message and changed files. The Brain extracts lessons automatically — no `session_end` required.
+
+**What happens if I hit the context window limit mid-session?**  
+Call `compact_recover`. It reconstructs full context from the Memory Crystal + recent sessions + WIP registry entries — typically restoring full context in one tool call.
+
+**Is my code sent to cachly servers?**  
+No code content is stored. cachly stores: lesson text, commit messages, session summaries, and key-value context entries. All data is on German servers, GDPR-compliant.
+
+**Does cachly work without an internet connection?**  
+No — cachly is a managed cloud service. The MCP server is a thin client; the Brain runs on cachly's infrastructure.
 
 ---
 
 ## Manual Setup (alternative to the wizard)
-
-If you prefer to add the config by hand:
 
 <details>
 <summary><b>Claude Code</b> (<code>~/.claude/mcp.json</code> or <code>.mcp.json</code>)</summary>

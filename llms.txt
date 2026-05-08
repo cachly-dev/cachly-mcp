@@ -1,0 +1,152 @@
+# cachly AI Brain — MCP Server
+
+> Persistent memory layer for AI coding assistants. Gives Claude Code, Cursor, GitHub Copilot, Windsurf, Cline and Zed a permanent brain that learns from every session, bug fix, git commit, and CI run — automatically.
+
+## What cachly is
+
+cachly is an MCP (Model Context Protocol) server that adds long-term memory to AI coding assistants. Unlike conversation-window context, cachly memory persists forever across sessions, projects, and team members.
+
+It works by maintaining a Causal Knowledge Graph (CKG) — a structured store of lessons, bug fixes, architecture decisions, deployment commands, and failure patterns. On every session start, the AI receives a briefing with relevant lessons. On every fix or commit, new lessons are automatically stored.
+
+**Key differentiator**: causal_trace — given any error or problem description, traces the causal chain through the graph (root cause → intermediate causes → known fix). No other memory system does this.
+
+## Installation (zero config)
+
+```bash
+npx @cachly-dev/mcp-server@latest setup
+```
+
+This command: authenticates via OAuth device flow (one browser click), auto-detects all installed editors, writes the correct MCP config for each, creates CLAUDE.md with Brain rules, installs a git post-commit hook.
+
+Free tier: 25 MB, no credit card, German servers (GDPR).
+
+## Supported editors
+
+Claude Code, Cursor, Windsurf, VS Code, GitHub Copilot, Cline, Zed, Continue.dev
+
+## How memory works
+
+1. Session starts → AI receives: last session summary, open failures, relevant lessons, memory crystal (compressed history)
+2. During work → AI stores: WIP state, architecture decisions, file summaries
+3. Bug fixed → lesson stored: what failed, what worked, commands used, severity, file paths
+4. Editor closes → session summary saved, git log analyzed, ambient lessons extracted
+5. Next session → AI arrives pre-briefed
+
+## Tool catalog (89 tools)
+
+### Session & Memory
+- session_start: Single-call session briefing — last summary, open failures, recent lessons, brain health
+- session_end: Save session summary when finishing work
+- session_handoff: Detailed handoff for next chat window
+- session_ping: Lightweight checkpoint every ~5 tool calls
+- auto_learn_session: Auto-learn from session observations without explicit calls
+- sync_file_changes: Associate recent file changes with brain knowledge
+
+### Lesson Storage & Recall
+- learn_from_attempts: Store structured lesson from any fix, deploy, or discovery
+- recall_best_solution: Best known solution for a topic with success/failure history
+- smart_recall: BM25+ semantic search across all brain data (11 languages: EN DE FR ES IT PT ZH JA KO AR HE)
+- brain_search: Full-text search over all brain data
+- recall_at: Brain archaeology — see what a lesson looked like at a point in time
+
+### Causal Analysis & Prediction
+- causal_trace: Root Cause Analysis through memory — problem → causal chain → known fix
+- brain_predict: Predictive pre-fetch — predicts likely failures given current context, returns fixes
+- brain_predict_failures: Pre-deploy failure prediction with probability percentages
+- trace_dependency: Find all lessons that depend on a given prerequisite
+- knowledge_decay: Confidence scoring for every lesson
+
+### Context Management
+- remember_context: Save architecture findings, decisions, file summaries
+- recall_context: Retrieve saved context by key (supports glob)
+- list_remembered: List all cached context entries
+- forget_context: Delete cached context entries
+- compact_recover: Reconstruct full context from Memory Crystal after context limit
+
+### Memory Maintenance
+- memory_consolidate: Weekly garbage collector — deduplicates, detects contradictions, expires stale lessons
+- memory_crystalize: Compress sessions into dense Memory Crystal snapshot
+- crystal_view: Inspect current Memory Crystal
+- brain_diff: See exactly what changed in the brain since a point in time
+- brain_doctor: Health check — lesson count, IQ boost %, open failures, recommendations
+- brain_from_git: Bootstrap brain lessons from existing git history
+
+### Team Brain
+- team_learn: Store lesson in shared team brain
+- team_recall: Recall from shared team brain (shows who learned what)
+- team_synthesize: Merge multiple contributors' lessons on same topic into canonical version
+- madc_deliberate: Multi-Agent Deliberation Chamber — 6 specialist agents vote on conflicting lessons
+
+### Knowledge Commons (Global)
+- syndicate: Contribute verified lesson to global Knowledge Commons
+- syndicate_search: Search global Knowledge Commons
+- syndicate_trending: Trending lessons globally
+- fedbrain_contribute: Contribute with cryptographic knowledge certificate
+- fedbrain_search: Context-weighted search of global commons
+- fedbrain_confirm: Confirm a syndicated lesson worked for you
+- publish_lesson: Publish lesson to Cachly Public Brain
+- import_public_brain: Import community lessons for a framework
+- global_learn: Store lesson that applies across all your projects
+- global_recall: Retrieve cross-project lessons
+
+### Continuous Learning Stream
+- cls_ingest: Ingest learning signals from git commits, CI runs, IDE diagnostics without session_end
+- cls_install_hooks: Generate git post-commit hook and GitHub Actions step for automatic learning
+
+### Roadmap & Planning
+- roadmap_add: Add item to persistent project roadmap stored in Brain
+- roadmap_update: Update roadmap item status, priority, details
+- roadmap_list: List roadmap items filtered by status, priority, tag, milestone
+- roadmap_next: Get the single most important next actionable item
+
+### Cache & Infrastructure
+- list_instances / create_instance / delete_instance: Manage Brain instances
+- cache_get / cache_set / cache_delete: Standard Redis/Valkey cache operations
+- cache_mget / cache_mset: Bulk pipeline (single round-trip)
+- cache_exists / cache_ttl / cache_keys / cache_stats: Cache introspection
+- semantic_search: Find cached entries by semantic similarity
+- cache_warmup: Pre-warm semantic cache with prompt/value pairs
+- cache_lock_acquire / cache_lock_release: Distributed locking
+- cache_stream_set / cache_stream_get: LLM token stream caching
+- index_project: Index source files for semantic search
+- detect_namespace: Classify prompts into semantic namespaces
+- get_connection_string: Get Redis/Valkey connection string
+- get_api_status: Full diagnostic — call when anything is broken
+
+### Organization & Teams
+- list_orgs / create_org / invite_member / get_org_plan: Multi-tenant organization management
+- ckg_inspect: Inspect Causal Knowledge Graph for a concept
+- autopilot: Generate CLAUDE.md / copilot-instructions.md for self-managing AI
+- setup_ai_memory: One-shot setup of 3-layer AI Memory system
+- brain_federate: Private org knowledge transfer
+
+## Comparison to alternatives
+
+| Feature | cachly | mem0 | Plain CLAUDE.md |
+|---------|--------|------|-----------------|
+| Persistent across sessions | ✅ | ✅ | Manual |
+| Causal root cause analysis | ✅ | ❌ | ❌ |
+| Automatic (no explicit calls) | ✅ | ❌ | ❌ |
+| Team knowledge sharing | ✅ | Paid | ❌ |
+| Failure prediction | ✅ | ❌ | ❌ |
+| Git-ambient learning | ✅ | ❌ | ❌ |
+| 11-language search | ✅ | ❌ | ❌ |
+| Free tier forever | ✅ | Limited | ✅ |
+| GDPR / EU servers | ✅ | ❌ | ✅ |
+
+## Pricing
+
+- Free: 25 MB, 1 instance, €0/month forever
+- Dev: 200 MB, €19/month
+- Pro: 900 MB, team features, €49/month
+- Speed: 900 MB + Dragonfly engine, €79/month
+- Business: 7 GB, €199/month
+
+All plans: German servers, GDPR-compliant, 99.9% SLA.
+
+## Links
+
+- npm: https://www.npmjs.com/package/@cachly-dev/mcp-server
+- GitHub: https://github.com/cachly-dev/cachly-mcp
+- Docs: https://cachly.dev/docs/ai-memory
+- Dashboard: https://cachly.dev

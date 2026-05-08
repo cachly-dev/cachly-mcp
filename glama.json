@@ -2,5 +2,28 @@
   "$schema": "https://glama.ai/mcp/schemas/server.json",
   "maintainers": [
     "HeinrichNebula"
+  ],
+  "categories": [
+    "memory",
+    "developer-tools",
+    "productivity",
+    "knowledge-management",
+    "team-collaboration"
+  ],
+  "keywords": [
+    "persistent-memory",
+    "ai-memory",
+    "mcp-server",
+    "claude-code",
+    "cursor",
+    "copilot",
+    "windsurf",
+    "causal-trace",
+    "brain-predict",
+    "smart-recall",
+    "knowledge-graph",
+    "team-brain",
+    "gdpr",
+    "free-tier"
   ]
 }
