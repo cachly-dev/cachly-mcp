@@ -17,19 +17,13 @@ console.log(`
 ${line}
   ${c.bold}${c.violet}🧠 cachly AI Brain${c.reset} ${c.dim}v${process.env.npm_package_version ?? ""}${c.reset}
 
-  ${c.bold}Add to Claude Code${c.reset} ${c.dim}(~/.claude/mcp.json or Settings → MCP):${c.reset}
+  ${c.bold}One command sets everything up:${c.reset}
 
-  ${c.dim}{${c.reset}
-    ${c.yellow}"mcpServers"${c.reset}: ${c.dim}{${c.reset}
-      ${c.yellow}"cachly"${c.reset}: ${c.dim}{${c.reset}
-        ${c.yellow}"command"${c.reset}: ${c.green}"npx"${c.reset},
-        ${c.yellow}"args"${c.reset}: ${c.dim}[${c.reset}${c.green}"-y"${c.reset}, ${c.green}"@cachly-dev/mcp-server@latest"${c.reset}${c.dim}]${c.reset}
-      ${c.dim}}${c.reset}
-    ${c.dim}}${c.reset}
-  ${c.dim}}${c.reset}
+  ${c.cyan}npx @cachly-dev/mcp-server@latest setup${c.reset}
 
-  Restart editor → call ${c.cyan}session_start${c.reset} → sign in with one click.
+  Signs you in → detects your editors → writes all MCP configs
+  automatically → adds Brain rules to CLAUDE.md.
+
   ${c.green}No credentials. No credit card. Free forever.${c.reset}
-
   ${c.dim}Other editors: https://cachly.dev/docs/mcp${c.reset}
 ${line}`);

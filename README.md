@@ -34,60 +34,36 @@ You explain your architecture. You explain the deployment process. You explain t
 
 ---
 
-## Setup — No Credentials Required
+## One Command. Fully Automatic.
 
-Add to your editor's MCP config and restart. **No account, no token, no credit card needed upfront.**  
-On the first `session_start` call, your AI walks you through a one-click sign-in — right inside the chat.
-
-### Claude Code
-
-`~/.claude/mcp.json` or **Settings → MCP**:
-
-```json
-{
-  "mcpServers": {
-    "cachly": {
-      "command": "npx",
-      "args": ["-y", "@cachly-dev/mcp-server@latest"]
-    }
-  }
-}
+```bash
+npx @cachly-dev/mcp-server@latest setup
 ```
 
-### Cursor / Windsurf
+Run it once. It handles everything:
 
-`.cursor/mcp.json` or `.mcp.json`:
+1. **Signs you in** — one click in your browser, no password, no credit card
+2. **Detects your editors** — Claude Code, Cursor, Windsurf, VS Code, Copilot, Cline & Zed
+3. **Writes the MCP config** for every detected editor automatically
+4. **Creates `CLAUDE.md`** with Brain rules so your AI acts autonomously
+5. **Installs a git hook** that learns from every commit automatically
 
-```json
-{
-  "servers": {
-    "cachly": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@cachly-dev/mcp-server@latest"]
-    }
-  }
-}
-```
+**Restart your editor.** From now on your AI arrives pre-briefed — every session.
 
-### VS Code / Copilot / Cline / Zed
+---
 
-`.vscode/mcp.json` or editor MCP settings:
+## What happens after setup
 
-```json
-{
-  "servers": {
-    "cachly": {
-      "type": "stdio",
-      "command": "npx",
-      "args": ["-y", "@cachly-dev/mcp-server@latest"]
-    }
-  }
-}
-```
+Everything runs automatically. You never type a command again:
 
-After adding the config, **restart your editor**, then call `session_start`.  
-Your AI will prompt you to sign in — takes about 10 seconds.
+| Trigger | What the Brain does |
+|---------|-------------------|
+| First tool call | Session starts, project gets indexed |
+| Before every task | AI recalls relevant past lessons automatically |
+| During debugging | AI traces root causes through memory |
+| Before deploys | AI predicts failure risks from past patterns |
+| After every fix | AI stores the lesson automatically |
+| Editor closes | Session summary saved for next time |
 
 ---
 
@@ -98,7 +74,7 @@ Your AI will prompt you to sign in — takes about 10 seconds.
 | Session start | "What's your architecture?" | "Ready. 23 lessons, last session: deployed API." |
 | Known bug hits again | Re-researches from scratch | "You fixed this March 12, here's the exact command" |
 | After holiday / handoff | Context dead | Fully briefed in < 10 seconds |
-| New team member | Weeks to onboard | `session_start` gives full context instantly |
+| New team member | Weeks to onboard | `setup` gives full context instantly |
 
 ---
 
@@ -110,8 +86,8 @@ Your AI will prompt you to sign in — takes about 10 seconds.
 | **`memory_consolidate`** | Weekly garbage collector — detects contradictions, merges duplicates, expires stale lessons |
 | **`brain_predict`** | Predicts failures before they happen based on past patterns |
 | **Team Brain** | `learn_from_attempts` with `author` param shares fixes across your whole team |
-| **Ambient Git** | `session_end` auto-reads `git log`, stores commits as lessons. Zero extra calls. |
-| **Memory Crystals** | Distills all lessons into a compact snapshot injected at every `session_start` |
+| **Ambient Git** | git hook auto-extracts lessons from every commit. Zero extra calls. |
+| **Memory Crystals** | Distills all lessons into a compact snapshot injected at every session start |
 
 **The `causal_trace` moment:**
 ```
@@ -122,18 +98,6 @@ causal_trace(problem="auth breaks after restart")
 → Fix:  PollUntilContextTimeout 3min  ← used this March 12, worked
 ```
 *30 minutes of git blame in one call.*
-
----
-
-## Add to `CLAUDE.md` / `.github/copilot-instructions.md`
-
-```markdown
-## AI Brain Rules (cachly)
-- Call learn_from_attempts AFTER every fix, deploy, or discovery
-- Call smart_recall or recall_best_solution before researching a known problem
-```
-
-> Sessions start and end automatically — no need to call `session_start` or `session_end` manually.
 
 ---
 
@@ -184,6 +148,44 @@ smart_recall("deploy")   → finds デプロイ, 部署, 배포, نشر, פרי�
 
 ---
 
+## Manual Setup (alternative to the wizard)
+
+If you prefer to add the config by hand:
+
+<details>
+<summary><b>Claude Code</b> (<code>~/.claude/mcp.json</code> or <code>.mcp.json</code>)</summary>
+
+```json
+{
+  "mcpServers": {
+    "cachly": {
+      "command": "npx",
+      "args": ["-y", "@cachly-dev/mcp-server@latest"]
+    }
+  }
+}
+```
+On the first tool call your AI will prompt you to sign in — takes 10 seconds.
+</details>
+
+<details>
+<summary><b>Cursor / Windsurf / VS Code / Copilot / Cline</b> (<code>.cursor/mcp.json</code> / <code>.mcp.json</code>)</summary>
+
+```json
+{
+  "mcpServers": {
+    "cachly": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@cachly-dev/mcp-server@latest"]
+    }
+  }
+}
+```
+</details>
+
+---
+
 ## Pricing
 
 | Tier | RAM | Price | Best for |
@@ -200,11 +202,11 @@ smart_recall("deploy")   → finds デプロイ, 部署, 배포, نشر, פרי�
 
 ## Environment Variables
 
-These are **optional** — device flow sets them automatically on first use.
+Set automatically by the setup wizard — only needed for manual configuration.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CACHLY_JWT` | — | API token (set automatically by device flow, or get from cachly.dev) |
+| `CACHLY_JWT` | — | API token (set by wizard, or get from cachly.dev) |
 | `CACHLY_BRAIN_INSTANCE_ID` | — | Default instance UUID (optional if passed per-call) |
 | `CACHLY_API_URL` | `https://api.cachly.dev` | Override for self-hosted |
 | `CACHLY_NO_TELEMETRY` | unset | Set to `1` to disable anonymous usage pings |
