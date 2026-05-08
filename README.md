@@ -129,10 +129,11 @@ causal_trace(problem="auth breaks after restart")
 
 ```markdown
 ## AI Brain Rules (cachly)
-- Call session_start BEFORE reading any files or making changes
 - Call learn_from_attempts AFTER every fix, deploy, or discovery
-- Call session_end when closing the window
+- Call smart_recall or recall_best_solution before researching a known problem
 ```
+
+> Sessions start and end automatically — no need to call `session_start` or `session_end` manually.
 
 ---
 
