@@ -805,54 +805,47 @@ function buildMcpConfig(apiKey: string, instanceId: string, editor: string): str
 
 function buildClaudeMdBlock(instanceId: string): string {
   return `${CLAUDE_MD_MARKER_START}
-## Cachly AI Brain
+## Cachly AI Brain — Always Active
 
-The Cachly MCP server is available as tool \`cachly\`.
-Your instance ID: \`${instanceId}\`
+The Brain MCP server runs automatically. Instance: \`${instanceId}\`
 
-> **Sessions are fully automatic** (MCP ≥ 0.5.3).
-> The Brain starts tracking when you call any tool for the first time and saves a summary when your editor closes. You never need to call \`session_start\` or \`session_end\` manually.
+Sessions start and end automatically — never call \`session_start\` or \`session_end\`.
 
 ---
 
-### Before editing any file — WIP-registry (prevents half-finished code across sessions):
+### BEFORE every task (mandatory — no exceptions):
 \`\`\`
-remember_context(
-  instance_id = "${instanceId}",
-  key         = "wip-registry",
-  content     = "EDITING: <file:line> — goal: <what you are implementing>",
-  category    = "bug",
-  ttl         = 86400,
-)
+smart_recall(instance_id="${instanceId}", query="<what you are about to do>")
 \`\`\`
-After the edit is complete, update \`content\` to \`"DONE: <file> — <what was completed>"\`.
+Report any relevant lessons found to the user before proceeding.
 
-### After fixing any bug or solving a tricky problem:
+### BEFORE editing any file (mandatory):
 \`\`\`
-learn_from_attempts(
-  instance_id = "${instanceId}",
-  topic       = "category:keyword",
-  outcome     = "success",
-  what_worked = "...",
-  what_failed = "...",
-  severity    = "critical" | "major" | "minor",
-  file_paths  = ["path/to/file"],
-  commands    = ["the command that worked"],
-  tags        = ["tag1"],
-)
+remember_context(instance_id="${instanceId}", key="wip:<filename>", content="EDITING: <file:line> — <goal>", ttl=86400)
+\`\`\`
+When done: update content to \`"DONE: <file> — <summary>"\`.
+
+### AFTER every fix, deploy, or discovery (mandatory):
+\`\`\`
+learn_from_attempts(instance_id="${instanceId}", topic="<category:keyword>", outcome="success"|"failure",
+  what_worked="...", what_failed="...", severity="critical"|"major"|"minor",
+  file_paths=["..."], commands=["..."], tags=["..."])
 \`\`\`
 
-### Before starting any task — recall relevant lessons first:
+### WHEN debugging any error (mandatory before grepping/reading files):
 \`\`\`
-smart_recall(
-  instance_id = "${instanceId}",
-  query       = "<describe what you are about to do>",
-)
+causal_trace(instance_id="${instanceId}", problem="<exact error or symptom>")
 \`\`\`
+If a known fix exists in the Brain, use it directly. Skip research if Brain has the answer.
+
+### BEFORE any risky operation (deploy, migration, dependency upgrade):
+\`\`\`
+brain_predict(instance_id="${instanceId}", context="<what you are about to do>")
+\`\`\`
+Report predicted failure risks to the user before proceeding.
 
 ### Half-finished code rule:
 Never commit code that does not compile. Run \`tsc --noEmit\` / \`go build ./...\` before every commit.
-If a session ends mid-task, save the WIP-registry entry so the next session picks up exactly where you left off.
 ${CLAUDE_MD_MARKER_END}`;
 }
 
