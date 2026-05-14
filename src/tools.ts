@@ -1696,7 +1696,8 @@ const TOOLS = [
     description:
       'Bootstrap brain lessons from git history. Parses commit messages and infers fix/feature/refactor ' +
       'lessons automatically. Great for onboarding an existing codebase — run once and the brain instantly ' +
-      'knows your team\'s accumulated patterns. Supports limit and branch options.',
+      'knows your team\'s accumulated patterns. Incremental by default: only processes new commits since the ' +
+      'last run, so repeated calls are fast. Emits progress updates to stderr during long scans.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1705,6 +1706,7 @@ const TOOLS = [
         limit: { type: 'number', description: 'Max commits to process (default: 100, max: 500)' },
         branch: { type: 'string', description: 'Git branch to parse (default: current branch / HEAD)' },
         since: { type: 'string', description: 'Only commits after this date, e.g. "2024-01-01" (optional)' },
+        incremental: { type: 'boolean', description: 'Only process commits since last run (default: true). Set false to reprocess all.' },
       },
       required: ['instance_id'],
     },

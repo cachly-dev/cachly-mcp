@@ -948,6 +948,158 @@ if (process.argv[2] === 'init') {
   process.exit(0);
 }
 
+// ── CLI: cachly health ────────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest health
+// Checks: JWT valid, Brain API reachable, editor configs found, git hook present.
+
+if (process.argv[2] === 'health') {
+  const { existsSync } = await import('node:fs');
+  const { readFile } = await import('node:fs/promises');
+  const { resolve, join: pJoin } = await import('node:path');
+
+  const cwd = process.cwd();
+  let passed = 0;
+  let failed = 0;
+
+  const ok  = (msg: string) => { console.log(`  ✅ ${msg}`); passed++; };
+  const warn = (msg: string) => { console.log(`  ⚠️  ${msg}`); };
+  const fail = (msg: string) => { console.log(`  ❌ ${msg}`); failed++; };
+
+  console.log('\n🧠 cachly health check\n');
+
+  // ── 1. JWT token ────────────────────────────────────────────────────────────
+  console.log('🔑 Auth token');
+  const jwt = process.env.CACHLY_JWT ?? '';
+  if (!jwt) {
+    fail('CACHLY_JWT not set — run: npx @cachly-dev/mcp-server@latest setup');
+  } else {
+    try {
+      const parts = jwt.split('.');
+      if (parts.length !== 3) throw new Error('not a JWT');
+      const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as {
+        sub?: string; exp?: number;
+      };
+      const expMs = payload.exp ? payload.exp * 1000 : null;
+      const minsLeft = expMs ? Math.floor((expMs - Date.now()) / 60_000) : null;
+      if (expMs && expMs < Date.now()) {
+        fail(`JWT expired ${Math.abs(minsLeft!)} minute(s) ago — get a new one: https://cachly.dev/setup-ai`);
+      } else if (minsLeft !== null && minsLeft < 30) {
+        warn(`JWT expires in ${minsLeft} minute(s) — refresh soon at https://cachly.dev/setup-ai`);
+      } else {
+        ok(`JWT valid${minsLeft !== null ? ` (expires in ${Math.floor(minsLeft / 60)}h ${minsLeft % 60}m)` : ''}`);
+      }
+    } catch {
+      fail('CACHLY_JWT format invalid (expected JWT with 3 parts)');
+    }
+  }
+
+  // ── 2. Brain API reachability ───────────────────────────────────────────────
+  console.log('\n🌐 Brain API');
+  const apiUrl = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
+  try {
+    const res = await fetch(`${apiUrl}/health`, { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const body = await res.json() as { status?: string };
+      ok(`${apiUrl} reachable (status: ${body.status ?? 'ok'})`);
+    } else if (res.status === 401 || res.status === 403) {
+      ok(`${apiUrl} reachable (auth required — expected)`);
+    } else {
+      fail(`${apiUrl}/health returned HTTP ${res.status}`);
+    }
+  } catch (e) {
+    fail(`${apiUrl} unreachable — ${(e as Error).message}`);
+  }
+
+  // ── 3. Brain instance ───────────────────────────────────────────────────────
+  console.log('\n🧠 Brain instance');
+  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  if (!instanceId) {
+    warn('CACHLY_BRAIN_INSTANCE_ID not set — will auto-resolve on first tool call');
+  } else if (jwt) {
+    try {
+      const instRes = await fetch(`${apiUrl}/api/v1/instances/${instanceId}`, {
+        headers: { Authorization: `Bearer ${jwt}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (instRes.ok) {
+        const inst = await instRes.json() as { name?: string; status?: string };
+        if (inst.status === 'running') {
+          ok(`Instance "${inst.name}" (${instanceId.slice(0, 8)}…) is running`);
+        } else {
+          warn(`Instance "${inst.name}" status: ${inst.status}`);
+        }
+      } else {
+        fail(`Instance ${instanceId.slice(0, 8)}… not found (HTTP ${instRes.status})`);
+      }
+    } catch (e) {
+      fail(`Could not check instance — ${(e as Error).message}`);
+    }
+  }
+
+  // ── 4. Editor configs ───────────────────────────────────────────────────────
+  console.log('\n🛠  Editor configs (project dir)');
+  const editorConfigs: Array<{ editor: string; path: string }> = [
+    { editor: 'Claude Code',     path: '.mcp.json' },
+    { editor: 'Cursor',          path: '.cursor/mcp.json' },
+    { editor: 'Windsurf',        path: '.windsurf/mcp.json' },
+    { editor: 'Copilot / Cline', path: '.vscode/mcp.json' },
+    { editor: 'Zed',             path: '.zed/settings.json' },
+    { editor: 'Continue.dev',    path: '.continue/config.json' },
+  ];
+  let configsFound = 0;
+  for (const { editor, path } of editorConfigs) {
+    const fullPath = resolve(cwd, path);
+    if (existsSync(fullPath)) {
+      try {
+        const content = await readFile(fullPath, 'utf-8');
+        const hasCachly = content.includes('@cachly-dev/mcp-server') || content.includes('cachly');
+        if (hasCachly) {
+          ok(`${editor}: ${path}`);
+          configsFound++;
+        } else {
+          warn(`${editor}: ${path} exists but cachly not found inside`);
+        }
+      } catch {
+        warn(`${editor}: ${path} exists but could not read`);
+      }
+    }
+  }
+  if (configsFound === 0) {
+    fail('No editor MCP configs found — run: npx @cachly-dev/mcp-server@latest setup');
+  }
+
+  // ── 5. Git hook ─────────────────────────────────────────────────────────────
+  console.log('\n🪝 Git hook (ambient learning)');
+  const hookPath = resolve(cwd, '.git', 'hooks', 'post-commit');
+  if (!existsSync(resolve(cwd, '.git'))) {
+    warn('Not in a git repository — skip');
+  } else if (existsSync(hookPath)) {
+    try {
+      const hook = await readFile(hookPath, 'utf-8');
+      if (hook.includes('cachly')) {
+        ok('.git/hooks/post-commit (cachly CLS hook present)');
+      } else {
+        warn('.git/hooks/post-commit exists but cachly hook not found — run setup to add it');
+      }
+    } catch {
+      warn('.git/hooks/post-commit exists but could not read');
+    }
+  } else {
+    warn('.git/hooks/post-commit not found — run: npx @cachly-dev/mcp-server@latest setup');
+  }
+
+  // ── Summary ─────────────────────────────────────────────────────────────────
+  console.log(`\n${'─'.repeat(40)}`);
+  if (failed === 0) {
+    console.log(`✅ All checks passed (${passed} ok)\n`);
+  } else {
+    console.log(`❌ ${failed} check(s) failed, ${passed} passed\n`);
+    console.log(`💡 Fix issues with: npx @cachly-dev/mcp-server@latest setup\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 // ── CLI: cachly setup (interactive — no flags required) ───────────────────────
 // Usage: npx @cachly-dev/mcp-server setup
 

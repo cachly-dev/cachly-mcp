@@ -893,8 +893,8 @@ export async function handleFedbrainTool(
 
     // ── brain_from_git ────────────────────────────────────────────────────────
     case 'brain_from_git': {
-      const { instance_id, repo_path = '.', limit = 100, branch = 'HEAD', since = '' } = args as {
-        instance_id: string; repo_path?: string; limit?: number; branch?: string; since?: string;
+      const { instance_id, repo_path = '.', limit = 100, branch = 'HEAD', since = '', incremental = true } = args as {
+        instance_id: string; repo_path?: string; limit?: number; branch?: string; since?: string; incremental?: boolean;
       };
       const redis = await getConnection(instance_id);
       const { execSync } = await import('node:child_process');
@@ -913,9 +913,21 @@ export async function handleFedbrainTool(
         return `❌ Not a git repository: \`${repoDir}\`. Pass \`repo_path\` pointing to a git checkout.`;
       }
 
+      // Incremental mode: resume from last processed commit SHA
+      const lastShaKey = `cachly:brain_from_git:last_sha:${Buffer.from(repoDir).toString('base64').slice(0, 32)}`;
+      let lastSha = '';
+      let isIncremental = false;
+      if (incremental !== false && !since) {
+        lastSha = (await redis.get(lastShaKey)) ?? '';
+        isIncremental = Boolean(lastSha);
+      }
+
       // Build git log command
+      // In incremental mode, only fetch commits after the last processed SHA
       const sinceFlag = since ? `--since="${since}"` : '';
-      const logCmd = `git log ${branch} ${sinceFlag} --pretty=format:"%H|||%s|||%ad|||%an" --date=short --no-merges -n ${maxCommits}`;
+      const afterFlag = isIncremental ? `${lastSha}..HEAD` : '';
+      const revRange = afterFlag || branch;
+      const logCmd = `git log ${revRange} ${sinceFlag} --pretty=format:"%H|||%s|||%ad|||%an" --date=short --no-merges -n ${maxCommits}`;
 
       let logOutput = '';
       try {
@@ -930,6 +942,9 @@ export async function handleFedbrainTool(
       });
 
       if (commits.length === 0) {
+        if (isIncremental) {
+          return `✅ brain_from_git: Brain is up to date — no new commits since last run (last SHA: \`${lastSha.slice(0, 8)}\`).`;
+        }
         return `⚠️ No commits found in \`${repoDir}\` on branch \`${branch}\`${since ? ` since ${since}` : ''}.`;
       }
 
@@ -960,8 +975,21 @@ export async function handleFedbrainTool(
       let ingested = 0;
       let skipped = 0;
       const categoryCount = new Map<string, number>();
+      const total = commits.length;
+      const progressInterval = Math.max(1, Math.floor(total / 10)); // emit ~10 progress updates
+      let lastProgressAt = 0;
 
-      for (const commit of commits) {
+      process.stderr.write(`\n🧠 brain_from_git: processing ${total} commits from ${repoDir}...\n`);
+
+      for (let i = 0; i < commits.length; i++) {
+        const commit = commits[i]!;
+
+        // Emit progress to stderr so editors can display it in MCP logs
+        if (i - lastProgressAt >= progressInterval) {
+          process.stderr.write(`   ⏳ Processing ${i}/${total} commits (${ingested} lessons so far)...\n`);
+          lastProgressAt = i;
+        }
+
         if (!commit.subject) { skipped++; continue; }
         const { category, outcome, severity } = classifyCommit(commit.subject);
         const domain = extractDomain(commit.subject);
@@ -996,11 +1024,20 @@ export async function handleFedbrainTool(
         ingested++;
       }
 
+      process.stderr.write(`   ✅ brain_from_git complete: ${ingested}/${total} commits ingested\n\n`);
+
+      // Save the latest commit SHA for incremental runs
+      if (commits.length > 0 && commits[0]?.sha) {
+        await redis.set(lastShaKey, commits[0].sha, 'EX', 90 * 24 * 3600); // expire after 90 days
+      }
+
       const categoryBreakdown = [...categoryCount.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `  • **${k}** (${v})`).join('\n');
 
       return [
-        `🔁 **brain_from_git: ${repoDir}**`, '',
-        `📂 Branch: \`${branch}\`  |  Processed: **${commits.length}** commits  |  Ingested: **${ingested}** lessons  |  Skipped: ${skipped}`,
+        `🔁 **brain_from_git: ${repoDir}**`,
+        isIncremental ? `🔄 Incremental mode — only new commits since \`${lastSha.slice(0, 8)}\` were processed` : '',
+        ``,
+        `📂 Branch: \`${revRange}\`  |  Processed: **${commits.length}** commits  |  Ingested: **${ingested}** lessons  |  Skipped: ${skipped}`,
         ``,
         `**Breakdown by category:**`,
         categoryBreakdown,
@@ -1008,7 +1045,8 @@ export async function handleFedbrainTool(
         `💡 New lessons are stored with confidence 0.55 (auto-inferred).`,
         `💡 As you confirm them via \`learn_from_attempts\`, confidence rises automatically.`,
         `🔍 Explore: \`brain_search(query="fix")\`  |  \`ckg_inspect(concept="deploy")\``,
-      ].join('\n');
+        `💾 Next run will automatically continue from the latest commit (incremental mode).`,
+      ].filter(Boolean).join('\n');
       } finally {
         _gitSemRelease();
       }
