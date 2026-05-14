@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.18';
+const CURRENT_VERSION = '0.10.19';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -291,7 +291,7 @@ async function getConnection(instance_id: string): Promise<Redis> {
       signal: AbortSignal.timeout(3000),
     }).catch(() => {});
     const hint = inst.status === 'provisioning'
-      ? `⏳ Brain instance "${inst.name}" is still starting up.\n\nThis usually finishes within 30 seconds. Please try again in a moment.`
+      ? `⏳ Brain instance "${inst.name}" is still starting up.\n\nFirst-time provisioning typically takes 1–3 minutes. Please retry in a moment — the instance will be ready soon.`
       : `Brain instance "${inst.name}" is not reachable (status: ${inst.status}).\n\n` +
         `• View your instance at: https://cachly.dev/instances\n` +
         `• Run \`get_api_status\` for a full diagnostic.`;

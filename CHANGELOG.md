@@ -7,6 +7,15 @@
 
 ---
 
+## [0.10.19] – 2026-05-14
+
+### Fix: accurate provisioning time estimate
+
+- `getConnection` no longer says "30 seconds" — the message now correctly says "1–3 minutes" for first-time provisioning. This prevents users from thinking their instance failed just because the first tool call waited 25 s and still saw `provisioning`.
+- Dashboard instance detail page provisioning banner updated to match ("1–3 minutes" instead of "under 60 seconds").
+
+---
+
 ## [0.10.17] – 2026-05-14
 
 ### `cachly upgrade` — check for newer versions
