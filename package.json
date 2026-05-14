@@ -15,6 +15,12 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "bash scripts/e2e-run.sh",
+    "test:e2e:api": "bash scripts/e2e-run.sh api",
+    "test:e2e:cli": "bash scripts/e2e-run.sh cli",
+    "test:e2e:tools": "bash scripts/e2e-run.sh tools",
+    "test:e2e:funnel": "bash scripts/e2e-run.sh funnel",
+    "test:e2e:provisioning": "bash scripts/e2e-run.sh provisioning",
     "lint": "eslint src --ext .ts",
     "typecheck": "tsc --noEmit"
   },
