@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.23';
+const CURRENT_VERSION = '0.10.24';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -552,7 +552,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   if (brainResult !== null) {
     if (!_firstCallSuccessSent && JWT) {
       _firstCallSuccessSent = true;
-      sendFunnelEvent('first_call_success', { tool: name, editor: detectEditor() });
+      sendFunnelEvent('first_call_success', { tool: name, instance_id: args.instance_id ?? _defaultInstanceId ?? '' });
     }
     return brainResult;
   }
@@ -562,7 +562,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   if (contextResult !== null) {
     if (!_firstCallSuccessSent && JWT) {
       _firstCallSuccessSent = true;
-      sendFunnelEvent('first_call_success', { tool: name, editor: detectEditor() });
+      sendFunnelEvent('first_call_success', { tool: name, instance_id: args.instance_id ?? _defaultInstanceId ?? '' });
     }
     return contextResult;
   }

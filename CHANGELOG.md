@@ -7,6 +7,15 @@
 
 ---
 
+## [0.10.24] – 2026-05-14
+
+### Funnel visibility + server.json version sync
+
+- `first_call_success` now includes `instance_id` for full per-tenant attribution in the `mcp_events` table.
+- `server.json` version bumped to 0.10.24 — Smithery and MCP directory indexes now show the current version.
+
+---
+
 ## [0.10.23] – 2026-05-14
 
 ### Full activation funnel + UTM tracking
