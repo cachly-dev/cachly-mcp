@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.16';
+const CURRENT_VERSION = '0.10.17';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -1165,6 +1165,45 @@ if (process.argv[2] === 'join') {
   process.exit(0);
 }
 
+// ── CLI: cachly upgrade ───────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest upgrade
+// Checks npm for the latest version and prints upgrade instructions if outdated.
+
+if (process.argv[2] === 'upgrade') {
+  process.stdout.write('\n⏳ Checking for updates...\n');
+  try {
+    const res = await fetch('https://registry.npmjs.org/@cachly-dev/mcp-server/latest', {
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) throw new Error(`registry HTTP ${res.status}`);
+    const pkg = await res.json() as { version: string };
+    const latest = pkg.version;
+
+    if (latest === CURRENT_VERSION) {
+      console.log(`\n✅ Already on the latest version: \x1b[32mv${CURRENT_VERSION}\x1b[0m\n`);
+    } else {
+      console.log('');
+      console.log('\x1b[35m  ╔══════════════════════════════════════════════════════╗\x1b[0m');
+      console.log('\x1b[35m  ║\x1b[0m  \x1b[1m🧠 cachly update available\x1b[0m                       \x1b[35m║\x1b[0m');
+      console.log('\x1b[35m  ╚══════════════════════════════════════════════════════╝\x1b[0m');
+      console.log('');
+      console.log(`  Current : \x1b[31mv${CURRENT_VERSION}\x1b[0m`);
+      console.log(`  Latest  : \x1b[32mv${latest}\x1b[0m`);
+      console.log('');
+      console.log('  Update your editor configs to pick up the new version:');
+      console.log('');
+      console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest setup\x1b[0m');
+      console.log('');
+      console.log('  \x1b[2m(npx always fetches the latest when @latest is specified)\x1b[0m');
+      console.log('');
+    }
+  } catch (e) {
+    console.log(`\n❌ Could not check for updates: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 // ── CLI: cachly demo ──────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest demo
 // Zero-signup. Reads local git history and shows what the AI Brain would know.
@@ -1427,6 +1466,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest badge\x1b[0m    ← README badge for your Brain');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest invite\x1b[0m   ← Invite a teammate');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest join <token>\x1b[0m ← Accept a Brain invite');
+  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
   console.log('  \x1b[90mFree forever · GDPR · German servers · 89 MCP tools\x1b[0m');
@@ -2124,7 +2164,7 @@ if (process.argv[2] === 'index') {
 // Warn on stderr when credentials are missing so the user sees a clear
 // actionable message in their editor's MCP log instead of silent failures.
 // Skip for CLI commands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init', 'digest', 'invite', 'badge', 'join'];
+const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '') && !(!process.argv[2] && process.stdout.isTTY)) {
   process.stderr.write(
     '\n' +

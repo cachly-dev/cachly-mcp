@@ -7,6 +7,20 @@
 
 ---
 
+## [0.10.17] – 2026-05-14
+
+### `cachly upgrade` — check for newer versions
+
+- **`cachly upgrade`** — fetches the latest version from the npm registry and compares with the running version. If outdated, shows current vs. latest and the one-liner to update (`npx @cachly-dev/mcp-server@latest setup`). No auth required.
+- Added `upgrade` to no-auth bypass list and splash screen.
+
+### Dashboard — Brain Badge widget
+
+- Instance detail page now shows a live badge preview + copy-ready Markdown and HTML snippets directly in the dashboard. No CLI needed.
+- Badge renders as `![cachly Brain](https://api.cachly.dev/api/v1/badge/<id>)` — one click to copy.
+
+---
+
 ## [0.10.16] – 2026-05-14
 
 ### `cachly join` — accept a Brain invite in one command
