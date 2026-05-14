@@ -7,6 +7,16 @@
 
 ---
 
+## [0.10.21] – 2026-05-14
+
+### Stability hardening — corrupt configs, silent auth failures, upgrade validation
+
+- **`mergeMcpConfig` corrupt JSON**: instead of silently overwriting, backs up the corrupted file to `.bak` and prints a warning so the user knows their previous config was preserved.
+- **`getConnection` auth failure**: if the `/connection` endpoint returns 401/403, throws an actionable "run `cachly setup` to refresh credentials" error instead of silently attempting a password-less Redis connect that fails with cryptic `NOAUTH`.
+- **`upgrade` version validation**: validates that the npm registry response contains a valid semver string before comparing — prevents false "update available" from a malformed registry response.
+
+---
+
 ## [0.10.20] – 2026-05-14
 
 ### Edge case hardening — silent failures eliminated

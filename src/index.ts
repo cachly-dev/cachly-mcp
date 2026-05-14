@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.20';
+const CURRENT_VERSION = '0.10.21';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -332,8 +332,15 @@ async function getConnection(instance_id: string): Promise<Redis> {
     );
     password = conn.password ?? undefined;
     tlsEnabled = conn.tls_enabled !== false;
-  } catch {
-    // Fallback: use TLS flag from instance metadata
+  } catch (connErr) {
+    // If the connection endpoint fails and the instance has a password, we cannot connect.
+    // Surface the error so the user knows why Redis auth will fail rather than getting a cryptic NOAUTH.
+    const msg = connErr instanceof Error ? connErr.message : String(connErr);
+    if (msg.includes('401') || msg.includes('403') || msg.includes('Unauthorized')) {
+      throw new McpError(ErrorCode.InvalidRequest,
+        `API key rejected — run \`cachly setup\` to refresh your credentials.`);
+    }
+    // Other failures (timeout, 500): proceed without password, Redis will surface NOAUTH if needed
   }
 
   const client = new Redis({
@@ -868,7 +875,14 @@ async function mergeMcpConfig(
   let existing: Record<string, unknown> = {};
   try {
     existing = JSON.parse(await fsOps.readFile(configPath, 'utf-8')) as Record<string, unknown>;
-  } catch { /* corrupt — start fresh */ }
+  } catch {
+    // Corrupt or unreadable JSON — back it up by appending .bak, then start fresh
+    try {
+      const { rename } = await import('node:fs/promises');
+      await rename(configPath, configPath + '.bak');
+      process.stderr.write(`⚠️  ${configPath} was not valid JSON — backed up to ${configPath}.bak\n`);
+    } catch { /* backup failed — still safe to overwrite with valid config */ }
+  }
 
   if (editor === 'continue') {
     // Merge into experimental.modelContextProtocolServers array — replace cachly entry if present
@@ -1276,8 +1290,9 @@ if (process.argv[2] === 'upgrade') {
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) throw new Error(`registry HTTP ${res.status}`);
-    const pkg = await res.json() as { version: string };
+    const pkg = await res.json() as { version?: string };
     const latest = pkg.version;
+    if (!latest || !/^\d+\.\d+\.\d+/.test(latest)) throw new Error('npm registry returned unexpected response');
 
     if (latest === CURRENT_VERSION) {
       console.log(`\n✅ Already on the latest version: \x1b[32mv${CURRENT_VERSION}\x1b[0m\n`);
