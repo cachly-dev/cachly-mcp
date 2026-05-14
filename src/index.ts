@@ -1438,13 +1438,12 @@ if (process.argv[2] === 'demo') {
   }
   const hoursWasted = Math.round(daysActive * 0.75); // 45 min/day
 
-  // Brain Level based on total lessons
-  const brainLevelName = totalLessons >= 201 ? 'Architect' : totalLessons >= 51 ? 'Expert' : totalLessons >= 11 ? 'Explorer' : 'Apprentice';
+  // Brain Level based on total lessons (matches Go ComputeBrainLevel thresholds)
+  const brainLevelName = totalLessons >= 501 ? 'Oracle' : totalLessons >= 201 ? 'Architect' : totalLessons >= 51 ? 'Expert' : totalLessons >= 11 ? 'Explorer' : 'Apprentice';
 
   // Personalized header
   const greeting = devName ? `Hey ${devName} — ` : '';
   const headerTitle = `${greeting}here's what your AI would know about ${projectName}`;
-  const headerPad = Math.max(0, 61 - headerTitle.length);
 
   // Display the demo
   process.stdout.write('\x1b[2K\r');

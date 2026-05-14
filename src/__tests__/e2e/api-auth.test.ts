@@ -119,6 +119,39 @@ describe('API keys', () => {
   });
 });
 
+describe('Brain Stats endpoint', () => {
+  it('GET /api/v1/instances/:id/brain-stats returns 200', async () => {
+    const { status } = await apiGet(`/api/v1/instances/${cfg.instanceId}/brain-stats`);
+    expect(status).toBe(200);
+  });
+
+  it('brain-stats body has brain_level and brain_level_name', async () => {
+    const { body } = await apiGet(`/api/v1/instances/${cfg.instanceId}/brain-stats`);
+    const stats = body as Record<string, unknown>;
+    expect(typeof stats.brain_level).toBe('number');
+    expect(stats.brain_level).toBeGreaterThanOrEqual(1);
+    expect(typeof stats.brain_level_name).toBe('string');
+    expect(['Apprentice', 'Explorer', 'Expert', 'Architect', 'Oracle']).toContain(stats.brain_level_name);
+  });
+
+  it('brain-stats has hours_saved and brain_recall_count', async () => {
+    const { body } = await apiGet(`/api/v1/instances/${cfg.instanceId}/brain-stats`);
+    const stats = body as Record<string, unknown>;
+    expect(typeof stats.hours_saved).toBe('number');
+    expect(stats.hours_saved).toBeGreaterThanOrEqual(0);
+    expect(typeof stats.brain_recall_count).toBe('number');
+    expect(stats.brain_recall_count).toBeGreaterThanOrEqual(0);
+  });
+
+  it('brain-stats has standard search telemetry fields', async () => {
+    const { body } = await apiGet(`/api/v1/instances/${cfg.instanceId}/brain-stats`);
+    const stats = body as Record<string, unknown>;
+    expect(typeof stats.total_searches).toBe('number');
+    expect(typeof stats.avg_latency_ms).toBe('number');
+    expect(Array.isArray(stats.top_queries)).toBe(true);
+  });
+});
+
 describe('Provisioning status messages', () => {
   it('a suspended instance returns connection error with billing hint', async () => {
     // We cannot easily have a suspended instance in e2e, so we verify the

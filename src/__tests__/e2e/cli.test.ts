@@ -123,6 +123,26 @@ describe('cachly demo', () => {
     }, 15_000);
     expect([0, 1]).toContain(code); // never 2+ (unhandled crash)
   });
+
+  it('shows Brain Level (valid level name)', () => {
+    const { stdout } = run(['demo'], { CACHLY_JWT: '', CACHLY_BRAIN_INSTANCE_ID: '' }, 15_000);
+    // Demo must show a valid brain level — Apprentice for new projects is expected
+    expect(stdout).toMatch(/Apprentice|Explorer|Expert|Architect|Oracle/);
+  });
+
+  it('shows 1–5 minutes in the CTA (no "30 seconds")', () => {
+    const { stdout } = run(['demo'], { CACHLY_JWT: '', CACHLY_BRAIN_INSTANCE_ID: '' }, 15_000);
+    expect(stdout).toContain('1–5 minutes');
+    expect(stdout).not.toContain('30 seconds');
+  });
+
+  it('shows "never repeat" instead of "remember" for bug fixes', () => {
+    const { stdout } = run(['demo'], { CACHLY_JWT: '', CACHLY_BRAIN_INSTANCE_ID: '' }, 15_000);
+    // Copy should say "never repeat" not "remember" — old wording was weaker
+    if (stdout.includes('Bug fixes')) {
+      expect(stdout).toMatch(/never repeat/i);
+    }
+  });
 });
 
 describe('cachly health', () => {
