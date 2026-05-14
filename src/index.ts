@@ -1592,8 +1592,8 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('\x1b[35m  ║\x1b[0m  \x1b[1m🧠 cachly — Persistent AI Memory for Developers\x1b[0m   \x1b[35m║\x1b[0m');
   console.log('\x1b[35m  ╚═══════════════════════════════════════════════════════╝\x1b[0m');
   console.log('');
-  console.log('  Your AI forgets everything when a session ends.');
-  console.log('  cachly gives it a brain that survives forever.');
+  console.log('  Stop re-teaching your AI every morning.');
+  console.log('  cachly gives it a permanent brain — pre-briefed every session.');
   console.log('');
   console.log('  \x1b[1mCommands:\x1b[0m');
   console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest demo\x1b[0m     ← Start here (no account)');
@@ -2248,8 +2248,9 @@ if (process.argv[2] === 'setup') {
     }
   } catch { console.log(' (skipped)'); }
 
-  console.log(`\n🧠  Done! Restart your editor — the \`cachly\` MCP tools will appear.`);
-  console.log(`   Your AI now has persistent memory across every session.\n`);
+  console.log(`\n🎉  Your AI just got a permanent brain.`);
+  console.log(`   Restart your editor — from this session on, it arrives pre-briefed.\n`);
+  console.log(`   No more re-explaining your stack. No repeated mistakes.\n`);
   console.log(`   Dashboard: https://cachly.dev/instances/${instance.id}`);
   console.log(`\n   📛 Add a live badge to your README:`);
   console.log(`      npx @cachly-dev/mcp-server@latest badge\n`);

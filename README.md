@@ -1,7 +1,7 @@
 # 🧠 cachly AI Brain — MCP Server
 
-> **Persistent memory for Claude Code, Cursor, GitHub Copilot, Windsurf, Cline & Zed.**  
-> Your AI remembers every lesson, every fix, every architecture decision — forever.
+> **You're a senior developer. Your AI should act like one.**  
+> Stop re-teaching your AI every morning. cachly gives it a permanent brain — pre-briefed every session, learns from every commit, never makes the same mistake twice.
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@cachly-dev/mcp-server">
