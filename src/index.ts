@@ -1348,8 +1348,8 @@ if (process.argv[2] === 'upgrade') {
 
 if (process.argv[2] === 'demo') {
   const { execSync } = await import('node:child_process');
-  const { existsSync } = await import('node:fs');
-  const { resolve } = await import('node:path');
+  const { existsSync, readFileSync } = await import('node:fs');
+  const { resolve, basename } = await import('node:path');
   const cwd = process.cwd();
 
   console.log('\n\x1b[35m🧠 cachly Brain — Live Demo\x1b[0m');
@@ -1362,6 +1362,19 @@ if (process.argv[2] === 'demo') {
     console.log('   Example: cd ~/my-project && npx @cachly-dev/mcp-server@latest demo\n');
     process.exit(0);
   }
+
+  // Get developer name from git config
+  let devName = '';
+  try {
+    devName = execSync('git config user.name', { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim().split(' ')[0] ?? '';
+  } catch { /* ignore */ }
+
+  // Get project name from package.json or directory name
+  let projectName = basename(cwd);
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(cwd, 'package.json'), 'utf-8')) as { name?: string };
+    if (pkg.name) projectName = pkg.name.replace(/^@[^/]+\//, '');
+  } catch { /* ignore */ }
 
   // Read git log
   let logOutput = '';
@@ -1416,13 +1429,31 @@ if (process.argv[2] === 'demo') {
   const totalLessons = commits.length - (cats.get('chore') ?? 0);
   const dateRange = `${commits[commits.length - 1]?.date ?? '?'} → ${commits[0]?.date ?? '?'}`;
 
+  // Estimate time wasted re-explaining (45 min/day * workdays since first commit)
+  const firstDate = commits[commits.length - 1]?.date;
+  let daysActive = 0;
+  if (firstDate) {
+    const ms = Date.now() - new Date(firstDate).getTime();
+    daysActive = Math.max(1, Math.round(ms / (1000 * 60 * 60 * 24) * 5 / 7)); // workdays
+  }
+  const hoursWasted = Math.round(daysActive * 0.75); // 45 min/day
+
+  // Brain Level based on total lessons
+  const brainLevelName = totalLessons >= 201 ? 'Architect' : totalLessons >= 51 ? 'Expert' : totalLessons >= 11 ? 'Explorer' : 'Apprentice';
+
+  // Personalized header
+  const greeting = devName ? `Hey ${devName} — ` : '';
+  const headerTitle = `${greeting}here's what your AI would know about ${projectName}`;
+  const headerPad = Math.max(0, 61 - headerTitle.length);
+
   // Display the demo
   process.stdout.write('\x1b[2K\r');
   console.log('┌─────────────────────────────────────────────────────────────┐');
-  console.log('│  \x1b[1m🧠 Brain Preview — What your AI would know\x1b[0m                  │');
+  console.log(`│  \x1b[1m🧠 ${headerTitle.slice(0, 58).padEnd(58)}\x1b[0m│`);
   console.log('├─────────────────────────────────────────────────────────────┤');
   console.log(`│  Commits analysed : \x1b[33m${String(commits.length).padEnd(6)}\x1b[0m  Date range: \x1b[90m${dateRange.slice(0, 23).padEnd(23)}\x1b[0m  │`);
   console.log(`│  Lessons extracted: \x1b[32m${String(totalLessons).padEnd(6)}\x1b[0m  Contributors: \x1b[36m${String(authors.size).padEnd(20)}\x1b[0m│`);
+  console.log(`│  Brain Level      : \x1b[35m${brainLevelName.padEnd(14)}\x1b[0m  Time wasted re-explaining: \x1b[31m${String(hoursWasted + 'h').padEnd(5)}\x1b[0m│`);
   console.log('├─────────────────────────────────────────────────────────────┤');
 
   // Category breakdown
@@ -1443,7 +1474,7 @@ if (process.argv[2] === 'demo') {
 
   if (fixes.length > 0) {
     console.log('├─────────────────────────────────────────────────────────────┤');
-    console.log('│  \x1b[33m🔧 Bug fixes your AI would remember:\x1b[0m                        │');
+    console.log('│  \x1b[33m🔧 Bug fixes your AI would never repeat:\x1b[0m                    │');
     for (const f of fixes.slice(0, 4)) console.log(`│  \x1b[90m• ${f.slice(0, 58).padEnd(58)}\x1b[0m │`);
   }
 
