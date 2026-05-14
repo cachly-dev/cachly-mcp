@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.17';
+const CURRENT_VERSION = '0.10.18';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -159,6 +159,7 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
       JWT = apiKey;
       setEmbedJwt(apiKey); // keep embeddings.ts in sync
       _deviceFlow = null;
+      sendFunnelEvent('device_flow_completed');
       // Auto-provision: find or create the user's brain instance.
       _defaultInstanceLastAttempt = 0;
       await resolveDefaultInstanceId();
@@ -400,21 +401,34 @@ import { TOOLS } from './tools.js';
 
 // Fires once per process when no JWT is set (anonymous, opt-out via CACHLY_NO_TELEMETRY=1)
 let _telemetryPingSent = false;
-async function sendAnonymousTelemetry(toolName: string): Promise<void> {
-  if (_telemetryPingSent) return;
-  if (process.env.CACHLY_NO_TELEMETRY === '1') return;
-  _telemetryPingSent = true;
-  // Detect editor from common env vars injected by IDE extensions
-  const editor = process.env.CURSOR_TRACE_ID ? 'cursor'
+
+function detectEditor(): string {
+  return process.env.CURSOR_TRACE_ID ? 'cursor'
     : process.env.WINDSURF_SESSION_ID ? 'windsurf'
     : process.env.GITHUB_COPILOT_WORKSPACE ? 'copilot'
     : process.env.CLAUDE_CODE_ENTRYPOINT ? 'claude'
     : 'unknown';
+}
+
+function sendFunnelEvent(event: string, extra?: Record<string, unknown>): void {
+  if (process.env.CACHLY_NO_TELEMETRY === '1') return;
+  void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event, version: CURRENT_VERSION, editor: detectEditor(), ...extra }),
+    signal: AbortSignal.timeout(3000),
+  }).catch(() => {/* fire-and-forget */});
+}
+
+async function sendAnonymousTelemetry(toolName: string): Promise<void> {
+  if (_telemetryPingSent) return;
+  if (process.env.CACHLY_NO_TELEMETRY === '1') return;
+  _telemetryPingSent = true;
   try {
     await fetch(`${API_URL}/api/v1/telemetry/mcp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ event: 'first_call_no_jwt', version: CURRENT_VERSION, editor, tool: toolName }),
+      body: JSON.stringify({ event: 'first_call_no_jwt', version: CURRENT_VERSION, editor: detectEditor(), tool: toolName }),
       signal: AbortSignal.timeout(3000),
     });
   } catch { /* fire-and-forget, never block the user */ }
@@ -453,18 +467,28 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     const flow = await startDeviceFlow();
     if (flow) {
       _deviceFlow = flow;
+      sendFunnelEvent('device_flow_started', { tool: name });
+      // Try to open the browser automatically — fire-and-forget, never block
+      void (async () => {
+        try {
+          const { exec } = await import('node:child_process');
+          const url = flow.verifyUrl;
+          const cmd = process.platform === 'win32' ? `start "" "${url}"`
+            : process.platform === 'darwin' ? `open "${url}"`
+            : `xdg-open "${url}"`;
+          exec(cmd);
+        } catch { /* non-critical */ }
+      })();
       return [
-        '🧠 **cachly AI Brain — One-click sign in**',
+        '🧠 **cachly AI Brain — sign in to activate** (browser opening...)',
         '',
-        '1. Open this URL in your browser (it may open automatically):',
-        `   **${flow.verifyUrl}**`,
+        `👉 **${flow.verifyUrl}**`,
         '',
-        `2. Enter this code if prompted: **${flow.userCode}**`,
+        `Code: **${flow.userCode}** (pre-filled if browser opened automatically)`,
         '',
-        '3. After sign-in, call this tool again — it will proceed automatically.',
+        'After sign-in: call **any tool again** — your Brain activates instantly.',
         '',
-        '✨ Free tier includes: 1 Brain instance, persistent memory, 63 MCP tools.',
-        '   No credit card required.',
+        '✨ Free forever · No credit card · 89 MCP tools · GDPR · EU servers',
       ].join('\n');
     }
 
@@ -801,6 +825,56 @@ function buildMcpConfig(apiKey: string, instanceId: string, editor: string): str
       },
     },
   }, null, 2);
+}
+
+// mergeMcpConfig reads an existing config file (if any), merges the cachly entry,
+// and returns the updated JSON string — preserving all other MCP servers and settings.
+async function mergeMcpConfig(
+  configPath: string,
+  apiKey: string,
+  instanceId: string,
+  editor: string,
+  fsOps: { readFile: (p: string, enc: BufferEncoding) => Promise<string>; existsSync: (p: string) => boolean },
+): Promise<string> {
+  const cachlyEntry = {
+    command: 'npx',
+    args: ['-y', '@cachly-dev/mcp-server@latest'],
+    env: { CACHLY_API_URL: 'https://api.cachly.dev', CACHLY_JWT: apiKey, CACHLY_BRAIN_INSTANCE_ID: instanceId },
+  };
+
+  if (!fsOps.existsSync(configPath)) return buildMcpConfig(apiKey, instanceId, editor);
+
+  let existing: Record<string, unknown> = {};
+  try {
+    existing = JSON.parse(await fsOps.readFile(configPath, 'utf-8')) as Record<string, unknown>;
+  } catch { /* corrupt — start fresh */ }
+
+  if (editor === 'continue') {
+    // Merge into experimental.modelContextProtocolServers array — replace cachly entry if present
+    const exp = (existing['experimental'] ?? {}) as Record<string, unknown>;
+    const servers = (exp['modelContextProtocolServers'] ?? []) as Array<Record<string, unknown>>;
+    const filtered = servers.filter((s) => {
+      const env = (s['env'] ?? {}) as Record<string, string>;
+      return !env['CACHLY_JWT'] && !env['CACHLY_BRAIN_INSTANCE_ID'];
+    });
+    filtered.push({ transport: { type: 'stdio', command: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'] }, env: cachlyEntry.env });
+    existing['experimental'] = { ...exp, modelContextProtocolServers: filtered };
+    return JSON.stringify(existing, null, 2);
+  }
+
+  if (editor === 'zed') {
+    // Merge only context_servers.cachly — preserve all other Zed settings
+    const cs = (existing['context_servers'] ?? {}) as Record<string, unknown>;
+    cs['cachly'] = { command: { path: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'], env: cachlyEntry.env }, settings: {} };
+    existing['context_servers'] = cs;
+    return JSON.stringify(existing, null, 2);
+  }
+
+  // Standard mcpServers format (Claude Code, Cursor, Windsurf, Copilot, Cline)
+  const servers = (existing['mcpServers'] ?? {}) as Record<string, unknown>;
+  servers['cachly'] = cachlyEntry;
+  existing['mcpServers'] = servers;
+  return JSON.stringify(existing, null, 2);
 }
 
 function buildClaudeMdBlock(instanceId: string): string {
@@ -1499,8 +1573,10 @@ if (process.argv[2] === 'init') {
   const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
   const configPath = resolve(projectDir, configFile);
   await mkdir(dirname(configPath), { recursive: true });
-  await writeFile(configPath, buildMcpConfig(apiKey, instanceId, editor), 'utf-8');
-  console.log(`\n✅ Written: ${configFile}`);
+  const { existsSync: exInit } = await import('node:fs');
+  const merged = await mergeMcpConfig(configPath, apiKey, instanceId, editor, { readFile, existsSync: exInit });
+  await writeFile(configPath, merged, 'utf-8');
+  console.log(`\n✅ ${exInit(configPath) ? 'Updated' : 'Written'}: ${configFile}`);
 
   // Always write CLAUDE.md (idempotent — safe to run multiple times)
   const result = await writeClaudeMd(projectDir, instanceId);
@@ -1709,6 +1785,8 @@ if (process.argv[2] === 'setup') {
   const { existsSync } = await import('node:fs');
   const { resolve, dirname } = await import('node:path');
   const { createInterface } = await import('node:readline');
+
+  sendFunnelEvent('setup_started');
 
   // --yes / -y → non-interactive mode (skips all prompts, picks defaults)
   const nonInteractive = process.argv.includes('--yes') || process.argv.includes('-y');
@@ -1935,12 +2013,17 @@ if (process.argv[2] === 'setup') {
   console.log(`Step 3: Configuring for: ${editorsToSetup.map(editorLabel).join(', ')}\n`);
 
   // ── Step 4: Write editor configs (project-level) ─────────────────────────
+  // Uses mergeMcpConfig to preserve all existing MCP servers — only adds/updates
+  // the cachly entry without touching filesystem, github, or other servers.
+  const { existsSync: exSetup } = await import('node:fs');
   for (const editor of editorsToSetup) {
     const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
     const configPath = resolve(cwd, configFile);
     await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(configPath, buildMcpConfig(token, instance.id, editor), 'utf-8');
-    console.log(`✅ Written: ${configFile}`);
+    const wasExisting = exSetup(configPath);
+    const merged = await mergeMcpConfig(configPath, token, instance.id, editor, { readFile, existsSync: exSetup });
+    await writeFile(configPath, merged, 'utf-8');
+    console.log(`✅ ${wasExisting ? 'Updated' : 'Written'}: ${configFile}`);
   }
 
   // ── Step 4b: Write global Claude Code config (~/.claude/mcp.json) ─────────
