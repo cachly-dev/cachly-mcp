@@ -1205,11 +1205,55 @@ if (process.argv[2] === 'share') {
     console.log('  ─────────────────────────────────────');
     console.log('');
     console.log('  \x1b[2mPro tip: add a screenshot of your Brain panel for 3x more engagement\x1b[0m');
+    console.log('  \x1b[2mAlso add a live badge to your README:\x1b[0m');
+    console.log(`  \x1b[90m  npx @cachly-dev/mcp-server@latest badge\x1b[0m`);
     console.log('');
   } catch (e) {
     console.log(`\n❌ Could not fetch stats: ${(e as Error).message}\n`);
     process.exit(1);
   }
+  process.exit(0);
+}
+
+// ── CLI: cachly badge ─────────────────────────────────────────────────────────
+// Outputs the Markdown + HTML snippet for embedding a live Brain lesson-count
+// badge in any README or website. Badge SVG served by cachly API (public, no auth).
+
+if (process.argv[2] === 'badge') {
+  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+
+  if (!instanceId) {
+    console.log('\n⚠️  CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest setup  (takes 30 seconds)\n');
+    process.exit(1);
+  }
+
+  const badgeUrl   = `${API_URL}/api/v1/badge/${instanceId}`;
+  const targetUrl  = 'https://cachly.dev';
+  const markdown   = `[![cachly Brain](${badgeUrl})](${targetUrl})`;
+  const htmlBadge  = `<a href="${targetUrl}"><img src="${badgeUrl}" alt="cachly Brain" /></a>`;
+
+  console.log('');
+  console.log('\x1b[35m  ╔═══════════════════════════════════════════════════════╗\x1b[0m');
+  console.log('\x1b[35m  ║\x1b[0m  \x1b[1m🧠 cachly Brain Badge\x1b[0m                              \x1b[35m║\x1b[0m');
+  console.log('\x1b[35m  ╚═══════════════════════════════════════════════════════╝\x1b[0m');
+  console.log('');
+  console.log('  Paste into your README.md:');
+  console.log('');
+  console.log(`  \x1b[32m${markdown}\x1b[0m`);
+  console.log('');
+  console.log('  ─────────────────────────────────────────────────────');
+  console.log('  Or paste into HTML:');
+  console.log('');
+  console.log(`  \x1b[36m${htmlBadge}\x1b[0m`);
+  console.log('');
+  console.log('  ─────────────────────────────────────────────────────');
+  console.log('  Badge URL (live, updates every hour):');
+  console.log(`  \x1b[90m${badgeUrl}\x1b[0m`);
+  console.log('');
+  console.log('  \x1b[2mThe badge shows your current lesson count — no auth required,');
+  console.log('  safe to embed in public repos. Updates hourly.\x1b[0m');
+  console.log('');
   process.exit(0);
 }
 
@@ -1231,6 +1275,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest health\x1b[0m   ← Check everything works');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest digest\x1b[0m   ← Weekly Brain summary');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest share\x1b[0m    ← Share your Brain stats');
+  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest badge\x1b[0m    ← README badge for your Brain');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest invite\x1b[0m   ← Invite a teammate');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
@@ -1925,7 +1970,7 @@ if (process.argv[2] === 'index') {
 // Warn on stderr when credentials are missing so the user sees a clear
 // actionable message in their editor's MCP log instead of silent failures.
 // Skip for CLI commands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init', 'digest', 'invite'];
+const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init', 'digest', 'invite', 'badge'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '') && !(!process.argv[2] && process.stdout.isTTY)) {
   process.stderr.write(
     '\n' +
