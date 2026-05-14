@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.22';
+const CURRENT_VERSION = '0.10.23';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -445,7 +445,11 @@ function sendFunnelEvent(event: string, extra?: Record<string, unknown>): void {
   void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ event, version: CURRENT_VERSION, editor: detectEditor(), ...extra }),
+    body: JSON.stringify({
+      event, version: CURRENT_VERSION, editor: detectEditor(),
+      ...(JWT ? { jwt: JWT } : {}),
+      ...extra,
+    }),
     signal: AbortSignal.timeout(3000),
   }).catch(() => {/* fire-and-forget */});
 }
@@ -1518,7 +1522,8 @@ if (process.argv[2] === 'share') {
     console.log('');
 
     // Tweet text
-    const tweet = `🧠 My AI coding assistant now has persistent memory.\n\n${lessons} lessons stored · ${recalls} recalls · ${level}\n\nFix a bug once → AI remembers forever. Across Claude Code, Cursor, Windsurf, Copilot.\n\nnpx @cachly-dev/mcp-server@latest setup\n\n#AIMemory #ClaudeCode #Cursor #DeveloperTools`;
+    const shareUrl = 'https://cachly.dev?ref=share&utm_source=x&utm_medium=social&utm_campaign=cli-share';
+    const tweet = `🧠 My AI coding assistant now has persistent memory.\n\n${lessons} lessons stored · ${recalls} recalls · ${level}\n\nFix a bug once → AI remembers forever. Across Claude Code, Cursor, Windsurf, Copilot.\n\n${shareUrl}\n\n#AIMemory #ClaudeCode #Cursor #DeveloperTools`;
 
     console.log('  \x1b[1m📋 Share on Twitter/X (copy this):\x1b[0m');
     console.log('  ─────────────────────────────────────');

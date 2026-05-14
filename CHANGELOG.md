@@ -7,6 +7,15 @@
 
 ---
 
+## [0.10.23] – 2026-05-14
+
+### Full activation funnel + UTM tracking
+
+- **`sendFunnelEvent` carries JWT**: all funnel events (`setup_started`, `device_flow_completed`, `first_call_success`) now include the JWT so the backend can resolve them to a tenant. Activation funnel is now fully attributable per user.
+- **`cachly share` UTM link**: the generated tweet now includes `https://cachly.dev?ref=share&utm_source=x&utm_medium=social&utm_campaign=cli-share` so shares can be traced back to new signups.
+
+---
+
 ## [0.10.22] – 2026-05-14
 
 ### Activation telemetry, health Redis ping, join backup
