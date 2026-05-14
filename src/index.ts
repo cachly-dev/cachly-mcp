@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.0';
+const CURRENT_VERSION = '0.10.7';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -875,6 +875,228 @@ async function writeClaudeMd(projectDir: string, instanceId: string): Promise<'w
   return 'written';
 }
 
+
+// ── CLI: cachly demo ──────────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest demo
+// Zero-signup. Reads local git history and shows what the AI Brain would know.
+// The fastest path from "what is this?" to "I need this".
+
+if (process.argv[2] === 'demo') {
+  const { execSync } = await import('node:child_process');
+  const { existsSync } = await import('node:fs');
+  const { resolve } = await import('node:path');
+  const cwd = process.cwd();
+
+  console.log('\n\x1b[35m🧠 cachly Brain — Live Demo\x1b[0m');
+  console.log('\x1b[90mNo account needed. Reading your git history...\x1b[0m\n');
+
+  // Verify git repo
+  if (!existsSync(resolve(cwd, '.git'))) {
+    console.log('⚠️  No git repository found here.');
+    console.log('   Run this command inside a project directory with git history.\n');
+    console.log('   Example: cd ~/my-project && npx @cachly-dev/mcp-server@latest demo\n');
+    process.exit(0);
+  }
+
+  // Read git log
+  let logOutput = '';
+  try {
+    logOutput = execSync(
+      'git log HEAD --pretty=format:"%H|||%s|||%ad|||%an" --date=short --no-merges -n 200',
+      { cwd, encoding: 'utf-8', stdio: 'pipe' }
+    );
+  } catch {
+    console.log('⚠️  Could not read git log. Make sure you have commits.\n');
+    process.exit(0);
+  }
+
+  const commits = logOutput.trim().split('\n').filter(Boolean).map(line => {
+    const [sha, subject, date, author] = line.split('|||');
+    return { sha: (sha ?? '').trim().slice(0, 8), subject: (subject ?? '').trim(), date: (date ?? '').trim(), author: (author ?? '').trim() };
+  });
+
+  if (commits.length === 0) {
+    console.log('⚠️  No commits found.\n');
+    process.exit(0);
+  }
+
+  // Classify commits (same logic as brain_from_git)
+  const classify = (s: string) => {
+    const t = s.toLowerCase();
+    if (/\b(fix|fixed|bug|hotfix|patch|revert|resolve)\b/.test(t)) return 'fix';
+    if (/\b(feat|feature|add|implement|new|introduce)\b/.test(t)) return 'feat';
+    if (/\b(perf|optim|speed|cache|latency)\b/.test(t)) return 'perf';
+    if (/\b(security|cve|auth|csrf|xss|inject|sanitize)\b/.test(t)) return 'security';
+    if (/\b(deploy|ci|cd|docker|k8s|infra)\b/.test(t)) return 'deploy';
+    if (/\b(refactor|clean|simplify|extract)\b/.test(t)) return 'refactor';
+    return 'chore';
+  };
+
+  // Count categories
+  const cats = new Map<string, number>();
+  const fixes: string[] = [];
+  const feats: string[] = [];
+  const security: string[] = [];
+  const authors = new Set<string>();
+
+  for (const c of commits) {
+    const cat = classify(c.subject);
+    cats.set(cat, (cats.get(cat) ?? 0) + 1);
+    if (cat === 'fix' && fixes.length < 5) fixes.push(c.subject.slice(0, 72));
+    if (cat === 'feat' && feats.length < 5) feats.push(c.subject.slice(0, 72));
+    if (cat === 'security' && security.length < 3) security.push(c.subject.slice(0, 72));
+    if (c.author) authors.add(c.author.split(' ')[0]!);
+  }
+
+  const totalLessons = commits.length - (cats.get('chore') ?? 0);
+  const dateRange = `${commits[commits.length - 1]?.date ?? '?'} → ${commits[0]?.date ?? '?'}`;
+
+  // Display the demo
+  process.stdout.write('\x1b[2K\r');
+  console.log('┌─────────────────────────────────────────────────────────────┐');
+  console.log('│  \x1b[1m🧠 Brain Preview — What your AI would know\x1b[0m                  │');
+  console.log('├─────────────────────────────────────────────────────────────┤');
+  console.log(`│  Commits analysed : \x1b[33m${String(commits.length).padEnd(6)}\x1b[0m  Date range: \x1b[90m${dateRange.slice(0, 23).padEnd(23)}\x1b[0m  │`);
+  console.log(`│  Lessons extracted: \x1b[32m${String(totalLessons).padEnd(6)}\x1b[0m  Contributors: \x1b[36m${String(authors.size).padEnd(20)}\x1b[0m│`);
+  console.log('├─────────────────────────────────────────────────────────────┤');
+
+  // Category breakdown
+  const sorted = [...cats.entries()].filter(([k]) => k !== 'chore').sort((a, b) => b[1] - a[1]);
+  const bar = (n: number, max: number) => '█'.repeat(Math.round((n / max) * 20)).padEnd(20);
+  const maxVal = Math.max(...sorted.map(([, v]) => v), 1);
+  console.log('│  \x1b[90mCategory breakdown:\x1b[0m                                         │');
+  for (const [cat, count] of sorted) {
+    const emoji = { fix: '🔧', feat: '✨', perf: '⚡', security: '🔒', deploy: '🚀', refactor: '🔄' }[cat] ?? '•';
+    console.log(`│  ${emoji} \x1b[36m${cat.padEnd(10)}\x1b[0m \x1b[35m${bar(count, maxVal)}\x1b[0m \x1b[33m${String(count).padStart(3)}\x1b[0m  │`);
+  }
+
+  if (security.length > 0) {
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log('│  \x1b[31m🔒 Security fixes your AI would know:\x1b[0m                       │');
+    for (const s of security) console.log(`│  \x1b[90m• ${s.slice(0, 58).padEnd(58)}\x1b[0m │`);
+  }
+
+  if (fixes.length > 0) {
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log('│  \x1b[33m🔧 Bug fixes your AI would remember:\x1b[0m                        │');
+    for (const f of fixes.slice(0, 4)) console.log(`│  \x1b[90m• ${f.slice(0, 58).padEnd(58)}\x1b[0m │`);
+  }
+
+  if (feats.length > 0) {
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log('│  \x1b[32m✨ Features & decisions it would recall:\x1b[0m                    │');
+    for (const f of feats.slice(0, 3)) console.log(`│  \x1b[90m• ${f.slice(0, 58).padEnd(58)}\x1b[0m │`);
+  }
+
+  console.log('├─────────────────────────────────────────────────────────────┤');
+  console.log('│  \x1b[32m💡 With cachly, your AI arrives pre-briefed every session.\x1b[0m  │');
+  console.log('│  \x1b[32m   No more re-explaining. No more repeated mistakes.\x1b[0m         │');
+  console.log('└─────────────────────────────────────────────────────────────┘');
+  console.log('');
+  console.log('  \x1b[1mMake this permanent (free, 30 seconds):\x1b[0m');
+  console.log('  \x1b[32m$ npx @cachly-dev/mcp-server@latest setup\x1b[0m');
+  console.log('');
+  console.log('  Works with: Claude Code · Cursor · Windsurf · Copilot · Cline · Zed');
+  console.log('  Free forever · GDPR · German servers · No credit card');
+  console.log('');
+  process.exit(0);
+}
+
+// ── CLI: cachly share ─────────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest share
+// Generates a shareable ASCII card + tweet text with your Brain stats.
+
+if (process.argv[2] === 'share') {
+  const apiKey = process.env.CACHLY_JWT ?? '';
+  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+
+  if (!apiKey || !instanceId) {
+    console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest setup  (takes 30 seconds)\n');
+    process.exit(1);
+  }
+
+  process.stdout.write('\n🧠 Fetching your Brain stats...\n');
+
+  try {
+    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain/stats`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (!statsRes.ok) throw new Error(`HTTP ${statsRes.status}`);
+    const stats = await statsRes.json() as {
+      lesson_count?: number; context_count?: number;
+      quality_score?: number; total_recall_count?: number;
+    };
+
+    const lessons  = stats.lesson_count ?? 0;
+    const recalls  = stats.total_recall_count ?? 0;
+    const score    = Math.round((stats.quality_score ?? 0) * 100);
+    const tokensSaved = recalls * 1200;
+    const costSaved = (tokensSaved * 0.000003).toFixed(2);
+
+    const level = lessons === 0 ? 'Intern 🌱' :
+      lessons < 10  ? 'Junior Dev 🔧' :
+      lessons < 30  ? 'Mid Dev ⚡' :
+      lessons < 60  ? 'Senior Dev 🧠' :
+      lessons < 100 ? 'Staff Eng 🚀' : 'Principal Eng 🏆';
+
+    console.log('');
+    console.log('┌─────────────────────────────────────────────────────────────┐');
+    console.log('│  🧠 My AI Brain  ·  powered by \x1b[35mcachly.dev\x1b[0m                   │');
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log(`│  Lessons stored : \x1b[33m${String(lessons).padEnd(8)}\x1b[0m  Brain level: \x1b[32m${level.padEnd(18)}\x1b[0m│`);
+    console.log(`│  Total recalls  : \x1b[36m${String(recalls).padEnd(8)}\x1b[0m  Quality score: \x1b[32m${String(score).padEnd(3)}%\x1b[0m              │`);
+    console.log(`│  Tokens saved   : \x1b[32m${String((tokensSaved / 1000).toFixed(0) + 'K').padEnd(8)}\x1b[0m  Cost saved: \x1b[32m$${costSaved.padEnd(20)}\x1b[0m│`);
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log('│  Works with: Claude Code · Cursor · Windsurf · Copilot      │');
+    console.log('│  Free · GDPR · German servers                                │');
+    console.log('│  \x1b[35mnpx @cachly-dev/mcp-server@latest setup\x1b[0m                     │');
+    console.log('└─────────────────────────────────────────────────────────────┘');
+    console.log('');
+
+    // Tweet text
+    const tweet = `🧠 My AI coding assistant now has persistent memory.\n\n${lessons} lessons stored · ${recalls} recalls · ${level}\n\nFix a bug once → AI remembers forever. Across Claude Code, Cursor, Windsurf, Copilot.\n\nnpx @cachly-dev/mcp-server@latest setup\n\n#AIMemory #ClaudeCode #Cursor #DeveloperTools`;
+
+    console.log('  \x1b[1m📋 Share on Twitter/X (copy this):\x1b[0m');
+    console.log('  ─────────────────────────────────────');
+    console.log(tweet.split('\n').map(l => `  ${l}`).join('\n'));
+    console.log('  ─────────────────────────────────────');
+    console.log('');
+    console.log('  \x1b[2mPro tip: add a screenshot of your Brain panel for 3x more engagement\x1b[0m');
+    console.log('');
+  } catch (e) {
+    console.log(`\n❌ Could not fetch stats: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+// ── CLI: no-args splash screen ────────────────────────────────────────────────
+// When run with no recognized subcommand, show a compelling pitch + help.
+
+if (!process.argv[2] && process.stdout.isTTY) {
+  console.log('');
+  console.log('\x1b[35m  ╔═══════════════════════════════════════════════════════╗\x1b[0m');
+  console.log('\x1b[35m  ║\x1b[0m  \x1b[1m🧠 cachly — Persistent AI Memory for Developers\x1b[0m   \x1b[35m║\x1b[0m');
+  console.log('\x1b[35m  ╚═══════════════════════════════════════════════════════╝\x1b[0m');
+  console.log('');
+  console.log('  Your AI forgets everything when a session ends.');
+  console.log('  cachly gives it a brain that survives forever.');
+  console.log('');
+  console.log('  \x1b[1mCommands:\x1b[0m');
+  console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest demo\x1b[0m     ← Start here (no account)');
+  console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest setup\x1b[0m    ← Wire up your AI editors');
+  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest health\x1b[0m   ← Check everything works');
+  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest share\x1b[0m    ← Share your Brain stats');
+  console.log('');
+  console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
+  console.log('  \x1b[90mFree forever · GDPR · German servers · 89 MCP tools\x1b[0m');
+  console.log('');
+  process.exit(0);
+}
+
 // ── CLI: cachly init ──────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server init --instance-id <id> --api-key <key> [--editor claude|cursor|windsurf|copilot|continue] [--project-dir /path]
 
@@ -1560,7 +1782,9 @@ if (process.argv[2] === 'index') {
 
 // Warn on stderr when credentials are missing so the user sees a clear
 // actionable message in their editor's MCP log instead of silent failures.
-if (!JWT) {
+// Skip for CLI commands that intentionally run without credentials.
+const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init'];
+if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '') && !(!process.argv[2] && process.stdout.isTTY)) {
   process.stderr.write(
     '\n' +
     '╔══════════════════════════════════════════════════════════════════╗\n' +
