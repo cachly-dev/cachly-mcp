@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.19';
+const CURRENT_VERSION = '0.10.20';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -178,8 +178,16 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
             };
             const id = body.instance?.id ?? body.instance_id;
             if (id) _defaultInstanceId = id;
+          } else {
+            // Log so telemetry can detect free-tier auto-provision failures
+            void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${JWT}` },
+              body: JSON.stringify({ event: 'auto_provision_failed', status: autoRes.status, version: CURRENT_VERSION }),
+              signal: AbortSignal.timeout(3000),
+            }).catch(() => {});
           }
-        } catch { /* non-fatal */ }
+        } catch { /* non-fatal — server unreachable, getConnection will surface the error */ }
       }
       // Give a provisioning instance a head-start so getConnection's wait is shorter.
       // The instance is almost always ready by the time the user's tool re-enters.
@@ -290,11 +298,24 @@ async function getConnection(instance_id: string): Promise<Redis> {
       body: JSON.stringify({ event: 'instance_not_reachable', instance_id, status: inst.status, version: CURRENT_VERSION }),
       signal: AbortSignal.timeout(3000),
     }).catch(() => {});
-    const hint = inst.status === 'provisioning'
-      ? `⏳ Brain instance "${inst.name}" is still starting up.\n\nFirst-time provisioning typically takes 1–3 minutes. Please retry in a moment — the instance will be ready soon.`
-      : `Brain instance "${inst.name}" is not reachable (status: ${inst.status}).\n\n` +
+    let hint: string;
+    if (inst.status === 'provisioning') {
+      hint = `⏳ Brain instance "${inst.name}" is still starting up.\n\nFirst-time provisioning typically takes 1–3 minutes. Please retry in a moment — the instance will be ready soon.`;
+    } else if (inst.status === 'failed') {
+      hint = `❌ Brain instance "${inst.name}" failed to start.\n\n` +
+        `Our system will retry automatically. Check status at: https://cachly.dev/instances\n` +
+        `If this persists, contact support@cachly.dev.`;
+    } else if (inst.status === 'suspended') {
+      hint = `⏸ Brain instance "${inst.name}" is suspended (billing issue).\n\n` +
+        `Update your payment method at: https://cachly.dev/billing`;
+    } else if (inst.status === 'pending_payment') {
+      hint = `💳 Brain instance "${inst.name}" is waiting for payment.\n\n` +
+        `Complete your checkout at: https://cachly.dev/instances`;
+    } else {
+      hint = `Brain instance "${inst.name}" is not reachable (status: ${inst.status}).\n\n` +
         `• View your instance at: https://cachly.dev/instances\n` +
         `• Run \`get_api_status\` for a full diagnostic.`;
+    }
     throw new McpError(ErrorCode.InvalidRequest, hint);
   }
   if (!inst.host || !inst.port) {
@@ -1224,7 +1245,12 @@ if (process.argv[2] === 'join') {
       await wfJ(ePath, JSON.stringify(cfg, null, 2), 'utf-8');
       console.log(`  ✅ ${eLabel}`);
       written++;
-    } catch { /* skip — not all editors are installed */ }
+    } catch (joinWriteErr) {
+      // Only surface unexpected errors — missing editor dirs are expected and silently skipped above
+      if ((joinWriteErr as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.log(`  ⚠️  ${eLabel}: ${(joinWriteErr as Error).message}`);
+      }
+    }
   }
 
   console.log('');
@@ -2019,11 +2045,16 @@ if (process.argv[2] === 'setup') {
   for (const editor of editorsToSetup) {
     const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
     const configPath = resolve(cwd, configFile);
-    await mkdir(dirname(configPath), { recursive: true });
-    const wasExisting = exSetup(configPath);
-    const merged = await mergeMcpConfig(configPath, token, instance.id, editor, { readFile, existsSync: exSetup });
-    await writeFile(configPath, merged, 'utf-8');
-    console.log(`✅ ${wasExisting ? 'Updated' : 'Written'}: ${configFile}`);
+    try {
+      await mkdir(dirname(configPath), { recursive: true });
+      const wasExisting = exSetup(configPath);
+      const merged = await mergeMcpConfig(configPath, token, instance.id, editor, { readFile, existsSync: exSetup });
+      await writeFile(configPath, merged, 'utf-8');
+      console.log(`✅ ${wasExisting ? 'Updated' : 'Written'}: ${configFile}`);
+    } catch (writeErr) {
+      console.log(`⚠️  Could not write ${configFile}: ${(writeErr as Error).message}`);
+      console.log(`   Fix permissions or run with sudo, then re-run setup.`);
+    }
   }
 
   // ── Step 4b: Write global Claude Code config (~/.claude/mcp.json) ─────────

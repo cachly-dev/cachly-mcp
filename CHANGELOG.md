@@ -7,6 +7,17 @@
 
 ---
 
+## [0.10.20] – 2026-05-14
+
+### Edge case hardening — silent failures eliminated
+
+- **`getConnection` status messages**: `failed`, `suspended`, and `pending_payment` now each get a specific actionable message instead of the generic "not reachable" fallback. Users know exactly what happened and where to go to fix it.
+- **`setup` write errors**: config file write failures now print a clear warning with the OS error and a recovery hint instead of silently succeeding.
+- **`join` write errors**: permission and unexpected filesystem errors are surfaced per-file instead of silently swallowed. Expected "editor not installed" cases are still quiet.
+- **Auto-provision telemetry**: if free-tier auto-provision returns a non-2xx response, a `auto_provision_failed` telemetry event fires so the team can detect new-user activation failures in real time.
+
+---
+
 ## [0.10.19] – 2026-05-14
 
 ### Fix: accurate provisioning time estimate
