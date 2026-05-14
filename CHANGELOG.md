@@ -7,6 +7,27 @@
 
 ---
 
+## [0.10.16] – 2026-05-14
+
+### `cachly join` — accept a Brain invite in one command
+
+- **`cachly join <token>`** — the missing half of the invite loop. Accepts a shared Brain invite link:
+  1. Fetches invite info (public, no auth) — shows Brain name, tier, expiry
+  2. Prompts for confirmation
+  3. If no JWT: starts Device Flow sign-in (browser, 10 s)
+  4. Writes `CACHLY_BRAIN_INSTANCE_ID` into every detected editor MCP config (`.mcp.json`, `.cursor/mcp.json`, `.windsurf/mcp.json`, `.vscode/mcp.json`, `~/.claude/mcp.json`)
+  5. Suggests `cachly badge` as next step
+- Added `join` to no-auth bypass list
+- Splash screen updated to list `join` command
+
+### MCP Directory metadata
+
+- **`smithery.yaml`** — added `name` + `description` block for Smithery listing quality
+- **`glama.json`** — added keywords: `cline`, `zed`, `brain-from-git`, `failure-prediction`, `memory-crystals`, `readme-badge`, `incremental-learning`
+- **`server.json`** — version bumped to `0.10.15`
+
+---
+
 ## [0.10.15] – 2026-05-14
 
 ### Brain Badge

@@ -18,12 +18,19 @@
     "cursor",
     "copilot",
     "windsurf",
+    "cline",
+    "zed",
     "causal-trace",
     "brain-predict",
     "smart-recall",
     "knowledge-graph",
     "team-brain",
+    "brain-from-git",
+    "failure-prediction",
+    "memory-crystals",
     "gdpr",
-    "free-tier"
+    "free-tier",
+    "readme-badge",
+    "incremental-learning"
   ]
 }

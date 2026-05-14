@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.15';
+const CURRENT_VERSION = '0.10.16';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -1016,6 +1016,155 @@ if (process.argv[2] === 'invite') {
   process.exit(0);
 }
 
+// ── CLI: cachly join <token> ──────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest join <token>
+// Accepts a Brain invite link — writes the shared instance ID into all
+// detected editor MCP configs and the global ~/.claude/mcp.json.
+// No account needed if CACHLY_JWT is already set; otherwise prompts for auth.
+
+if (process.argv[2] === 'join') {
+  const { writeFile: wfJ, readFile: rfJ, mkdir: mkJ } = await import('node:fs/promises');
+  const { existsSync: exJ } = await import('node:fs');
+  const { resolve: resJ, dirname: dirJ } = await import('node:path');
+  const { homedir } = await import('node:os');
+  const { createInterface: ciJ } = await import('node:readline');
+
+  const token = process.argv[3] ?? '';
+  if (!token) {
+    console.log('\n❌ Usage: npx @cachly-dev/mcp-server@latest join <token>\n');
+    console.log('   Get a token from a teammate: npx @cachly-dev/mcp-server@latest invite\n');
+    process.exit(1);
+  }
+
+  console.log('\n⏳ Looking up invite...');
+
+  // ── Step 1: Fetch invite info (public, no auth) ───────────────────────────
+  let inviteInfo: { instance_id: string; instance_name: string; tier: string; expires_at: string; label?: string };
+  try {
+    const res = await fetch(`${API_URL}/api/invite/${token}`, { signal: AbortSignal.timeout(8000) });
+    if (res.status === 404) { console.log('\n❌ Invite not found — the link may be invalid.\n'); process.exit(1); }
+    if (res.status === 410) { console.log('\n❌ This invite link has expired (7-day limit).\n'); process.exit(1); }
+    if (!res.ok) { console.log(`\n❌ Could not fetch invite: HTTP ${res.status}\n`); process.exit(1); }
+    inviteInfo = await res.json() as typeof inviteInfo;
+  } catch (e) {
+    console.log(`\n❌ Network error: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+
+  const { instance_id, instance_name, tier, label } = inviteInfo;
+  const expires = new Date(inviteInfo.expires_at).toLocaleDateString();
+
+  console.log('');
+  console.log('  \x1b[35m╔══════════════════════════════════════════════════════╗\x1b[0m');
+  console.log('  \x1b[35m║\x1b[0m  \x1b[1m🧠 Brain Invite\x1b[0m                                  \x1b[35m║\x1b[0m');
+  console.log('  \x1b[35m╚══════════════════════════════════════════════════════╝\x1b[0m');
+  console.log('');
+  console.log(`  Brain   : \x1b[1m${instance_name}\x1b[0m`);
+  console.log(`  Tier    : ${tier}`);
+  if (label) console.log(`  Note    : ${label}`);
+  console.log(`  Expires : ${expires}`);
+  console.log('');
+
+  // ── Step 2: Confirm ───────────────────────────────────────────────────────
+  const rlJ = ciJ({ input: process.stdin, output: process.stdout });
+  const confirmJ = await new Promise<string>((resolve) => {
+    rlJ.question('  Join this Brain? [Y/n] ', (a) => { rlJ.close(); resolve(a.trim().toLowerCase() || 'y'); });
+  });
+  if (confirmJ !== 'y' && confirmJ !== 'yes') {
+    console.log('\n  Cancelled.\n');
+    process.exit(0);
+  }
+
+  // ── Step 3: Ensure JWT ────────────────────────────────────────────────────
+  let joinJwt = JWT;
+  if (!joinJwt) {
+    console.log('\n  No API key found — starting sign-in (10 seconds)...\n');
+    try {
+      const dcRes = await fetch(`${API_URL}/api/v1/auth/device/code`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: 'cachly-mcp-cli' }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (dcRes.ok) {
+        const dc = await dcRes.json() as { verification_uri: string; user_code: string; device_code: string; interval: number };
+        console.log(`  👉 Open: \x1b[36m${dc.verification_uri}\x1b[0m`);
+        console.log(`     Code: \x1b[1m${dc.user_code}\x1b[0m\n`);
+        // Poll for token
+        const pollInterval = (dc.interval ?? 5) * 1000;
+        for (let i = 0; i < 24; i++) {
+          await new Promise(r => setTimeout(r, pollInterval));
+          try {
+            const tokRes = await fetch(`${API_URL}/api/v1/auth/device/token`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ device_code: dc.device_code, client_id: 'cachly-mcp-cli' }),
+              signal: AbortSignal.timeout(8000),
+            });
+            if (tokRes.ok) {
+              const tok = await tokRes.json() as { access_token?: string };
+              if (tok.access_token) { joinJwt = tok.access_token; break; }
+            }
+          } catch { /* polling — keep going */ }
+        }
+        if (!joinJwt) { console.log('\n❌ Sign-in timed out. Run the command again.\n'); process.exit(1); }
+        console.log('  ✅ Signed in!\n');
+      }
+    } catch (e) {
+      console.log(`\n  ⚠️  Could not start sign-in: ${(e as Error).message}`);
+      console.log(`   Set CACHLY_JWT manually from https://cachly.dev/setup-ai\n`);
+      process.exit(1);
+    }
+  }
+
+  // ── Step 4: Write instance ID into all editor MCP configs ────────────────
+  const cwd  = process.cwd();
+  const home = homedir();
+
+  const editorFiles: Array<{ label: string; path: string; global?: boolean }> = [
+    { label: '.mcp.json (Claude Code project)',    path: resJ(cwd, '.mcp.json') },
+    { label: '.cursor/mcp.json',                   path: resJ(cwd, '.cursor', 'mcp.json') },
+    { label: '.windsurf/mcp.json',                 path: resJ(cwd, '.windsurf', 'mcp.json') },
+    { label: '.vscode/mcp.json (Copilot/Cline)',   path: resJ(cwd, '.vscode', 'mcp.json') },
+    { label: '~/.claude/mcp.json (global)',         path: resJ(home, '.claude', 'mcp.json'), global: true },
+  ];
+
+  let written = 0;
+  for (const { label: eLabel, path: ePath, global: isGlobal } of editorFiles) {
+    // Only write project configs if the directory exists (or global)
+    const dir = dirJ(ePath);
+    if (!isGlobal && !exJ(dir) && !exJ(ePath)) continue;
+    try {
+      await mkJ(dir, { recursive: true });
+      let cfg: Record<string, unknown> = {};
+      if (exJ(ePath)) {
+        try { cfg = JSON.parse(await rfJ(ePath, 'utf-8')) as Record<string, unknown>; } catch { /* corrupt — overwrite */ }
+      }
+      // Update or create the cachly entry with the shared instance ID
+      const servers = (cfg['mcpServers'] ?? {}) as Record<string, unknown>;
+      const existing = (servers['cachly'] ?? {}) as Record<string, unknown>;
+      const env = (existing['env'] ?? {}) as Record<string, string>;
+      env['CACHLY_BRAIN_INSTANCE_ID'] = instance_id;
+      if (joinJwt && !env['CACHLY_JWT']) env['CACHLY_JWT'] = joinJwt;
+      env['CACHLY_API_URL'] ??= 'https://api.cachly.dev';
+      servers['cachly'] = { ...existing, command: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'], env };
+      cfg['mcpServers'] = servers;
+      await wfJ(ePath, JSON.stringify(cfg, null, 2), 'utf-8');
+      console.log(`  ✅ ${eLabel}`);
+      written++;
+    } catch { /* skip — not all editors are installed */ }
+  }
+
+  console.log('');
+  if (written === 0) {
+    console.log('  ⚠️  No editor configs found — run `cachly setup` first.\n');
+  } else {
+    console.log(`  🧠 You're now sharing Brain: \x1b[1m${instance_name}\x1b[0m`);
+    console.log('     Restart your editor — your AI arrives pre-briefed from the team Brain.\n');
+    console.log('  📛 Add the badge to your README:');
+    console.log(`     npx @cachly-dev/mcp-server@latest badge\n`);
+  }
+  process.exit(0);
+}
+
 // ── CLI: cachly demo ──────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest demo
 // Zero-signup. Reads local git history and shows what the AI Brain would know.
@@ -1277,6 +1426,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest share\x1b[0m    ← Share your Brain stats');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest badge\x1b[0m    ← README badge for your Brain');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest invite\x1b[0m   ← Invite a teammate');
+  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest join <token>\x1b[0m ← Accept a Brain invite');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
   console.log('  \x1b[90mFree forever · GDPR · German servers · 89 MCP tools\x1b[0m');
@@ -1974,7 +2124,7 @@ if (process.argv[2] === 'index') {
 // Warn on stderr when credentials are missing so the user sees a clear
 // actionable message in their editor's MCP log instead of silent failures.
 // Skip for CLI commands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init', 'digest', 'invite', 'badge'];
+const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init', 'digest', 'invite', 'badge', 'join'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '') && !(!process.argv[2] && process.stdout.isTTY)) {
   process.stderr.write(
     '\n' +
