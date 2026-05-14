@@ -1127,7 +1127,7 @@ if (process.argv[2] === 'invite') {
 
     if (res.ok) {
       console.log(`\n  ✅ Invite sent to \x1b[32m${email}\x1b[0m`);
-      console.log(`     They'll get a link to join your Brain — one click, 30 seconds.\n`);
+      console.log(`     They'll get a link to join your Brain — one click, 1–5 minutes.\n`);
       console.log(`  💡 Once they join, your AI assistants share lessons automatically.\n`);
     } else if (res.status === 409) {
       console.log(`\n  ✓  ${email} is already a team member.\n`);
@@ -1458,7 +1458,7 @@ if (process.argv[2] === 'demo') {
   console.log('│  \x1b[32m   No more re-explaining. No more repeated mistakes.\x1b[0m         │');
   console.log('└─────────────────────────────────────────────────────────────┘');
   console.log('');
-  console.log('  \x1b[1mMake this permanent (free, 30 seconds):\x1b[0m');
+  console.log('  \x1b[1mMake this permanent (free, 1–5 minutes):\x1b[0m');
   console.log('  \x1b[32m$ npx @cachly-dev/mcp-server@latest setup\x1b[0m');
   console.log('');
   console.log('  Works with: Claude Code · Cursor · Windsurf · Copilot · Cline · Zed');
@@ -1477,7 +1477,7 @@ if (process.argv[2] === 'share') {
 
   if (!apiKey || !instanceId) {
     console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
-    console.log('   Run: npx @cachly-dev/mcp-server@latest setup  (takes 30 seconds)\n');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest setup  (takes 1–5 minutes)\n');
     process.exit(1);
   }
 
@@ -1550,7 +1550,7 @@ if (process.argv[2] === 'badge') {
 
   if (!instanceId) {
     console.log('\n⚠️  CACHLY_BRAIN_INSTANCE_ID must be set.');
-    console.log('   Run: npx @cachly-dev/mcp-server@latest setup  (takes 30 seconds)\n');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest setup  (takes 1–5 minutes)\n');
     process.exit(1);
   }
 

@@ -66,7 +66,7 @@ Run this in any project directory. It reads your git history and shows exactly w
 │     No more re-explaining. No more repeated mistakes.        │
 └─────────────────────────────────────────────────────────────┘
 
-  Make this permanent (free, 30 seconds):
+  Make this permanent (free, 1–5 minutes):
   $ npx @cachly-dev/mcp-server@latest setup
 
   Works with: Claude Code · Cursor · Windsurf · Copilot · Cline · Zed
@@ -133,7 +133,7 @@ Run it once. It handles everything:
 
 ```bash
 npx @cachly-dev/mcp-server@latest demo     # Preview your Brain (no account needed)
-npx @cachly-dev/mcp-server@latest setup    # Wire up all your AI editors (30 seconds)
+npx @cachly-dev/mcp-server@latest setup    # Wire up all your AI editors (1–5 minutes)
 npx @cachly-dev/mcp-server@latest health   # Check token, API, editors, git hook
 npx @cachly-dev/mcp-server@latest digest   # Weekly Brain summary — shareable
 npx @cachly-dev/mcp-server@latest share    # Generate a shareable stats card + tweet
