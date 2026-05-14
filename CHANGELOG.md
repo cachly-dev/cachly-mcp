@@ -7,6 +7,34 @@
 
 ---
 
+## [0.10.8] – 2026-05-14
+
+### Viral CLI — 6 new commands
+
+- **`cachly demo`** — zero-signup Brain preview. Reads local `.git/` history, classifies commits by type (fix/feat/security/deploy/refactor/perf), and renders an ASCII table showing commit count, date range, contributors, per-category bar charts, and sample security + bug-fix lessons. No account or token required — works before any sign-in.
+
+- **`cachly share`** — shareable ASCII stats card. Fetches live Brain stats (lessons, recalls, tokens/cost saved, Brain level) and generates a tweet-ready text block with `#AIMemory #ClaudeCode #Cursor` hashtags. Requires `CACHLY_JWT`.
+
+- **`cachly digest`** — weekly Brain summary. Displays a formatted summary table: lessons stored, recalls performed, tokens saved, estimated cost saved, Brain level, top team contributors, and top-recalled lessons. Includes a crontab snippet for automated Monday morning delivery. Requires `CACHLY_JWT`.
+
+- **`cachly invite [email]`** — team referral. Accepts an email address as argument or via interactive prompt, then POSTs to `/api/v1/team/invite`. Handles 409 (already a member) gracefully. Requires `CACHLY_JWT`.
+
+- **`cachly health`** — connection check. Validates JWT (decode + expiry), tests API reachability, checks Brain instance status, scans all editor MCP config files (Claude Code, Cursor, Windsurf, VS Code, Zed, Continue), and verifies the git post-commit hook. Exits 1 if any checks fail — CI-friendly.
+
+- **No-args splash screen** — running `npx @cachly-dev/mcp-server@latest` in a TTY now shows a violet-framed help card listing all commands instead of silently starting the MCP server.
+
+### brain_from_git — Incremental mode + progress feedback
+
+- **Incremental by default** — after the first full run, subsequent calls only process commits since the last ingested SHA (stored in Redis with 90-day TTL). Repeated calls on active repos are near-instant.
+- **Progress output** — reports progress to stderr every ~10% of commits (`⏳ Processing N/total…`) and prints a completion summary (`✅ brain_from_git complete: N/total commits ingested`).
+- New `incremental` boolean parameter (default `true`). Pass `false` to force a full reprocess.
+
+### README
+
+- Complete rewrite: `cachly demo` featured at the very top with embedded ASCII preview output, all 6 CLI commands documented, Zed manual-setup section added, competitor table updated, FAQ expanded with incremental `brain_from_git` Q&A.
+
+---
+
 ## [0.10.0] – 2026-05-08
 
 ### Zero-Friction Onboarding

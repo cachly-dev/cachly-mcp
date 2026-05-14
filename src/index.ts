@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.7';
+const CURRENT_VERSION = '0.10.8';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -876,6 +876,146 @@ async function writeClaudeMd(projectDir: string, instanceId: string): Promise<'w
 }
 
 
+
+// ── CLI: cachly digest ────────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest digest
+// Weekly brain summary — what your AI learned this week. Shareable output.
+
+if (process.argv[2] === 'digest') {
+  const apiKey = process.env.CACHLY_JWT ?? '';
+  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+
+  if (!apiKey || !instanceId) {
+    console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest setup\n');
+    process.exit(1);
+  }
+
+  process.stdout.write('\n🧠 Fetching your weekly Brain digest...\n\n');
+
+  try {
+    // Fetch current stats
+    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain/stats`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!statsRes.ok) throw new Error(`stats HTTP ${statsRes.status}`);
+    const stats = await statsRes.json() as {
+      lesson_count?: number; context_count?: number; quality_score?: number;
+      total_recall_count?: number; top_lessons?: Array<{ topic: string; recall_count: number; what_worked: string }>;
+      team_authors?: string[];
+    };
+
+    const lessons      = stats.lesson_count ?? 0;
+    const recalls      = stats.total_recall_count ?? 0;
+    const score        = Math.round((stats.quality_score ?? 0) * 100);
+    const topLessons   = (stats.top_lessons ?? []).slice(0, 5);
+    const teamAuthors  = stats.team_authors ?? [];
+    const tokensSaved  = recalls * 1200;
+    const costSaved    = (tokensSaved * 0.000003).toFixed(2);
+
+    const level = lessons < 10 ? 'Junior Dev 🔧' : lessons < 30 ? 'Mid Dev ⚡' :
+      lessons < 60 ? 'Senior Dev 🧠' : lessons < 100 ? 'Staff Eng 🚀' : 'Principal Eng 🏆';
+
+    const now = new Date();
+    const weekStart = new Date(now); weekStart.setDate(now.getDate() - 7);
+    const fmt = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+    console.log('┌─────────────────────────────────────────────────────────────┐');
+    console.log(`│  \x1b[1m🧠 Brain Weekly Digest\x1b[0m  \x1b[90m${fmt(weekStart)} – ${fmt(now)}\x1b[0m                 │`);
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log(`│  Total lessons  : \x1b[33m${String(lessons).padEnd(8)}\x1b[0m  Brain level : \x1b[32m${level.padEnd(18)}\x1b[0m│`);
+    console.log(`│  Total recalls  : \x1b[36m${String(recalls).padEnd(8)}\x1b[0m  Quality score: \x1b[32m${String(score).padEnd(3)}%\x1b[0m              │`);
+    console.log(`│  Tokens saved   : \x1b[32m${String(Math.round(tokensSaved / 1000) + 'K').padEnd(8)}\x1b[0m  Cost saved   : \x1b[32m$${costSaved.padEnd(20)}\x1b[0m│`);
+
+    if (teamAuthors.length > 0) {
+      console.log('├─────────────────────────────────────────────────────────────┤');
+      console.log(`│  \x1b[36m👥 Team contributors:\x1b[0m ${teamAuthors.slice(0, 5).join(', ').slice(0, 42).padEnd(42)} │`);
+    }
+
+    if (topLessons.length > 0) {
+      console.log('├─────────────────────────────────────────────────────────────┤');
+      console.log('│  \x1b[33m🔥 Most recalled lessons this week:\x1b[0m                         │');
+      for (const l of topLessons) {
+        const line = `${l.topic}: ${l.what_worked}`.slice(0, 57);
+        console.log(`│  \x1b[90m• ${line.padEnd(58)}\x1b[0m│`);
+      }
+    }
+
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log('│  \x1b[32m📋 Share this digest:\x1b[0m                                        │');
+    console.log('│  \x1b[90m   npx @cachly-dev/mcp-server@latest share\x1b[0m                   │');
+    console.log('│  \x1b[90m   Add more: npx @cachly-dev/mcp-server@latest invite\x1b[0m         │');
+    console.log('└─────────────────────────────────────────────────────────────┘');
+    console.log('');
+
+    // Pro tip for cron
+    console.log('  \x1b[2m💡 Automate: add to crontab for a weekly team email\x1b[0m');
+    console.log('  \x1b[2m   0 9 * * 1 npx @cachly-dev/mcp-server@latest digest\x1b[0m');
+    console.log('');
+  } catch (e) {
+    console.log(`\n❌ Could not fetch digest: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+// ── CLI: cachly invite ────────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest invite [email]
+// Invites a teammate to share your Brain. Fastest referral loop.
+
+if (process.argv[2] === 'invite') {
+  const { createInterface } = await import('node:readline');
+  const apiKey = process.env.CACHLY_JWT ?? '';
+
+  if (!apiKey) {
+    console.log('\n⚠️  CACHLY_JWT must be set.');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest setup\n');
+    process.exit(1);
+  }
+
+  let email = process.argv[3] ?? '';
+
+  if (!email) {
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+    email = await new Promise<string>((resolve) => {
+      rl.question('\n  📬 Teammate email to invite: ', (ans) => { rl.close(); resolve(ans.trim()); });
+    });
+  }
+
+  if (!email || !email.includes('@')) {
+    console.log('\n❌ Invalid email address.\n');
+    process.exit(1);
+  }
+
+  console.log(`\n  ⏳ Inviting ${email}...`);
+
+  try {
+    const res = await fetch(`${API_URL}/api/v1/team/invite`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, role: 'member', source: 'cli-invite' }),
+      signal: AbortSignal.timeout(8000),
+    });
+
+    if (res.ok) {
+      console.log(`\n  ✅ Invite sent to \x1b[32m${email}\x1b[0m`);
+      console.log(`     They'll get a link to join your Brain — one click, 30 seconds.\n`);
+      console.log(`  💡 Once they join, your AI assistants share lessons automatically.\n`);
+    } else if (res.status === 409) {
+      console.log(`\n  ✓  ${email} is already a team member.\n`);
+    } else {
+      const body = await res.json().catch(() => ({})) as { error?: string };
+      console.log(`\n  ❌ Invite failed: ${body.error ?? `HTTP ${res.status}`}\n`);
+      process.exit(1);
+    }
+  } catch (e) {
+    console.log(`\n  ❌ Network error: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 // ── CLI: cachly demo ──────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest demo
 // Zero-signup. Reads local git history and shows what the AI Brain would know.
@@ -1089,7 +1229,9 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest demo\x1b[0m     ← Start here (no account)');
   console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest setup\x1b[0m    ← Wire up your AI editors');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest health\x1b[0m   ← Check everything works');
+  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest digest\x1b[0m   ← Weekly Brain summary');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest share\x1b[0m    ← Share your Brain stats');
+  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest invite\x1b[0m   ← Invite a teammate');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
   console.log('  \x1b[90mFree forever · GDPR · German servers · 89 MCP tools\x1b[0m');
@@ -1783,7 +1925,7 @@ if (process.argv[2] === 'index') {
 // Warn on stderr when credentials are missing so the user sees a clear
 // actionable message in their editor's MCP log instead of silent failures.
 // Skip for CLI commands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init'];
+const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init', 'digest', 'invite'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '') && !(!process.argv[2] && process.stdout.isTTY)) {
   process.stderr.write(
     '\n' +
