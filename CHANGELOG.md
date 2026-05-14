@@ -7,6 +7,16 @@
 
 ---
 
+## [0.10.15] – 2026-05-14
+
+### Brain Badge
+
+- **`cachly badge`** — new CLI command that outputs the Markdown + HTML snippet for embedding a live lesson-count badge in any README or website. Badge SVG served by `GET /api/v1/badge/:instanceId` (public, no auth, rate-limited 30 req/min, result cached 1 h in instance Valkey). Badge shows lesson count only — no topic names or content.
+- **Setup CTA** — both setup flows now print `npx ... badge` as the next suggested action after successful configuration.
+- **README** — Brain Badge section added with copy-paste Markdown snippet and explanation. Badge shield added to header.
+
+---
+
 ## [0.10.8] – 2026-05-14
 
 ### Viral CLI — 6 new commands

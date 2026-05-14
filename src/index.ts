@@ -1353,7 +1353,9 @@ if (process.argv[2] === 'init') {
   } catch { /* non-critical — git hook is a best-effort feature */ }
 
   console.log(`\n🧠 Cachly AI Brain configured for ${editor === 'claude' ? 'Claude Code' : editor}!`);
-  console.log(`   Restart your editor — the \`cachly\` MCP tools will appear.\n`);
+  console.log(`   Restart your editor — the \`cachly\` MCP tools will appear.`);
+  console.log(`\n   📛 Add a live badge to your README:`);
+  console.log(`      npx @cachly-dev/mcp-server@latest badge\n`);
   process.exit(0);
 }
 
@@ -1869,7 +1871,9 @@ if (process.argv[2] === 'setup') {
 
   console.log(`\n🧠  Done! Restart your editor — the \`cachly\` MCP tools will appear.`);
   console.log(`   Your AI now has persistent memory across every session.\n`);
-  console.log(`   Dashboard: https://cachly.dev/instances/${instance.id}\n`);
+  console.log(`   Dashboard: https://cachly.dev/instances/${instance.id}`);
+  console.log(`\n   📛 Add a live badge to your README:`);
+  console.log(`      npx @cachly-dev/mcp-server@latest badge\n`);
 
   // ── Step 7: Email opt-in (non-blocking — at the very end) ────────────────
   if (!nonInteractive) {

@@ -23,6 +23,10 @@
   <img src="https://img.shields.io/badge/89%20MCP%20tools-violet" alt="89 MCP tools" />
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
+  &nbsp;
+  <a href="https://cachly.dev">
+    <img src="https://img.shields.io/badge/Brain%20badge-embed%20in%20README-7c3aed" alt="Brain badge" />
+  </a>
 </p>
 
 ---
@@ -133,8 +137,27 @@ npx @cachly-dev/mcp-server@latest setup    # Wire up all your AI editors (30 sec
 npx @cachly-dev/mcp-server@latest health   # Check token, API, editors, git hook
 npx @cachly-dev/mcp-server@latest digest   # Weekly Brain summary — shareable
 npx @cachly-dev/mcp-server@latest share    # Generate a shareable stats card + tweet
+npx @cachly-dev/mcp-server@latest badge    # Get a live README badge for your Brain
 npx @cachly-dev/mcp-server@latest invite   # Invite a teammate to share your Brain
 ```
+
+---
+
+## Brain Badge — show your lessons live
+
+Add a live lesson-count badge to any README — updates every hour, no auth required:
+
+```bash
+npx @cachly-dev/mcp-server@latest badge
+```
+
+Outputs your personal Markdown snippet:
+
+```markdown
+[![cachly Brain](https://api.cachly.dev/api/v1/badge/YOUR_INSTANCE_ID)](https://cachly.dev)
+```
+
+Drop it in your repo's README and anyone visiting sees how many lessons your AI has accumulated. The badge endpoint is public, rate-limited, and only exposes the lesson count — no topic names, no content.
 
 ---
 
