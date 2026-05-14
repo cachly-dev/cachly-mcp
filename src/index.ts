@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.21';
+const CURRENT_VERSION = '0.10.22';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -429,6 +429,8 @@ import { TOOLS } from './tools.js';
 
 // Fires once per process when no JWT is set (anonymous, opt-out via CACHLY_NO_TELEMETRY=1)
 let _telemetryPingSent = false;
+// Fires once per process on the first successful Brain tool call — key activation metric
+let _firstCallSuccessSent = false;
 
 function detectEditor(): string {
   return process.env.CURSOR_TRACE_ID ? 'cursor'
@@ -543,11 +545,23 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
   // Delegate brain tools (learn, recall, session, etc.)
   const brainResult = await handleBrainTool(name, args, getConnection, apiFetch);
-  if (brainResult !== null) return brainResult;
+  if (brainResult !== null) {
+    if (!_firstCallSuccessSent && JWT) {
+      _firstCallSuccessSent = true;
+      sendFunnelEvent('first_call_success', { tool: name, editor: detectEditor() });
+    }
+    return brainResult;
+  }
 
   // Delegate context tools (remember/recall/list/forget)
   const contextResult = await handleContextTool(name, args, getConnection, apiFetch);
-  if (contextResult !== null) return contextResult;
+  if (contextResult !== null) {
+    if (!_firstCallSuccessSent && JWT) {
+      _firstCallSuccessSent = true;
+      sendFunnelEvent('first_call_success', { tool: name, editor: detectEditor() });
+    }
+    return contextResult;
+  }
 
   // Delegate instance + cache tools
   const instanceResult = await handleInstanceTool(name, args, getConnection, apiFetch);
@@ -1245,7 +1259,11 @@ if (process.argv[2] === 'join') {
       await mkJ(dir, { recursive: true });
       let cfg: Record<string, unknown> = {};
       if (exJ(ePath)) {
-        try { cfg = JSON.parse(await rfJ(ePath, 'utf-8')) as Record<string, unknown>; } catch { /* corrupt — overwrite */ }
+        try {
+          cfg = JSON.parse(await rfJ(ePath, 'utf-8')) as Record<string, unknown>;
+        } catch {
+          try { await (await import('node:fs/promises')).rename(ePath, ePath + '.bak'); } catch { /* backup failed */ }
+        }
       }
       // Update or create the cachly entry with the shared instance ID
       const servers = (cfg['mcpServers'] ?? {}) as Record<string, unknown>;
@@ -1740,9 +1758,46 @@ if (process.argv[2] === 'health') {
         signal: AbortSignal.timeout(5000),
       });
       if (instRes.ok) {
-        const inst = await instRes.json() as { name?: string; status?: string };
+        const inst = await instRes.json() as { name?: string; status?: string; host?: string; port?: number; tls_enabled?: boolean };
         if (inst.status === 'running') {
           ok(`Instance "${inst.name}" (${instanceId.slice(0, 8)}…) is running`);
+          // Attempt actual Redis PING to verify connectivity end-to-end
+          console.log('\n🔌 Redis connectivity');
+          if (inst.host && inst.port) {
+            try {
+              let pingPassword: string | undefined;
+              let pingTls = inst.tls_enabled !== false;
+              try {
+                const connRes = await fetch(`${apiUrl}/api/v1/instances/${instanceId}/connection`, {
+                  headers: { Authorization: `Bearer ${jwt}`, Accept: 'application/json' },
+                  signal: AbortSignal.timeout(5000),
+                });
+                if (connRes.ok) {
+                  const conn = await connRes.json() as { password?: string; tls_enabled?: boolean };
+                  pingPassword = conn.password;
+                  pingTls = conn.tls_enabled !== false;
+                }
+              } catch { /* proceed without password */ }
+              const pingClient = new Redis({
+                host: inst.host, port: inst.port,
+                password: pingPassword,
+                ...(pingTls ? { tls: {} } : {}),
+                lazyConnect: true, connectTimeout: 5000, retryStrategy: () => null,
+              });
+              await pingClient.connect();
+              const pong = await pingClient.ping();
+              pingClient.disconnect();
+              if (pong === 'PONG') {
+                ok(`Redis PING → PONG (${inst.host}:${inst.port})`);
+              } else {
+                warn(`Redis responded but not PONG: ${pong}`);
+              }
+            } catch (pingErr) {
+              fail(`Redis unreachable — ${(pingErr as Error).message}`);
+            }
+          } else {
+            warn('Instance has no host/port yet');
+          }
         } else {
           warn(`Instance "${inst.name}" status: ${inst.status}`);
         }

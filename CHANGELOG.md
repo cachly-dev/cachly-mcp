@@ -7,6 +7,16 @@
 
 ---
 
+## [0.10.22] – 2026-05-14
+
+### Activation telemetry, health Redis ping, join backup
+
+- **`first_call_success` telemetry**: fires once per process on the first successful brain/context tool call. Combined with `setup_started → device_flow_completed → first_call_success`, the full activation funnel is now visible.
+- **`cachly health` Redis PING**: section 3 now opens an actual Redis connection and sends `PING` — verifies end-to-end connectivity, not just instance metadata.
+- **`cachly join` corrupt JSON**: backs up corrupted config files to `.bak` before overwriting, matching the `mergeMcpConfig` behavior.
+
+---
+
 ## [0.10.21] – 2026-05-14
 
 ### Stability hardening — corrupt configs, silent auth failures, upgrade validation
