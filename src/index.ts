@@ -1488,8 +1488,21 @@ if (process.argv[2] === 'demo') {
   console.log('│  \x1b[32m   No more re-explaining. No more repeated mistakes.\x1b[0m         │');
   console.log('└─────────────────────────────────────────────────────────────┘');
   console.log('');
+  // Generate shareable preview URL with encoded stats
+  const previewParams = new URLSearchParams({
+    repo: projectName,
+    commits: String(commits.length),
+    lessons: String(totalLessons),
+    level: brainLevelName,
+    authors: String(authors.size),
+    hours: String(hoursWasted),
+  });
+  const previewURL = `https://cachly.dev/preview?${previewParams.toString()}`;
+
   console.log('  \x1b[1mMake this permanent (free, 1–5 minutes):\x1b[0m');
   console.log('  \x1b[32m$ npx @cachly-dev/mcp-server@latest setup\x1b[0m');
+  console.log('');
+  console.log(`  \x1b[90m🔗 Shareable preview:\x1b[0m \x1b[36m${previewURL}\x1b[0m`);
   console.log('');
   console.log('  Works with: Claude Code · Cursor · Windsurf · Copilot · Cline · Zed');
   console.log('  Free forever · GDPR · German servers · No credit card');

@@ -1419,6 +1419,33 @@ export async function handleBrainTool(
       }
 
       const durationStr = durationMin !== undefined ? ` · ${durationMin} min` : '';
+      const totalAutoLearned = autoLearned.length + ambientLearned.length;
+
+      // ── Shareable Session Summary Card ────────────────────────────────────────
+      // Generated after each session so the user can share their progress.
+      const tweetLines: string[] = [];
+      if (durationMin !== undefined && durationMin > 0) tweetLines.push(`⏱ ${durationMin} min session`);
+      if (totalAutoLearned > 0) tweetLines.push(`🧠 ${totalAutoLearned} lessons saved to Brain`);
+      if (files_changed.length > 0) tweetLines.push(`📁 ${files_changed.length} file${files_changed.length > 1 ? 's' : ''} changed`);
+      const tweetBody = tweetLines.length > 0
+        ? `${tweetLines.join(' · ')}\n\nMy AI Brain remembers this so I never repeat it. @cachlydev\ncachly.dev`
+        : `Session saved to my AI Brain. No more re-explaining this tomorrow. @cachlydev\ncachly.dev`;
+      const tweetURL = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetBody)}`;
+
+      const sessionCard = [
+        ``,
+        `┌─────────────────────────────────────────────┐`,
+        `│  🧠 Session Summary Card                    │`,
+        `│  Share your progress — cached forever       │`,
+        `├─────────────────────────────────────────────┤`,
+        durationMin !== undefined ? `│  ⏱  Duration   : ${String(durationMin + ' min').padEnd(26)}│` : '',
+        totalAutoLearned > 0     ? `│  📚 Learned    : ${String(totalAutoLearned + ' lessons').padEnd(26)}│` : '',
+        files_changed.length > 0 ? `│  📁 Changed    : ${String(files_changed.length + ' file' + (files_changed.length > 1 ? 's' : '')).padEnd(26)}│` : '',
+        `├─────────────────────────────────────────────┤`,
+        `│  📣 Share: ${tweetURL.slice(0, 34).padEnd(34)}│`,
+        `└─────────────────────────────────────────────┘`,
+      ].filter(l => l !== '').join('\n');
+
       return [
         `✅ **Session saved**${durationStr}`,
         ``,
@@ -1427,6 +1454,7 @@ export async function handleBrainTool(
         lessons_learned !== undefined ? `🧠 **Lessons stored:** ${lessons_learned}` : '',
         autoLearned.length > 0 ? `🤖 **Auto-learned:** ${autoLearned.length} lessons extracted from summary (${autoLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${autoLearned.length > 3 ? '…' : ''})` : '',
         ambientLearned.length > 0 ? `🌿 **Ambient git learning:** ${ambientLearned.length} commit${ambientLearned.length > 1 ? 's' : ''} auto-learned (${ambientLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${ambientLearned.length > 3 ? '…' : ''})` : '',
+        sessionCard,
         ``,
         `💡 Next session: \`session_start(focus="...")\` to see this summary.`,
       ].filter(l => l !== '').join('\n');
