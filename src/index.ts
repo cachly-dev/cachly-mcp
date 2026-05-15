@@ -554,13 +554,23 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       _firstCallSuccessSent = true;
       sendFunnelEvent('first_call_success', { tool: name, instance_id: args.instance_id ?? _defaultInstanceId ?? '' });
     }
-    // Track recall_best_solution separately so Telegram reports + BrainRecallCount work.
-    // Send JWT in both fields so the backend recognises cky_live_... keys via api_key fallback.
-    if (name === 'recall_best_solution' && JWT) {
-      sendFunnelEvent('recall_best_solution', {
-        api_key: JWT,
-        instance_id: args.instance_id ?? _defaultInstanceId ?? '',
-      });
+    // Per-tool telemetry — fires after every successful brain tool call.
+    // api_key carries the cky_live_... token so the backend can resolve tenant + increment counters.
+    const instanceId = (args.instance_id as string | undefined) ?? _defaultInstanceId ?? '';
+    const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
+    if (name === 'recall_best_solution') {
+      // recall_best_solution → increments BrainRecallCount + triggers level-up logic
+      sendFunnelEvent('recall_best_solution', telemetryExtra);
+    } else if (name === 'learn_from_attempts') {
+      sendFunnelEvent('learn_from_attempts', telemetryExtra);
+    } else if (name === 'session_start') {
+      sendFunnelEvent('session_start', telemetryExtra);
+    } else if (name === 'session_end') {
+      sendFunnelEvent('session_end', telemetryExtra);
+    } else if (name === 'smart_recall') {
+      sendFunnelEvent('smart_recall', telemetryExtra);
+    } else if (name === 'brain_from_git') {
+      sendFunnelEvent('brain_from_git', telemetryExtra);
     }
     return brainResult;
   }
