@@ -6,6 +6,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@cachly-dev/mcp-server">
     <img src="https://img.shields.io/npm/v/@cachly-dev/mcp-server?color=violet&logo=npm" alt="npm version" />
+[![SafeSkill 65/100](https://img.shields.io/badge/SafeSkill-65%2F100_Use%20with%20Caution-orange)](https://safeskill.dev/scan/cachly-dev-cachly-mcp)
   </a>
   &nbsp;
   <a href="https://www.npmjs.com/package/@cachly-dev/mcp-server">
