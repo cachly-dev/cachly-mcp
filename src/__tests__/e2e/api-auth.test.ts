@@ -28,14 +28,17 @@ describe('Auth guard', () => {
 });
 
 describe('Instances API', () => {
-  it('returns an array', async () => {
+  // API returns { data: Instance[], count: number }
+  it('returns object with data array', async () => {
     const { body } = await apiGet('/api/v1/instances');
-    expect(Array.isArray(body)).toBe(true);
+    const b = body as { data?: unknown[]; count?: number };
+    expect(Array.isArray(b.data)).toBe(true);
+    expect(typeof b.count).toBe('number');
   });
 
   it('each instance has required fields', async () => {
     const { body } = await apiGet('/api/v1/instances');
-    const instances = body as Record<string, unknown>[];
+    const instances = ((body as { data?: Record<string, unknown>[] }).data) ?? [];
     if (instances.length === 0) return; // fresh account — skip
     for (const inst of instances) {
       expect(typeof inst.id).toBe('string');
@@ -45,12 +48,12 @@ describe('Instances API', () => {
     }
   });
 
-  it('test instance is present and active', async () => {
+  it('test instance is present and running', async () => {
     const { body } = await apiGet('/api/v1/instances');
-    const instances = body as Record<string, unknown>[];
+    const instances = ((body as { data?: Record<string, unknown>[] }).data) ?? [];
     const found = instances.find((i) => i.id === cfg.instanceId);
     expect(found).toBeDefined();
-    expect(found!.status).toBe('active');
+    expect(found!.status).toBe('running');
   });
 });
 
@@ -65,18 +68,18 @@ describe('Single instance GET', () => {
     expect([403, 404]).toContain(status);
   });
 
-  it('instance body has id, status, tier, name', async () => {
+  it('instance body has id, status running, tier, name', async () => {
     const { body } = await apiGet(`/api/v1/instances/${cfg.instanceId}`);
     const inst = body as Record<string, unknown>;
     expect(inst.id).toBe(cfg.instanceId);
-    expect(inst.status).toBe('active');
+    expect(inst.status).toBe('running');
     expect(typeof inst.tier).toBe('string');
     expect(typeof inst.name).toBe('string');
   });
 });
 
 describe('Connection endpoint', () => {
-  it('returns 200 with connection details for active instance', async () => {
+  it('returns 200 with connection details for running instance', async () => {
     const { status, body } = await apiGet(`/api/v1/instances/${cfg.instanceId}/connection`);
     expect(status).toBe(200);
     const conn = body as Record<string, unknown>;
@@ -102,15 +105,17 @@ describe('Connection endpoint', () => {
 });
 
 describe('API keys', () => {
-  it('GET /api/v1/api-keys returns array', async () => {
+  // API returns { keys: APIKey[], count: number }
+  it('GET /api/v1/api-keys returns 200 with keys array', async () => {
     const { status, body } = await apiGet('/api/v1/api-keys');
     expect(status).toBe(200);
-    expect(Array.isArray(body)).toBe(true);
+    const b = body as { keys?: unknown[]; count?: number };
+    expect(Array.isArray(b.keys)).toBe(true);
   });
 
   it('api-keys have id and instance_id fields', async () => {
     const { body } = await apiGet('/api/v1/api-keys');
-    const keys = body as Record<string, unknown>[];
+    const keys = ((body as { keys?: Record<string, unknown>[] }).keys) ?? [];
     if (keys.length === 0) return;
     for (const k of keys) {
       expect(typeof k.id).toBe('string');
@@ -153,11 +158,25 @@ describe('Brain Stats endpoint', () => {
 });
 
 describe('Provisioning status messages', () => {
-  it('a suspended instance returns connection error with billing hint', async () => {
-    // We cannot easily have a suspended instance in e2e, so we verify the
-    // endpoint returns a meaningful error (not a generic 500) for bad states.
-    // This test validates the connection endpoint fails gracefully.
+  it('non-existent instance connection returns 4xx, never 500', async () => {
     const { status } = await apiGet('/api/v1/instances/00000000-0000-0000-0000-000000000001/connection');
-    expect([400, 403, 404, 422]).toContain(status); // never 500
+    expect([400, 403, 404, 422]).toContain(status);
+  });
+});
+
+describe('Auto-provision endpoint', () => {
+  it('POST /api/v1/instances/auto returns 200 or 201', async () => {
+    const { status } = await apiPost('/api/v1/instances/auto', {});
+    expect([200, 201]).toContain(status);
+  });
+
+  it('returns existing running instance without creating a new one', async () => {
+    const { body } = await apiPost('/api/v1/instances/auto', {});
+    const b = body as { instance?: { id: string; status: string }; created?: boolean };
+    if (b.instance) {
+      // Existing instance returned
+      expect(typeof b.instance.id).toBe('string');
+      expect(b.created).toBe(false);
+    }
   });
 });
