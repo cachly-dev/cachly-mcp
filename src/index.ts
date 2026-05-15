@@ -554,6 +554,14 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       _firstCallSuccessSent = true;
       sendFunnelEvent('first_call_success', { tool: name, instance_id: args.instance_id ?? _defaultInstanceId ?? '' });
     }
+    // Track recall_best_solution separately so Telegram reports + BrainRecallCount work.
+    // Send JWT in both fields so the backend recognises cky_live_... keys via api_key fallback.
+    if (name === 'recall_best_solution' && JWT) {
+      sendFunnelEvent('recall_best_solution', {
+        api_key: JWT,
+        instance_id: args.instance_id ?? _defaultInstanceId ?? '',
+      });
+    }
     return brainResult;
   }
 
