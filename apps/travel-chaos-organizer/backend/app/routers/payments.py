@@ -44,6 +44,8 @@ async def create_checkout(
         **({"customer_email": customer_email} if customer_email else {}),
         metadata={"user_id": uid},
     )
+    from app.services import telemetry
+    await telemetry.track(db, uid, "stripe_checkout_initiated", {"price_id": s.stripe_pro_price_id})
     return {"checkout_url": session.url, "session_id": session.id}
 
 
@@ -80,6 +82,10 @@ async def stripe_webhook(request: Request, db: Annotated[AsyncSession, Depends(g
                 {"uid": uid, "exp": expires_at, "now": datetime.now(timezone.utc)},
             )
             await db.commit()
+            from app.services import telemetry as tel_svc
+            from app.services import notifier as notifier_svc
+            await tel_svc.track(db, uid, "stripe_payment_completed", {"amount": obj.get("amount_total"), "currency": obj.get("currency")})
+            await notifier_svc.notify("tco", "stripe_payment", {"user_id": uid, "amount": obj.get("amount_total"), "currency": obj.get("currency")})
 
     elif event["type"] in ("customer.subscription.deleted", "customer.subscription.paused"):
         # Downgrade when subscription cancelled

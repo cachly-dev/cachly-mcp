@@ -26,6 +26,14 @@ async def me(
     )
     await db.commit()
 
+    row_check = await db.execute(text("SELECT created_at, updated_at FROM users WHERE id = :uid"), {"uid": uid})
+    user_row = row_check.fetchone()
+    # Track first login (created_at == updated_at means fresh insert)
+    if user_row and str(user_row[0])[:19] == str(user_row[1])[:19]:
+        from app.services import telemetry, notifier
+        await telemetry.track(db, uid, "user_first_login", {"uid": uid})
+        await notifier.notify("tco", "new_user", {"uid": uid[:8] + "..."})
+
     row = await db.execute(
         text("""
             SELECT id, email, plan, plan_expires_at, created_at

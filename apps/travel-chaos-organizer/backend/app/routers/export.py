@@ -36,6 +36,9 @@ async def export_trip_pdf(
     )
     items = [dict(r._mapping) for r in items_row.fetchall()]
 
+    from app.services import telemetry
+    await telemetry.track(db, uid, "pdf_export", {"trip_id": str(trip_id), "item_count": len(items)})
+
     pdf_bytes = _build_pdf(trip, items)
     filename = f"trip-{trip['name'].replace(' ', '_')[:40]}.pdf"
     return StreamingResponse(
