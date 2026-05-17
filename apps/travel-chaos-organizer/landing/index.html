@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Travel Chaos Organizer — Reisedokumente. Endlich im Griff.</title>
+  <meta name="description" content="KI liest deine Tickets, PDFs und Screenshots und baut daraus eine saubere Timeline. Selbst gehostet, offline-fähig, open source." />
+  <meta property="og:title" content="Travel Chaos Organizer" />
+  <meta property="og:description" content="Wirf dein Reisechaos rein. Bekomme eine saubere Timeline heraus." />
+  <meta property="og:type" content="website" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f0f1a;
+      --bg2:      #1a1a2e;
+      --bg3:      #12122a;
+      --border:   #2a2a4e;
+      --accent:   #4f46e5;
+      --accent2:  #7c3aed;
+      --glow:     #4f46e533;
+      --text:     #e2e8f0;
+      --muted:    #6666aa;
+      --faint:    #3a3a5e;
+      --purple:   #a5b4fc;
+      --green:    #34d399;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ── Util ── */
+    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
+    .hidden { display: none !important; }
+
+    /* ── Nav ── */
+    nav {
+      position: sticky; top: 0; z-index: 100;
+      background: #0f0f1acc; backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 0;
+    }
+    .nav-inner {
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .nav-logo {
+      font-size: 18px; font-weight: 800; color: var(--text);
+      text-decoration: none; display: flex; align-items: center; gap: 8px;
+    }
+    .nav-logo span { color: var(--purple); }
+    .nav-right { display: flex; align-items: center; gap: 12px; }
+    .lang-btn {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
+      transition: all .2s;
+    }
+    .lang-btn:hover, .lang-btn.active {
+      border-color: var(--accent); color: var(--purple);
+    }
+    .nav-cta {
+      background: var(--accent); color: #fff; text-decoration: none;
+      padding: 8px 20px; border-radius: 8px; font-size: 14px; font-weight: 600;
+      transition: opacity .2s;
+    }
+    .nav-cta:hover { opacity: .85; }
+
+    /* ── Hero ── */
+    .hero {
+      padding: 100px 0 80px;
+      text-align: center;
+      background: radial-gradient(ellipse 80% 50% at 50% -10%, #4f46e518 0%, transparent 70%);
+    }
+    .hero-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: var(--glow); border: 1px solid #4f46e544;
+      color: var(--purple); font-size: 13px; font-weight: 600;
+      padding: 6px 16px; border-radius: 99px; margin-bottom: 32px;
+    }
+    .hero-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+    h1 {
+      font-size: clamp(36px, 6vw, 72px);
+      font-weight: 900;
+      line-height: 1.08;
+      letter-spacing: -2px;
+      margin-bottom: 24px;
+    }
+    h1 em { font-style: normal; color: var(--purple); }
+    .hero-sub {
+      font-size: clamp(16px, 2.2vw, 22px);
+      color: var(--muted);
+      max-width: 600px;
+      margin: 0 auto 44px;
+      line-height: 1.55;
+    }
+    .hero-actions {
+      display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;
+    }
+    .btn-primary {
+      background: var(--accent); color: #fff; text-decoration: none;
+      padding: 16px 36px; border-radius: 12px; font-size: 17px; font-weight: 700;
+      transition: transform .15s, box-shadow .15s;
+      box-shadow: 0 4px 24px #4f46e555;
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 32px #4f46e566; }
+    .btn-secondary {
+      background: var(--bg2); color: var(--text); text-decoration: none;
+      padding: 16px 36px; border-radius: 12px; font-size: 17px; font-weight: 600;
+      border: 1px solid var(--border); transition: border-color .2s;
+    }
+    .btn-secondary:hover { border-color: var(--accent); }
+
+    /* ── Phone mockup ── */
+    .mockup-wrap {
+      margin: 72px auto 0;
+      max-width: 340px;
+      position: relative;
+    }
+    .phone {
+      background: var(--bg2);
+      border: 2px solid var(--border);
+      border-radius: 40px;
+      padding: 12px;
+      box-shadow: 0 40px 80px #00000088, 0 0 0 1px #ffffff08;
+      position: relative;
+      overflow: hidden;
+    }
+    .phone::before {
+      content: '';
+      position: absolute; top: 0; left: 50%; transform: translateX(-50%);
+      width: 100px; height: 28px; background: var(--bg);
+      border-radius: 0 0 20px 20px; z-index: 2;
+    }
+    .phone-screen {
+      background: var(--bg); border-radius: 30px; overflow: hidden;
+      min-height: 580px; display: flex; flex-direction: column;
+    }
+    .ps-header {
+      background: var(--bg2); padding: 48px 16px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .ps-header-title { font-size: 17px; font-weight: 700; }
+    .ps-timeline { padding: 14px 12px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
+    .ps-item {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 12px; padding: 12px 14px;
+      display: flex; align-items: center; gap: 12px;
+    }
+    .ps-item-icon {
+      width: 36px; height: 36px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 18px; flex-shrink: 0;
+    }
+    .ps-item-icon.flight { background: #4f46e522; }
+    .ps-item-icon.hotel  { background: #7c3aed22; }
+    .ps-item-icon.train  { background: #06b6d422; }
+    .ps-item-body { flex: 1; min-width: 0; }
+    .ps-item-title { font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ps-item-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .ps-item-ref { font-size: 10px; color: var(--purple); font-family: monospace; margin-top: 3px; }
+    .ps-upload {
+      background: var(--bg2); border-top: 1px solid var(--border);
+      padding: 10px 12px; display: flex; gap: 8px;
+    }
+    .ps-upload-btn {
+      flex: 1; background: var(--bg); border: 1px solid var(--border);
+      border-radius: 10px; padding: 8px 6px; text-align: center;
+      font-size: 10px; color: var(--muted);
+    }
+    .ps-upload-btn span { display: block; font-size: 16px; margin-bottom: 2px; }
+    .glow-ring {
+      position: absolute; inset: -2px; border-radius: 42px;
+      background: conic-gradient(from 0deg, transparent 60%, #4f46e588, transparent 80%);
+      animation: spin 6s linear infinite;
+      z-index: -1;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Problem ── */
+    .section { padding: 96px 0; }
+    .section-label {
+      font-size: 11px; font-weight: 700; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--accent); margin-bottom: 12px;
+    }
+    .section-title {
+      font-size: clamp(28px, 4vw, 48px);
+      font-weight: 800; letter-spacing: -1px; line-height: 1.15;
+      margin-bottom: 20px;
+    }
+    .section-sub { font-size: 18px; color: var(--muted); max-width: 560px; line-height: 1.6; }
+
+    .chaos-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 16px; margin-top: 56px;
+    }
+    .chaos-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 16px; padding: 24px;
+      transition: border-color .2s;
+    }
+    .chaos-card:hover { border-color: var(--accent); }
+    .chaos-emoji { font-size: 32px; margin-bottom: 14px; }
+    .chaos-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+    .chaos-text { font-size: 14px; color: var(--muted); line-height: 1.5; }
+
+    /* ── How it works ── */
+    .how-bg { background: var(--bg2); }
+    .steps {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 32px; margin-top: 64px;
+    }
+    .step { text-align: center; }
+    .step-num {
+      width: 52px; height: 52px; border-radius: 50%;
+      background: var(--glow); border: 1px solid #4f46e544;
+      color: var(--purple); font-size: 20px; font-weight: 800;
+      display: flex; align-items: center; justify-content: center;
+      margin: 0 auto 20px;
+    }
+    .step-icon { font-size: 36px; margin-bottom: 16px; }
+    .step-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .step-text { font-size: 14px; color: var(--muted); line-height: 1.6; }
+    .step-arrow {
+      display: none;
+      color: var(--faint); font-size: 24px; align-self: center; text-align: center;
+    }
+    @media (min-width: 900px) {
+      .steps { grid-template-columns: 1fr 40px 1fr 40px 1fr; }
+      .step-arrow { display: flex; justify-content: center; }
+    }
+
+    /* ── Features ── */
+    .features-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 20px; margin-top: 64px;
+    }
+    .feat {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 16px; padding: 28px;
+    }
+    .feat-icon { font-size: 28px; margin-bottom: 16px; }
+    .feat-title { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+    .feat-text { font-size: 14px; color: var(--muted); line-height: 1.6; }
+    .feat.highlight { border-color: #4f46e544; background: var(--glow); }
+
+    /* ── Cachly integration ── */
+    .cachly-section {
+      background: linear-gradient(135deg, #1a1a2e 0%, #12122a 100%);
+      border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+    }
+    .cachly-inner {
+      display: flex; align-items: center; gap: 64px; flex-wrap: wrap;
+    }
+    .cachly-text-col { flex: 1; min-width: 280px; }
+    .cachly-badge-col { flex-shrink: 0; }
+    .cachly-pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: #4f46e522; border: 1px solid #4f46e544;
+      color: var(--purple); font-size: 12px; font-weight: 700; letter-spacing: 1px;
+      padding: 5px 14px; border-radius: 99px; margin-bottom: 20px;
+      text-transform: uppercase;
+    }
+    .cachly-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+    .cachly-badge-card {
+      background: var(--bg2); border: 1px solid #4f46e544;
+      border-radius: 20px; padding: 28px 32px; text-align: center; min-width: 220px;
+    }
+    .cachly-badge-logo {
+      font-size: 32px; font-weight: 900; color: var(--purple);
+      letter-spacing: -1px; margin-bottom: 6px;
+    }
+    .cachly-badge-sub { font-size: 12px; color: var(--muted); }
+    .cachly-stats {
+      display: flex; gap: 32px; margin-top: 32px; flex-wrap: wrap;
+    }
+    .cachly-stat-val { font-size: 28px; font-weight: 800; color: var(--purple); }
+    .cachly-stat-label { font-size: 13px; color: var(--muted); margin-top: 2px; }
+
+    /* ── Open source ── */
+    .oss-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: 20px; padding: 48px;
+      display: flex; align-items: center; gap: 48px; flex-wrap: wrap;
+      margin-top: 64px;
+    }
+    .oss-icon { font-size: 64px; }
+    .oss-text { flex: 1; min-width: 260px; }
+    .oss-title { font-size: 24px; font-weight: 800; margin-bottom: 10px; }
+    .oss-sub { font-size: 15px; color: var(--muted); line-height: 1.6; max-width: 480px; }
+    .tag-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
+    .tag {
+      background: var(--bg); border: 1px solid var(--border);
+      color: var(--muted); font-size: 12px; padding: 4px 12px; border-radius: 6px;
+      font-family: monospace;
+    }
+
+    /* ── CTA ── */
+    .cta-section {
+      padding: 100px 0;
+      text-align: center;
+      background: radial-gradient(ellipse 80% 60% at 50% 100%, #4f46e514 0%, transparent 70%);
+    }
+    .cta-title {
+      font-size: clamp(32px, 5vw, 60px);
+      font-weight: 900; letter-spacing: -1.5px; line-height: 1.1;
+      margin-bottom: 20px;
+    }
+    .cta-sub { font-size: 18px; color: var(--muted); margin-bottom: 44px; }
+    .cta-note { font-size: 13px; color: var(--faint); margin-top: 20px; }
+    .cta-note a { color: var(--muted); }
+
+    /* ── Footer ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 32px 0;
+      display: flex; flex-wrap: wrap;
+      align-items: center; justify-content: space-between; gap: 16px;
+    }
+    .footer-copy { font-size: 13px; color: var(--faint); }
+    .footer-links { display: flex; gap: 24px; }
+    .footer-links a { font-size: 13px; color: var(--muted); text-decoration: none; }
+    .footer-links a:hover { color: var(--text); }
+
+    /* ── Responsive ── */
+    @media (max-width: 640px) {
+      .hero { padding: 64px 0 48px; }
+      .section { padding: 64px 0; }
+      .mockup-wrap { max-width: 280px; }
+      .cachly-inner { gap: 32px; }
+      .oss-card { padding: 28px; gap: 24px; }
+    }
+
+    /* ── Scroll animations ── */
+    .fade-up {
+      opacity: 0; transform: translateY(24px);
+      transition: opacity .6s ease, transform .6s ease;
+    }
+    .fade-up.visible { opacity: 1; transform: translateY(0); }
+  </style>
+</head>
+<body>
+
+<!-- ── Nav ── -->
+<nav>
+  <div class="container nav-inner">
+    <a class="nav-logo" href="#">🗺️ Travel Chaos <span>Organizer</span></a>
+    <div class="nav-right">
+      <button class="lang-btn active" onclick="setLang('de')" id="btn-de">DE</button>
+      <button class="lang-btn" onclick="setLang('en')" id="btn-en">EN</button>
+      <a class="nav-cta" href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">
+        <span data-de="GitHub →" data-en="GitHub →">GitHub →</span>
+      </a>
+    </div>
+  </div>
+</nav>
+
+<!-- ── Hero ── -->
+<section class="hero">
+  <div class="container">
+    <div class="hero-badge fade-up">
+      <span class="dot"></span>
+      <span data-de="Open Source · Self-hosted · KI-powered" data-en="Open Source · Self-hosted · AI-powered">Open Source · Self-hosted · KI-powered</span>
+    </div>
+
+    <h1 class="fade-up">
+      <span data-de="Reisechaos rein.<br><em>Saubere Timeline raus.</em>" data-en="Travel chaos in.<br><em>Clean timeline out.</em>">Reisechaos rein.<br><em>Saubere Timeline raus.</em></span>
+    </h1>
+
+    <p class="hero-sub fade-up" data-de="Fotografiere dein Ticket, hänge die Buchungs-E-Mail rein, wirf die PDF-Confirmation rein. Die KI liest alles und baut daraus eine saubere Reise-Timeline — offline, privat, selbst gehostet." data-en="Snap your ticket, paste the booking email, drop in the PDF confirmation. The AI reads everything and builds a clean travel timeline — offline, private, self-hosted.">
+      Fotografiere dein Ticket, hänge die Buchungs-E-Mail rein, wirf die PDF-Confirmation rein. Die KI liest alles und baut daraus eine saubere Reise-Timeline — offline, privat, selbst gehostet.
+    </p>
+
+    <div class="hero-actions fade-up">
+      <a class="btn-primary" href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">
+        <span data-de="Jetzt starten →" data-en="Get started →">Jetzt starten →</span>
+      </a>
+      <a class="btn-secondary" href="#how-it-works">
+        <span data-de="Wie funktioniert's?" data-en="How it works">Wie funktioniert's?</span>
+      </a>
+    </div>
+
+    <!-- Phone mockup -->
+    <div class="mockup-wrap fade-up">
+      <div class="glow-ring"></div>
+      <div class="phone">
+        <div class="phone-screen">
+          <div class="ps-header">
+            <span style="color:var(--accent);font-size:13px">← <span data-de="Zurück" data-en="Back">Zurück</span></span>
+            <span class="ps-header-title">Timeline</span>
+            <span style="font-size:18px">🗑️</span>
+          </div>
+          <div class="ps-timeline">
+            <div class="ps-item">
+              <div class="ps-item-icon flight">✈️</div>
+              <div class="ps-item-body">
+                <div class="ps-item-title">LH 400 · FRA → JFK</div>
+                <div class="ps-item-sub">15. Aug · 10:30 Uhr</div>
+                <div class="ps-item-ref">ABC123</div>
+              </div>
+            </div>
+            <div class="ps-item">
+              <div class="ps-item-icon hotel">🏨</div>
+              <div class="ps-item-body">
+                <div class="ps-item-title">Hilton Midtown New York</div>
+                <div class="ps-item-sub">15.–20. Aug · Check-in 15:00</div>
+                <div class="ps-item-ref">HTL-99281</div>
+              </div>
+            </div>
+            <div class="ps-item">
+              <div class="ps-item-icon train">🚆</div>
+              <div class="ps-item-body">
+                <div class="ps-item-title">Amtrak NYC → Boston</div>
+                <div class="ps-item-sub">20. Aug · 09:15 Uhr</div>
+                <div class="ps-item-ref">TKT-44210</div>
+              </div>
+            </div>
+          </div>
+          <div class="ps-upload">
+            <div class="ps-upload-btn"><span>📄</span>PDF</div>
+            <div class="ps-upload-btn"><span>🖼️</span>Screenshot</div>
+            <div class="ps-upload-btn"><span>📝</span><span data-de="Text" data-en="Text">Text</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Problem ── -->
+<section class="section">
+  <div class="container">
+    <div class="fade-up">
+      <p class="section-label" data-de="Das Problem" data-en="The Problem">Das Problem</p>
+      <h2 class="section-title" data-de="Kennst du das?" data-en="Sound familiar?">Kennst du das?</h2>
+      <p class="section-sub" data-de="Vier Airlines, drei Buchungsportale, sieben E-Mails, zwei PDFs, ein Screenshot aus WhatsApp. Und der Flug geht in 3 Stunden." data-en="Four airlines, three booking portals, seven emails, two PDFs, one WhatsApp screenshot. And the flight's in 3 hours.">
+        Vier Airlines, drei Buchungsportale, sieben E-Mails, zwei PDFs, ein Screenshot aus WhatsApp. Und der Flug geht in 3 Stunden.
+      </p>
+    </div>
+
+    <div class="chaos-grid">
+      <div class="chaos-card fade-up">
+        <div class="chaos-emoji">📧</div>
+        <div class="chaos-title" data-de="E-Mail-Chaos" data-en="Email chaos">E-Mail-Chaos</div>
+        <div class="chaos-text" data-de="Buchungsbestätigungen vergraben in einem Postfach, das niemand mehr öffnet." data-en="Booking confirmations buried in an inbox no one wants to open.">Buchungsbestätigungen vergraben in einem Postfach, das niemand mehr öffnet.</div>
+      </div>
+      <div class="chaos-card fade-up">
+        <div class="chaos-emoji">📸</div>
+        <div class="chaos-title" data-de="Screenshot-Friedhof" data-en="Screenshot graveyard">Screenshot-Friedhof</div>
+        <div class="chaos-text" data-de="Fotos von Anzeigetafeln, Handy-Screenshots, Fotos von Buchungsseiten — alle irgendwo in der Galerie." data-en="Photos of departure boards, phone screenshots, pictures of booking pages — all somewhere in your camera roll.">Fotos von Anzeigetafeln, Handy-Screenshots, Fotos von Buchungsseiten — alle irgendwo in der Galerie.</div>
+      </div>
+      <div class="chaos-card fade-up">
+        <div class="chaos-emoji">🧾</div>
+        <div class="chaos-title" data-de="PDF-Dschungel" data-en="PDF jungle">PDF-Dschungel</div>
+        <div class="chaos-text" data-de="Hotelvoucher, Mietwagen-Confirmation, Versicherungspolice — irgendwo auf dem Gerät, aber wo?" data-en="Hotel voucher, car rental confirmation, insurance policy — somewhere on the device, but where?">Hotelvoucher, Mietwagen-Confirmation, Versicherungspolice — irgendwo auf dem Gerät, aber wo?</div>
+      </div>
+      <div class="chaos-card fade-up">
+        <div class="chaos-emoji">😰</div>
+        <div class="chaos-title" data-de="Stress am Gate" data-en="Gate panic">Stress am Gate</div>
+        <div class="chaos-text" data-de='Flugbegleiter fragt nach der Buchungsnummer. Du tippst hektisch "Ryanair Buchungsbestätigung" in die Suche.' data-en='Flight attendant asks for your booking number. You desperately search "Ryanair booking confirmation" in your email.'>Flugbegleiter fragt nach der Buchungsnummer. Du tippst hektisch "Ryanair Buchungsbestätigung" in die Suche.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── How it works ── -->
+<section class="section how-bg" id="how-it-works">
+  <div class="container">
+    <div class="fade-up" style="text-align:center">
+      <p class="section-label" data-de="So funktioniert's" data-en="How it works">So funktioniert's</p>
+      <h2 class="section-title" data-de="Drei Schritte. Fertig." data-en="Three steps. Done.">Drei Schritte. Fertig.</h2>
+      <p class="section-sub" style="margin:0 auto" data-de="Keine manuelle Eingabe. Kein Abtippen. Die KI übernimmt." data-en="No manual entry. No typing. The AI handles it.">Keine manuelle Eingabe. Kein Abtippen. Die KI übernimmt.</p>
+    </div>
+
+    <div class="steps fade-up">
+      <div class="step">
+        <div class="step-icon">📥</div>
+        <div class="step-num">1</div>
+        <div class="step-title" data-de="Reinwerfen" data-en="Drop it in">Reinwerfen</div>
+        <div class="step-text" data-de="PDF, Screenshot, E-Mail-Text, URL einer Buchungsseite — einfach rein. Alles wird akzeptiert." data-en="PDF, screenshot, email text, booking page URL — just drop it in. Everything is accepted.">PDF, Screenshot, E-Mail-Text, URL einer Buchungsseite — einfach rein. Alles wird akzeptiert.</div>
+      </div>
+      <div class="step-arrow fade-up">→</div>
+      <div class="step">
+        <div class="step-icon">🤖</div>
+        <div class="step-num">2</div>
+        <div class="step-title" data-de="KI analysiert" data-en="AI reads it">KI analysiert</div>
+        <div class="step-text" data-de="Ollama (lokal, privat) erkennt Datum, Uhrzeit, Buchungsnummer, Route, Passagiere, Preis — automatisch." data-en="Ollama (local, private) extracts date, time, booking number, route, passengers, price — automatically.">Ollama (lokal, privat) erkennt Datum, Uhrzeit, Buchungsnummer, Route, Passagiere, Preis — automatisch.</div>
+      </div>
+      <div class="step-arrow fade-up">→</div>
+      <div class="step">
+        <div class="step-icon">✅</div>
+        <div class="step-num">3</div>
+        <div class="step-title" data-de="Saubere Timeline" data-en="Clean timeline">Saubere Timeline</div>
+        <div class="step-text" data-de="Alle Reiseelemente chronologisch sortiert. Tap für Details, QR-Code, Buchungsreferenz — alles sofort griffbereit." data-en="All travel items sorted chronologically. Tap for details, QR code, booking reference — everything at your fingertips.">Alle Reiseelemente chronologisch sortiert. Tap für Details, QR-Code, Buchungsreferenz — alles sofort griffbereit.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Features ── -->
+<section class="section">
+  <div class="container">
+    <div class="fade-up">
+      <p class="section-label" data-de="Features" data-en="Features">Features</p>
+      <h2 class="section-title" data-de="Alles drin. Nichts fehlt." data-en="Everything included.">Alles drin. Nichts fehlt.</h2>
+    </div>
+
+    <div class="features-grid">
+      <div class="feat highlight fade-up">
+        <div class="feat-icon">🧠</div>
+        <div class="feat-title" data-de="KI versteht alles" data-en="AI understands everything">KI versteht alles</div>
+        <div class="feat-text" data-de="Vision-Modell via Ollama: liest Screenshots, PDFs, Text und URLs. Erkennt Flüge, Hotels, Züge, Mietwagen, Aktivitäten." data-en="Vision model via Ollama: reads screenshots, PDFs, text, and URLs. Recognizes flights, hotels, trains, rentals, activities.">Vision-Modell via Ollama: liest Screenshots, PDFs, Text und URLs. Erkennt Flüge, Hotels, Züge, Mietwagen, Aktivitäten.</div>
+      </div>
+      <div class="feat fade-up">
+        <div class="feat-icon">📴</div>
+        <div class="feat-title" data-de="Offline-first" data-en="Offline-first">Offline-first</div>
+        <div class="feat-text" data-de="Lokale SQLite-Datenbank als Mirror. Alle Daten verfügbar — auch ohne Internet. Sync beim nächsten Verbindungsaufbau." data-en="Local SQLite mirror. All data available offline. Syncs when connection is restored.">Lokale SQLite-Datenbank als Mirror. Alle Daten verfügbar — auch ohne Internet.</div>
+      </div>
+      <div class="feat fade-up">
+        <div class="feat-icon">🔒</div>
+        <div class="feat-title" data-de="100% privat" data-en="100% private">100% privat</div>
+        <div class="feat-text" data-de="Selbst gehostet. Deine Reisedaten verlassen nie deine Infrastruktur. Keycloak Auth, kein Cloud-KI-Provider." data-en="Self-hosted. Your travel data never leaves your infrastructure. Keycloak auth, no cloud AI provider.">Selbst gehostet. Deine Reisedaten verlassen nie deine Infrastruktur. Keycloak Auth, kein Cloud-KI-Provider.</div>
+      </div>
+      <div class="feat fade-up">
+        <div class="feat-icon">📱</div>
+        <div class="feat-title" data-de="Native Mobile App" data-en="Native mobile app">Native Mobile App</div>
+        <div class="feat-text" data-de="React Native + Expo. Echte Haptics, Swipe-Gesten, QR-Codes, Share-Intent. iOS und Android." data-en="React Native + Expo. Real haptics, swipe gestures, QR codes, share intent. iOS and Android.">React Native + Expo. Echte Haptics, Swipe-Gesten, QR-Codes, Share-Intent. iOS und Android.</div>
+      </div>
+      <div class="feat fade-up">
+        <div class="feat-icon">🔗</div>
+        <div class="feat-title" data-de="Share-Intent" data-en="Share intent">Share-Intent</div>
+        <div class="feat-text" data-de="Teile ein Dokument direkt aus Mail, Safari oder Files an TCO. Die KI verarbeitet es sofort und ordnet es dem richtigen Trip zu." data-en="Share a document directly from Mail, Safari or Files to TCO. AI processes it instantly and assigns it to the right trip.">Teile ein Dokument direkt aus Mail, Safari oder Files an TCO.</div>
+      </div>
+      <div class="feat fade-up">
+        <div class="feat-icon">🔍</div>
+        <div class="feat-title" data-de="Volltext-Suche" data-en="Full-text search">Volltext-Suche</div>
+        <div class="feat-text" data-de="Suche über alle Trips und Einträge. Findet Buchungsnummern, Flugcodes, Hotelnamen — alles durchsuchbar." data-en="Search across all trips and items. Finds booking numbers, flight codes, hotel names — everything searchable.">Suche über alle Trips und Einträge. Buchungsnummern, Flugcodes, Hotelnamen — alles durchsuchbar.</div>
+      </div>
+    </div>
+
+    <!-- OSS card -->
+    <div class="oss-card fade-up">
+      <div class="oss-icon">⚡</div>
+      <div class="oss-text">
+        <div class="oss-title" data-de="Docker Compose. 60 Sekunden. Fertig." data-en="Docker Compose. 60 seconds. Done.">Docker Compose. 60 Sekunden. Fertig.</div>
+        <div class="oss-sub" data-de="Ein einziger Befehl startet Postgres, Keycloak, Redis und den Backend-Server. Kein Konfigurationsmarathon." data-en="A single command starts Postgres, Keycloak, Redis and the backend. No configuration marathon.">Ein einziger Befehl startet Postgres, Keycloak, Redis und den Backend-Server. Kein Konfigurationsmarathon.</div>
+        <div class="tag-row">
+          <span class="tag">docker compose up</span>
+          <span class="tag">FastAPI</span>
+          <span class="tag">PostgreSQL 16</span>
+          <span class="tag">Keycloak 26</span>
+          <span class="tag">Ollama</span>
+          <span class="tag">Redis 7</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Cachly ── -->
+<section class="section cachly-section">
+  <div class="container">
+    <div class="cachly-inner fade-up">
+      <div class="cachly-text-col">
+        <div class="cachly-pill"><span class="cachly-dot"></span>Powered by Cachly</div>
+        <h2 class="section-title" data-de="Kein zweiter KI-Call für dasselbe Dokument." data-en="No second AI call for the same document.">Kein zweiter KI-Call für dasselbe Dokument.</h2>
+        <p class="section-sub" data-de="TCO nutzt Cachly als Redis-Cache-Schicht. Das Analyse-Ergebnis wird per SHA-256-Content-Hash gespeichert. Lädst du dasselbe Ticket zweimal hoch, antwortet der Cache in Millisekunden — kein Ollama-Call, keine Wartezeit, kein Energieverbrauch." data-en="TCO uses Cachly as its Redis caching layer. Parse results are stored by SHA-256 content hash. Upload the same ticket twice and the cache responds in milliseconds — no Ollama call, no wait, no wasted compute.">
+          TCO nutzt Cachly als Redis-Cache-Schicht. Das Analyse-Ergebnis wird per SHA-256-Content-Hash gespeichert. Lädst du dasselbe Ticket zweimal hoch, antwortet der Cache in Millisekunden.
+        </p>
+        <div class="cachly-stats">
+          <div>
+            <div class="cachly-stat-val">7 Tage</div>
+            <div class="cachly-stat-label" data-de="Cache-TTL" data-en="Cache TTL">Cache-TTL</div>
+          </div>
+          <div>
+            <div class="cachly-stat-val">0 ms</div>
+            <div class="cachly-stat-label" data-de="Bei Cache-Hit" data-en="On cache hit">Bei Cache-Hit</div>
+          </div>
+          <div>
+            <div class="cachly-stat-val">100%</div>
+            <div class="cachly-stat-label" data-de="Optional — App läuft ohne Redis" data-en="Optional — app runs without Redis">Optional</div>
+          </div>
+        </div>
+      </div>
+      <div class="cachly-badge-col">
+        <div class="cachly-badge-card">
+          <div style="font-size:40px;margin-bottom:12px">⚡</div>
+          <div class="cachly-badge-logo">Cachly</div>
+          <div class="cachly-badge-sub" data-de="Redis-Cache für KI-Ergebnisse" data-en="Redis cache for AI results">Redis-Cache für KI-Ergebnisse</div>
+          <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+            <div style="font-size:11px;color:var(--faint);line-height:1.6" data-de="tco:parse:{sha256[:16]}<br>TTL 604800s · optional" data-en="tco:parse:{sha256[:16]}<br>TTL 604800s · optional">
+              tco:parse:{sha256[:16]}<br>TTL 604800s · optional
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA ── -->
+<section class="cta-section">
+  <div class="container">
+    <h2 class="cta-title fade-up" data-de="Bereit, Reisechaos<br>in Ordnung zu bringen?" data-en="Ready to bring order<br>to travel chaos?">Bereit, Reisechaos<br>in Ordnung zu bringen?</h2>
+    <p class="cta-sub fade-up" data-de="Open Source. Self-hosted. Kein Abo. Keine Cloud. Deine Daten." data-en="Open source. Self-hosted. No subscription. No cloud. Your data.">Open Source. Self-hosted. Kein Abo. Keine Cloud. Deine Daten.</p>
+    <div class="hero-actions fade-up">
+      <a class="btn-primary" href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">
+        <span data-de="Auf GitHub ansehen →" data-en="View on GitHub →">Auf GitHub ansehen →</span>
+      </a>
+    </div>
+    <p class="cta-note fade-up">
+      <span data-de="Benötigt: Docker, Ollama, ~10 Min Setup · " data-en="Requires: Docker, Ollama, ~10 min setup · ">Benötigt: Docker, Ollama, ~10 Min Setup · </span>
+      <a href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener" data-de="Dokumentation lesen" data-en="Read the docs">Dokumentation lesen</a>
+    </p>
+  </div>
+</section>
+
+<!-- ── Footer ── -->
+<footer>
+  <div class="container" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:16px;width:100%">
+    <span class="footer-copy">© 2025 Travel Chaos Organizer · <span data-de="MIT Lizenz" data-en="MIT License">MIT Lizenz</span></span>
+    <div class="footer-links">
+      <a href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://cachly.dev" target="_blank" rel="noopener">Cachly</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // ── Language toggle ──
+  let currentLang = 'de';
+
+  function setLang(lang) {
+    currentLang = lang;
+    document.documentElement.lang = lang;
+    document.getElementById('btn-de').classList.toggle('active', lang === 'de');
+    document.getElementById('btn-en').classList.toggle('active', lang === 'en');
+
+    document.querySelectorAll('[data-de][data-en]').forEach(el => {
+      el.innerHTML = el.dataset[lang];
+    });
+  }
+
+  // ── Scroll fade-in ──
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) {
+        e.target.classList.add('visible');
+        observer.unobserve(e.target);
+      }
+    });
+  }, { threshold: 0.12 });
+
+  document.querySelectorAll('.fade-up').forEach(el => observer.observe(el));
+</script>
+</body>
+</html>
