@@ -9,9 +9,9 @@ const config: ExpoConfig = {
     policy: "appVersion",
   },
   orientation: "portrait",
-  icon: "./assets/icon.png",
+  icon: "./assets/icon.svg",
   splash: {
-    image: "./assets/splash.png",
+    image: "./assets/splash.svg",
     backgroundColor: "#0f0f1a",
   },
   updates: {
@@ -27,7 +27,7 @@ const config: ExpoConfig = {
   android: {
     package: "dev.cachly.tco",
     adaptiveIcon: {
-      foregroundImage: "./assets/adaptive-icon.png",
+      foregroundImage: "./assets/adaptive-icon.svg",
       backgroundColor: "#0f0f1a",
     },
   },
@@ -40,7 +40,7 @@ const config: ExpoConfig = {
     [
       "expo-notifications",
       {
-        icon: "./assets/icon.png",
+        icon: "./assets/icon.svg",
         color: "#4f46e5",
         sounds: [],
       },

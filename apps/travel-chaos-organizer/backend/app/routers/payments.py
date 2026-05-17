@@ -38,7 +38,7 @@ async def create_checkout(
     session = stripe.checkout.Session.create(
         mode="subscription",
         line_items=[{"price": s.stripe_pro_price_id, "quantity": 1}],
-        success_url=s.stripe_success_url,
+        success_url=s.stripe_success_url + "?session_id={CHECKOUT_SESSION_ID}",
         cancel_url=s.stripe_cancel_url,
         client_reference_id=uid,
         **({"customer_email": customer_email} if customer_email else {}),

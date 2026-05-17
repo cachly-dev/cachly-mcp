@@ -74,6 +74,8 @@ export default function AppLayout() {
         }}
       />
       <Tabs.Screen name="trips/[id]" options={{ href: null }} />
+      <Tabs.Screen name="upgrade/success" options={{ href: null }} />
+      <Tabs.Screen name="upgrade/cancel" options={{ href: null }} />
     </Tabs>
   );
 }

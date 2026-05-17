@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1284" height="2778" viewBox="0 0 1284 2778">
+  <rect width="1284" height="2778" fill="#0f0f1a"/>
+  <radialGradient id="g" cx="642" cy="1389" r="400" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#4f46e5" stop-opacity="0.25"/>
+    <stop offset="1" stop-color="#4f46e5" stop-opacity="0"/>
+  </radialGradient>
+  <circle cx="642" cy="1389" r="400" fill="url(#g)"/>
+  <g transform="translate(642,1330)">
+    <polygon points="-110,-80 160,0 -110,80 -40,0" fill="#ffffff"/>
+    <polygon points="-110,80 -40,0 -110,20" fill="#a5b4fc"/>
+    <polygon points="-110,-80 -40,0 20,-60" fill="#e0e7ff" opacity="0.6"/>
+  </g>
+  <text x="642" y="1510" font-family="system-ui,-apple-system,sans-serif" font-size="120" font-weight="700" fill="#ffffff" text-anchor="middle" letter-spacing="12">TCO</text>
+  <text x="642" y="1590" font-family="system-ui,-apple-system,sans-serif" font-size="40" fill="#6666aa" text-anchor="middle" letter-spacing="3">Travel Chaos Organizer</text>
+</svg>
