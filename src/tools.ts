@@ -1729,6 +1729,138 @@ const TOOLS = [
       required: ['instance_id', 'context'],
     },
   },
+
+  // ── Travel Chaos Organizer (TCO) ─────────────────────────────────────────
+  // Requires TCO_API_URL env var pointing to the TCO FastAPI backend.
+  // Auth is shared with Cachly via the same Keycloak realm (CACHLY_JWT forwarded).
+  {
+    name: 'tco_list_trips',
+    description:
+      'List all travel trips in Travel Chaos Organizer. ' +
+      'Returns trip name, id, and date range. Use tco_get_timeline to see items for a specific trip. ' +
+      'Requires TCO_API_URL to be configured.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'tco_create_trip',
+    description:
+      'Create a new trip in Travel Chaos Organizer. ' +
+      'Dates are optional ISO strings (YYYY-MM-DD). ' +
+      'Returns the new trip id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Trip name, e.g. "Barcelona Sommer 2025"' },
+        description: { type: 'string', description: 'Optional trip description' },
+        start_date: { type: 'string', description: 'Start date (YYYY-MM-DD), optional' },
+        end_date: { type: 'string', description: 'End date (YYYY-MM-DD), optional' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'tco_get_timeline',
+    description:
+      'Get the full timeline (flights, hotels, trains, activities …) for a trip. ' +
+      'Use tco_list_trips first to get the trip_id. ' +
+      'Returns items sorted by event_at with type icon, time, provider, and booking reference.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        trip_id: { type: 'string', description: 'UUID of the trip (from tco_list_trips)' },
+      },
+      required: ['trip_id'],
+    },
+  },
+  {
+    name: 'tco_delete_trip',
+    description: 'Permanently delete a trip and all its timeline items. This is irreversible.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        trip_id: { type: 'string', description: 'UUID of the trip to delete' },
+      },
+      required: ['trip_id'],
+    },
+  },
+  {
+    name: 'tco_inbox_list',
+    description:
+      'List items in the Travel Chaos Organizer Chaos Inbox — unassigned documents, ' +
+      'emails, and PDFs that Ollama has parsed but not yet assigned to a trip. ' +
+      'Use tco_inbox_assign to move them to a trip or tco_inbox_reject to discard.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        status: {
+          type: 'string',
+          enum: ['pending', 'assigned', 'rejected'],
+          description: 'Filter by status (default: pending)',
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'tco_inbox_assign',
+    description:
+      'Assign a Chaos Inbox item to an existing trip, creating a timeline entry. ' +
+      'Use tco_inbox_list to discover inbox_id values and tco_list_trips for trip_ids.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        inbox_id: { type: 'string', description: 'UUID of the inbox item' },
+        trip_id: { type: 'string', description: 'UUID of the target trip' },
+        type: {
+          type: 'string',
+          enum: ['flight', 'train', 'bus', 'hotel', 'rental_car', 'activity', 'transfer', 'document', 'other'],
+          description: 'Item type (default: other)',
+        },
+      },
+      required: ['inbox_id', 'trip_id'],
+    },
+  },
+  {
+    name: 'tco_inbox_reject',
+    description: 'Remove an item from the Chaos Inbox without assigning it to any trip.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        inbox_id: { type: 'string', description: 'UUID of the inbox item to reject' },
+      },
+      required: ['inbox_id'],
+    },
+  },
+  {
+    name: 'tco_parse_url',
+    description:
+      'Fetch a public URL (booking confirmation page, airline URL) and parse it with Ollama AI, ' +
+      'saving the result directly to a trip timeline or the Chaos Inbox. ' +
+      'Useful for quickly importing online booking confirmations without uploading a file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'Public URL to fetch and parse' },
+        trip_id: { type: 'string', description: 'Trip UUID to assign to directly (omit to send to Chaos Inbox)' },
+      },
+      required: ['url'],
+    },
+  },
+  {
+    name: 'tco_import_email',
+    description:
+      'Import a raw email (paste the full email text including headers) into Travel Chaos Organizer. ' +
+      'Ollama strips headers, parses travel data (flights, hotels, bookings), and saves to inbox or trip. ' +
+      'Ideal for forwarding booking confirmation emails directly through Claude.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        raw_email: { type: 'string', description: 'Full email text including headers' },
+        trip_id: { type: 'string', description: 'Trip UUID to assign directly (omit to send to Chaos Inbox)' },
+      },
+      required: ['raw_email'],
+    },
+  },
 ] as const;
 
 

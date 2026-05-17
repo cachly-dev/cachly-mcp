@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { jwtExpiryMs, checkJwt, handleApiError } from './auth.js';
+import { handleTcoTool, TCO_TOOL_NAMES } from './handlers/tco.js';
 import { readFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -30,11 +31,24 @@ import { join } from 'node:path';
  * ── Auth & Status ────────────────────────────────────────────────────────────
  *   • get_api_status        – check API health + JWT auth info (Keycloak)
  *
+ * ── Travel Chaos Organizer (TCO) ────────────────────────────────────────────
+ *   • tco_list_trips    – list all trips
+ *   • tco_create_trip   – create a new trip
+ *   • tco_get_timeline  – get timeline items for a trip
+ *   • tco_delete_trip   – delete a trip
+ *   • tco_inbox_list    – list Chaos Inbox items
+ *   • tco_inbox_assign  – assign inbox item to a trip
+ *   • tco_inbox_reject  – reject/discard an inbox item
+ *   • tco_parse_url     – fetch a URL and parse with Ollama
+ *   • tco_import_email  – import raw email text
+ *   (Requires TCO_API_URL env var; auth forwarded from CACHLY_JWT — same Keycloak realm)
+ *
  * Configuration (env vars):
  *   CACHLY_API_URL      – default https://api.cachly.dev
  *   CACHLY_JWT          – your JWT (Keycloak access token)
  *   CACHLY_EMBED_PROVIDER – embedding backend: openai (default), gemini, mistral, cohere, ollama, cachly (server fallback)
  *   CACHLY_EMBED_MODEL  – override embedding model (optional)
+ *   TCO_API_URL         – Travel Chaos Organizer backend URL (optional, enables tco_* tools)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -607,6 +621,10 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
   const fedbrainResult = await handleFedbrainTool(name, args, getConnection, apiFetch);
   if (fedbrainResult !== null) return fedbrainResult;
+
+  // Delegate Travel Chaos Organizer tools (requires TCO_API_URL env var)
+  const tcoResult = await handleTcoTool(name, args, JWT ?? '');
+  if (tcoResult !== null) return tcoResult;
 
   switch (name) {
     // ── Instance management ──────────────────────────────────────────────
