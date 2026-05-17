@@ -4,6 +4,7 @@ No-op when RESEND_API_KEY is not set.
 """
 import os
 from typing import Any
+from app.config import get_settings
 
 
 def _configured() -> bool:
@@ -31,6 +32,21 @@ async def send_waitlist_welcome(to_email: str) -> None:
             )
     except Exception:
         pass
+
+
+async def _send(to: str, subject: str, html: str) -> None:
+    """Generic send — used by drip and other services."""
+    s = get_settings()
+    if not s.resend_api_key:
+        return
+    import httpx
+    async with httpx.AsyncClient() as client:
+        await client.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {s.resend_api_key}", "Content-Type": "application/json"},
+            json={"from": s.resend_from, "to": [to], "subject": subject, "html": html},
+            timeout=10,
+        )
 
 
 def _welcome_html(email: str) -> str:

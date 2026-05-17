@@ -7,7 +7,7 @@ import {
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTrips } from "../../hooks/useTrips";
-import { Trip } from "../../lib/api";
+import { Trip, tripsApi } from "../../lib/api";
 import TripCard from "../../components/TripCard";
 import BottomSheet from "../../components/BottomSheet";
 import { TripCardSkeleton } from "../../components/Skeleton";
@@ -15,6 +15,7 @@ import { haptics } from "../../lib/haptics";
 import { scheduleAllTripReminders } from "../../lib/notifications";
 import { useToast } from "../../components/ToastContext";
 import { UpgradeBanner } from "../../components/UpgradeBanner";
+import { TripQRModal } from "../../components/TripQRModal";
 
 type SheetMode = "create" | "edit";
 
@@ -32,9 +33,29 @@ export default function TripsScreen() {
   const [endDate, setEndDate] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<Trip[] | null>(null);
+  const [qrTrip, setQrTrip] = useState<{ id: string; name: string } | null>(null);
+
   useEffect(() => {
     if (trips.length > 0) scheduleAllTripReminders(trips).catch(() => {});
   }, [trips]);
+
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setSearchResults(null);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const results = await tripsApi.search(searchQuery);
+        setSearchResults(results);
+      } catch { setSearchResults([]); }
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchQuery]);
+
+  const displayedTrips = searchResults ?? trips;
 
   function openCreate() {
     haptics.tap();
@@ -109,11 +130,20 @@ export default function TripsScreen() {
       <UpgradeBanner />
       {error && <Text style={s.errorBanner}>Offline — zeige gespeicherte Daten</Text>}
 
+      <TextInput
+        style={searchInputStyle}
+        placeholder="Trips durchsuchen..."
+        placeholderTextColor="#3a3a5e"
+        value={searchQuery}
+        onChangeText={setSearchQuery}
+        clearButtonMode="while-editing"
+      />
+
       <FlatList
-        data={trips}
+        data={displayedTrips}
         keyExtractor={(t) => t.id}
         contentContainerStyle={[
-          trips.length === 0 ? s.emptyContainer : s.list,
+          displayedTrips.length === 0 ? s.emptyContainer : s.list,
           { paddingBottom: insets.bottom + 80 },
         ]}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={refresh} tintColor="#4f46e5" />}
@@ -125,13 +155,32 @@ export default function TripsScreen() {
           </View>
         }
         renderItem={({ item }) => (
-          <TripCard
-            trip={item}
-            onPress={() => router.push(`/(app)/trips/${item.id}`)}
-            onLongPress={() => openEdit(item)}
-          />
+          <View>
+            <TripCard
+              trip={item}
+              onPress={() => router.push(`/(app)/trips/${item.id}`)}
+              onLongPress={() => openEdit(item)}
+            />
+            <TouchableOpacity
+              style={s.qrBtn}
+              onPress={() => setQrTrip({ id: item.id, name: item.name })}
+              accessibilityLabel={`QR-Code für ${item.name}`}
+              accessibilityRole="button"
+            >
+              <Text style={s.qrBtnText}>⊞</Text>
+            </TouchableOpacity>
+          </View>
         )}
       />
+
+      {qrTrip && (
+        <TripQRModal
+          tripId={qrTrip.id}
+          tripName={qrTrip.name}
+          visible={!!qrTrip}
+          onClose={() => setQrTrip(null)}
+        />
+      )}
 
       <TouchableOpacity
         style={[s.fab, { bottom: insets.bottom + 24 }]}
@@ -213,6 +262,19 @@ export default function TripsScreen() {
   );
 }
 
+const searchInputStyle = {
+  backgroundColor: "#1a1a2e",
+  borderRadius: 12,
+  paddingHorizontal: 16,
+  paddingVertical: 12,
+  color: "#fff",
+  fontSize: 15,
+  marginHorizontal: 16,
+  marginBottom: 12,
+  borderWidth: 1,
+  borderColor: "#2a2a4a",
+} as const;
+
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#0f0f1a" },
   list: { padding: 16, gap: 12 },
@@ -241,4 +303,6 @@ const s = StyleSheet.create({
   saveBtn: { paddingVertical: 12, paddingHorizontal: 28, borderRadius: 10, backgroundColor: "#4f46e5", minWidth: 100, alignItems: "center" },
   saveBtnDisabled: { opacity: 0.45 },
   saveText: { color: "#fff", fontWeight: "600", fontSize: 15 },
+  qrBtn: { position: "absolute", bottom: 10, right: 14, padding: 6 },
+  qrBtnText: { color: "#4f46e5", fontSize: 16 },
 });

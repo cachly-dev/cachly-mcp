@@ -56,6 +56,19 @@ export function purgeFailed(maxRetries = 5): void {
   db.runSync("DELETE FROM offline_queue WHERE retries >= ?", [maxRetries]);
 }
 
+/** Alias used by api.ts — enqueue a failed mutation for later replay. */
+export function enqueueRequest(method: QueuedOp["method"], path: string, body?: object): void {
+  enqueue(method, path, body);
+}
+
+/** Alias used by useNetworkSync — drain the queue using stored auth. */
+export async function processQueue(
+  authHeaders: () => Promise<Record<string, string>>,
+  baseUrl: string
+): Promise<{ succeeded: number; failed: number }> {
+  return drainQueue(authHeaders, baseUrl);
+}
+
 export async function drainQueue(
   authHeaders: () => Promise<Record<string, string>>,
   baseUrl: string

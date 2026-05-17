@@ -49,6 +49,13 @@ class Settings(BaseSettings):
     # Upload
     max_upload_bytes: int = 20 * 1024 * 1024  # 20 MB
 
+    # Stripe
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_pro_price_id: str = "price_YOUR_PRICE_ID"
+    stripe_success_url: str = "tco://upgrade/success"
+    stripe_cancel_url: str = "tco://upgrade/cancel"
+
     class Config:
         env_file = ".env"
 
