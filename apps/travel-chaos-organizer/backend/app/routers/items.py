@@ -1,11 +1,12 @@
 import json
 from typing import Annotated
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.keycloak import user_id
 from app.db.database import get_db
+from app.limiter import limiter
 from app.models.schemas import TripItemCreate, TripItemOut, TripItemUpdate
 
 router = APIRouter(prefix="/trips/{trip_id}/items", tags=["items"])
@@ -45,8 +46,10 @@ async def list_items(
     return [_parse_item_row(dict(r._mapping)) for r in result.fetchall()]
 
 
+@limiter.limit("30/minute")
 @router.post("", response_model=TripItemOut, status_code=status.HTTP_201_CREATED)
 async def create_item(
+    request: Request,
     trip_id: UUID,
     body: TripItemCreate,
     uid: Annotated[str, Depends(user_id)],
@@ -76,8 +79,10 @@ async def create_item(
     return _parse_item_row(dict(result.fetchone()._mapping))
 
 
+@limiter.limit("30/minute")
 @router.patch("/{item_id}", response_model=TripItemOut)
 async def update_item(
+    request: Request,
     trip_id: UUID,
     item_id: UUID,
     body: TripItemUpdate,
@@ -105,8 +110,10 @@ async def update_item(
     return _parse_item_row(dict(row._mapping))
 
 
+@limiter.limit("30/minute")
 @router.delete("/{item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_item(
+    request: Request,
     trip_id: UUID,
     item_id: UUID,
     uid: Annotated[str, Depends(user_id)],

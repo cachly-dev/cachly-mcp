@@ -5,7 +5,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTrips } from "../../hooks/useTrips";
-import { inboxApi, InboxItem } from "../../lib/api";
+import { ApiError, inboxApi, InboxItem } from "../../lib/api";
 import { useInbox } from "../../hooks/useInbox";
 import SwipeableInboxItem from "../../components/SwipeableInboxItem";
 import BottomSheet from "../../components/BottomSheet";
@@ -35,9 +35,9 @@ export default function InboxScreen() {
       showToast("Dem Trip zugeordnet ✓", "success");
       setSelected(null);
       await refresh();
-    } catch (err: any) {
+    } catch (err) {
       await haptics.error();
-      if (err?.status === 429) {
+      if (err instanceof ApiError && err.status === 429) {
         showToast("Tageslimit erreicht (50 Parses). Upgrade auf Pro.", "warning");
       } else {
         showToast("Zuordnung fehlgeschlagen", "error");

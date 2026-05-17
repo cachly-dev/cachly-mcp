@@ -189,12 +189,13 @@ CREATE TABLE IF NOT EXISTS chaos_inbox (
 );
 
 CREATE TABLE IF NOT EXISTS users (
-    id              TEXT PRIMARY KEY,
-    email           TEXT,
-    plan            TEXT NOT NULL DEFAULT 'free',
-    plan_expires_at TEXT,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+    id                 TEXT PRIMARY KEY,
+    email              TEXT,
+    plan               TEXT NOT NULL DEFAULT 'free',
+    plan_expires_at    TEXT,
+    stripe_customer_id TEXT,
+    created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS events (

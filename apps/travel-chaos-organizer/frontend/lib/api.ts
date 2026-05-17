@@ -5,6 +5,17 @@ const BASE_URL = process.env.EXPO_PUBLIC_API_URL!;
 
 const MUTATION_METHODS = new Set(["POST", "PATCH", "DELETE"]);
 
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly body: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
 async function authHeaders(): Promise<Record<string, string>> {
   const token = await getAccessToken();
   if (!token) throw new Error("Not authenticated");
@@ -17,17 +28,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers = await authHeaders();
     const res = await fetch(`${BASE_URL}${path}`, { ...init, headers: { ...headers, ...init.headers } });
     if (!res.ok) {
-      const err = await res.text();
-      const error = new Error(`API ${res.status}: ${err}`) as Error & { status: number };
-      (error as any).status = res.status;
-      throw error;
+      const body = await res.text();
+      throw new ApiError(`API ${res.status}: ${body}`, res.status, body);
     }
     return res.json() as Promise<T>;
-  } catch (err: any) {
-    // Network-level failure (no response) — enqueue mutations for later replay
-    if (MUTATION_METHODS.has(method) && !err?.status) {
-      const body = init.body ? JSON.parse(init.body as string) : undefined;
-      enqueueRequest(method as "POST" | "PATCH" | "DELETE", path, body);
+  } catch (err) {
+    // Network error (no status) — queue for offline retry
+    if (!(err instanceof ApiError) && init.method && ["POST","PATCH","DELETE"].includes(init.method)) {
+      enqueueRequest(init.method as "POST" | "PATCH" | "DELETE", path, init.body as string | undefined);
     }
     throw err;
   }

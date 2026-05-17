@@ -9,6 +9,7 @@ import {
   StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from "react-native";
 import BottomSheet from "./BottomSheet";
+import { ApiError } from "../lib/api";
 import { haptics } from "../lib/haptics";
 import { useToast } from "./ToastContext";
 
@@ -49,10 +50,8 @@ export default function ImportSheet({ visible, onClose, tripId, onSuccess }: Pro
       });
 
       if (!res.ok) {
-        const err = await res.text();
-        const error = new Error(`${res.status}: ${err}`) as Error & { status: number };
-        (error as any).status = res.status;
-        throw error;
+        const body = await res.text();
+        throw new ApiError(`${res.status}: ${body}`, res.status, body);
       }
 
       await haptics.success();
@@ -60,9 +59,9 @@ export default function ImportSheet({ visible, onClose, tripId, onSuccess }: Pro
       onClose();
       onSuccess();
       showToast("Dokument erfolgreich importiert", "success");
-    } catch (err: any) {
+    } catch (err) {
       await haptics.error();
-      if (err?.status === 429) {
+      if (err instanceof ApiError && err.status === 429) {
         showToast("Tageslimit erreicht (50 Parses/Tag). Upgrade auf Pro.", "warning");
       } else {
         setError(err instanceof Error ? err.message : "Unbekannter Fehler");
