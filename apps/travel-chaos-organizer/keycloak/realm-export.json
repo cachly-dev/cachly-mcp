@@ -1,0 +1,39 @@
+{
+  "realm": "travel-chaos",
+  "enabled": true,
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "loginWithEmailAllowed": true,
+  "clients": [
+    {
+      "clientId": "tco-backend",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "bearerOnly": true,
+      "publicClient": false
+    },
+    {
+      "clientId": "tco-mobile",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "redirectUris": [
+        "exp://*",
+        "tco://*",
+        "http://localhost:*"
+      ],
+      "webOrigins": ["*"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ],
+  "roles": {
+    "realm": [
+      { "name": "user" },
+      { "name": "admin" }
+    ]
+  },
+  "defaultRoles": ["user"]
+}
