@@ -86,6 +86,43 @@ npm start
 | POST | `/api/v1/inbox/{id}/assign` | Item einem Trip zuweisen |
 | DELETE | `/api/v1/inbox/{id}` | Item ablehnen |
 
+## Cachly-MCP Integration
+
+TCO lässt sich direkt als MCP-Toolset in **cachly-mcp** einbinden — Claude kann dann über natürliche Sprache Trips verwalten, Dokumente importieren und den Chaos-Eingang bearbeiten.
+
+### Setup
+
+TCO und Cachly verwenden dieselbe Keycloak-Instanz. Das `CACHLY_JWT` wird direkt als Bearer-Token an die TCO-API weitergeleitet — keine separate Auth nötig.
+
+```bash
+# In cachly-mcp env (z.B. .env oder MCP-Config)
+TCO_API_URL=http://localhost:8000
+```
+
+### Verfügbare MCP Tools
+
+| Tool | Beschreibung |
+|---|---|
+| `tco_list_trips` | Alle Trips auflisten |
+| `tco_create_trip` | Neuen Trip anlegen |
+| `tco_get_timeline` | Timeline eines Trips abrufen |
+| `tco_delete_trip` | Trip löschen |
+| `tco_inbox_list` | Chaos Inbox anzeigen |
+| `tco_inbox_assign` | Inbox-Item einem Trip zuweisen |
+| `tco_inbox_reject` | Inbox-Item verwerfen |
+| `tco_parse_url` | URL mit Ollama parsen und speichern |
+| `tco_import_email` | E-Mail-Text importieren |
+
+### Beispiel-Prompts für Claude
+
+```
+"Zeig mir meine Reisen"
+"Erstelle einen Trip 'Tokyo 2025' vom 1. März bis 15. März"
+"Was steht auf meiner Barcelona-Timeline?"
+"Ich habe 3 ungelesene Buchungsbestätigungen im Posteingang — weise sie alle dem Paris-Trip zu"
+"Importiere diese E-Mail-Bestätigung: [E-Mail einfügen]"
+```
+
 ## Aus dem Repo herauslösen
 
 Das Projekt ist vollständig isoliert in `apps/travel-chaos-organizer/`.
