@@ -8,8 +8,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { useTripItems, useTrips } from "../../../hooks/useTrips";
-import { parseFile } from "../../../lib/api";
+import { parseFile, TripItem } from "../../../lib/api";
 import SwipeableTimelineItem from "../../../components/SwipeableTimelineItem";
+import TimelineItemDetail from "../../../components/TimelineItemDetail";
+import ImportSheet from "../../../components/ImportSheet";
 import FileUploadButton from "../../../components/FileUploadButton";
 import { TimelineItemSkeleton } from "../../../components/Skeleton";
 import { haptics } from "../../../lib/haptics";
@@ -26,6 +28,8 @@ export default function TripDetailScreen() {
   const { items, loading, refresh, deleteItem } = useTripItems(id);
   const { deleteTrip } = useTrips();
   const [parsing, setParsing] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<TripItem | null>(null);
+  const [importVisible, setImportVisible] = useState(false);
 
   useEffect(() => {
     if (sharedUri) {
@@ -89,6 +93,11 @@ export default function TripDetailScreen() {
     ]);
   }
 
+  async function handleTapItem(item: TripItem) {
+    await haptics.tap();
+    setSelectedItem(item);
+  }
+
   return (
     <KeyboardAvoidingView style={s.container} behavior={Platform.OS === "ios" ? "padding" : "height"}>
       <View style={[s.header, { paddingTop: insets.top + 8 }]}>
@@ -130,7 +139,7 @@ export default function TripDetailScreen() {
         onRefresh={refresh}
         ListHeaderComponent={
           items.length > 0
-            ? <Text style={s.hint}>← Wischen zum Löschen</Text>
+            ? <Text style={s.hint}>Tippen für Details · ← Wischen zum Löschen</Text>
             : null
         }
         ListEmptyComponent={
@@ -139,31 +148,48 @@ export default function TripDetailScreen() {
             : <View style={s.empty}>
                 <Text style={s.emptyIcon}>📂</Text>
                 <Text style={s.emptyTitle}>Noch keine Einträge</Text>
-                <Text style={s.emptySub}>Wirf Tickets, Buchungen oder Screenshots rein.</Text>
+                <Text style={s.emptySub}>Lade ein Dokument hoch oder füge Text ein.</Text>
               </View>
         }
         renderItem={({ item }) => (
-          <SwipeableTimelineItem
-            item={item}
-            onDelete={() => handleDeleteItem(item.id)}
-          />
+          <TouchableOpacity
+            onPress={() => handleTapItem(item)}
+            activeOpacity={0.85}
+            accessibilityLabel={`${item.title} — Details anzeigen`}
+            accessibilityRole="button"
+          >
+            <SwipeableTimelineItem
+              item={item}
+              onDelete={() => handleDeleteItem(item.id)}
+            />
+          </TouchableOpacity>
         )}
       />
 
       <View style={[s.uploadBar, { paddingBottom: insets.bottom + 8 }]}>
+        <FileUploadButton icon="📄" label="PDF / Datei" onPress={uploadDocument} disabled={parsing} />
+        <FileUploadButton icon="🖼️" label="Screenshot" onPress={uploadScreenshot} disabled={parsing} />
         <FileUploadButton
-          icon="📄"
-          label="PDF / Datei"
-          onPress={uploadDocument}
-          disabled={parsing}
-        />
-        <FileUploadButton
-          icon="🖼️"
-          label="Screenshot"
-          onPress={uploadScreenshot}
+          icon="📝"
+          label="Text einfügen"
+          onPress={() => setImportVisible(true)}
           disabled={parsing}
         />
       </View>
+
+      {/* Timeline item detail */}
+      <TimelineItemDetail
+        item={selectedItem}
+        onClose={() => setSelectedItem(null)}
+      />
+
+      {/* In-app text/email import */}
+      <ImportSheet
+        visible={importVisible}
+        onClose={() => setImportVisible(false)}
+        tripId={id}
+        onSuccess={refresh}
+      />
     </KeyboardAvoidingView>
   );
 }
@@ -172,11 +198,11 @@ const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#0f0f1a" },
   header: {
     flexDirection: "row", alignItems: "center", paddingHorizontal: 16,
-    paddingBottom: 12, backgroundColor: "#1a1a2e", gap: 12,
+    paddingBottom: 12, backgroundColor: "#1a1a2e",
   },
   back: { paddingVertical: 4 },
   backText: { color: "#4f46e5", fontSize: 15 },
-  headerTitle: { flex: 1, color: "#fff", fontSize: 18, fontWeight: "700" },
+  headerTitle: { flex: 1, color: "#fff", fontSize: 18, fontWeight: "700", textAlign: "center" },
   deleteBtn: { padding: 4 },
   deleteBtnText: { fontSize: 18 },
   parsingBanner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#4f46e522", padding: 10, paddingHorizontal: 16 },
@@ -189,7 +215,7 @@ const s = StyleSheet.create({
   emptyTitle: { fontSize: 20, fontWeight: "700", color: "#fff", marginBottom: 8 },
   emptySub: { fontSize: 14, color: "#6666aa", textAlign: "center" },
   uploadBar: {
-    flexDirection: "row", gap: 12, padding: 16,
+    flexDirection: "row", gap: 8, padding: 12,
     backgroundColor: "#1a1a2e", borderTopWidth: 1, borderTopColor: "#2a2a4e",
   },
 });
