@@ -17,7 +17,16 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 security = HTTPBasic()
 
 
-@router.get("", response_class=HTMLResponse, include_in_schema=False)
+def _check_auth(credentials: Annotated[HTTPBasicCredentials, Depends(security)]) -> None:
+    s = get_settings()
+    ok_user = secrets.compare_digest(credentials.username.encode(), s.admin_user.encode())
+    ok_pass = secrets.compare_digest(credentials.password.encode(), s.admin_password.encode())
+    if not (ok_user and ok_pass):
+        raise HTTPException(status_code=401, headers={"WWW-Authenticate": "Basic"})
+
+
+@router.get("", response_class=HTMLResponse, include_in_schema=False,
+            dependencies=[Depends(_check_auth)])
 async def admin_dashboard():
     html = """<!DOCTYPE html>
 <html lang="de">
@@ -127,14 +136,6 @@ async def admin_dashboard():
 </body>
 </html>"""
     return HTMLResponse(html)
-
-
-def _check_auth(credentials: Annotated[HTTPBasicCredentials, Depends(security)]) -> None:
-    s = get_settings()
-    ok_user = secrets.compare_digest(credentials.username.encode(), s.admin_user.encode())
-    ok_pass = secrets.compare_digest(credentials.password.encode(), s.admin_password.encode())
-    if not (ok_user and ok_pass):
-        raise HTTPException(status_code=401, headers={"WWW-Authenticate": "Basic"})
 
 
 @router.get("/events/summary", dependencies=[Depends(_check_auth)])

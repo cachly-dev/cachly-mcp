@@ -8,6 +8,7 @@ import { onShareIntent, getInitialShareIntent } from "../lib/shareIntent";
 import { ToastProvider, useToast } from "../components/ToastContext";
 import { QuotaProvider } from "../lib/quota";
 import { initSentry } from "../lib/sentry";
+import { ErrorBoundary } from "../components/ErrorBoundary";
 
 initSentry();
 
@@ -46,16 +47,18 @@ export default function RootLayout() {
   }, []);
 
   return (
-    <ToastProvider>
-      <QuotaProvider>
-        <SyncManager />
-        <ShareIntentHandler />
-        <Stack screenOptions={{ headerShown: false }}>
-          <Stack.Screen name="index" />
-          <Stack.Screen name="(auth)" />
-          <Stack.Screen name="(app)" />
-        </Stack>
-      </QuotaProvider>
-    </ToastProvider>
+    <ErrorBoundary>
+      <ToastProvider>
+        <QuotaProvider>
+          <SyncManager />
+          <ShareIntentHandler />
+          <Stack screenOptions={{ headerShown: false }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="(auth)" />
+            <Stack.Screen name="(app)" />
+          </Stack>
+        </QuotaProvider>
+      </ToastProvider>
+    </ErrorBoundary>
   );
 }

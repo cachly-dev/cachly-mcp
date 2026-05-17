@@ -14,6 +14,7 @@ curl -sf "${BASE}/health" | grep -q '"status":"ok"' && ok "Health OK" || fail "H
 CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST "${BASE}/api/v1/waitlist" \
   -H "Content-Type: application/json" -d '{"email":"smoke@tco.test","source":"smoke"}')
 [[ "$CODE" =~ ^2 ]] && ok "Waitlist POST → HTTP $CODE" || fail "Waitlist POST failed: HTTP $CODE"
+# Note: smoke@tco.test entry stays in waitlist — harmless, remove via admin dashboard
 
 # Admin (unauthenticated → 401 for JSON endpoints, 200 for HTML page)
 CODE=$(curl -s -o /dev/null -w "%{http_code}" "${BASE}/admin")

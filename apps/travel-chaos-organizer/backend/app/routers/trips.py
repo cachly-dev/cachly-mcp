@@ -1,12 +1,13 @@
 from typing import Annotated
 from uuid import UUID
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.keycloak import user_id
 from app.db.database import get_db
 from app.models.schemas import TripCreate, TripOut, TripUpdate
 from app.services import quota
+from app.limiter import limiter
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 
@@ -53,8 +54,10 @@ async def search_trips(
     return rows
 
 
+@limiter.limit("30/minute")
 @router.post("", response_model=TripOut, status_code=status.HTTP_201_CREATED)
 async def create_trip(
+    request: Request,
     body: TripCreate,
     uid: Annotated[str, Depends(user_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
@@ -89,8 +92,10 @@ async def get_trip(
     return dict(row._mapping)
 
 
+@limiter.limit("30/minute")
 @router.patch("/{trip_id}", response_model=TripOut)
 async def update_trip(
+    request: Request,
     trip_id: UUID,
     body: TripUpdate,
     uid: Annotated[str, Depends(user_id)],
@@ -113,8 +118,10 @@ async def update_trip(
     return dict(row._mapping)
 
 
+@limiter.limit("30/minute")
 @router.delete("/{trip_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_trip(
+    request: Request,
     trip_id: UUID,
     uid: Annotated[str, Depends(user_id)],
     db: Annotated[AsyncSession, Depends(get_db)],

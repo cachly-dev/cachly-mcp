@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.services import email as email_svc
+from app.config import get_settings as _get_settings
 
 
 SEQUENCE = [
@@ -40,7 +41,7 @@ unsere KI erkennt Flüge, Hotels und Mietwagen automatisch.</p>
 <p>nach einer Woche mit TCO: wie läuft's?</p>
 <p>Mit dem <strong>kostenlosen Plan</strong> hast du 3 Trips und 50 KI-Parses pro Tag.
 Für Vielreisende gibt's <strong>TCO Pro</strong>: unbegrenzte Trips, unbegrenzte Parses.</p>
-<p><a href="https://tco.app/upgrade" style="background:#4f46e5;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;display:inline-block;">Jetzt upgraden →</a></p>
+<p><a href="{upgrade_url}" style="background:#4f46e5;color:#fff;padding:10px 20px;border-radius:8px;text-decoration:none;display:inline-block;">Jetzt upgraden →</a></p>
 """,
     "day14_feedback": """
 <p>Hey,</p>
@@ -63,6 +64,10 @@ async def run_drip(db: AsyncSession, dry_run: bool = False) -> dict:
 
     rows = await db.execute(text("SELECT id, email, created_at FROM waitlist ORDER BY created_at ASC"))
     signups = rows.fetchall()
+
+    _s = _get_settings()
+    _app_url = getattr(_s, 'app_url', 'https://tco.app')
+    _upgrade_url = getattr(_s, 'stripe_success_url', 'https://tco.app/upgrade').replace('/upgrade/success', '/upgrade')
 
     for signup in signups:
         signup_id, email, created_at = signup
@@ -98,13 +103,13 @@ async def run_drip(db: AsyncSession, dry_run: bool = False) -> dict:
 
             if not dry_run:
                 subject = SUBJECTS[event_name]
-                body = BODIES[event_name]
+                body = BODIES[event_name].format(upgrade_url=_upgrade_url)
                 html = f"""
                 <div style="font-family:system-ui,sans-serif;max-width:560px;margin:0 auto;padding:24px">
-                <img src="https://tco.app/logo.png" height="32" style="margin-bottom:24px">
+                <img src="{_app_url}/logo.png" height="32" style="margin-bottom:24px">
                 {body}
                 <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
-                <p style="color:#999;font-size:12px">Travel Chaos Organizer · <a href="https://tco.app">tco.app</a></p>
+                <p style="color:#999;font-size:12px">Travel Chaos Organizer · <a href="{_app_url}">tco.app</a></p>
                 </div>"""
                 await email_svc._send(email, subject, html)
 
