@@ -10,6 +10,8 @@ import { useTripItems } from "../../../hooks/useTrips";
 import { parseFile } from "../../../lib/api";
 import TimelineItem from "../../../components/TimelineItem";
 import FileUploadButton from "../../../components/FileUploadButton";
+import { TimelineItemSkeleton } from "../../../components/Skeleton";
+import { haptics } from "../../../lib/haptics";
 
 export default function TripDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -33,10 +35,13 @@ export default function TripDetailScreen() {
 
   async function parseAndRefresh(uri: string, mime: string, name: string) {
     setParsing(true);
+    await haptics.confirm();
     try {
       await parseFile(uri, mime, name, id);
+      await haptics.success();
       await refresh();
     } catch {
+      await haptics.error();
       Alert.alert("Fehler", "Datei konnte nicht verarbeitet werden. Prüfe die Verbindung und Ollama.");
     } finally {
       setParsing(false);
@@ -66,11 +71,13 @@ export default function TripDetailScreen() {
         refreshing={loading}
         onRefresh={refresh}
         ListEmptyComponent={
-          <View style={s.empty}>
-            <Text style={s.emptyIcon}>📂</Text>
-            <Text style={s.emptyTitle}>Noch keine Einträge</Text>
-            <Text style={s.emptySub}>Wirf Tickets, Buchungen oder Screenshots rein.</Text>
-          </View>
+          loading
+            ? <View style={s.list}>{[1,2,3].map(k => <TimelineItemSkeleton key={k} />)}</View>
+            : <View style={s.empty}>
+                <Text style={s.emptyIcon}>📂</Text>
+                <Text style={s.emptyTitle}>Noch keine Einträge</Text>
+                <Text style={s.emptySub}>Wirf Tickets, Buchungen oder Screenshots rein.</Text>
+              </View>
         }
         renderItem={({ item }) => <TimelineItem item={item} />}
       />

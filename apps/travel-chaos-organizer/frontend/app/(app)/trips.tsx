@@ -7,10 +7,12 @@ import { useRouter } from "expo-router";
 import { useTrips } from "../../hooks/useTrips";
 import { tripsApi, Trip } from "../../lib/api";
 import TripCard from "../../components/TripCard";
+import { TripCardSkeleton } from "../../components/Skeleton";
+import { haptics } from "../../lib/haptics";
 
 export default function TripsScreen() {
   const router = useRouter();
-  const { trips, loading, error, refresh } = useTrips();
+  const { trips, loading, error, refresh, createOffline } = useTrips();
   const [modalVisible, setModalVisible] = useState(false);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
@@ -19,11 +21,12 @@ export default function TripsScreen() {
     if (!name.trim()) return;
     setSaving(true);
     try {
-      await tripsApi.create({ name: name.trim(), description: null, start_date: null, end_date: null });
+      await createOffline({ name: name.trim(), description: null, start_date: null, end_date: null });
+      await haptics.success();
       setName("");
       setModalVisible(false);
-      await refresh();
     } catch {
+      await haptics.error();
       Alert.alert("Fehler", "Trip konnte nicht erstellt werden.");
     } finally {
       setSaving(false);
@@ -31,7 +34,13 @@ export default function TripsScreen() {
   }
 
   if (loading && trips.length === 0) {
-    return <View style={s.center}><ActivityIndicator color="#4f46e5" size="large" /></View>;
+    return (
+      <View style={s.container}>
+        <View style={s.list}>
+          {[1, 2, 3].map((k) => <TripCardSkeleton key={k} />)}
+        </View>
+      </View>
+    );
   }
 
   return (
