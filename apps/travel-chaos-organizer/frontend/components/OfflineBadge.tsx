@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
-import { Animated, StyleSheet, Text } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Animated, AppState, AppStateStatus, StyleSheet, Text } from "react-native";
 import * as Network from "expo-network";
 
 export default function OfflineBadge() {
   const [offline, setOffline] = useState(false);
   const opacity = useState(new Animated.Value(0))[0];
+  const appState = useRef<AppStateStatus>(AppState.currentState);
 
   useEffect(() => {
     let mounted = true;
@@ -22,8 +23,15 @@ export default function OfflineBadge() {
     }
 
     check();
-    const interval = setInterval(check, 5000);
-    return () => { mounted = false; clearInterval(interval); };
+    // Re-check when app returns to foreground, fall back to 30s interval
+    const appStateSub = AppState.addEventListener("change", (next) => {
+      if (appState.current.match(/inactive|background/) && next === "active") {
+        check();
+      }
+      appState.current = next;
+    });
+    const interval = setInterval(check, 30_000);
+    return () => { mounted = false; appStateSub.remove(); clearInterval(interval); };
   }, []);
 
   if (!offline) return null;
