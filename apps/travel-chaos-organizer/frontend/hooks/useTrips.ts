@@ -3,6 +3,7 @@ import * as Network from "expo-network";
 import { tripsApi, itemsApi, Trip, TripItem } from "../lib/api";
 import { upsertTrips, upsertItems, getLocalTrips, getLocalItems, deleteLocalItem } from "../lib/db";
 import { enqueue } from "../lib/offlineQueue";
+import { cancelItemReminders } from "../lib/notifications";
 
 export function useTrips() {
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -103,6 +104,7 @@ export function useTripItems(tripId: string) {
       enqueue("DELETE", `/api/v1/trips/${tripId}/items/${itemId}`, {});
     }
     deleteLocalItem(itemId);
+    await cancelItemReminders(itemId);
     setItems((prev) => prev.filter((i) => i.id !== itemId));
   }
 

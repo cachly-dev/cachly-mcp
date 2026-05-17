@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from "react";
 import {
   ActivityIndicator, BackHandler, FlatList, KeyboardAvoidingView,
-  Platform, StyleSheet, Text, TouchableOpacity, View,
+  Platform, Share, StyleSheet, Text, TouchableOpacity, View,
 } from "react-native";
+import ConfettiCannon from "../../../components/ConfettiCannon";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -17,6 +18,10 @@ import FileUploadButton from "../../../components/FileUploadButton";
 import { TimelineItemSkeleton } from "../../../components/Skeleton";
 import { haptics } from "../../../lib/haptics";
 import { useToast } from "../../../components/ToastContext";
+import { scheduleItemReminder } from "../../../lib/notifications";
+import { getLocalItems } from "../../../lib/db";
+import { format, parseISO } from "date-fns";
+import { de } from "date-fns/locale";
 
 export default function TripDetailScreen() {
   const { id, sharedUri, sharedMime, sharedName } = useLocalSearchParams<{
@@ -28,9 +33,10 @@ export default function TripDetailScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { items, loading, refresh, deleteItem } = useTripItems(id);
-  const { deleteTrip } = useTrips();
+  const { deleteTrip, trips } = useTrips();
   const { showToast } = useToast();
   const [parsing, setParsing] = useState(false);
+  const [showConfetti, setShowConfetti] = useState(false);
   const [selectedItem, setSelectedItem] = useState<TripItem | null>(null);
   const [importVisible, setImportVisible] = useState(false);
   const [dialog, setDialog] = useState<{ title: string; message?: string; onConfirm: () => void; destructive?: boolean } | null>(null);
@@ -75,6 +81,14 @@ export default function TripDetailScreen() {
       await parseFile(uri, mime, name, id);
       await haptics.success();
       await refresh();
+      const currentItems = getLocalItems(id);
+      for (const item of currentItems) {
+        if (item.event_at) {
+          await scheduleItemReminder(id, "Dein Trip", item.id, item.title, item.event_at);
+        }
+      }
+      setShowConfetti(true);
+      setTimeout(() => setShowConfetti(false), 1500);
     } catch {
       await haptics.error();
       showToast("Datei konnte nicht verarbeitet werden. Prüfe Ollama.", "error");
@@ -113,6 +127,48 @@ export default function TripDetailScreen() {
     setSelectedItem(item);
   }
 
+  async function handleShareTrip() {
+    const currentTrip = trips.find(t => t.id === id);
+    const tripName = currentTrip?.name ?? "Mein Trip";
+    const lines: string[] = [];
+
+    lines.push(`✈️ Mein Trip: ${tripName}`);
+
+    if (currentTrip?.start_date) {
+      const startStr = format(parseISO(currentTrip.start_date), "dd. MMM", { locale: de });
+      if (currentTrip.end_date) {
+        const endStr = format(parseISO(currentTrip.end_date), "dd. MMM yyyy", { locale: de });
+        const diffMs = new Date(currentTrip.end_date).getTime() - new Date(currentTrip.start_date).getTime();
+        const days = Math.round(diffMs / (1000 * 60 * 60 * 24));
+        lines.push(`📅 ${startStr} → ${endStr} (${days} Tage)`);
+      } else {
+        lines.push(`📅 ${startStr}`);
+      }
+    }
+
+    if (items.length > 0) {
+      const types = Array.from(new Set(items.map(i => i.type).filter(Boolean))) as string[];
+      const capitalizedTypes = types.map(t => t.charAt(0).toUpperCase() + t.slice(1));
+      const displayTypes = capitalizedTypes.length > 3
+        ? `${capitalizedTypes.slice(0, 3).join(", ")} + mehr`
+        : capitalizedTypes.join(", ");
+      lines.push(`📋 ${items.length} Einträge${displayTypes ? ` (${displayTypes})` : ""}`);
+    }
+
+    const refs = items.map(i => i.booking_ref).filter(Boolean) as string[];
+    if (refs.length > 0) {
+      const displayRefs = refs.length > 3
+        ? `${refs.slice(0, 3).join(", ")} + mehr`
+        : refs.join(", ");
+      lines.push(`🔑 ${displayRefs}`);
+    }
+
+    lines.push("");
+    lines.push("Erstellt mit Travel Chaos Organizer");
+
+    await Share.share({ message: lines.join("\n") });
+  }
+
   return (
     <KeyboardAvoidingView style={s.container} behavior={Platform.OS === "ios" ? "padding" : "height"}>
       <View style={[s.header, { paddingTop: insets.top + 8 }]}>
@@ -133,6 +189,16 @@ export default function TripDetailScreen() {
         </TouchableOpacity>
 
         <Text style={s.headerTitle}>Timeline</Text>
+
+        <TouchableOpacity
+          onPress={handleShareTrip}
+          style={s.shareBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel="Trip teilen"
+          accessibilityRole="button"
+        >
+          <Text style={s.shareBtnText}>↗</Text>
+        </TouchableOpacity>
 
         <TouchableOpacity
           onPress={handleDeleteTrip}
@@ -225,6 +291,8 @@ export default function TripDetailScreen() {
           { label: "Abbrechen", style: "cancel", onPress: () => setDialog(null) },
         ]}
       />
+
+      <ConfettiCannon visible={showConfetti} />
     </KeyboardAvoidingView>
   );
 }
@@ -240,6 +308,8 @@ const s = StyleSheet.create({
   headerTitle: { flex: 1, color: "#fff", fontSize: 18, fontWeight: "700", textAlign: "center" },
   deleteBtn: { padding: 4 },
   deleteBtnText: { fontSize: 18 },
+  shareBtn: { padding: 4, marginRight: 8 },
+  shareBtnText: { color: "#a5b4fc", fontSize: 20, fontWeight: "300" },
   parsingBanner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#4f46e522", padding: 10, paddingHorizontal: 16 },
   parsingText: { color: "#a5b4fc", fontSize: 14 },
   hint: { color: "#3a3a5e", fontSize: 12, textAlign: "center", marginBottom: 8 },

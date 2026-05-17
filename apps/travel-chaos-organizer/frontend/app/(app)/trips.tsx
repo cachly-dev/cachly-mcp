@@ -16,6 +16,15 @@ import { scheduleAllTripReminders } from "../../lib/notifications";
 import { useToast } from "../../components/ToastContext";
 import { UpgradeBanner } from "../../components/UpgradeBanner";
 import { TripQRModal } from "../../components/TripQRModal";
+import { getLocalItems } from "../../lib/db";
+
+function tripScore(tripId: string, hasDates: boolean): number {
+  const items = getLocalItems(tripId);
+  const types = items.map(i => i.type?.toLowerCase() ?? "");
+  const hasFlight = types.some(t => t.includes("flight") || t.includes("flug"));
+  const hasHotel = types.some(t => t.includes("hotel") || t.includes("accommodation") || t.includes("unterkunft"));
+  return (hasDates ? 50 : 0) + (hasFlight ? 25 : 0) + (hasHotel ? 25 : 0);
+}
 
 type SheetMode = "create" | "edit";
 
@@ -199,6 +208,7 @@ export default function TripsScreen() {
               trip={item}
               onPress={() => router.push(`/(app)/trips/${item.id}`)}
               onLongPress={() => openEdit(item)}
+              score={tripScore(item.id, !!(item.start_date && item.end_date))}
             />
             <TouchableOpacity
               style={s.qrBtn}
