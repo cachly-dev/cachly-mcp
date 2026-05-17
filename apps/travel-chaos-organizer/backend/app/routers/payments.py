@@ -84,18 +84,61 @@ async def stripe_webhook(request: Request, db: Annotated[AsyncSession, Depends(g
                 {"uid": uid, "exp": expires_at, "now": datetime.now(timezone.utc)},
             )
             await db.commit()
+            # Store Stripe customer ID for future subscription management
+            stripe_cust = obj.get("customer")
+            if stripe_cust:
+                await db.execute(
+                    text("UPDATE users SET stripe_customer_id = :cid WHERE id = :uid"),
+                    {"cid": stripe_cust, "uid": uid},
+                )
+                await db.commit()
             from app.services import telemetry as tel_svc
             from app.services import notifier as notifier_svc
             await tel_svc.track(db, uid, "stripe_payment_completed", {"amount": obj.get("amount_total"), "currency": obj.get("currency")})
             await notifier_svc.notify("tco", "stripe_payment", {"user_id": uid, "amount": obj.get("amount_total"), "currency": obj.get("currency")})
 
     elif event["type"] in ("customer.subscription.deleted", "customer.subscription.paused"):
-        # Downgrade when subscription cancelled
         cust_id = event["data"]["object"].get("customer")
         if cust_id:
-            # Look up user by Stripe customer — store in metadata if possible
-            # For now, webhook sets plan=free where stripe_customer_id matches
-            # This is best-effort; admin can also do it manually
-            pass
+            result = await db.execute(
+                text("SELECT id FROM users WHERE stripe_customer_id = :cid"),
+                {"cid": cust_id},
+            )
+            row = result.fetchone()
+            if row:
+                downgrade_uid = row[0]
+                await db.execute(
+                    text("""
+                        UPDATE users SET plan = 'free', plan_expires_at = NULL, updated_at = :now
+                        WHERE id = :uid
+                    """),
+                    {"uid": downgrade_uid, "now": datetime.now(timezone.utc)},
+                )
+                await db.commit()
+                from app.services import telemetry as tel_svc, notifier as notifier_svc
+                await tel_svc.track(db, downgrade_uid, "stripe_subscription_cancelled", {"customer": cust_id})
+                await notifier_svc.notify("tco", "stripe_payment", {"event": "cancelled", "user_id": downgrade_uid[:8]})
+
+    elif event["type"] == "invoice.payment_succeeded":
+        # Extend plan by 1 year on renewal
+        sub = event["data"]["object"].get("subscription")
+        cust_id = event["data"]["object"].get("customer")
+        if sub and cust_id:
+            result = await db.execute(
+                text("SELECT id, plan_expires_at FROM users WHERE stripe_customer_id = :cid"),
+                {"cid": cust_id},
+            )
+            row = result.fetchone()
+            if row:
+                renewal_uid = row[0]
+                new_expiry = datetime.now(timezone.utc) + timedelta(days=366)
+                await db.execute(
+                    text("""
+                        UPDATE users SET plan = 'pro', plan_expires_at = :exp, updated_at = :now
+                        WHERE id = :uid
+                    """),
+                    {"uid": renewal_uid, "exp": new_expiry, "now": datetime.now(timezone.utc)},
+                )
+                await db.commit()
 
     return {"ok": True}

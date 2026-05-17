@@ -7,7 +7,7 @@ import {
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTrips } from "../../hooks/useTrips";
-import { Trip, tripsApi } from "../../lib/api";
+import { ApiError, Trip, tripsApi } from "../../lib/api";
 import TripCard from "../../components/TripCard";
 import BottomSheet from "../../components/BottomSheet";
 import { TripCardSkeleton } from "../../components/Skeleton";
@@ -103,9 +103,9 @@ export default function TripsScreen() {
       }
       await haptics.success();
       closeSheet();
-    } catch (err: any) {
+    } catch (err) {
       await haptics.error();
-      if (err?.status === 402) {
+      if (err instanceof ApiError && err.status === 402) {
         showToast("Free Plan: Max. 3 Trips erreicht. Upgrade auf Pro.", "warning");
       } else {
         showToast("Trip konnte nicht erstellt werden", "error");
