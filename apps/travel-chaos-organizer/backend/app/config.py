@@ -26,6 +26,25 @@ class Settings(BaseSettings):
     # Format: redis://:<password>@<host>:<port>/0  or  rediss:// for TLS
     cachly_redis_url: str = ""
 
+    # CORS
+    cors_origins: str = "*"
+
+    # Telegram notifier (optional)
+    telegram_bot_token: str = ""
+    telegram_chat_id: str = ""       # default chat; per-app override below
+    tco_telegram_chat_id: str = ""   # if set, overrides telegram_chat_id for TCO events
+
+    # Email (Resend)
+    resend_api_key: str = ""
+    resend_from: str = "noreply@tco.app"
+
+    # Admin
+    admin_user: str = "admin"
+    admin_password: str = "changeme"
+
+    # Upload
+    max_upload_bytes: int = 20 * 1024 * 1024  # 20 MB
+
     class Config:
         env_file = ".env"
 

@@ -8,17 +8,19 @@ from uuid import UUID
 import aiofiles
 import os
 from pathlib import Path
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.keycloak import user_id
 from app.config import get_settings
+from app.config import get_settings as _get_settings
 from app.db.database import get_db
 from app.models.schemas import ParseResponse, ParsedTravelData
 from app.services import ollama as ollama_svc
 from app.services.parser import extract_text_from_pdf, is_image, is_pdf, is_text
 from app.services.cache import cachly_configured
+from app.limiter import limiter
 
 router = APIRouter(prefix="/parse", tags=["parse"])
 settings = get_settings()
@@ -98,14 +100,19 @@ async def _insert_inbox(
 
 # ── endpoints ──────────────────────────────────────────────────────────────────
 
+@limiter.limit("10/minute")
 @router.post("/file", response_model=ParseResponse)
 async def parse_file(
+    request: Request,
     uid: Annotated[str, Depends(user_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
     file: UploadFile = File(...),
     trip_id: UUID | None = Form(None),
 ):
+    _s = _get_settings()
     content = await file.read()
+    if len(content) > _s.max_upload_bytes:
+        raise HTTPException(status_code=413, detail=f"File too large. Max {_s.max_upload_bytes // 1024 // 1024} MB.")
     mime = file.content_type or "application/octet-stream"
     raw_text: str | None = None
     parsed_dict: dict = {}
@@ -134,8 +141,10 @@ async def parse_file(
     return ParseResponse(parsed=parsed, raw_text=raw_text, model_used=settings.ollama_model)
 
 
+@limiter.limit("20/minute")
 @router.post("/text", response_model=ParseResponse)
 async def parse_text_endpoint(
+    request: Request,
     uid: Annotated[str, Depends(user_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
     raw_text: str = Form(...),
@@ -159,8 +168,10 @@ class ParseUrlRequest(BaseModel):
     trip_id: UUID | None = None
 
 
+@limiter.limit("5/minute")
 @router.post("/url")
 async def parse_url(
+    request: Request,
     body: ParseUrlRequest,
     uid: Annotated[str, Depends(user_id)],
     db: Annotated[AsyncSession, Depends(get_db)],

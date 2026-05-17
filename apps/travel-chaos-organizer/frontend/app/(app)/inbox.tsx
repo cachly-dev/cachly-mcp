@@ -11,8 +11,10 @@ import SwipeableInboxItem from "../../components/SwipeableInboxItem";
 import BottomSheet from "../../components/BottomSheet";
 import { haptics } from "../../lib/haptics";
 import { TripCardSkeleton } from "../../components/Skeleton";
+import { useToast } from "../../components/ToastContext";
 
 export default function InboxScreen() {
+  const { showToast } = useToast();
   const insets = useSafeAreaInsets();
   const { items, loading, refresh } = useInbox();
   const { trips } = useTrips();
@@ -30,10 +32,12 @@ export default function InboxScreen() {
     try {
       await inboxApi.assign(selected.id, tripId, (selected.parsed_data?.type as string) ?? "other");
       await haptics.success();
+      showToast("Dem Trip zugeordnet ✓", "success");
       setSelected(null);
       await refresh();
     } catch {
       await haptics.error();
+      showToast("Zuordnung fehlgeschlagen", "error");
     } finally {
       setAssigning(false);
     }
@@ -42,6 +46,7 @@ export default function InboxScreen() {
   async function reject(id: string) {
     await haptics.warning();
     await inboxApi.reject(id);
+    showToast("Eintrag abgelehnt", "warning");
     await refresh();
   }
 
