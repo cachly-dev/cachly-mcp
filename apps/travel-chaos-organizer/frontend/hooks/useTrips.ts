@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import * as Network from "expo-network";
 import { tripsApi, itemsApi, Trip, TripItem } from "../lib/api";
 import { upsertTrips, upsertItems, getLocalTrips, getLocalItems } from "../lib/db";
+import { enqueue } from "../lib/offlineQueue";
 
 export function useTrips() {
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -30,7 +31,23 @@ export function useTrips() {
 
   useEffect(() => { sync(); }, [sync]);
 
-  return { trips, loading, error, refresh: sync };
+  async function createOffline(data: Pick<Trip, "name" | "description" | "start_date" | "end_date">) {
+    const net = await Network.getNetworkStateAsync();
+    if (net.isConnected) {
+      const trip = await tripsApi.create(data);
+      upsertTrips([trip]);
+      setTrips((prev) => [...prev, trip]);
+      return trip;
+    }
+    // Offline: queue and show locally with a temp id
+    enqueue("POST", "/api/v1/trips", data);
+    const temp: Trip = { id: `temp-${Date.now()}`, user_id: "local", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...data };
+    upsertTrips([temp]);
+    setTrips((prev) => [...prev, temp]);
+    return temp;
+  }
+
+  return { trips, loading, error, refresh: sync, createOffline };
 }
 
 export function useTripItems(tripId: string) {
