@@ -57,3 +57,56 @@ export async function scheduleAllTripReminders(trips: { id: string; name: string
     }
   }
 }
+
+export async function scheduleItemReminder(
+  tripId: string,
+  tripName: string,
+  itemId: string,
+  itemTitle: string,
+  eventAt: string,
+): Promise<void> {
+  const granted = await requestNotificationPermission();
+  if (!granted) return;
+
+  await cancelItemReminders(itemId);
+
+  const event = new Date(eventAt);
+  const now = new Date();
+
+  const reminder24h = new Date(event.getTime() - 24 * 60 * 60 * 1000);
+  if (reminder24h > now) {
+    await Notifications.scheduleNotificationAsync({
+      identifier: `item-${itemId}-24h`,
+      content: {
+        title: `⏰ ${itemTitle}`,
+        body: `Morgen: ${itemTitle} — ${tripName}`,
+        data: { tripId, itemId },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: reminder24h,
+      },
+    });
+  }
+
+  const reminder2h = new Date(event.getTime() - 2 * 60 * 60 * 1000);
+  if (reminder2h > now) {
+    await Notifications.scheduleNotificationAsync({
+      identifier: `item-${itemId}-2h`,
+      content: {
+        title: `🔔 In 2 Stunden: ${itemTitle}`,
+        body: `${itemTitle} startet bald. Alles bereit?`,
+        data: { tripId, itemId },
+      },
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: reminder2h,
+      },
+    });
+  }
+}
+
+export async function cancelItemReminders(itemId: string): Promise<void> {
+  await Notifications.cancelScheduledNotificationAsync(`item-${itemId}-24h`).catch(() => {});
+  await Notifications.cancelScheduledNotificationAsync(`item-${itemId}-2h`).catch(() => {});
+}
