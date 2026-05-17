@@ -204,12 +204,35 @@ async def parse_url(
         def text(self) -> str:
             return " ".join(self._parts)[:8000]
 
+    # SSRF protection: only allow http/https, block private/loopback IP ranges
+    import ipaddress as _ip
     try:
-        async with _httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
+        _parsed = _httpx.URL(body.url)
+        if _parsed.scheme not in ("http", "https"):
+            raise HTTPException(status_code=422, detail="Only http/https URLs are allowed")
+        import socket as _socket
+        try:
+            _addr = _socket.gethostbyname(_parsed.host)
+            _net = _ip.ip_address(_addr)
+            if _net.is_private or _net.is_loopback or _net.is_link_local or _net.is_reserved:
+                raise HTTPException(status_code=422, detail="URL resolves to a private/internal address")
+        except HTTPException:
+            raise
+        except Exception:
+            pass  # DNS failure handled below
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=422, detail="Invalid URL")
+
+    try:
+        async with _httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
             resp = await client.get(body.url, headers={"User-Agent": "Mozilla/5.0 TCO/0.1"})
             resp.raise_for_status()
-    except Exception as e:
-        raise HTTPException(status_code=422, detail=f"Could not fetch URL: {e}")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=422, detail="Could not fetch URL")
 
     await quota.check_parse(db, uid)
     ct = resp.headers.get("content-type", "")

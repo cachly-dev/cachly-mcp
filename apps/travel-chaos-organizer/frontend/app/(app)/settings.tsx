@@ -99,7 +99,7 @@ export default function SettingsScreen() {
         {!isPro && (
           <TouchableOpacity
             style={s.upgradeBtn}
-            onPress={() => Linking.openURL("https://tco.app/upgrade")}
+            onPress={() => Linking.openURL(process.env.EXPO_PUBLIC_UPGRADE_URL ?? "https://tco.app/upgrade")}
             activeOpacity={0.8}
           >
             <Text style={s.upgradeBtnText}>Auf Pro upgraden ✦</Text>
@@ -163,7 +163,7 @@ export default function SettingsScreen() {
       <View style={s.card}>
         <TouchableOpacity
           style={s.row}
-          onPress={() => Linking.openURL("https://tco.app/privacy")}
+          onPress={() => Linking.openURL(process.env.EXPO_PUBLIC_PRIVACY_URL ?? "https://tco.app/privacy")}
           accessibilityRole="link"
         >
           <Text style={s.rowText}>Datenschutz</Text>
@@ -171,7 +171,7 @@ export default function SettingsScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={s.row}
-          onPress={() => Linking.openURL("https://tco.app/terms")}
+          onPress={() => Linking.openURL(process.env.EXPO_PUBLIC_TERMS_URL ?? "https://tco.app/terms")}
           accessibilityRole="link"
         >
           <Text style={s.rowText}>Nutzungsbedingungen</Text>
@@ -179,7 +179,7 @@ export default function SettingsScreen() {
         </TouchableOpacity>
         <TouchableOpacity
           style={[s.row, { borderBottomWidth: 0 }]}
-          onPress={() => Linking.openURL("mailto:hello@tco.app")}
+          onPress={() => Linking.openURL(`mailto:${process.env.EXPO_PUBLIC_SUPPORT_EMAIL ?? "hello@tco.app"}`)}
           accessibilityRole="link"
         >
           <Text style={s.rowText}>Support kontaktieren</Text>

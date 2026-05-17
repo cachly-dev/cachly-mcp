@@ -49,6 +49,14 @@ async def assign_to_trip(
     if not inbox_item:
         raise HTTPException(status_code=404, detail="Inbox item not found")
 
+    # Verify the target trip belongs to this user (prevents assigning to other users' trips)
+    trip_check = await db.execute(
+        text("SELECT id FROM trips WHERE id = :tid AND user_id = :uid"),
+        {"tid": str(body.trip_id), "uid": uid},
+    )
+    if not trip_check.fetchone():
+        raise HTTPException(status_code=403, detail="Trip not found or access denied")
+
     item = dict(inbox_item._mapping)
     raw_pd = item.get("parsed_data") or {}
     parsed = json.loads(raw_pd) if isinstance(raw_pd, str) else raw_pd

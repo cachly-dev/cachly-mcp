@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     app_name: str = "Travel Chaos Organizer API"
     debug: bool = False
     upload_dir: str = "/data/uploads"
+    app_url: str = "https://tco.app"
 
     # Database
     database_url: str = "postgresql+asyncpg://tco:tco@localhost:5432/tco"
@@ -53,8 +54,8 @@ class Settings(BaseSettings):
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
     stripe_pro_price_id: str = "price_YOUR_PRICE_ID"
-    stripe_success_url: str = "tco://upgrade/success"
-    stripe_cancel_url: str = "tco://upgrade/cancel"
+    stripe_success_url: str = "https://tco.app/upgrade/success"
+    stripe_cancel_url: str = "https://tco.app/upgrade/cancel"
 
     class Config:
         env_file = ".env"

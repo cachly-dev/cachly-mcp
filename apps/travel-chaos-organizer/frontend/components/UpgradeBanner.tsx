@@ -13,7 +13,7 @@ export function UpgradeBanner() {
       </Text>
       <TouchableOpacity
         style={s.btn}
-        onPress={() => Linking.openURL("https://tco.app/upgrade")}
+        onPress={() => Linking.openURL(process.env.EXPO_PUBLIC_UPGRADE_URL ?? "https://tco.app/upgrade")}
         activeOpacity={0.8}
       >
         <Text style={s.btnText}>Pro ✦</Text>

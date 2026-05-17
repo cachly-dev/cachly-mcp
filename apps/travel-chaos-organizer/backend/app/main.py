@@ -17,13 +17,15 @@ from slowapi.middleware import SlowAPIMiddleware
 
 settings = get_settings()
 
+APP_VERSION = "0.1.0"
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.logging_config import setup_logging
     setup_logging(debug=settings.debug)
     from app.services import sentry as sentry_svc
-    sentry_svc.init(settings.sentry_dsn, settings.environment)
+    sentry_svc.init(settings.sentry_dsn, settings.environment, release=APP_VERSION)
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     import sys
     if settings.admin_password == "changeme":
@@ -33,7 +35,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=settings.app_name,
-    version="0.1.0",
+    version=APP_VERSION,
     lifespan=lifespan,
     docs_url="/docs" if settings.debug else None,
     redoc_url="/redoc" if settings.debug else None,
@@ -68,6 +70,6 @@ app.include_router(export_router.router, prefix="/api/v1")
 async def health():
     return {
         "status": "ok",
-        "version": "0.1.0",
+        "version": APP_VERSION,
         "cachly_cache": "enabled" if cachly_configured() else "disabled",
     }
