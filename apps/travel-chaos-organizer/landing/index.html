@@ -753,6 +753,7 @@
         joined = !!data.joined;
       }
       fb.textContent = joined ? MSG[_lang].ok : MSG[_lang].already;
+      if (window.plausible) window.plausible('Waitlist Signup', { props: { slot, lang: _lang } });
       fb.className = 'form-feedback ok';
       input.value = '';
     } catch {
