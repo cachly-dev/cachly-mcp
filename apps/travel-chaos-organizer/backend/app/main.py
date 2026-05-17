@@ -4,7 +4,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
-from app.routers import trips, items, parse, inbox, mail
+from app.routers import trips, items, parse, inbox, mail, events as events_router, waitlist as waitlist_router
 from app.services.cache import cachly_configured
 
 settings = get_settings()
@@ -35,6 +35,8 @@ app.include_router(items.router, prefix="/api/v1")
 app.include_router(parse.router, prefix="/api/v1")
 app.include_router(inbox.router, prefix="/api/v1")
 app.include_router(mail.router, prefix="/api/v1")
+app.include_router(events_router.router, prefix="/api/v1")
+app.include_router(waitlist_router.router, prefix="/api/v1")
 
 
 @app.get("/health")

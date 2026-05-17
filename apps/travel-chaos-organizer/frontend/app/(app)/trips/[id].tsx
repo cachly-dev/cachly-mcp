@@ -15,6 +15,7 @@ import ImportSheet from "../../../components/ImportSheet";
 import FileUploadButton from "../../../components/FileUploadButton";
 import { TimelineItemSkeleton } from "../../../components/Skeleton";
 import { haptics } from "../../../lib/haptics";
+import { useToast } from "../../../components/ToastContext";
 
 export default function TripDetailScreen() {
   const { id, sharedUri, sharedMime, sharedName } = useLocalSearchParams<{
@@ -27,6 +28,7 @@ export default function TripDetailScreen() {
   const insets = useSafeAreaInsets();
   const { items, loading, refresh, deleteItem } = useTripItems(id);
   const { deleteTrip } = useTrips();
+  const { showToast } = useToast();
   const [parsing, setParsing] = useState(false);
   const [selectedItem, setSelectedItem] = useState<TripItem | null>(null);
   const [importVisible, setImportVisible] = useState(false);
@@ -60,7 +62,7 @@ export default function TripDetailScreen() {
       await refresh();
     } catch {
       await haptics.error();
-      Alert.alert("Fehler", "Datei konnte nicht verarbeitet werden. Prüfe die Verbindung und Ollama.");
+      showToast("Datei konnte nicht verarbeitet werden. Prüfe Ollama.", "error");
     } finally {
       setParsing(false);
     }
