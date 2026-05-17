@@ -20,6 +20,7 @@ from app.models.schemas import ParseResponse, ParsedTravelData
 from app.services import ollama as ollama_svc
 from app.services.parser import extract_text_from_pdf, is_image, is_pdf, is_text
 from app.services.cache import cachly_configured
+from app.services import quota
 from app.limiter import limiter
 
 router = APIRouter(prefix="/parse", tags=["parse"])
@@ -109,6 +110,7 @@ async def parse_file(
     file: UploadFile = File(...),
     trip_id: UUID | None = Form(None),
 ):
+    await quota.check_parse(db, uid)
     _s = _get_settings()
     content = await file.read()
     if len(content) > _s.max_upload_bytes:
@@ -150,6 +152,7 @@ async def parse_text_endpoint(
     raw_text: str = Form(...),
     trip_id: UUID | None = Form(None),
 ):
+    await quota.check_parse(db, uid)
     parsed_dict = await ollama_svc.parse_text(raw_text)
     parsed = ParsedTravelData(**{k: parsed_dict.get(k) for k in ParsedTravelData.model_fields})
 
@@ -208,6 +211,7 @@ async def parse_url(
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Could not fetch URL: {e}")
 
+    await quota.check_parse(db, uid)
     ct = resp.headers.get("content-type", "")
     if "html" in ct:
         extractor = _TextExtractor()

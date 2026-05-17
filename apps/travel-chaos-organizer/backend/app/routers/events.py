@@ -1,10 +1,11 @@
 from typing import Annotated
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.keycloak import user_id
 from app.db.database import get_db
 from app.services import telemetry
+from app.limiter import limiter
 
 router = APIRouter(prefix="/events", tags=["events"])
 
@@ -16,8 +17,10 @@ class EventBody(BaseModel):
     app_version: str | None = None
 
 
+@limiter.limit("30/minute")
 @router.post("")
 async def log_event(
+    request: Request,
     body: EventBody,
     uid: Annotated[str, Depends(user_id)],
     db: Annotated[AsyncSession, Depends(get_db)],

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { jwtExpiryMs, checkJwt, handleApiError } from './auth.js';
 import { handleTcoTool, TCO_TOOL_NAMES } from './handlers/tco.js';
+import { notify } from './notifier.js';
 import { readFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -833,7 +834,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     return { content: [{ type: 'text', text }] };
   } catch (err) {
     if (err instanceof McpError) throw err;
-    throw new McpError(ErrorCode.InternalError, (err as Error).message);
+    const msg = (err as Error).message ?? String(err);
+    notify('cachly', 'tool_error', { tool: name, error: msg }).catch(() => undefined);
+    throw new McpError(ErrorCode.InternalError, msg);
   }
 });
 
@@ -2533,4 +2536,6 @@ if (httpPort) {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
+
+notify('cachly', 'startup', { version: CURRENT_VERSION, mode: process.env.MCP_HTTP_PORT ? 'http' : 'stdio' }).catch(() => undefined);
 
