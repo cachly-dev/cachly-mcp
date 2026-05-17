@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator, Alert, BackHandler, FlatList, KeyboardAvoidingView,
+  ActivityIndicator, BackHandler, FlatList, KeyboardAvoidingView,
   Platform, StyleSheet, Text, TouchableOpacity, View,
 } from "react-native";
 import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
+import ConfirmDialog from "../../../components/ConfirmDialog";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
@@ -32,19 +33,13 @@ export default function TripDetailScreen() {
   const [parsing, setParsing] = useState(false);
   const [selectedItem, setSelectedItem] = useState<TripItem | null>(null);
   const [importVisible, setImportVisible] = useState(false);
+  const [dialog, setDialog] = useState<{ title: string; message?: string; onConfirm: () => void; destructive?: boolean } | null>(null);
 
   useFocusEffect(
     React.useCallback(() => {
       const handler = BackHandler.addEventListener('hardwareBackPress', () => {
         if (parsing) {
-          Alert.alert(
-            'Upload läuft',
-            'Ein Dokument wird gerade verarbeitet. Trotzdem zurück?',
-            [
-              { text: 'Abbrechen', style: 'cancel' },
-              { text: 'Ja, zurück', style: 'destructive', onPress: () => router.back() },
-            ]
-          );
+          setDialog({ title: 'Upload läuft', message: 'Ein Dokument wird gerade verarbeitet. Trotzdem zurück?', onConfirm: () => router.back(), destructive: true });
           return true;
         }
         return false;
@@ -88,31 +83,29 @@ export default function TripDetailScreen() {
     }
   }
 
-  async function handleDeleteItem(itemId: string) {
-    Alert.alert("Eintrag löschen?", "Dieser Eintrag wird dauerhaft entfernt.", [
-      { text: "Abbrechen", style: "cancel" },
-      {
-        text: "Löschen", style: "destructive",
-        onPress: async () => {
-          await haptics.warning();
-          await deleteItem(itemId);
-        },
+  function handleDeleteItem(itemId: string) {
+    setDialog({
+      title: "Eintrag löschen?",
+      message: "Dieser Eintrag wird dauerhaft entfernt.",
+      destructive: true,
+      onConfirm: async () => {
+        await haptics.warning();
+        await deleteItem(itemId);
       },
-    ]);
+    });
   }
 
-  async function handleDeleteTrip() {
-    Alert.alert("Trip löschen?", "Alle Einträge und Daten werden gelöscht.", [
-      { text: "Abbrechen", style: "cancel" },
-      {
-        text: "Löschen", style: "destructive",
-        onPress: async () => {
-          await haptics.error();
-          await deleteTrip(id);
-          router.back();
-        },
+  function handleDeleteTrip() {
+    setDialog({
+      title: "Trip löschen?",
+      message: "Alle Einträge und Daten werden gelöscht.",
+      destructive: true,
+      onConfirm: async () => {
+        await haptics.error();
+        await deleteTrip(id);
+        router.back();
       },
-    ]);
+    });
   }
 
   async function handleTapItem(item: TripItem) {
@@ -126,14 +119,7 @@ export default function TripDetailScreen() {
         <TouchableOpacity
           onPress={() => {
             if (parsing) {
-              Alert.alert(
-                'Upload läuft',
-                'Ein Dokument wird gerade verarbeitet. Trotzdem zurück?',
-                [
-                  { text: 'Abbrechen', style: 'cancel' },
-                  { text: 'Ja, zurück', style: 'destructive', onPress: () => router.back() },
-                ]
-              );
+              setDialog({ title: 'Upload läuft', message: 'Ein Dokument wird gerade verarbeitet. Trotzdem zurück?', onConfirm: () => router.back(), destructive: true });
             } else {
               router.back();
             }
@@ -224,6 +210,20 @@ export default function TripDetailScreen() {
         onClose={() => setImportVisible(false)}
         tripId={id}
         onSuccess={refresh}
+      />
+
+      <ConfirmDialog
+        visible={!!dialog}
+        title={dialog?.title ?? ""}
+        message={dialog?.message}
+        actions={[
+          {
+            label: dialog?.destructive ? "Ja, löschen" : "Ja, zurück",
+            style: "destructive",
+            onPress: () => { setDialog(null); dialog?.onConfirm(); },
+          },
+          { label: "Abbrechen", style: "cancel", onPress: () => setDialog(null) },
+        ]}
       />
     </KeyboardAvoidingView>
   );

@@ -5,7 +5,7 @@
  */
 import { useState } from "react";
 import {
-  ActivityIndicator, KeyboardAvoidingView, Platform,
+  ActivityIndicator,
   StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from "react-native";
 import BottomSheet from "./BottomSheet";
@@ -78,8 +78,8 @@ export default function ImportSheet({ visible, onClose, tripId, onSuccess }: Pro
   }
 
   return (
-    <BottomSheet visible={visible} onClose={handleClose} heightFraction={0.75}>
-      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
+    <BottomSheet visible={visible} onClose={handleClose} heightFraction={0.75} hasInputs>
+      <View style={{ flex: 1 }}>
         <Text style={s.title}>Text importieren</Text>
         <Text style={s.subtitle}>
           {tripId
@@ -127,7 +127,7 @@ export default function ImportSheet({ visible, onClose, tripId, onSuccess }: Pro
               : <Text style={s.submitText}>Analysieren ✨</Text>}
           </TouchableOpacity>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </BottomSheet>
   );
 }

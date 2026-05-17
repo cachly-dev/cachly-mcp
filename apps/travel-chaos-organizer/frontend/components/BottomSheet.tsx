@@ -4,7 +4,7 @@
  */
 import { ReactNode, useEffect, useRef } from "react";
 import {
-  Animated, Dimensions, Pressable, StyleSheet, View,
+  Animated, Dimensions, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -16,9 +16,11 @@ type Props = {
   children: ReactNode;
   /** Sheet takes up this fraction of screen height (default 0.5) */
   heightFraction?: number;
+  /** Set true when sheet contains text inputs so keyboard doesn't cover them */
+  hasInputs?: boolean;
 };
 
-export default function BottomSheet({ visible, onClose, children, heightFraction = 0.5 }: Props) {
+export default function BottomSheet({ visible, onClose, children, heightFraction = 0.5, hasInputs = false }: Props) {
   const insets = useSafeAreaInsets();
   const translateY = useRef(new Animated.Value(SCREEN_HEIGHT)).current;
   const backdropOpacity = useRef(new Animated.Value(0)).current;
@@ -56,7 +58,21 @@ export default function BottomSheet({ visible, onClose, children, heightFraction
         ]}
       >
         <View style={s.handle} />
-        {children}
+        {hasInputs ? (
+          <KeyboardAvoidingView
+            style={{ flex: 1 }}
+            behavior={Platform.OS === "ios" ? "padding" : "height"}
+            keyboardVerticalOffset={16}
+          >
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ flexGrow: 1 }}
+            >
+              {children}
+            </ScrollView>
+          </KeyboardAvoidingView>
+        ) : children}
       </Animated.View>
     </View>
   );

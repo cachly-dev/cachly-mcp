@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  ActivityIndicator, Alert, FlatList, KeyboardAvoidingView,
-  Platform, RefreshControl, StyleSheet, Text, TextInput,
+  ActivityIndicator, Alert, FlatList,
+  RefreshControl, StyleSheet, Text, TextInput,
   TouchableOpacity, View,
 } from "react-native";
 import { useRouter } from "expo-router";
@@ -231,8 +231,8 @@ export default function TripsScreen() {
         <Text style={s.fabText}>+</Text>
       </TouchableOpacity>
 
-      <BottomSheet visible={sheetVisible} onClose={closeSheet} heightFraction={0.65}>
-        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
+      <BottomSheet visible={sheetVisible} onClose={closeSheet} heightFraction={0.65} hasInputs>
+        <View style={{ flex: 1 }}>
           <Text style={s.sheetTitle}>
             {sheetMode === "create" ? "Neuer Trip" : "Trip bearbeiten"}
           </Text>
@@ -301,7 +301,7 @@ export default function TripsScreen() {
                 : <Text style={s.saveText}>{sheetMode === "create" ? "Erstellen" : "Speichern"}</Text>}
             </TouchableOpacity>
           </View>
-        </KeyboardAvoidingView>
+        </View>
       </BottomSheet>
     </View>
   );

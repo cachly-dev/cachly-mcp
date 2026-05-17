@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import {
-  Alert, Linking, ScrollView, StyleSheet, Text,
+  Linking, ScrollView, StyleSheet, Text,
   TouchableOpacity, View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,6 +10,7 @@ import { clearCache, cacheSizeBytes } from "../../lib/fileCache";
 import { purgeFailed, getPending } from "../../lib/offlineQueue";
 import { haptics } from "../../lib/haptics";
 import { useQuota } from "../../lib/quota";
+import ConfirmDialog from "../../components/ConfirmDialog";
 
 const OLLAMA_MODELS = ["llama3.2-vision", "llava", "llava-phi3", "bakllava"];
 
@@ -20,6 +21,7 @@ export default function SettingsScreen() {
   const [cacheSize, setCacheSize] = useState(0);
   const [queueSize, setQueueSize] = useState(0);
   const [loggingOut, setLoggingOut] = useState(false);
+  const [dialog, setDialog] = useState<{ title: string; message?: string; onConfirm: () => void } | null>(null);
   const [selectedModel, setSelectedModel] = useState(
     process.env.EXPO_PUBLIC_OLLAMA_MODEL ?? "llama3.2-vision"
   );
@@ -31,21 +33,15 @@ export default function SettingsScreen() {
 
   async function handleClearCache() {
     await haptics.warning();
-    Alert.alert(
-      "Cache leeren?",
-      "Alle lokal gespeicherten Tickets und PDFs werden gelöscht.",
-      [
-        { text: "Abbrechen", style: "cancel" },
-        {
-          text: "Leeren", style: "destructive",
-          onPress: async () => {
-            await clearCache();
-            setCacheSize(0);
-            await haptics.success();
-          },
-        },
-      ]
-    );
+    setDialog({
+      title: "Cache leeren?",
+      message: "Alle lokal gespeicherten Tickets und PDFs werden gelöscht.",
+      onConfirm: async () => {
+        await clearCache();
+        setCacheSize(0);
+        await haptics.success();
+      },
+    });
   }
 
   async function handlePurgeQueue() {
@@ -54,20 +50,17 @@ export default function SettingsScreen() {
     await haptics.confirm();
   }
 
-  async function handleLogout() {
-    Alert.alert("Abmelden", "Wirklich abmelden?", [
-      { text: "Abbrechen", style: "cancel" },
-      {
-        text: "Abmelden",
-        style: "destructive",
-        onPress: async () => {
-          setLoggingOut(true);
-          await haptics.tap();
-          await logout();
-          router.replace("/(auth)/login");
-        },
+  function handleLogout() {
+    setDialog({
+      title: "Abmelden",
+      message: "Wirklich abmelden?",
+      onConfirm: async () => {
+        setLoggingOut(true);
+        await haptics.tap();
+        await logout();
+        router.replace("/(auth)/login");
       },
-    ]);
+    });
   }
 
   return (
@@ -220,6 +213,16 @@ export default function SettingsScreen() {
       </TouchableOpacity>
 
       <Text style={s.version}>Travel Chaos Organizer v0.1.0</Text>
+
+      <ConfirmDialog
+        visible={!!dialog}
+        title={dialog?.title ?? ""}
+        message={dialog?.message}
+        actions={[
+          { label: "Ja", style: "destructive", onPress: () => { setDialog(null); dialog?.onConfirm(); } },
+          { label: "Abbrechen", style: "cancel", onPress: () => setDialog(null) },
+        ]}
+      />
     </ScrollView>
   );
 }
