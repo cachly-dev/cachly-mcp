@@ -35,9 +35,13 @@ export default function InboxScreen() {
       showToast("Dem Trip zugeordnet ✓", "success");
       setSelected(null);
       await refresh();
-    } catch {
+    } catch (err: any) {
       await haptics.error();
-      showToast("Zuordnung fehlgeschlagen", "error");
+      if (err?.status === 429) {
+        showToast("Tageslimit erreicht (50 Parses). Upgrade auf Pro.", "warning");
+      } else {
+        showToast("Zuordnung fehlgeschlagen", "error");
+      }
     } finally {
       setAssigning(false);
     }

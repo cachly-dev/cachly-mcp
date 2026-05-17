@@ -13,7 +13,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, { ...init, headers: { ...headers, ...init.headers } });
   if (!res.ok) {
     const err = await res.text();
-    throw new Error(`API ${res.status}: ${err}`);
+    const error = new Error(`API ${res.status}: ${err}`) as Error & { status: number };
+    (error as any).status = res.status;
+    throw error;
   }
   return res.json() as Promise<T>;
 }
@@ -82,6 +84,21 @@ export const inboxApi = {
       body: JSON.stringify({ trip_id: tripId, type }),
     }),
   reject: (inboxId: string) => request<void>(`/api/v1/inbox/${inboxId}`, { method: "DELETE" }),
+};
+
+// ── User / Plan ────────────────────────────────────────────────────────────
+
+export type UserPlan = {
+  id: string;
+  plan: "free" | "pro";
+  plan_expires_at: string | null;
+  free_daily_parses: number;
+  free_max_trips: number;
+  is_pro: boolean;
+};
+
+export const usersApi = {
+  me: () => request<UserPlan>("/api/v1/users/me"),
 };
 
 // ── Parse ──────────────────────────────────────────────────────────────────

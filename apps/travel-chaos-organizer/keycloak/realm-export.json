@@ -1,9 +1,15 @@
 {
   "realm": "travel-chaos",
   "enabled": true,
+  "sslRequired": "none",
   "registrationAllowed": true,
   "registrationEmailAsUsername": true,
   "loginWithEmailAllowed": true,
+  "resetPasswordAllowed": true,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionMaxLifespan": 36000,
+  "refreshTokenMaxReuse": 0,
   "clients": [
     {
       "clientId": "tco-backend",
@@ -17,11 +23,12 @@
       "enabled": true,
       "publicClient": true,
       "standardFlowEnabled": true,
-      "directAccessGrantsEnabled": true,
+      "directAccessGrantsEnabled": false,
       "redirectUris": [
         "exp://*",
         "tco://*",
-        "http://localhost:*"
+        "http://localhost:*",
+        "https://auth.expo.io/*"
       ],
       "webOrigins": ["*"],
       "attributes": {

@@ -50,7 +50,9 @@ export default function ImportSheet({ visible, onClose, tripId, onSuccess }: Pro
 
       if (!res.ok) {
         const err = await res.text();
-        throw new Error(`${res.status}: ${err}`);
+        const error = new Error(`${res.status}: ${err}`) as Error & { status: number };
+        (error as any).status = res.status;
+        throw error;
       }
 
       await haptics.success();
@@ -58,9 +60,13 @@ export default function ImportSheet({ visible, onClose, tripId, onSuccess }: Pro
       onClose();
       onSuccess();
       showToast("Dokument erfolgreich importiert", "success");
-    } catch (e) {
+    } catch (err: any) {
       await haptics.error();
-      setError(e instanceof Error ? e.message : "Unbekannter Fehler");
+      if (err?.status === 429) {
+        showToast("Tageslimit erreicht (50 Parses/Tag). Upgrade auf Pro.", "warning");
+      } else {
+        setError(err instanceof Error ? err.message : "Unbekannter Fehler");
+      }
     } finally {
       setLoading(false);
     }
