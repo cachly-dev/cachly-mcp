@@ -6,6 +6,7 @@ import { useNetworkSync } from "../hooks/useNetworkSync";
 import { requestNotificationPermission } from "../lib/notifications";
 import { onShareIntent, getInitialShareIntent } from "../lib/shareIntent";
 import { ToastProvider, useToast } from "../components/ToastContext";
+import { QuotaProvider } from "../lib/quota";
 
 function SyncManager() {
   const { showToast } = useToast();
@@ -43,13 +44,15 @@ export default function RootLayout() {
 
   return (
     <ToastProvider>
-      <SyncManager />
-      <ShareIntentHandler />
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="index" />
-        <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(app)" />
-      </Stack>
+      <QuotaProvider>
+        <SyncManager />
+        <ShareIntentHandler />
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="index" />
+          <Stack.Screen name="(auth)" />
+          <Stack.Screen name="(app)" />
+        </Stack>
+      </QuotaProvider>
     </ToastProvider>
   );
 }

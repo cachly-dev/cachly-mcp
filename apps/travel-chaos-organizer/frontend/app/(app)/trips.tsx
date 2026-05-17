@@ -13,12 +13,15 @@ import BottomSheet from "../../components/BottomSheet";
 import { TripCardSkeleton } from "../../components/Skeleton";
 import { haptics } from "../../lib/haptics";
 import { scheduleAllTripReminders } from "../../lib/notifications";
+import { useToast } from "../../components/ToastContext";
+import { UpgradeBanner } from "../../components/UpgradeBanner";
 
 type SheetMode = "create" | "edit";
 
 export default function TripsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { showToast } = useToast();
   const { trips, loading, error, refresh, createOffline, updateOffline } = useTrips();
 
   const [sheetVisible, setSheetVisible] = useState(false);
@@ -79,9 +82,13 @@ export default function TripsScreen() {
       }
       await haptics.success();
       closeSheet();
-    } catch {
+    } catch (err: any) {
       await haptics.error();
-      Alert.alert("Fehler", "Änderung konnte nicht gespeichert werden.");
+      if (err?.status === 402) {
+        showToast("Free Plan: Max. 3 Trips erreicht. Upgrade auf Pro.", "warning");
+      } else {
+        showToast("Trip konnte nicht erstellt werden", "error");
+      }
     } finally {
       setSaving(false);
     }
@@ -99,6 +106,7 @@ export default function TripsScreen() {
 
   return (
     <View style={s.container}>
+      <UpgradeBanner />
       {error && <Text style={s.errorBanner}>Offline — zeige gespeicherte Daten</Text>}
 
       <FlatList

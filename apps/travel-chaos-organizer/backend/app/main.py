@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.routers import trips, items, parse, inbox, mail, events as events_router, waitlist as waitlist_router
 from app.routers import admin as admin_router
+from app.routers import users as users_router
 from app.services.cache import cachly_configured
 from app.limiter import limiter
 from slowapi import _rate_limit_exceeded_handler
@@ -18,6 +19,9 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
+    import sys
+    if settings.admin_password == "changeme":
+        print("⚠️  WARNING: ADMIN_PASSWORD is still 'changeme'. Change it before going live!", file=sys.stderr)
     yield
 
 
@@ -46,6 +50,7 @@ app.include_router(mail.router, prefix="/api/v1")
 app.include_router(events_router.router, prefix="/api/v1")
 app.include_router(waitlist_router.router, prefix="/api/v1")
 app.include_router(admin_router.router)   # no /api/v1 prefix — admin is at /admin
+app.include_router(users_router.router, prefix="/api/v1")
 
 
 @app.get("/health")
