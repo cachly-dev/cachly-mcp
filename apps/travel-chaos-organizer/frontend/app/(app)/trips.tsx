@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator, Alert, FlatList, KeyboardAvoidingView,
   Platform, RefreshControl, StyleSheet, Text, TextInput,
@@ -31,10 +31,14 @@ export default function TripsScreen() {
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [startDateError, setStartDateError] = useState<string | null>(null);
+  const [endDateError, setEndDateError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const submittingRef = useRef<boolean>(false);
 
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<Trip[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const [qrTrip, setQrTrip] = useState<{ id: string; name: string } | null>(null);
 
   useEffect(() => {
@@ -47,10 +51,11 @@ export default function TripsScreen() {
       return;
     }
     const t = setTimeout(async () => {
+      setSearching(true);
       try {
         const results = await tripsApi.search(searchQuery);
         setSearchResults(results);
-      } catch { setSearchResults([]); }
+      } catch { setSearchResults([]); } finally { setSearching(false); }
     }, 300);
     return () => clearTimeout(t);
   }, [searchQuery]);
@@ -81,6 +86,8 @@ export default function TripsScreen() {
     setName("");
     setStartDate("");
     setEndDate("");
+    setStartDateError(null);
+    setEndDateError(null);
     setEditingTrip(null);
   }
 
@@ -90,8 +97,31 @@ export default function TripsScreen() {
     return /^\d{4}-\d{2}-\d{2}$/.test(s.trim()) ? s.trim() : null;
   }
 
+  function handleStartDateChange(val: string) {
+    setStartDate(val);
+    if (val.length > 0 && !/^\d{4}-\d{2}-\d{2}$/.test(val.trim())) {
+      setStartDateError("Format: TT.MM.JJJJ (z.B. 2025-06-15)");
+    } else {
+      setStartDateError(null);
+    }
+  }
+
+  function handleEndDateChange(val: string) {
+    setEndDate(val);
+    if (val.length > 0 && !/^\d{4}-\d{2}-\d{2}$/.test(val.trim())) {
+      setEndDateError("Format: TT.MM.JJJJ (z.B. 2025-06-15)");
+    } else {
+      setEndDateError(null);
+    }
+  }
+
+  const hasDateError = startDateError !== null || endDateError !== null;
+
   async function save() {
     if (!name.trim()) return;
+    if (hasDateError) return;
+    if (submittingRef.current) return;
+    submittingRef.current = true;
     setSaving(true);
     try {
       const start = parsedDate(startDate);
@@ -106,12 +136,14 @@ export default function TripsScreen() {
     } catch (err) {
       await haptics.error();
       if (err instanceof ApiError && err.status === 402) {
-        showToast("Free Plan: Max. 3 Trips erreicht. Upgrade auf Pro.", "warning");
+        closeSheet();
+        showToast("Trip-Limit erreicht – jetzt upgraden 🚀", "warning");
       } else {
         showToast("Trip konnte nicht erstellt werden", "error");
       }
     } finally {
       setSaving(false);
+      submittingRef.current = false;
     }
   }
 
@@ -138,6 +170,13 @@ export default function TripsScreen() {
         onChangeText={setSearchQuery}
         clearButtonMode="while-editing"
       />
+      {searchQuery.trim() !== "" && searching && (
+        <ActivityIndicator
+          style={{ marginBottom: 8 }}
+          color="#4f46e5"
+          accessibilityLabel="Suche läuft"
+        />
+      )}
 
       <FlatList
         data={displayedTrips}
@@ -213,27 +252,33 @@ export default function TripsScreen() {
           <Text style={s.fieldLabel}>Startdatum</Text>
           <TextInput
             style={s.input}
-            placeholder="YYYY-MM-DD"
+            placeholder="2025-06-15"
             placeholderTextColor="#6666aa"
             value={startDate}
-            onChangeText={setStartDate}
+            onChangeText={handleStartDateChange}
             keyboardType="numbers-and-punctuation"
             returnKeyType="next"
             accessibilityLabel="Startdatum"
           />
+          {startDateError && (
+            <Text style={{ color: "#ef4444", fontSize: 12 }}>{startDateError}</Text>
+          )}
 
           <Text style={s.fieldLabel}>Enddatum</Text>
           <TextInput
             style={s.input}
-            placeholder="YYYY-MM-DD"
+            placeholder="2025-06-15"
             placeholderTextColor="#6666aa"
             value={endDate}
-            onChangeText={setEndDate}
+            onChangeText={handleEndDateChange}
             keyboardType="numbers-and-punctuation"
             returnKeyType="done"
             onSubmitEditing={save}
             accessibilityLabel="Enddatum"
           />
+          {endDateError && (
+            <Text style={{ color: "#ef4444", fontSize: 12 }}>{endDateError}</Text>
+          )}
 
           <View style={s.sheetButtons}>
             <TouchableOpacity
@@ -245,9 +290,9 @@ export default function TripsScreen() {
               <Text style={s.cancelText}>Abbrechen</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[s.saveBtn, (!name.trim() || saving) && s.saveBtnDisabled]}
+              style={[s.saveBtn, (!name.trim() || saving || hasDateError) && s.saveBtnDisabled]}
               onPress={save}
-              disabled={saving || !name.trim()}
+              disabled={saving || !name.trim() || hasDateError}
               accessibilityLabel={sheetMode === "create" ? "Trip erstellen" : "Änderungen speichern"}
               accessibilityRole="button"
             >

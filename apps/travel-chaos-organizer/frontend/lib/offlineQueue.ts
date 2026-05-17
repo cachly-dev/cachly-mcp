@@ -7,6 +7,7 @@
  */
 import * as SQLite from "expo-sqlite";
 import * as Network from "expo-network";
+import { ApiError } from "./api";
 
 const db = SQLite.openDatabaseSync("tco.db");
 
@@ -56,6 +57,12 @@ export function purgeFailed(maxRetries = 5): void {
   db.runSync("DELETE FROM offline_queue WHERE retries >= ?", [maxRetries]);
 }
 
+export let onQueueError: ((count: number) => void) | null = null;
+
+export function setQueueErrorCallback(cb: (count: number) => void): void {
+  onQueueError = cb;
+}
+
 /** Alias used by api.ts — enqueue a failed mutation for later replay. */
 export function enqueueRequest(method: QueuedOp["method"], path: string, body?: object): void {
   enqueue(method, path, body);
@@ -82,6 +89,7 @@ export async function drainQueue(
   let failed = 0;
 
   const headers = await authHeaders();
+  let permanentlyRemoved = 0;
 
   for (const op of ops) {
     try {
@@ -93,14 +101,44 @@ export async function drainQueue(
       if (res.ok || res.status === 404) {
         dequeue(op.id);
         succeeded++;
+      } else if (res.status === 429) {
+        incrementRetry(op.id);
+        failed++;
+      } else if (res.status >= 400 && res.status < 500) {
+        dequeue(op.id);
+        permanentlyRemoved++;
+        failed++;
       } else {
         incrementRetry(op.id);
         failed++;
       }
-    } catch {
-      incrementRetry(op.id);
-      failed++;
+    } catch (err) {
+      if (err instanceof ApiError) {
+        if (err.status === 401 || err.status === 403) {
+          console.warn(`offlineQueue: removing unrecoverable op ${op.id} (${err.status})`);
+          dequeue(op.id);
+          permanentlyRemoved++;
+          failed++;
+        } else if (err.status === 429 || err.status == null) {
+          incrementRetry(op.id);
+          failed++;
+        } else if (err.status >= 400 && err.status < 500) {
+          dequeue(op.id);
+          permanentlyRemoved++;
+          failed++;
+        } else {
+          incrementRetry(op.id);
+          failed++;
+        }
+      } else {
+        incrementRetry(op.id);
+        failed++;
+      }
     }
+  }
+
+  if (permanentlyRemoved > 0) {
+    onQueueError?.(permanentlyRemoved);
   }
 
   return { succeeded, failed };

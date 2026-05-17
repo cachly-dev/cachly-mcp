@@ -7,8 +7,9 @@
 import { useEffect, useRef } from "react";
 import { AppState, AppStateStatus } from "react-native";
 import * as Network from "expo-network";
-import { drainQueue, processQueue } from "../lib/offlineQueue";
+import { drainQueue, processQueue, setQueueErrorCallback } from "../lib/offlineQueue";
 import { getAccessToken } from "../lib/auth";
+import { useToast } from "../components/ToastContext";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL!;
 
@@ -21,8 +22,12 @@ async function authHeaders(): Promise<Record<string, string>> {
 export function useNetworkSync(onSynced?: (result: { succeeded: number; failed: number }) => void) {
   const appState = useRef<AppStateStatus>(AppState.currentState);
   const wasOffline = useRef(false);
+  const { showToast } = useToast();
 
   useEffect(() => {
+    setQueueErrorCallback((count) => {
+      showToast(`${count} gespeicherte Änderungen konnten nicht synchronisiert werden`, "error");
+    });
     // Drain on foreground
     const appStateSub = AppState.addEventListener("change", async (next) => {
       if (appState.current.match(/inactive|background/) && next === "active") {

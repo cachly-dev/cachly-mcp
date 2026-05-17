@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
-  FlatList, ScrollView, StyleSheet, Text,
+  ActivityIndicator, FlatList, ScrollView, StyleSheet, Text,
   TouchableOpacity, View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -20,6 +20,7 @@ export default function InboxScreen() {
   const { trips } = useTrips();
   const [selected, setSelected] = useState<InboxItem | null>(null);
   const [assigning, setAssigning] = useState(false);
+  const assigningRef = useRef<boolean>(false);
 
   async function openAssign(item: InboxItem) {
     await haptics.tap();
@@ -28,6 +29,8 @@ export default function InboxScreen() {
 
   async function assign(tripId: string) {
     if (!selected) return;
+    if (assigningRef.current) return;
+    assigningRef.current = true;
     setAssigning(true);
     try {
       await inboxApi.assign(selected.id, tripId, (selected.parsed_data?.type as string) ?? "other");
@@ -42,8 +45,10 @@ export default function InboxScreen() {
       } else {
         showToast("Zuordnung fehlgeschlagen", "error");
       }
+      setSelected(null);
     } finally {
       setAssigning(false);
+      assigningRef.current = false;
     }
   }
 
@@ -107,7 +112,7 @@ export default function InboxScreen() {
             {trips.map((trip) => (
               <TouchableOpacity
                 key={trip.id}
-                style={s.tripRow}
+                style={[s.tripRow, { opacity: assigning ? 0.5 : 1 }]}
                 onPress={() => assign(trip.id)}
                 disabled={assigning}
                 activeOpacity={0.7}
@@ -116,7 +121,7 @@ export default function InboxScreen() {
                   <Text style={s.tripName}>{trip.name}</Text>
                   {trip.start_date && <Text style={s.tripDate}>{trip.start_date}</Text>}
                 </View>
-                <Text style={s.arrow}>›</Text>
+                {assigning ? <ActivityIndicator color="#4f46e5" /> : <Text style={s.arrow}>›</Text>}
               </TouchableOpacity>
             ))}
           </ScrollView>

@@ -1,9 +1,9 @@
-import { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import {
-  ActivityIndicator, Alert, FlatList, KeyboardAvoidingView,
+  ActivityIndicator, Alert, BackHandler, FlatList, KeyboardAvoidingView,
   Platform, StyleSheet, Text, TouchableOpacity, View,
 } from "react-native";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useLocalSearchParams, useRouter, useFocusEffect } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
@@ -32,6 +32,26 @@ export default function TripDetailScreen() {
   const [parsing, setParsing] = useState(false);
   const [selectedItem, setSelectedItem] = useState<TripItem | null>(null);
   const [importVisible, setImportVisible] = useState(false);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const handler = BackHandler.addEventListener('hardwareBackPress', () => {
+        if (parsing) {
+          Alert.alert(
+            'Upload läuft',
+            'Ein Dokument wird gerade verarbeitet. Trotzdem zurück?',
+            [
+              { text: 'Abbrechen', style: 'cancel' },
+              { text: 'Ja, zurück', style: 'destructive', onPress: () => router.back() },
+            ]
+          );
+          return true;
+        }
+        return false;
+      });
+      return () => handler.remove();
+    }, [parsing])
+  );
 
   useEffect(() => {
     if (sharedUri) {
@@ -104,7 +124,20 @@ export default function TripDetailScreen() {
     <KeyboardAvoidingView style={s.container} behavior={Platform.OS === "ios" ? "padding" : "height"}>
       <View style={[s.header, { paddingTop: insets.top + 8 }]}>
         <TouchableOpacity
-          onPress={() => router.back()}
+          onPress={() => {
+            if (parsing) {
+              Alert.alert(
+                'Upload läuft',
+                'Ein Dokument wird gerade verarbeitet. Trotzdem zurück?',
+                [
+                  { text: 'Abbrechen', style: 'cancel' },
+                  { text: 'Ja, zurück', style: 'destructive', onPress: () => router.back() },
+                ]
+              );
+            } else {
+              router.back();
+            }
+          }}
           style={s.back}
           hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
           accessibilityLabel="Zurück"
