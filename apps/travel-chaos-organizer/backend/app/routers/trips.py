@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.keycloak import user_id
 from app.db.database import get_db
 from app.models.schemas import TripCreate, TripOut, TripUpdate
+from app.services import quota
 
 router = APIRouter(prefix="/trips", tags=["trips"])
 
@@ -28,6 +29,7 @@ async def create_trip(
     uid: Annotated[str, Depends(user_id)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
+    await quota.check_trips(db, uid)
     result = await db.execute(
         text("""
             INSERT INTO trips (user_id, name, description, start_date, end_date)
