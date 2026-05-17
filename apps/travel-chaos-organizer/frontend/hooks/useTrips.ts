@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import * as Network from "expo-network";
 import { tripsApi, itemsApi, Trip, TripItem } from "../lib/api";
-import { upsertTrips, upsertItems, getLocalTrips, getLocalItems } from "../lib/db";
+import { upsertTrips, upsertItems, getLocalTrips, getLocalItems, deleteLocalItem } from "../lib/db";
 import { enqueue } from "../lib/offlineQueue";
 
 export function useTrips() {
@@ -39,7 +39,6 @@ export function useTrips() {
       setTrips((prev) => [...prev, trip]);
       return trip;
     }
-    // Offline: queue and show locally with a temp id
     enqueue("POST", "/api/v1/trips", data);
     const temp: Trip = { id: `temp-${Date.now()}`, user_id: "local", created_at: new Date().toISOString(), updated_at: new Date().toISOString(), ...data };
     upsertTrips([temp]);
@@ -47,7 +46,29 @@ export function useTrips() {
     return temp;
   }
 
-  return { trips, loading, error, refresh: sync, createOffline };
+  async function updateOffline(id: string, data: Partial<Pick<Trip, "name" | "description" | "start_date" | "end_date">>) {
+    const net = await Network.getNetworkStateAsync();
+    if (net.isConnected) {
+      const updated = await tripsApi.update(id, data);
+      upsertTrips([updated]);
+      setTrips((prev) => prev.map((t) => (t.id === id ? updated : t)));
+      return updated;
+    }
+    enqueue("PATCH", `/api/v1/trips/${id}`, data);
+    setTrips((prev) => prev.map((t) => (t.id === id ? { ...t, ...data } : t)));
+  }
+
+  async function deleteTrip(id: string) {
+    const net = await Network.getNetworkStateAsync();
+    if (net.isConnected) {
+      await tripsApi.delete(id);
+    } else {
+      enqueue("DELETE", `/api/v1/trips/${id}`, {});
+    }
+    setTrips((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  return { trips, loading, error, refresh: sync, createOffline, updateOffline, deleteTrip };
 }
 
 export function useTripItems(tripId: string) {
@@ -74,5 +95,16 @@ export function useTripItems(tripId: string) {
 
   useEffect(() => { sync(); }, [sync]);
 
-  return { items, loading, refresh: sync };
+  async function deleteItem(itemId: string) {
+    const net = await Network.getNetworkStateAsync();
+    if (net.isConnected) {
+      await itemsApi.delete(tripId, itemId);
+    } else {
+      enqueue("DELETE", `/api/v1/trips/${tripId}/items/${itemId}`, {});
+    }
+    deleteLocalItem(itemId);
+    setItems((prev) => prev.filter((i) => i.id !== itemId));
+  }
+
+  return { items, loading, refresh: sync, deleteItem };
 }

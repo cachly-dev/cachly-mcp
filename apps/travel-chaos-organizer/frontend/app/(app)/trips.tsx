@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator, Alert, FlatList, KeyboardAvoidingView,
   Platform, RefreshControl, StyleSheet, Text, TextInput,
@@ -7,44 +7,68 @@ import {
 import { useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useTrips } from "../../hooks/useTrips";
+import { Trip } from "../../lib/api";
 import TripCard from "../../components/TripCard";
 import BottomSheet from "../../components/BottomSheet";
 import { TripCardSkeleton } from "../../components/Skeleton";
 import { haptics } from "../../lib/haptics";
 import { scheduleAllTripReminders } from "../../lib/notifications";
 
+type SheetMode = "create" | "edit";
+
 export default function TripsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { trips, loading, error, refresh, createOffline } = useTrips();
+  const { trips, loading, error, refresh, createOffline, updateOffline } = useTrips();
+
   const [sheetVisible, setSheetVisible] = useState(false);
+  const [sheetMode, setSheetMode] = useState<SheetMode>("create");
+  const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [name, setName] = useState("");
   const [saving, setSaving] = useState(false);
 
-  // Schedule reminders whenever trip list changes
   useEffect(() => {
     if (trips.length > 0) scheduleAllTripReminders(trips).catch(() => {});
   }, [trips]);
 
-  async function createTrip() {
+  function openCreate() {
+    haptics.tap();
+    setSheetMode("create");
+    setEditingTrip(null);
+    setName("");
+    setSheetVisible(true);
+  }
+
+  function openEdit(trip: Trip) {
+    setSheetMode("edit");
+    setEditingTrip(trip);
+    setName(trip.name);
+    setSheetVisible(true);
+  }
+
+  function closeSheet() {
+    setSheetVisible(false);
+    setName("");
+    setEditingTrip(null);
+  }
+
+  async function save() {
     if (!name.trim()) return;
     setSaving(true);
     try {
-      await createOffline({ name: name.trim(), description: null, start_date: null, end_date: null });
+      if (sheetMode === "create") {
+        await createOffline({ name: name.trim(), description: null, start_date: null, end_date: null });
+      } else if (editingTrip) {
+        await updateOffline(editingTrip.id, { name: name.trim() });
+      }
       await haptics.success();
-      setName("");
-      setSheetVisible(false);
+      closeSheet();
     } catch {
       await haptics.error();
-      Alert.alert("Fehler", "Trip konnte nicht erstellt werden.");
+      Alert.alert("Fehler", "Änderung konnte nicht gespeichert werden.");
     } finally {
       setSaving(false);
     }
-  }
-
-  function openSheet() {
-    haptics.tap();
-    setSheetVisible(true);
   }
 
   if (loading && trips.length === 0) {
@@ -77,21 +101,29 @@ export default function TripsScreen() {
           </View>
         }
         renderItem={({ item }) => (
-          <TripCard trip={item} onPress={() => router.push(`/(app)/trips/${item.id}`)} />
+          <TripCard
+            trip={item}
+            onPress={() => router.push(`/(app)/trips/${item.id}`)}
+            onLongPress={() => openEdit(item)}
+          />
         )}
       />
 
       <TouchableOpacity
         style={[s.fab, { bottom: insets.bottom + 24 }]}
-        onPress={openSheet}
+        onPress={openCreate}
         activeOpacity={0.85}
+        accessibilityLabel="Neuen Trip erstellen"
+        accessibilityRole="button"
       >
         <Text style={s.fabText}>+</Text>
       </TouchableOpacity>
 
-      <BottomSheet visible={sheetVisible} onClose={() => setSheetVisible(false)} heightFraction={0.45}>
+      <BottomSheet visible={sheetVisible} onClose={closeSheet} heightFraction={0.45}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
-          <Text style={s.sheetTitle}>Neuer Trip</Text>
+          <Text style={s.sheetTitle}>
+            {sheetMode === "create" ? "Neuer Trip" : "Trip bearbeiten"}
+          </Text>
           <TextInput
             style={s.input}
             placeholder="z.B. Barcelona Sommer 2024"
@@ -100,20 +132,28 @@ export default function TripsScreen() {
             onChangeText={setName}
             autoFocus
             returnKeyType="done"
-            onSubmitEditing={createTrip}
+            onSubmitEditing={save}
+            accessibilityLabel="Trip-Name"
           />
           <View style={s.sheetButtons}>
-            <TouchableOpacity style={s.cancelBtn} onPress={() => setSheetVisible(false)}>
+            <TouchableOpacity
+              style={s.cancelBtn}
+              onPress={closeSheet}
+              accessibilityLabel="Abbrechen"
+              accessibilityRole="button"
+            >
               <Text style={s.cancelText}>Abbrechen</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[s.saveBtn, (!name.trim() || saving) && s.saveBtnDisabled]}
-              onPress={createTrip}
+              onPress={save}
               disabled={saving || !name.trim()}
+              accessibilityLabel={sheetMode === "create" ? "Trip erstellen" : "Änderungen speichern"}
+              accessibilityRole="button"
             >
               {saving
                 ? <ActivityIndicator color="#fff" />
-                : <Text style={s.saveText}>Erstellen</Text>}
+                : <Text style={s.saveText}>{sheetMode === "create" ? "Erstellen" : "Speichern"}</Text>}
             </TouchableOpacity>
           </View>
         </KeyboardAvoidingView>

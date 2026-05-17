@@ -7,9 +7,9 @@ import { useLocalSearchParams, useRouter } from "expo-router";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
-import { useTripItems } from "../../../hooks/useTrips";
+import { useTripItems, useTrips } from "../../../hooks/useTrips";
 import { parseFile } from "../../../lib/api";
-import TimelineItem from "../../../components/TimelineItem";
+import SwipeableTimelineItem from "../../../components/SwipeableTimelineItem";
 import FileUploadButton from "../../../components/FileUploadButton";
 import { TimelineItemSkeleton } from "../../../components/Skeleton";
 import { haptics } from "../../../lib/haptics";
@@ -23,10 +23,10 @@ export default function TripDetailScreen() {
   }>();
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { items, loading, refresh } = useTripItems(id);
+  const { items, loading, refresh, deleteItem } = useTripItems(id);
+  const { deleteTrip } = useTrips();
   const [parsing, setParsing] = useState(false);
 
-  // Auto-process file shared into this trip via share intent
   useEffect(() => {
     if (sharedUri) {
       parseAndRefresh(sharedUri, sharedMime ?? "application/octet-stream", sharedName ?? "shared-file");
@@ -62,13 +62,57 @@ export default function TripDetailScreen() {
     }
   }
 
+  async function handleDeleteItem(itemId: string) {
+    Alert.alert("Eintrag löschen?", "Dieser Eintrag wird dauerhaft entfernt.", [
+      { text: "Abbrechen", style: "cancel" },
+      {
+        text: "Löschen", style: "destructive",
+        onPress: async () => {
+          await haptics.warning();
+          await deleteItem(itemId);
+        },
+      },
+    ]);
+  }
+
+  async function handleDeleteTrip() {
+    Alert.alert("Trip löschen?", "Alle Einträge und Daten werden gelöscht.", [
+      { text: "Abbrechen", style: "cancel" },
+      {
+        text: "Löschen", style: "destructive",
+        onPress: async () => {
+          await haptics.error();
+          await deleteTrip(id);
+          router.back();
+        },
+      },
+    ]);
+  }
+
   return (
     <KeyboardAvoidingView style={s.container} behavior={Platform.OS === "ios" ? "padding" : "height"}>
       <View style={[s.header, { paddingTop: insets.top + 8 }]}>
-        <TouchableOpacity onPress={() => router.back()} style={s.back} hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}>
+        <TouchableOpacity
+          onPress={() => router.back()}
+          style={s.back}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel="Zurück"
+          accessibilityRole="button"
+        >
           <Text style={s.backText}>← Zurück</Text>
         </TouchableOpacity>
+
         <Text style={s.headerTitle}>Timeline</Text>
+
+        <TouchableOpacity
+          onPress={handleDeleteTrip}
+          style={s.deleteBtn}
+          hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+          accessibilityLabel="Trip löschen"
+          accessibilityRole="button"
+        >
+          <Text style={s.deleteBtnText}>🗑️</Text>
+        </TouchableOpacity>
       </View>
 
       {parsing && (
@@ -84,6 +128,11 @@ export default function TripDetailScreen() {
         contentContainerStyle={items.length === 0 ? s.emptyContainer : s.list}
         refreshing={loading}
         onRefresh={refresh}
+        ListHeaderComponent={
+          items.length > 0
+            ? <Text style={s.hint}>← Wischen zum Löschen</Text>
+            : null
+        }
         ListEmptyComponent={
           loading
             ? <View style={s.list}>{[1, 2, 3].map(k => <TimelineItemSkeleton key={k} />)}</View>
@@ -93,12 +142,27 @@ export default function TripDetailScreen() {
                 <Text style={s.emptySub}>Wirf Tickets, Buchungen oder Screenshots rein.</Text>
               </View>
         }
-        renderItem={({ item }) => <TimelineItem item={item} />}
+        renderItem={({ item }) => (
+          <SwipeableTimelineItem
+            item={item}
+            onDelete={() => handleDeleteItem(item.id)}
+          />
+        )}
       />
 
       <View style={[s.uploadBar, { paddingBottom: insets.bottom + 8 }]}>
-        <FileUploadButton icon="📄" label="PDF / Datei" onPress={uploadDocument} disabled={parsing} />
-        <FileUploadButton icon="🖼️" label="Screenshot" onPress={uploadScreenshot} disabled={parsing} />
+        <FileUploadButton
+          icon="📄"
+          label="PDF / Datei"
+          onPress={uploadDocument}
+          disabled={parsing}
+        />
+        <FileUploadButton
+          icon="🖼️"
+          label="Screenshot"
+          onPress={uploadScreenshot}
+          disabled={parsing}
+        />
       </View>
     </KeyboardAvoidingView>
   );
@@ -106,12 +170,18 @@ export default function TripDetailScreen() {
 
 const s = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#0f0f1a" },
-  header: { flexDirection: "row", alignItems: "center", padding: 16, paddingTop: 8, backgroundColor: "#1a1a2e", gap: 12 },
+  header: {
+    flexDirection: "row", alignItems: "center", paddingHorizontal: 16,
+    paddingBottom: 12, backgroundColor: "#1a1a2e", gap: 12,
+  },
   back: { paddingVertical: 4 },
   backText: { color: "#4f46e5", fontSize: 15 },
-  headerTitle: { color: "#fff", fontSize: 18, fontWeight: "700" },
+  headerTitle: { flex: 1, color: "#fff", fontSize: 18, fontWeight: "700" },
+  deleteBtn: { padding: 4 },
+  deleteBtnText: { fontSize: 18 },
   parsingBanner: { flexDirection: "row", alignItems: "center", gap: 8, backgroundColor: "#4f46e522", padding: 10, paddingHorizontal: 16 },
   parsingText: { color: "#a5b4fc", fontSize: 14 },
+  hint: { color: "#3a3a5e", fontSize: 12, textAlign: "center", marginBottom: 8 },
   list: { padding: 16, gap: 1 },
   emptyContainer: { flex: 1 },
   empty: { flex: 1, alignItems: "center", justifyContent: "center", padding: 48 },
