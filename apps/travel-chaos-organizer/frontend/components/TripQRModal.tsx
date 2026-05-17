@@ -31,10 +31,10 @@ export function TripQRModal({ tripId, tripName, visible, onClose }: Props) {
             <QRCode value={deepLink} size={180} color="#fff" backgroundColor="#1a1a2e" />
           </View>
           <Text style={s.link}>{deepLink}</Text>
-          <TouchableOpacity style={s.shareBtn} onPress={handleShare} activeOpacity={0.8}>
+          <TouchableOpacity style={s.shareBtn} onPress={handleShare} activeOpacity={0.8} accessibilityLabel="Teilen" accessibilityRole="button">
             <Text style={s.shareBtnText}>Teilen</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={s.closeBtn} onPress={onClose}>
+          <TouchableOpacity style={s.closeBtn} onPress={onClose} accessibilityLabel="Schließen" accessibilityRole="button">
             <Text style={s.closeBtnText}>Schließen</Text>
           </TouchableOpacity>
         </View>
