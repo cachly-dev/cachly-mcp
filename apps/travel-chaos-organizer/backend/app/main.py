@@ -7,6 +7,8 @@ from app.config import get_settings
 from app.routers import trips, items, parse, inbox, mail, events as events_router, waitlist as waitlist_router
 from app.routers import admin as admin_router
 from app.routers import users as users_router
+from app.routers import payments as payments_router
+from app.routers import export as export_router
 from app.services.cache import cachly_configured
 from app.limiter import limiter
 from slowapi import _rate_limit_exceeded_handler
@@ -33,6 +35,9 @@ app = FastAPI(
     title=settings.app_name,
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
+    openapi_url="/openapi.json" if settings.debug else None,
 )
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -55,6 +60,8 @@ app.include_router(events_router.router, prefix="/api/v1")
 app.include_router(waitlist_router.router, prefix="/api/v1")
 app.include_router(admin_router.router)   # no /api/v1 prefix — admin is at /admin
 app.include_router(users_router.router, prefix="/api/v1")
+app.include_router(payments_router.router, prefix="/api/v1")
+app.include_router(export_router.router, prefix="/api/v1")
 
 
 @app.get("/health")

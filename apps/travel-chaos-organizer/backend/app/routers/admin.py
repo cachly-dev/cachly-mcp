@@ -224,3 +224,13 @@ async def set_user_plan(
     )
     await db.commit()
     return {"ok": True, "uid": uid, "plan": plan}
+
+
+@router.post("/drip/run", dependencies=[Depends(_check_auth)])
+async def run_drip_sequence(
+    db: Annotated[AsyncSession, Depends(get_db)],
+    dry_run: bool = False,
+):
+    from app.services.drip import run_drip
+    result = await run_drip(db, dry_run=dry_run)
+    return result

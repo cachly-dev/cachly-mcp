@@ -9,14 +9,17 @@ import { logout } from "../../lib/auth";
 import { clearCache, cacheSizeBytes } from "../../lib/fileCache";
 import { purgeFailed, getPending } from "../../lib/offlineQueue";
 import { haptics } from "../../lib/haptics";
+import { useQuota } from "../../lib/quota";
 
 const OLLAMA_MODELS = ["llama3.2-vision", "llava", "llava-phi3", "bakllava"];
 
 export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
+  const { plan, isPro } = useQuota();
   const [cacheSize, setCacheSize] = useState(0);
   const [queueSize, setQueueSize] = useState(0);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [selectedModel, setSelectedModel] = useState(
     process.env.EXPO_PUBLIC_OLLAMA_MODEL ?? "llama3.2-vision"
   );
@@ -52,12 +55,14 @@ export default function SettingsScreen() {
   }
 
   async function handleLogout() {
-    await haptics.warning();
-    Alert.alert("Abmelden?", "Du wirst aus der App ausgeloggt.", [
+    Alert.alert("Abmelden", "Wirklich abmelden?", [
       { text: "Abbrechen", style: "cancel" },
       {
-        text: "Abmelden", style: "destructive",
+        text: "Abmelden",
+        style: "destructive",
         onPress: async () => {
+          setLoggingOut(true);
+          await haptics.tap();
           await logout();
           router.replace("/(auth)/login");
         },
@@ -70,6 +75,38 @@ export default function SettingsScreen() {
       style={s.container}
       contentContainerStyle={[s.content, { paddingBottom: insets.bottom + 32 }]}
     >
+      {/* Plan section */}
+      <Text style={s.sectionTitle}>Mein Plan</Text>
+      <View style={s.planCard}>
+        <View style={s.planRow}>
+          <Text style={s.planName}>{isPro ? "✦ Pro" : "Free"}</Text>
+          {plan?.plan_expires_at && (
+            <Text style={s.planExpiry}>
+              bis {new Date(plan.plan_expires_at).toLocaleDateString("de")}
+            </Text>
+          )}
+        </View>
+        {!isPro && (
+          <View style={s.limits}>
+            <Text style={s.limitText}>
+              {plan?.free_daily_parses ?? 50} KI-Parses / Tag
+            </Text>
+            <Text style={s.limitText}>
+              max. {plan?.free_max_trips ?? 3} Trips
+            </Text>
+          </View>
+        )}
+        {!isPro && (
+          <TouchableOpacity
+            style={s.upgradeBtn}
+            onPress={() => Linking.openURL("https://tco.app/upgrade")}
+            activeOpacity={0.8}
+          >
+            <Text style={s.upgradeBtnText}>Auf Pro upgraden ✦</Text>
+          </TouchableOpacity>
+        )}
+      </View>
+
       <Text style={s.sectionTitle}>KI Modell</Text>
       <View style={s.card}>
         {OLLAMA_MODELS.map((model) => (
@@ -121,15 +158,45 @@ export default function SettingsScreen() {
         )}
       </View>
 
+      {/* Links section */}
+      <Text style={s.sectionTitle}>Info</Text>
+      <View style={s.card}>
+        <TouchableOpacity
+          style={s.row}
+          onPress={() => Linking.openURL("https://tco.app/privacy")}
+          accessibilityRole="link"
+        >
+          <Text style={s.rowText}>Datenschutz</Text>
+          <Text style={s.rowChevron}>›</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={s.row}
+          onPress={() => Linking.openURL("https://tco.app/terms")}
+          accessibilityRole="link"
+        >
+          <Text style={s.rowText}>Nutzungsbedingungen</Text>
+          <Text style={s.rowChevron}>›</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[s.row, { borderBottomWidth: 0 }]}
+          onPress={() => Linking.openURL("mailto:hello@tco.app")}
+          accessibilityRole="link"
+        >
+          <Text style={s.rowText}>Support kontaktieren</Text>
+          <Text style={s.rowChevron}>›</Text>
+        </TouchableOpacity>
+      </View>
+
       <Text style={s.sectionTitle}>Account</Text>
       <View style={s.card}>
         <TouchableOpacity
-          style={[s.row, { borderBottomWidth: 0 }]}
+          style={[s.row, s.dangerRow, { borderBottomWidth: 0 }]}
           onPress={handleLogout}
+          disabled={loggingOut}
           accessibilityLabel="Abmelden"
           accessibilityRole="button"
         >
-          <Text style={[s.rowText, s.danger]}>Abmelden</Text>
+          <Text style={s.dangerText}>Abmelden</Text>
         </TouchableOpacity>
       </View>
 
@@ -152,7 +219,7 @@ export default function SettingsScreen() {
         </Text>
       </TouchableOpacity>
 
-      <Text style={s.version}>Travel Chaos Organizer · v0.1.0</Text>
+      <Text style={s.version}>Travel Chaos Organizer v0.1.0</Text>
     </ScrollView>
   );
 }
@@ -165,8 +232,16 @@ const s = StyleSheet.create({
     letterSpacing: 0.8, textTransform: "uppercase",
     marginTop: 16, marginBottom: 4, paddingHorizontal: 4,
   },
+  planCard: { backgroundColor: "#1a1a2e", borderRadius: 16, padding: 20, gap: 12, borderWidth: 1, borderColor: "#2a2a4e" },
+  planRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
+  planName: { fontSize: 22, fontWeight: "800", color: "#fff" },
+  planExpiry: { fontSize: 12, color: "#6666aa" },
+  limits: { gap: 4 },
+  limitText: { fontSize: 13, color: "#6666aa" },
+  upgradeBtn: { backgroundColor: "#4f46e5", paddingVertical: 14, borderRadius: 12, alignItems: "center", marginTop: 4 },
+  upgradeBtnText: { color: "#fff", fontWeight: "700", fontSize: 15 },
   card: { backgroundColor: "#1a1a2e", borderRadius: 16, borderWidth: 1, borderColor: "#2a2a4e", overflow: "hidden" },
-  row: { paddingVertical: 14, paddingHorizontal: 18, borderBottomWidth: 1, borderBottomColor: "#2a2a4e" },
+  row: { paddingVertical: 14, paddingHorizontal: 18, borderBottomWidth: 1, borderBottomColor: "#2a2a4e", flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   infoRow: {
     paddingVertical: 14, paddingHorizontal: 18,
     flexDirection: "row", justifyContent: "space-between", alignItems: "center",
@@ -174,8 +249,11 @@ const s = StyleSheet.create({
   },
   rowText: { color: "#e2e8f0", fontSize: 15 },
   rowValue: { color: "#6666aa", fontSize: 14 },
+  rowChevron: { color: "#6666aa", fontSize: 18 },
   check: { color: "#4f46e5", fontSize: 16, fontWeight: "700" },
   danger: { color: "#f87171" },
+  dangerRow: { borderWidth: 1, borderColor: "#ff6b6b22", backgroundColor: "#ff6b6b11" },
+  dangerText: { color: "#ff8888", fontSize: 15, fontWeight: "600" },
   hint: { color: "#4a4a7a", fontSize: 12, padding: 16, lineHeight: 18 },
 
   // Cachly badge

@@ -1,6 +1,9 @@
 import { getAccessToken } from "./auth";
+import { enqueueRequest } from "./offlineQueue";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL!;
+
+const MUTATION_METHODS = new Set(["POST", "PATCH", "DELETE"]);
 
 async function authHeaders(): Promise<Record<string, string>> {
   const token = await getAccessToken();
@@ -9,15 +12,25 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = await authHeaders();
-  const res = await fetch(`${BASE_URL}${path}`, { ...init, headers: { ...headers, ...init.headers } });
-  if (!res.ok) {
-    const err = await res.text();
-    const error = new Error(`API ${res.status}: ${err}`) as Error & { status: number };
-    (error as any).status = res.status;
-    throw error;
+  const method = (init.method ?? "GET").toUpperCase();
+  try {
+    const headers = await authHeaders();
+    const res = await fetch(`${BASE_URL}${path}`, { ...init, headers: { ...headers, ...init.headers } });
+    if (!res.ok) {
+      const err = await res.text();
+      const error = new Error(`API ${res.status}: ${err}`) as Error & { status: number };
+      (error as any).status = res.status;
+      throw error;
+    }
+    return res.json() as Promise<T>;
+  } catch (err: any) {
+    // Network-level failure (no response) — enqueue mutations for later replay
+    if (MUTATION_METHODS.has(method) && !err?.status) {
+      const body = init.body ? JSON.parse(init.body as string) : undefined;
+      enqueueRequest(method as "POST" | "PATCH" | "DELETE", path, body);
+    }
+    throw err;
   }
-  return res.json() as Promise<T>;
 }
 
 // ── Trips ──────────────────────────────────────────────────────────────────
@@ -41,6 +54,7 @@ export const tripsApi = {
   update: (id: string, data: Partial<Trip>) =>
     request<Trip>(`/api/v1/trips/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   delete: (id: string) => request<void>(`/api/v1/trips/${id}`, { method: "DELETE" }),
+  search: (q: string) => request<Trip[]>(`/api/v1/trips/search?q=${encodeURIComponent(q)}`),
 };
 
 // ── Trip Items ─────────────────────────────────────────────────────────────
