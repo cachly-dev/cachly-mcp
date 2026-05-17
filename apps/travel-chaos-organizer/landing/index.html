@@ -3,387 +3,266 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Travel Chaos Organizer — Reisedokumente. Endlich im Griff.</title>
-  <meta name="description" content="KI liest deine Tickets, PDFs und Screenshots und baut daraus eine saubere Timeline. Selbst gehostet, offline-fähig, open source." />
+  <title>Travel Chaos Organizer — Nie wieder am Gate nach der Buchungsnummer suchen.</title>
+  <meta name="description" content="TCO verwandelt Screenshots, PDFs und Booking-E-Mails in eine saubere Reise-Timeline. KI-powered, selbst gehostet, offline-fähig." />
   <meta property="og:title" content="Travel Chaos Organizer" />
-  <meta property="og:description" content="Wirf dein Reisechaos rein. Bekomme eine saubere Timeline heraus." />
+  <meta property="og:description" content="Nie wieder am Gate nach der Buchungsnummer suchen. TCO bringt Ordnung in dein Reisechaos." />
   <meta property="og:type" content="website" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🗺️</text></svg>" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg:       #0f0f1a;
-      --bg2:      #1a1a2e;
-      --bg3:      #12122a;
-      --border:   #2a2a4e;
-      --accent:   #4f46e5;
-      --accent2:  #7c3aed;
-      --glow:     #4f46e533;
-      --text:     #e2e8f0;
-      --muted:    #6666aa;
-      --faint:    #3a3a5e;
-      --purple:   #a5b4fc;
-      --green:    #34d399;
+      --bg:      #0f0f1a;
+      --bg2:     #1a1a2e;
+      --border:  #2a2a4e;
+      --accent:  #4f46e5;
+      --glow:    #4f46e522;
+      --text:    #e2e8f0;
+      --muted:   #6666aa;
+      --faint:   #3a3a5e;
+      --purple:  #a5b4fc;
+      --green:   #34d399;
+      --red:     #f87171;
     }
 
     html { scroll-behavior: smooth; }
-
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.6;
-      overflow-x: hidden;
+      background: var(--bg); color: var(--text); line-height: 1.6; overflow-x: hidden;
     }
+    .container { max-width: 1060px; margin: 0 auto; padding: 0 24px; }
+    .fade-up { opacity: 0; transform: translateY(28px); transition: opacity .65s ease, transform .65s ease; }
+    .fade-up.visible { opacity: 1; transform: translateY(0); }
 
-    /* ── Util ── */
-    .container { max-width: 1100px; margin: 0 auto; padding: 0 24px; }
-    .hidden { display: none !important; }
-
-    /* ── Nav ── */
+    /* ─── NAV ─── */
     nav {
       position: sticky; top: 0; z-index: 100;
-      background: #0f0f1acc; backdrop-filter: blur(16px);
-      border-bottom: 1px solid var(--border);
-      padding: 14px 0;
+      background: #0f0f1add; backdrop-filter: blur(18px);
+      border-bottom: 1px solid var(--border); padding: 14px 0;
     }
-    .nav-inner {
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .nav-logo {
-      font-size: 18px; font-weight: 800; color: var(--text);
-      text-decoration: none; display: flex; align-items: center; gap: 8px;
-    }
-    .nav-logo span { color: var(--purple); }
-    .nav-right { display: flex; align-items: center; gap: 12px; }
-    .lang-btn {
-      background: none; border: 1px solid var(--border); color: var(--muted);
-      padding: 5px 12px; border-radius: 6px; cursor: pointer; font-size: 13px;
-      transition: all .2s;
-    }
-    .lang-btn:hover, .lang-btn.active {
-      border-color: var(--accent); color: var(--purple);
-    }
-    .nav-cta {
-      background: var(--accent); color: #fff; text-decoration: none;
-      padding: 8px 20px; border-radius: 8px; font-size: 14px; font-weight: 600;
-      transition: opacity .2s;
-    }
+    .nav-inner { display: flex; align-items: center; justify-content: space-between; }
+    .nav-logo { font-size: 17px; font-weight: 800; color: var(--text); text-decoration: none; display: flex; align-items: center; gap: 8px; }
+    .nav-logo em { font-style: normal; color: var(--purple); }
+    .nav-right { display: flex; align-items: center; gap: 10px; }
+    .lang-btn { background: none; border: 1px solid var(--border); color: var(--muted); padding: 5px 11px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600; transition: all .2s; }
+    .lang-btn.active, .lang-btn:hover { border-color: var(--accent); color: var(--purple); }
+    .nav-cta { background: var(--accent); color: #fff; text-decoration: none; padding: 9px 20px; border-radius: 8px; font-size: 14px; font-weight: 700; transition: opacity .2s; }
     .nav-cta:hover { opacity: .85; }
 
-    /* ── Hero ── */
+    /* ─── HERO (SB7: Character + Problem + Promise + CTA) ─── */
     .hero {
-      padding: 100px 0 80px;
-      text-align: center;
-      background: radial-gradient(ellipse 80% 50% at 50% -10%, #4f46e518 0%, transparent 70%);
+      padding: 96px 0 80px; text-align: center;
+      background: radial-gradient(ellipse 80% 55% at 50% -5%, #4f46e51a 0%, transparent 68%);
     }
-    .hero-badge {
+    .hero-eyebrow {
       display: inline-flex; align-items: center; gap: 8px;
-      background: var(--glow); border: 1px solid #4f46e544;
-      color: var(--purple); font-size: 13px; font-weight: 600;
-      padding: 6px 16px; border-radius: 99px; margin-bottom: 32px;
+      background: var(--glow); border: 1px solid #4f46e540;
+      color: var(--purple); font-size: 12px; font-weight: 700; letter-spacing: .5px;
+      padding: 6px 16px; border-radius: 99px; margin-bottom: 36px;
     }
-    .hero-badge .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
-    h1 {
-      font-size: clamp(36px, 6vw, 72px);
-      font-weight: 900;
-      line-height: 1.08;
-      letter-spacing: -2px;
-      margin-bottom: 24px;
-    }
+    .hero-eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    h1 { font-size: clamp(34px, 5.5vw, 66px); font-weight: 900; letter-spacing: -2px; line-height: 1.08; margin-bottom: 24px; }
     h1 em { font-style: normal; color: var(--purple); }
-    .hero-sub {
-      font-size: clamp(16px, 2.2vw, 22px);
-      color: var(--muted);
-      max-width: 600px;
-      margin: 0 auto 44px;
-      line-height: 1.55;
-    }
-    .hero-actions {
-      display: flex; gap: 16px; justify-content: center; flex-wrap: wrap;
-    }
-    .btn-primary {
-      background: var(--accent); color: #fff; text-decoration: none;
-      padding: 16px 36px; border-radius: 12px; font-size: 17px; font-weight: 700;
-      transition: transform .15s, box-shadow .15s;
-      box-shadow: 0 4px 24px #4f46e555;
-    }
-    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 32px #4f46e566; }
-    .btn-secondary {
-      background: var(--bg2); color: var(--text); text-decoration: none;
-      padding: 16px 36px; border-radius: 12px; font-size: 17px; font-weight: 600;
-      border: 1px solid var(--border); transition: border-color .2s;
-    }
-    .btn-secondary:hover { border-color: var(--accent); }
+    .hero-sub { font-size: clamp(16px, 2.2vw, 20px); color: var(--muted); max-width: 580px; margin: 0 auto 48px; line-height: 1.6; }
+    .btn-row { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+    .btn-primary { background: var(--accent); color: #fff; text-decoration: none; padding: 16px 36px; border-radius: 12px; font-size: 16px; font-weight: 700; box-shadow: 0 4px 28px #4f46e550; transition: transform .15s, box-shadow .15s; }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 36px #4f46e565; }
+    .btn-ghost { background: none; border: 1px solid var(--border); color: var(--text); text-decoration: none; padding: 16px 32px; border-radius: 12px; font-size: 16px; font-weight: 600; transition: border-color .2s; }
+    .btn-ghost:hover { border-color: var(--accent); }
 
-    /* ── Phone mockup ── */
-    .mockup-wrap {
-      margin: 72px auto 0;
-      max-width: 340px;
-      position: relative;
-    }
-    .phone {
-      background: var(--bg2);
-      border: 2px solid var(--border);
-      border-radius: 40px;
-      padding: 12px;
-      box-shadow: 0 40px 80px #00000088, 0 0 0 1px #ffffff08;
-      position: relative;
-      overflow: hidden;
-    }
-    .phone::before {
-      content: '';
-      position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-      width: 100px; height: 28px; background: var(--bg);
-      border-radius: 0 0 20px 20px; z-index: 2;
-    }
-    .phone-screen {
-      background: var(--bg); border-radius: 30px; overflow: hidden;
-      min-height: 580px; display: flex; flex-direction: column;
-    }
-    .ps-header {
-      background: var(--bg2); padding: 48px 16px 14px;
-      border-bottom: 1px solid var(--border);
-      display: flex; align-items: center; justify-content: space-between;
-    }
-    .ps-header-title { font-size: 17px; font-weight: 700; }
-    .ps-timeline { padding: 14px 12px; flex: 1; display: flex; flex-direction: column; gap: 10px; }
-    .ps-item {
-      background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 12px; padding: 12px 14px;
-      display: flex; align-items: center; gap: 12px;
-    }
-    .ps-item-icon {
-      width: 36px; height: 36px; border-radius: 10px;
-      display: flex; align-items: center; justify-content: center;
-      font-size: 18px; flex-shrink: 0;
-    }
-    .ps-item-icon.flight { background: #4f46e522; }
-    .ps-item-icon.hotel  { background: #7c3aed22; }
-    .ps-item-icon.train  { background: #06b6d422; }
-    .ps-item-body { flex: 1; min-width: 0; }
-    .ps-item-title { font-size: 13px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .ps-item-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
-    .ps-item-ref { font-size: 10px; color: var(--purple); font-family: monospace; margin-top: 3px; }
-    .ps-upload {
-      background: var(--bg2); border-top: 1px solid var(--border);
-      padding: 10px 12px; display: flex; gap: 8px;
-    }
-    .ps-upload-btn {
-      flex: 1; background: var(--bg); border: 1px solid var(--border);
-      border-radius: 10px; padding: 8px 6px; text-align: center;
-      font-size: 10px; color: var(--muted);
-    }
-    .ps-upload-btn span { display: block; font-size: 16px; margin-bottom: 2px; }
-    .glow-ring {
-      position: absolute; inset: -2px; border-radius: 42px;
-      background: conic-gradient(from 0deg, transparent 60%, #4f46e588, transparent 80%);
-      animation: spin 6s linear infinite;
-      z-index: -1;
-    }
+    /* Phone */
+    .mockup-wrap { margin: 72px auto 0; max-width: 320px; position: relative; }
+    .glow-ring { position: absolute; inset: -3px; border-radius: 43px; background: conic-gradient(from 0deg, transparent 55%, #4f46e57a, transparent 78%); animation: spin 7s linear infinite; z-index: -1; }
     @keyframes spin { to { transform: rotate(360deg); } }
+    .phone { background: var(--bg2); border: 2px solid var(--border); border-radius: 40px; padding: 10px; box-shadow: 0 40px 80px #00000090, 0 0 0 1px #ffffff07; overflow: hidden; }
+    .phone::before { content: ''; position: absolute; top: 10px; left: 50%; transform: translateX(-50%); width: 90px; height: 24px; background: var(--bg); border-radius: 0 0 16px 16px; z-index: 2; }
+    .pscreen { background: var(--bg); border-radius: 32px; overflow: hidden; }
+    .ph { background: var(--bg2); padding: 44px 14px 12px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; }
+    .ph-title { font-size: 15px; font-weight: 700; }
+    .plist { padding: 12px 10px; display: flex; flex-direction: column; gap: 8px; }
+    .pi { background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; display: flex; align-items: center; gap: 10px; }
+    .pi-ico { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-size: 17px; flex-shrink: 0; }
+    .pi-ico.f { background: #4f46e520; } .pi-ico.h { background: #7c3aed20; } .pi-ico.t { background: #06b6d420; }
+    .pi-title { font-size: 12px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .pi-sub { font-size: 10px; color: var(--muted); margin-top: 1px; }
+    .pi-ref { font-size: 9px; color: var(--purple); font-family: monospace; margin-top: 2px; }
+    .pbar { background: var(--bg2); border-top: 1px solid var(--border); padding: 8px 10px; display: flex; gap: 6px; }
+    .pbtn { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 9px; padding: 7px 4px; text-align: center; font-size: 9px; color: var(--muted); }
+    .pbtn span { display: block; font-size: 14px; margin-bottom: 1px; }
 
-    /* ── Problem ── */
-    .section { padding: 96px 0; }
-    .section-label {
-      font-size: 11px; font-weight: 700; letter-spacing: 2px;
-      text-transform: uppercase; color: var(--accent); margin-bottom: 12px;
-    }
-    .section-title {
-      font-size: clamp(28px, 4vw, 48px);
-      font-weight: 800; letter-spacing: -1px; line-height: 1.15;
-      margin-bottom: 20px;
-    }
-    .section-sub { font-size: 18px; color: var(--muted); max-width: 560px; line-height: 1.6; }
+    /* ─── SECTION BASE ─── */
+    section { padding: 96px 0; }
+    .s-label { font-size: 11px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+    h2 { font-size: clamp(26px, 3.8vw, 46px); font-weight: 800; letter-spacing: -1px; line-height: 1.15; margin-bottom: 16px; }
+    .s-sub { font-size: 17px; color: var(--muted); line-height: 1.65; max-width: 580px; }
+    .divider { width: 48px; height: 3px; background: var(--accent); border-radius: 2px; margin: 28px 0; }
+    .alt-bg { background: var(--bg2); }
 
-    .chaos-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 16px; margin-top: 56px;
+    /* ─── PROBLEM (Villain + External + Internal + Philosophical) ─── */
+    .villain-banner {
+      background: #7c3aed18; border: 1px solid #7c3aed40;
+      border-radius: 16px; padding: 28px 32px; margin-top: 56px;
+      display: flex; align-items: flex-start; gap: 20px;
     }
-    .chaos-card {
+    .villain-icon { font-size: 36px; flex-shrink: 0; }
+    .villain-title { font-size: 18px; font-weight: 800; margin-bottom: 6px; color: var(--text); }
+    .villain-text { font-size: 15px; color: var(--muted); line-height: 1.6; }
+    .problem-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-top: 40px; }
+    .prob-card { background: var(--bg); border: 1px solid var(--border); border-radius: 16px; padding: 28px; }
+    .prob-card.ext { border-top: 3px solid #4f46e5; }
+    .prob-card.int { border-top: 3px solid #7c3aed; }
+    .prob-card.phi { border-top: 3px solid #06b6d4; }
+    .prob-type { font-size: 10px; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; margin-bottom: 10px; }
+    .prob-card.ext .prob-type { color: #4f46e5; }
+    .prob-card.int .prob-type { color: #a78bfa; }
+    .prob-card.phi .prob-type { color: #22d3ee; }
+    .prob-title { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+    .prob-text { font-size: 14px; color: var(--muted); line-height: 1.6; }
+
+    /* ─── GUIDE (Empathy first, Authority second) ─── */
+    .empathy-box {
+      background: var(--glow); border: 1px solid #4f46e540;
+      border-radius: 20px; padding: 40px 44px; max-width: 680px;
+      margin: 56px auto 0; text-align: center;
+    }
+    .empathy-quote { font-size: clamp(18px, 2.5vw, 26px); font-weight: 700; line-height: 1.4; margin-bottom: 16px; color: var(--text); }
+    .empathy-quote em { font-style: normal; color: var(--purple); }
+    .empathy-sub { font-size: 15px; color: var(--muted); line-height: 1.6; }
+    .authority-strip { display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 56px; }
+    .auth-pill {
       background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 16px; padding: 24px;
-      transition: border-color .2s;
+      border-radius: 10px; padding: 14px 24px; text-align: center;
+      display: flex; align-items: center; gap: 10px;
     }
-    .chaos-card:hover { border-color: var(--accent); }
-    .chaos-emoji { font-size: 32px; margin-bottom: 14px; }
-    .chaos-title { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
-    .chaos-text { font-size: 14px; color: var(--muted); line-height: 1.5; }
+    .auth-val { font-size: 22px; font-weight: 800; color: var(--purple); }
+    .auth-label { font-size: 12px; color: var(--muted); line-height: 1.4; }
 
-    /* ── How it works ── */
-    .how-bg { background: var(--bg2); }
-    .steps {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-      gap: 32px; margin-top: 64px;
+    /* ─── PLAN (3 simple steps, each removes a fear) ─── */
+    .plan-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 0; margin-top: 64px; position: relative; }
+    .plan-step { padding: 36px 32px; border: 1px solid var(--border); border-radius: 0; position: relative; }
+    .plan-step:first-child { border-radius: 16px 0 0 16px; }
+    .plan-step:last-child  { border-radius: 0 16px 16px 0; }
+    .plan-step + .plan-step { border-left: none; }
+    @media (max-width: 800px) {
+      .plan-steps { grid-template-columns: 1fr; }
+      .plan-step:first-child { border-radius: 16px 16px 0 0; }
+      .plan-step:last-child  { border-radius: 0 0 16px 16px; }
+      .plan-step + .plan-step { border-left: 1px solid var(--border); border-top: none; }
     }
-    .step { text-align: center; }
-    .step-num {
-      width: 52px; height: 52px; border-radius: 50%;
-      background: var(--glow); border: 1px solid #4f46e544;
-      color: var(--purple); font-size: 20px; font-weight: 800;
-      display: flex; align-items: center; justify-content: center;
-      margin: 0 auto 20px;
-    }
-    .step-icon { font-size: 36px; margin-bottom: 16px; }
-    .step-title { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
-    .step-text { font-size: 14px; color: var(--muted); line-height: 1.6; }
-    .step-arrow {
-      display: none;
-      color: var(--faint); font-size: 24px; align-self: center; text-align: center;
-    }
-    @media (min-width: 900px) {
-      .steps { grid-template-columns: 1fr 40px 1fr 40px 1fr; }
-      .step-arrow { display: flex; justify-content: center; }
-    }
+    .plan-num { width: 40px; height: 40px; border-radius: 50%; background: var(--glow); border: 1px solid #4f46e550; color: var(--purple); font-size: 16px; font-weight: 800; display: flex; align-items: center; justify-content: center; margin-bottom: 20px; }
+    .plan-icon { font-size: 30px; margin-bottom: 14px; }
+    .plan-title { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+    .plan-text { font-size: 14px; color: var(--muted); line-height: 1.6; }
+    .plan-fear { font-size: 12px; color: var(--green); margin-top: 12px; display: flex; align-items: center; gap: 6px; }
+    .plan-fear::before { content: '✓'; font-weight: 700; }
 
-    /* ── Features ── */
-    .features-grid {
-      display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-      gap: 20px; margin-top: 64px;
+    /* ─── CTA BAND (mid-page) ─── */
+    .cta-band {
+      background: linear-gradient(135deg, #4f46e518 0%, #7c3aed12 100%);
+      border-top: 1px solid #4f46e530; border-bottom: 1px solid #4f46e530;
     }
-    .feat {
-      background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 16px; padding: 28px;
-    }
-    .feat-icon { font-size: 28px; margin-bottom: 16px; }
-    .feat-title { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
-    .feat-text { font-size: 14px; color: var(--muted); line-height: 1.6; }
-    .feat.highlight { border-color: #4f46e544; background: var(--glow); }
+    .cta-band-inner { display: flex; align-items: center; justify-content: space-between; gap: 32px; flex-wrap: wrap; padding: 48px 0; }
+    .cta-band-text { flex: 1; min-width: 280px; }
+    .cta-band h3 { font-size: clamp(20px, 2.8vw, 32px); font-weight: 800; letter-spacing: -.5px; margin-bottom: 8px; }
+    .cta-band p { font-size: 15px; color: var(--muted); }
 
-    /* ── Cachly integration ── */
-    .cachly-section {
-      background: linear-gradient(135deg, #1a1a2e 0%, #12122a 100%);
-      border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
-    }
-    .cachly-inner {
-      display: flex; align-items: center; gap: 64px; flex-wrap: wrap;
-    }
-    .cachly-text-col { flex: 1; min-width: 280px; }
-    .cachly-badge-col { flex-shrink: 0; }
-    .cachly-pill {
-      display: inline-flex; align-items: center; gap: 8px;
-      background: #4f46e522; border: 1px solid #4f46e544;
-      color: var(--purple); font-size: 12px; font-weight: 700; letter-spacing: 1px;
-      padding: 5px 14px; border-radius: 99px; margin-bottom: 20px;
-      text-transform: uppercase;
-    }
-    .cachly-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-    .cachly-badge-card {
-      background: var(--bg2); border: 1px solid #4f46e544;
-      border-radius: 20px; padding: 28px 32px; text-align: center; min-width: 220px;
-    }
-    .cachly-badge-logo {
-      font-size: 32px; font-weight: 900; color: var(--purple);
-      letter-spacing: -1px; margin-bottom: 6px;
-    }
-    .cachly-badge-sub { font-size: 12px; color: var(--muted); }
-    .cachly-stats {
-      display: flex; gap: 32px; margin-top: 32px; flex-wrap: wrap;
-    }
-    .cachly-stat-val { font-size: 28px; font-weight: 800; color: var(--purple); }
-    .cachly-stat-label { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    /* ─── FAILURE vs SUCCESS ─── */
+    .stakes-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 56px; }
+    @media (max-width: 680px) { .stakes-grid { grid-template-columns: 1fr; } }
+    .stakes-col { border-radius: 20px; padding: 32px; }
+    .stakes-col.fail { background: #f8717110; border: 1px solid #f8717130; }
+    .stakes-col.win  { background: #34d39910; border: 1px solid #34d39930; }
+    .stakes-header { display: flex; align-items: center; gap: 10px; margin-bottom: 20px; }
+    .stakes-icon { font-size: 24px; }
+    .stakes-label { font-size: 13px; font-weight: 700; letter-spacing: .5px; }
+    .stakes-col.fail .stakes-label { color: var(--red); }
+    .stakes-col.win  .stakes-label { color: var(--green); }
+    .stakes-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+    .stakes-list li { font-size: 14px; line-height: 1.5; display: flex; gap: 10px; }
+    .stakes-col.fail .stakes-list li::before { content: '✗'; color: var(--red); font-weight: 700; flex-shrink: 0; }
+    .stakes-col.win  .stakes-list li::before { content: '✓'; color: var(--green); font-weight: 700; flex-shrink: 0; }
 
-    /* ── Open source ── */
-    .oss-card {
-      background: var(--bg2); border: 1px solid var(--border);
-      border-radius: 20px; padding: 48px;
-      display: flex; align-items: center; gap: 48px; flex-wrap: wrap;
-      margin-top: 64px;
-    }
-    .oss-icon { font-size: 64px; }
-    .oss-text { flex: 1; min-width: 260px; }
-    .oss-title { font-size: 24px; font-weight: 800; margin-bottom: 10px; }
-    .oss-sub { font-size: 15px; color: var(--muted); line-height: 1.6; max-width: 480px; }
-    .tag-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 20px; }
-    .tag {
-      background: var(--bg); border: 1px solid var(--border);
-      color: var(--muted); font-size: 12px; padding: 4px 12px; border-radius: 6px;
-      font-family: monospace;
-    }
+    /* ─── CACHLY ─── */
+    .cachly-row { display: flex; align-items: center; gap: 56px; flex-wrap: wrap; margin-top: 64px; }
+    .cachly-text { flex: 1; min-width: 280px; }
+    .cachly-card { background: var(--bg); border: 1px solid #4f46e540; border-radius: 20px; padding: 28px; flex-shrink: 0; min-width: 220px; text-align: center; }
+    .cachly-pill { display: inline-flex; align-items: center; gap: 7px; background: var(--glow); border: 1px solid #4f46e540; color: var(--purple); font-size: 11px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; padding: 5px 13px; border-radius: 99px; margin-bottom: 16px; }
+    .cachly-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+    .cachly-stat-row { display: flex; gap: 28px; margin-top: 24px; flex-wrap: wrap; }
+    .cs-val { font-size: 24px; font-weight: 800; color: var(--purple); }
+    .cs-lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
-    /* ── CTA ── */
-    .cta-section {
-      padding: 100px 0;
-      text-align: center;
-      background: radial-gradient(ellipse 80% 60% at 50% 100%, #4f46e514 0%, transparent 70%);
+    /* ─── FINAL CTA (Success vision) ─── */
+    .final-cta {
+      padding: 112px 0; text-align: center;
+      background: radial-gradient(ellipse 70% 60% at 50% 100%, #4f46e514 0%, transparent 70%);
     }
-    .cta-title {
-      font-size: clamp(32px, 5vw, 60px);
-      font-weight: 900; letter-spacing: -1.5px; line-height: 1.1;
-      margin-bottom: 20px;
-    }
-    .cta-sub { font-size: 18px; color: var(--muted); margin-bottom: 44px; }
-    .cta-note { font-size: 13px; color: var(--faint); margin-top: 20px; }
-    .cta-note a { color: var(--muted); }
+    .final-cta h2 { font-size: clamp(30px, 5vw, 58px); letter-spacing: -1.5px; margin-bottom: 20px; }
+    .final-cta .s-sub { margin: 0 auto 48px; }
+    .cta-note { font-size: 13px; color: var(--faint); margin-top: 18px; }
+    .cta-note a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--faint); }
 
-    /* ── Footer ── */
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 32px 0;
-      display: flex; flex-wrap: wrap;
-      align-items: center; justify-content: space-between; gap: 16px;
-    }
-    .footer-copy { font-size: 13px; color: var(--faint); }
-    .footer-links { display: flex; gap: 24px; }
-    .footer-links a { font-size: 13px; color: var(--muted); text-decoration: none; }
-    .footer-links a:hover { color: var(--text); }
+    /* ─── FOOTER ─── */
+    footer { border-top: 1px solid var(--border); padding: 28px 0; }
+    .foot-inner { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+    .foot-copy { font-size: 12px; color: var(--faint); }
+    .foot-links { display: flex; gap: 20px; }
+    .foot-links a { font-size: 12px; color: var(--muted); text-decoration: none; }
+    .foot-links a:hover { color: var(--text); }
 
-    /* ── Responsive ── */
     @media (max-width: 640px) {
-      .hero { padding: 64px 0 48px; }
-      .section { padding: 64px 0; }
-      .mockup-wrap { max-width: 280px; }
-      .cachly-inner { gap: 32px; }
-      .oss-card { padding: 28px; gap: 24px; }
+      section { padding: 64px 0; }
+      .hero { padding: 60px 0 48px; }
+      .empathy-box { padding: 28px 24px; }
+      .plan-step:first-child { border-radius: 16px 16px 0 0; }
+      .plan-step:last-child  { border-radius: 0 0 16px 16px; }
+      .plan-step + .plan-step { border-left: 1px solid var(--border); border-top: none; }
     }
-
-    /* ── Scroll animations ── */
-    .fade-up {
-      opacity: 0; transform: translateY(24px);
-      transition: opacity .6s ease, transform .6s ease;
-    }
-    .fade-up.visible { opacity: 1; transform: translateY(0); }
   </style>
 </head>
 <body>
 
-<!-- ── Nav ── -->
+<!-- NAV -->
 <nav>
   <div class="container nav-inner">
-    <a class="nav-logo" href="#">🗺️ Travel Chaos <span>Organizer</span></a>
+    <a class="nav-logo" href="#">🗺️ Travel Chaos <em>Organizer</em></a>
     <div class="nav-right">
       <button class="lang-btn active" onclick="setLang('de')" id="btn-de">DE</button>
-      <button class="lang-btn" onclick="setLang('en')" id="btn-en">EN</button>
+      <button class="lang-btn"        onclick="setLang('en')" id="btn-en">EN</button>
       <a class="nav-cta" href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">
-        <span data-de="GitHub →" data-en="GitHub →">GitHub →</span>
+        <span data-de="Jetzt starten →" data-en="Get started →">Jetzt starten →</span>
       </a>
     </div>
   </div>
 </nav>
 
-<!-- ── Hero ── -->
+<!-- ═══ 1 · HERO — Character + Problem + Guide Promise + CTA ═══ -->
 <section class="hero">
   <div class="container">
-    <div class="hero-badge fade-up">
+    <div class="hero-eyebrow fade-up">
       <span class="dot"></span>
-      <span data-de="Open Source · Self-hosted · KI-powered" data-en="Open Source · Self-hosted · AI-powered">Open Source · Self-hosted · KI-powered</span>
+      <span data-de="Open Source · KI-powered · Selbst gehostet" data-en="Open Source · AI-powered · Self-hosted">Open Source · KI-powered · Selbst gehostet</span>
     </div>
 
     <h1 class="fade-up">
-      <span data-de="Reisechaos rein.<br><em>Saubere Timeline raus.</em>" data-en="Travel chaos in.<br><em>Clean timeline out.</em>">Reisechaos rein.<br><em>Saubere Timeline raus.</em></span>
+      <span data-de="Nie wieder am Gate<br>nach der Buchungsnummer<br><em>suchen.</em>" data-en="Never search for your<br>booking number<br><em>at the gate again.</em>">
+        Nie wieder am Gate<br>nach der Buchungsnummer<br><em>suchen.</em>
+      </span>
     </h1>
 
-    <p class="hero-sub fade-up" data-de="Fotografiere dein Ticket, hänge die Buchungs-E-Mail rein, wirf die PDF-Confirmation rein. Die KI liest alles und baut daraus eine saubere Reise-Timeline — offline, privat, selbst gehostet." data-en="Snap your ticket, paste the booking email, drop in the PDF confirmation. The AI reads everything and builds a clean travel timeline — offline, private, self-hosted.">
-      Fotografiere dein Ticket, hänge die Buchungs-E-Mail rein, wirf die PDF-Confirmation rein. Die KI liest alles und baut daraus eine saubere Reise-Timeline — offline, privat, selbst gehostet.
+    <p class="hero-sub fade-up"
+       data-de="Du bist Vielreisender — kein Dokumentenverwalter. Wirf deine Tickets, E-Mails und PDFs rein. TCO baut daraus eine saubere Timeline. Automatisch."
+       data-en="You're a frequent traveler — not a document manager. Drop in your tickets, emails and PDFs. TCO builds a clean timeline. Automatically.">
+      Du bist Vielreisender — kein Dokumentenverwalter. Wirf deine Tickets, E-Mails und PDFs rein. TCO baut daraus eine saubere Timeline. Automatisch.
     </p>
 
-    <div class="hero-actions fade-up">
+    <div class="btn-row fade-up">
       <a class="btn-primary" href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">
-        <span data-de="Jetzt starten →" data-en="Get started →">Jetzt starten →</span>
+        <span data-de="Chaos beenden →" data-en="End the chaos →">Chaos beenden →</span>
       </a>
-      <a class="btn-secondary" href="#how-it-works">
-        <span data-de="Wie funktioniert's?" data-en="How it works">Wie funktioniert's?</span>
+      <a class="btn-ghost" href="#plan">
+        <span data-de="Wie es funktioniert" data-en="See how it works">Wie es funktioniert</span>
       </a>
     </div>
 
@@ -391,42 +270,42 @@
     <div class="mockup-wrap fade-up">
       <div class="glow-ring"></div>
       <div class="phone">
-        <div class="phone-screen">
-          <div class="ps-header">
-            <span style="color:var(--accent);font-size:13px">← <span data-de="Zurück" data-en="Back">Zurück</span></span>
-            <span class="ps-header-title">Timeline</span>
-            <span style="font-size:18px">🗑️</span>
+        <div class="pscreen">
+          <div class="ph">
+            <span style="color:var(--accent);font-size:12px">← <span data-de="Zurück" data-en="Back">Zurück</span></span>
+            <span class="ph-title">Timeline</span>
+            <span style="font-size:17px">🗑️</span>
           </div>
-          <div class="ps-timeline">
-            <div class="ps-item">
-              <div class="ps-item-icon flight">✈️</div>
-              <div class="ps-item-body">
-                <div class="ps-item-title">LH 400 · FRA → JFK</div>
-                <div class="ps-item-sub">15. Aug · 10:30 Uhr</div>
-                <div class="ps-item-ref">ABC123</div>
+          <div class="plist">
+            <div class="pi">
+              <div class="pi-ico f">✈️</div>
+              <div style="flex:1;min-width:0">
+                <div class="pi-title">LH 400 · FRA → JFK</div>
+                <div class="pi-sub">15. Aug · 10:30</div>
+                <div class="pi-ref">ABC123</div>
               </div>
             </div>
-            <div class="ps-item">
-              <div class="ps-item-icon hotel">🏨</div>
-              <div class="ps-item-body">
-                <div class="ps-item-title">Hilton Midtown New York</div>
-                <div class="ps-item-sub">15.–20. Aug · Check-in 15:00</div>
-                <div class="ps-item-ref">HTL-99281</div>
+            <div class="pi">
+              <div class="pi-ico h">🏨</div>
+              <div style="flex:1;min-width:0">
+                <div class="pi-title">Hilton Midtown New York</div>
+                <div class="pi-sub">15.–20. Aug · Check-in 15:00</div>
+                <div class="pi-ref">HTL-99281</div>
               </div>
             </div>
-            <div class="ps-item">
-              <div class="ps-item-icon train">🚆</div>
-              <div class="ps-item-body">
-                <div class="ps-item-title">Amtrak NYC → Boston</div>
-                <div class="ps-item-sub">20. Aug · 09:15 Uhr</div>
-                <div class="ps-item-ref">TKT-44210</div>
+            <div class="pi">
+              <div class="pi-ico t">🚆</div>
+              <div style="flex:1;min-width:0">
+                <div class="pi-title">Amtrak NYC → Boston</div>
+                <div class="pi-sub">20. Aug · 09:15</div>
+                <div class="pi-ref">TKT-44210</div>
               </div>
             </div>
           </div>
-          <div class="ps-upload">
-            <div class="ps-upload-btn"><span>📄</span>PDF</div>
-            <div class="ps-upload-btn"><span>🖼️</span>Screenshot</div>
-            <div class="ps-upload-btn"><span>📝</span><span data-de="Text" data-en="Text">Text</span></div>
+          <div class="pbar">
+            <div class="pbtn"><span>📄</span>PDF</div>
+            <div class="pbtn"><span>🖼️</span>Foto</div>
+            <div class="pbtn"><span>📝</span><span data-de="Text" data-en="Text">Text</span></div>
           </div>
         </div>
       </div>
@@ -434,199 +313,323 @@
   </div>
 </section>
 
-<!-- ── Problem ── -->
-<section class="section">
+<!-- ═══ 2 · PROBLEM — Villain + External + Internal + Philosophical ═══ -->
+<section>
   <div class="container">
     <div class="fade-up">
-      <p class="section-label" data-de="Das Problem" data-en="The Problem">Das Problem</p>
-      <h2 class="section-title" data-de="Kennst du das?" data-en="Sound familiar?">Kennst du das?</h2>
-      <p class="section-sub" data-de="Vier Airlines, drei Buchungsportale, sieben E-Mails, zwei PDFs, ein Screenshot aus WhatsApp. Und der Flug geht in 3 Stunden." data-en="Four airlines, three booking portals, seven emails, two PDFs, one WhatsApp screenshot. And the flight's in 3 hours.">
-        Vier Airlines, drei Buchungsportale, sieben E-Mails, zwei PDFs, ein Screenshot aus WhatsApp. Und der Flug geht in 3 Stunden.
+      <p class="s-label" data-de="Das Problem" data-en="The Problem">Das Problem</p>
+      <h2 data-de="Dokumentenchaos ist der Feind jeder entspannten Reise." data-en="Document chaos is the enemy of every relaxed trip.">
+        Dokumentenchaos ist der Feind<br>jeder entspannten Reise.
+      </h2>
+      <p class="s-sub"
+         data-de="Nicht das Reisen ist stressig. Es ist das Suchen. Das Wühlen. Das Panisch-Tippen in eine Suchbox — während alle anderen schon längst durch die Security sind."
+         data-en="It's not the travel that's stressful. It's the searching. The digging. The panicked typing into a search box — while everyone else is already through security.">
+        Nicht das Reisen ist stressig. Es ist das Suchen. Das Wühlen. Das Panisch-Tippen in eine Suchbox — während alle anderen schon längst durch die Security sind.
       </p>
     </div>
 
-    <div class="chaos-grid">
-      <div class="chaos-card fade-up">
-        <div class="chaos-emoji">📧</div>
-        <div class="chaos-title" data-de="E-Mail-Chaos" data-en="Email chaos">E-Mail-Chaos</div>
-        <div class="chaos-text" data-de="Buchungsbestätigungen vergraben in einem Postfach, das niemand mehr öffnet." data-en="Booking confirmations buried in an inbox no one wants to open.">Buchungsbestätigungen vergraben in einem Postfach, das niemand mehr öffnet.</div>
+    <!-- The Villain -->
+    <div class="villain-banner fade-up">
+      <div class="villain-icon">😤</div>
+      <div>
+        <div class="villain-title" data-de="Der Schuldige: Verstreute Reisedokumente." data-en="The villain: scattered travel documents.">Der Schuldige: Verstreute Reisedokumente.</div>
+        <div class="villain-text"
+             data-de="Vier Buchungsportale, drei E-Mail-Adressen, zwei WhatsApp-Weiterleitungen, eine Galerie voller Screenshots — und die Boarding-Zeit in 8 Minuten."
+             data-en="Four booking portals, three email accounts, two WhatsApp forwards, a camera roll full of screenshots — and boarding in 8 minutes.">
+          Vier Buchungsportale, drei E-Mail-Adressen, zwei WhatsApp-Weiterleitungen, eine Galerie voller Screenshots — und die Boarding-Zeit in 8 Minuten.
+        </div>
       </div>
-      <div class="chaos-card fade-up">
-        <div class="chaos-emoji">📸</div>
-        <div class="chaos-title" data-de="Screenshot-Friedhof" data-en="Screenshot graveyard">Screenshot-Friedhof</div>
-        <div class="chaos-text" data-de="Fotos von Anzeigetafeln, Handy-Screenshots, Fotos von Buchungsseiten — alle irgendwo in der Galerie." data-en="Photos of departure boards, phone screenshots, pictures of booking pages — all somewhere in your camera roll.">Fotos von Anzeigetafeln, Handy-Screenshots, Fotos von Buchungsseiten — alle irgendwo in der Galerie.</div>
+    </div>
+
+    <!-- 3-Level Problem -->
+    <div class="problem-cols">
+      <div class="prob-card ext fade-up">
+        <div class="prob-type" data-de="Äußeres Problem" data-en="External Problem">Äußeres Problem</div>
+        <div class="prob-title" data-de="Alles liegt überall." data-en="Everything is everywhere.">Alles liegt überall.</div>
+        <div class="prob-text"
+             data-de="Tickets in der Airline-App, Hotels im Postfach, Transfers im WhatsApp-Chat. Kein einziger Ort für alle Reisedaten."
+             data-en="Tickets in the airline app, hotels in your inbox, transfers in a WhatsApp chat. Not one single place for all your travel data.">
+          Tickets in der Airline-App, Hotels im Postfach, Transfers im WhatsApp-Chat. Kein einziger Ort für alle Reisedaten.
+        </div>
       </div>
-      <div class="chaos-card fade-up">
-        <div class="chaos-emoji">🧾</div>
-        <div class="chaos-title" data-de="PDF-Dschungel" data-en="PDF jungle">PDF-Dschungel</div>
-        <div class="chaos-text" data-de="Hotelvoucher, Mietwagen-Confirmation, Versicherungspolice — irgendwo auf dem Gerät, aber wo?" data-en="Hotel voucher, car rental confirmation, insurance policy — somewhere on the device, but where?">Hotelvoucher, Mietwagen-Confirmation, Versicherungspolice — irgendwo auf dem Gerät, aber wo?</div>
+      <div class="prob-card int fade-up">
+        <div class="prob-type" data-de="Inneres Problem" data-en="Internal Problem">Inneres Problem</div>
+        <div class="prob-title" data-de="Du fühlst dich unvorbereitet." data-en="You feel unprepared.">Du fühlst dich unvorbereitet.</div>
+        <div class="prob-text"
+             data-de="Ausgerechnet dann, wenn Ruhe gefragt ist — am Gate, beim Check-in, im Ausland — kommt das Gefühl: 'Warum habe ich das nicht im Griff?'"
+             data-en="At exactly the moment when you need calm — at the gate, at check-in, abroad — comes the feeling: 'Why don't I have this together?'">
+          Ausgerechnet dann, wenn Ruhe gefragt ist, kommt das Gefühl: "Warum habe ich das nicht im Griff?"
+        </div>
       </div>
-      <div class="chaos-card fade-up">
-        <div class="chaos-emoji">😰</div>
-        <div class="chaos-title" data-de="Stress am Gate" data-en="Gate panic">Stress am Gate</div>
-        <div class="chaos-text" data-de='Flugbegleiter fragt nach der Buchungsnummer. Du tippst hektisch "Ryanair Buchungsbestätigung" in die Suche.' data-en='Flight attendant asks for your booking number. You desperately search "Ryanair booking confirmation" in your email.'>Flugbegleiter fragt nach der Buchungsnummer. Du tippst hektisch "Ryanair Buchungsbestätigung" in die Suche.</div>
+      <div class="prob-card phi fade-up">
+        <div class="prob-type" data-de="Philosophisches Problem" data-en="Philosophical Problem">Philosophisches Problem</div>
+        <div class="prob-title" data-de="Du solltest Reisen genießen — nicht verwalten." data-en="You should enjoy travel — not manage it.">Du solltest Reisen genießen — nicht verwalten.</div>
+        <div class="prob-text"
+             data-de="Wer viel reist, verdient ein Tool, das die Bürokratie übernimmt. Reisen ist Erfahrung. Dokumente suchen ist Zeitverschwendung."
+             data-en="Frequent travelers deserve a tool that handles the admin. Travel is experience. Searching for documents is a waste of time.">
+          Wer viel reist, verdient ein Tool, das die Bürokratie übernimmt. Reisen ist Erfahrung. Dokumente suchen ist Zeitverschwendung.
+        </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ── How it works ── -->
-<section class="section how-bg" id="how-it-works">
+<!-- ═══ 3 · GUIDE — Empathy first, then Authority ═══ -->
+<section class="alt-bg">
   <div class="container">
     <div class="fade-up" style="text-align:center">
-      <p class="section-label" data-de="So funktioniert's" data-en="How it works">So funktioniert's</p>
-      <h2 class="section-title" data-de="Drei Schritte. Fertig." data-en="Three steps. Done.">Drei Schritte. Fertig.</h2>
-      <p class="section-sub" style="margin:0 auto" data-de="Keine manuelle Eingabe. Kein Abtippen. Die KI übernimmt." data-en="No manual entry. No typing. The AI handles it.">Keine manuelle Eingabe. Kein Abtippen. Die KI übernimmt.</p>
+      <p class="s-label" data-de="Der Guide" data-en="The Guide">Der Guide</p>
+      <h2 data-de="Wir kennen dieses Gefühl." data-en="We know that feeling.">Wir kennen dieses Gefühl.</h2>
     </div>
 
-    <div class="steps fade-up">
-      <div class="step">
-        <div class="step-icon">📥</div>
-        <div class="step-num">1</div>
-        <div class="step-title" data-de="Reinwerfen" data-en="Drop it in">Reinwerfen</div>
-        <div class="step-text" data-de="PDF, Screenshot, E-Mail-Text, URL einer Buchungsseite — einfach rein. Alles wird akzeptiert." data-en="PDF, screenshot, email text, booking page URL — just drop it in. Everything is accepted.">PDF, Screenshot, E-Mail-Text, URL einer Buchungsseite — einfach rein. Alles wird akzeptiert.</div>
+    <!-- Empathy first -->
+    <div class="empathy-box fade-up">
+      <div class="empathy-quote"
+           data-de="&ldquo;Gate B42. Boarding in 3 Minuten. Die Buchungsnummer irgendwo in <em>200 ungelesenen E-Mails.</em>&rdquo;"
+           data-en="&ldquo;Gate B42. Boarding in 3 minutes. The booking number somewhere in <em>200 unread emails.</em>&rdquo;">
+        &ldquo;Gate B42. Boarding in 3 Minuten. Die Buchungsnummer irgendwo in <em>200 ungelesenen E-Mails.</em>&rdquo;
       </div>
-      <div class="step-arrow fade-up">→</div>
-      <div class="step">
-        <div class="step-icon">🤖</div>
-        <div class="step-num">2</div>
-        <div class="step-title" data-de="KI analysiert" data-en="AI reads it">KI analysiert</div>
-        <div class="step-text" data-de="Ollama (lokal, privat) erkennt Datum, Uhrzeit, Buchungsnummer, Route, Passagiere, Preis — automatisch." data-en="Ollama (local, private) extracts date, time, booking number, route, passengers, price — automatically.">Ollama (lokal, privat) erkennt Datum, Uhrzeit, Buchungsnummer, Route, Passagiere, Preis — automatisch.</div>
+      <div class="empathy-sub"
+           data-de="TCO wurde genau für diesen Moment gebaut — und für alle Momente davor, in denen man hätte vorbereitet sein können. Du bist nicht das Problem. Das Chaos ist das Problem."
+           data-en="TCO was built for exactly this moment — and for all the moments before it where you could have been prepared. You're not the problem. The chaos is the problem.">
+        TCO wurde genau für diesen Moment gebaut — und für alle Momente davor. Du bist nicht das Problem. Das Chaos ist das Problem.
       </div>
-      <div class="step-arrow fade-up">→</div>
-      <div class="step">
-        <div class="step-icon">✅</div>
-        <div class="step-num">3</div>
-        <div class="step-title" data-de="Saubere Timeline" data-en="Clean timeline">Saubere Timeline</div>
-        <div class="step-text" data-de="Alle Reiseelemente chronologisch sortiert. Tap für Details, QR-Code, Buchungsreferenz — alles sofort griffbereit." data-en="All travel items sorted chronologically. Tap for details, QR code, booking reference — everything at your fingertips.">Alle Reiseelemente chronologisch sortiert. Tap für Details, QR-Code, Buchungsreferenz — alles sofort griffbereit.</div>
+    </div>
+
+    <!-- Authority strip -->
+    <div class="authority-strip fade-up">
+      <div class="auth-pill">
+        <div>
+          <div class="auth-val">71</div>
+          <div class="auth-label" data-de="Backend-Tests<br>alles grün" data-en="backend tests<br>all green">Backend-Tests<br>alles grün</div>
+        </div>
+      </div>
+      <div class="auth-pill">
+        <div>
+          <div class="auth-val">5</div>
+          <div class="auth-label" data-de="Eingabeformate:<br>PDF, Foto, Text, URL, E-Mail" data-en="input formats:<br>PDF, photo, text, URL, email">Eingabeformate:<br>PDF, Foto, Text, URL, E-Mail</div>
+        </div>
+      </div>
+      <div class="auth-pill">
+        <div>
+          <div class="auth-val">0</div>
+          <div class="auth-label" data-de="Cloud-Abhängigkeiten.<br>Deine Daten bleiben bei dir." data-en="cloud dependencies.<br>Your data stays with you.">Cloud-Abhängigkeiten.<br>Deine Daten bleiben bei dir.</div>
+        </div>
+      </div>
+      <div class="auth-pill">
+        <div>
+          <div class="auth-val">MIT</div>
+          <div class="auth-label" data-de="Lizenz.<br>Open Source, für immer." data-en="license.<br>Open source, forever.">Lizenz.<br>Open Source, für immer.</div>
+        </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ── Features ── -->
-<section class="section">
+<!-- ═══ 4 · PLAN — 3 simple steps, each removes a fear ═══ -->
+<section id="plan">
   <div class="container">
     <div class="fade-up">
-      <p class="section-label" data-de="Features" data-en="Features">Features</p>
-      <h2 class="section-title" data-de="Alles drin. Nichts fehlt." data-en="Everything included.">Alles drin. Nichts fehlt.</h2>
+      <p class="s-label" data-de="Der Plan" data-en="The Plan">Der Plan</p>
+      <h2 data-de="In drei Schritten zu einer sauberen Timeline." data-en="Three steps to a clean timeline.">In drei Schritten zu einer sauberen Timeline.</h2>
+      <p class="s-sub"
+         data-de="Kein Konfigurationsmarathon. Kein Abtippen. Kein Lernen neuer Tools. Einfach reinwerfen."
+         data-en="No configuration marathon. No manual typing. No learning new tools. Just drop it in.">
+        Kein Konfigurationsmarathon. Kein Abtippen. Kein Lernen neuer Tools. Einfach reinwerfen.
+      </p>
     </div>
 
-    <div class="features-grid">
-      <div class="feat highlight fade-up">
-        <div class="feat-icon">🧠</div>
-        <div class="feat-title" data-de="KI versteht alles" data-en="AI understands everything">KI versteht alles</div>
-        <div class="feat-text" data-de="Vision-Modell via Ollama: liest Screenshots, PDFs, Text und URLs. Erkennt Flüge, Hotels, Züge, Mietwagen, Aktivitäten." data-en="Vision model via Ollama: reads screenshots, PDFs, text, and URLs. Recognizes flights, hotels, trains, rentals, activities.">Vision-Modell via Ollama: liest Screenshots, PDFs, Text und URLs. Erkennt Flüge, Hotels, Züge, Mietwagen, Aktivitäten.</div>
+    <div class="plan-steps fade-up">
+      <div class="plan-step">
+        <div class="plan-icon">📥</div>
+        <div class="plan-num">1</div>
+        <div class="plan-title" data-de="Dokument hineinwerfen" data-en="Drop your document in">Dokument hineinwerfen</div>
+        <div class="plan-text"
+             data-de="Screenshot aus der Galerie, PDF aus dem Postfach, Text aus der Buchungs-E-Mail, URL einer Buchungsseite — alles wird akzeptiert, nichts muss vorbereitet werden."
+             data-en="Screenshot from your gallery, PDF from your inbox, text from a booking email, URL of a booking page — everything is accepted, nothing needs preparation.">
+          Screenshot, PDF, Text, URL — alles wird akzeptiert. Einfach teilen oder einfügen.
+        </div>
+        <div class="plan-fear"
+             data-de="Kein manuelles Eintippen mehr."
+             data-en="No more manual entry.">
+          Kein manuelles Eintippen mehr.
+        </div>
       </div>
-      <div class="feat fade-up">
-        <div class="feat-icon">📴</div>
-        <div class="feat-title" data-de="Offline-first" data-en="Offline-first">Offline-first</div>
-        <div class="feat-text" data-de="Lokale SQLite-Datenbank als Mirror. Alle Daten verfügbar — auch ohne Internet. Sync beim nächsten Verbindungsaufbau." data-en="Local SQLite mirror. All data available offline. Syncs when connection is restored.">Lokale SQLite-Datenbank als Mirror. Alle Daten verfügbar — auch ohne Internet.</div>
-      </div>
-      <div class="feat fade-up">
-        <div class="feat-icon">🔒</div>
-        <div class="feat-title" data-de="100% privat" data-en="100% private">100% privat</div>
-        <div class="feat-text" data-de="Selbst gehostet. Deine Reisedaten verlassen nie deine Infrastruktur. Keycloak Auth, kein Cloud-KI-Provider." data-en="Self-hosted. Your travel data never leaves your infrastructure. Keycloak auth, no cloud AI provider.">Selbst gehostet. Deine Reisedaten verlassen nie deine Infrastruktur. Keycloak Auth, kein Cloud-KI-Provider.</div>
-      </div>
-      <div class="feat fade-up">
-        <div class="feat-icon">📱</div>
-        <div class="feat-title" data-de="Native Mobile App" data-en="Native mobile app">Native Mobile App</div>
-        <div class="feat-text" data-de="React Native + Expo. Echte Haptics, Swipe-Gesten, QR-Codes, Share-Intent. iOS und Android." data-en="React Native + Expo. Real haptics, swipe gestures, QR codes, share intent. iOS and Android.">React Native + Expo. Echte Haptics, Swipe-Gesten, QR-Codes, Share-Intent. iOS und Android.</div>
-      </div>
-      <div class="feat fade-up">
-        <div class="feat-icon">🔗</div>
-        <div class="feat-title" data-de="Share-Intent" data-en="Share intent">Share-Intent</div>
-        <div class="feat-text" data-de="Teile ein Dokument direkt aus Mail, Safari oder Files an TCO. Die KI verarbeitet es sofort und ordnet es dem richtigen Trip zu." data-en="Share a document directly from Mail, Safari or Files to TCO. AI processes it instantly and assigns it to the right trip.">Teile ein Dokument direkt aus Mail, Safari oder Files an TCO.</div>
-      </div>
-      <div class="feat fade-up">
-        <div class="feat-icon">🔍</div>
-        <div class="feat-title" data-de="Volltext-Suche" data-en="Full-text search">Volltext-Suche</div>
-        <div class="feat-text" data-de="Suche über alle Trips und Einträge. Findet Buchungsnummern, Flugcodes, Hotelnamen — alles durchsuchbar." data-en="Search across all trips and items. Finds booking numbers, flight codes, hotel names — everything searchable.">Suche über alle Trips und Einträge. Buchungsnummern, Flugcodes, Hotelnamen — alles durchsuchbar.</div>
-      </div>
-    </div>
 
-    <!-- OSS card -->
-    <div class="oss-card fade-up">
-      <div class="oss-icon">⚡</div>
-      <div class="oss-text">
-        <div class="oss-title" data-de="Docker Compose. 60 Sekunden. Fertig." data-en="Docker Compose. 60 seconds. Done.">Docker Compose. 60 Sekunden. Fertig.</div>
-        <div class="oss-sub" data-de="Ein einziger Befehl startet Postgres, Keycloak, Redis und den Backend-Server. Kein Konfigurationsmarathon." data-en="A single command starts Postgres, Keycloak, Redis and the backend. No configuration marathon.">Ein einziger Befehl startet Postgres, Keycloak, Redis und den Backend-Server. Kein Konfigurationsmarathon.</div>
-        <div class="tag-row">
-          <span class="tag">docker compose up</span>
-          <span class="tag">FastAPI</span>
-          <span class="tag">PostgreSQL 16</span>
-          <span class="tag">Keycloak 26</span>
-          <span class="tag">Ollama</span>
-          <span class="tag">Redis 7</span>
+      <div class="plan-step">
+        <div class="plan-icon">🤖</div>
+        <div class="plan-num">2</div>
+        <div class="plan-title" data-de="KI liest und versteht" data-en="AI reads and understands">KI liest und versteht</div>
+        <div class="plan-text"
+             data-de="Ollama — lokal auf deinem Server — erkennt Datum, Uhrzeit, Buchungsnummer, Route, Passagiere und Preis. Keine Cloud. Keine Drittanbieter. Keine Datenweitergabe."
+             data-en="Ollama — running locally on your server — extracts date, time, booking number, route, passengers and price. No cloud. No third parties. No data sharing.">
+          Ollama — lokal auf deinem Server — erkennt alle relevanten Daten. Privat, deterministisch, gecacht.
+        </div>
+        <div class="plan-fear"
+             data-de="Deine Reisedaten verlassen nie deine Infrastruktur."
+             data-en="Your travel data never leaves your infrastructure.">
+          Deine Reisedaten verlassen nie deine Infrastruktur.
+        </div>
+      </div>
+
+      <div class="plan-step">
+        <div class="plan-icon">✅</div>
+        <div class="plan-num">3</div>
+        <div class="plan-title" data-de="Saubere Timeline. Sofort." data-en="Clean timeline. Instantly.">Saubere Timeline. Sofort.</div>
+        <div class="plan-text"
+             data-de="Alle Reiseelemente in chronologischer Reihenfolge. Buchungsnummer mit einem Tap. QR-Code für den Scanner. Offline verfügbar — auch ohne Internet."
+             data-en="All travel items in chronological order. Booking number in one tap. QR code for the scanner. Available offline — even without internet.">
+          Alle Events chronologisch. Buchungsnummer per Tap. QR-Code. Offline-fähig.
+        </div>
+        <div class="plan-fear"
+             data-de="Am Gate sofort griffbereit — mit oder ohne Internet."
+             data-en="Ready at the gate — with or without internet.">
+          Am Gate sofort griffbereit — mit oder ohne Internet.
         </div>
       </div>
     </div>
   </div>
 </section>
 
-<!-- ── Cachly ── -->
-<section class="section cachly-section">
+<!-- ═══ 5 · MID-PAGE CTA ═══ -->
+<section class="cta-band">
   <div class="container">
-    <div class="cachly-inner fade-up">
-      <div class="cachly-text-col">
-        <div class="cachly-pill"><span class="cachly-dot"></span>Powered by Cachly</div>
-        <h2 class="section-title" data-de="Kein zweiter KI-Call für dasselbe Dokument." data-en="No second AI call for the same document.">Kein zweiter KI-Call für dasselbe Dokument.</h2>
-        <p class="section-sub" data-de="TCO nutzt Cachly als Redis-Cache-Schicht. Das Analyse-Ergebnis wird per SHA-256-Content-Hash gespeichert. Lädst du dasselbe Ticket zweimal hoch, antwortet der Cache in Millisekunden — kein Ollama-Call, keine Wartezeit, kein Energieverbrauch." data-en="TCO uses Cachly as its Redis caching layer. Parse results are stored by SHA-256 content hash. Upload the same ticket twice and the cache responds in milliseconds — no Ollama call, no wait, no wasted compute.">
-          TCO nutzt Cachly als Redis-Cache-Schicht. Das Analyse-Ergebnis wird per SHA-256-Content-Hash gespeichert. Lädst du dasselbe Ticket zweimal hoch, antwortet der Cache in Millisekunden.
-        </p>
-        <div class="cachly-stats">
-          <div>
-            <div class="cachly-stat-val">7 Tage</div>
-            <div class="cachly-stat-label" data-de="Cache-TTL" data-en="Cache TTL">Cache-TTL</div>
-          </div>
-          <div>
-            <div class="cachly-stat-val">0 ms</div>
-            <div class="cachly-stat-label" data-de="Bei Cache-Hit" data-en="On cache hit">Bei Cache-Hit</div>
-          </div>
-          <div>
-            <div class="cachly-stat-val">100%</div>
-            <div class="cachly-stat-label" data-de="Optional — App läuft ohne Redis" data-en="Optional — app runs without Redis">Optional</div>
-          </div>
-        </div>
+    <div class="cta-band-inner fade-up">
+      <div class="cta-band-text">
+        <h3 data-de="Bereit, das Chaos hinter dir zu lassen?" data-en="Ready to leave the chaos behind?">Bereit, das Chaos hinter dir zu lassen?</h3>
+        <p data-de="Docker Compose, 60 Sekunden, fertig. Kein Abo. Keine Kreditkarte." data-en="Docker Compose, 60 seconds, done. No subscription. No credit card.">Docker Compose, 60 Sekunden, fertig. Kein Abo. Keine Kreditkarte.</p>
       </div>
-      <div class="cachly-badge-col">
-        <div class="cachly-badge-card">
-          <div style="font-size:40px;margin-bottom:12px">⚡</div>
-          <div class="cachly-badge-logo">Cachly</div>
-          <div class="cachly-badge-sub" data-de="Redis-Cache für KI-Ergebnisse" data-en="Redis cache for AI results">Redis-Cache für KI-Ergebnisse</div>
-          <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
-            <div style="font-size:11px;color:var(--faint);line-height:1.6" data-de="tco:parse:{sha256[:16]}<br>TTL 604800s · optional" data-en="tco:parse:{sha256[:16]}<br>TTL 604800s · optional">
-              tco:parse:{sha256[:16]}<br>TTL 604800s · optional
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- ── CTA ── -->
-<section class="cta-section">
-  <div class="container">
-    <h2 class="cta-title fade-up" data-de="Bereit, Reisechaos<br>in Ordnung zu bringen?" data-en="Ready to bring order<br>to travel chaos?">Bereit, Reisechaos<br>in Ordnung zu bringen?</h2>
-    <p class="cta-sub fade-up" data-de="Open Source. Self-hosted. Kein Abo. Keine Cloud. Deine Daten." data-en="Open source. Self-hosted. No subscription. No cloud. Your data.">Open Source. Self-hosted. Kein Abo. Keine Cloud. Deine Daten.</p>
-    <div class="hero-actions fade-up">
       <a class="btn-primary" href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">
-        <span data-de="Auf GitHub ansehen →" data-en="View on GitHub →">Auf GitHub ansehen →</span>
+        <span data-de="Jetzt auf GitHub →" data-en="View on GitHub →">Jetzt auf GitHub →</span>
       </a>
     </div>
+  </div>
+</section>
+
+<!-- ═══ 6 · STAKES — Failure vs. Success ═══ -->
+<section>
+  <div class="container">
+    <div class="fade-up">
+      <p class="s-label" data-de="Was auf dem Spiel steht" data-en="What's at stake">Was auf dem Spiel steht</p>
+      <h2 data-de="Zwei mögliche Reiseszenarien." data-en="Two possible travel scenarios.">Zwei mögliche Reiseszenarien.</h2>
+      <p class="s-sub"
+         data-de="Die Entscheidung liegt bei dir — weitermachen wie bisher, oder das Chaos ein für alle Mal beenden."
+         data-en="The choice is yours — keep going as before, or end the chaos once and for all.">
+        Die Entscheidung liegt bei dir.
+      </p>
+    </div>
+
+    <div class="stakes-grid">
+      <div class="stakes-col fail fade-up">
+        <div class="stakes-header">
+          <div class="stakes-icon">❌</div>
+          <div class="stakes-label" data-de="Ohne TCO" data-en="Without TCO">Ohne TCO</div>
+        </div>
+        <ul class="stakes-list">
+          <li data-de="Panisch die Buchungsmail suchen, während andere boarden." data-en="Frantically searching for the booking email while others board.">Panisch die Buchungsmail suchen, während andere boarden.</li>
+          <li data-de="Buchungsnummer irgendwo in 200 E-Mails begraben." data-en="Booking number buried somewhere in 200 emails.">Buchungsnummer irgendwo in 200 E-Mails begraben.</li>
+          <li data-de="Kein Internet, keine Daten — und die PDF liegt auf dem Laptop zu Hause." data-en="No internet, no data — and the PDF is on the laptop at home.">Kein Internet, keine Daten — PDF liegt zu Hause auf dem Laptop.</li>
+          <li data-de="Sich unvorbereitet und unprofessionell fühlen — obwohl man ein Profi ist." data-en="Feeling unprepared and unprofessional — even though you're a pro.">Sich unprofessionell fühlen — obwohl man ein Profi ist.</li>
+          <li data-de="Dasselbe Ticket dreimal analysieren, weil man es nicht findet." data-en="Analyzing the same ticket three times because you can't find it.">Dasselbe Ticket dreimal analysieren, weil man es nicht findet.</li>
+        </ul>
+      </div>
+
+      <div class="stakes-col win fade-up">
+        <div class="stakes-header">
+          <div class="stakes-icon">✅</div>
+          <div class="stakes-label" data-de="Mit TCO" data-en="With TCO">Mit TCO</div>
+        </div>
+        <ul class="stakes-list">
+          <li data-de="Buchungsnummer in einem Tap — auch offline." data-en="Booking number in one tap — even offline.">Buchungsnummer in einem Tap — auch offline.</li>
+          <li data-de="Alle Trips in einer sauberen Timeline, chronologisch sortiert." data-en="All trips in a clean timeline, sorted chronologically.">Alle Trips in einer sauberen Timeline, chronologisch sortiert.</li>
+          <li data-de="QR-Code auf dem Sperrbildschirm, bevor der Scanner fragt." data-en="QR code on the lock screen before the scanner asks.">QR-Code auf dem Sperrbildschirm, bevor der Scanner fragt.</li>
+          <li data-de="Ruhig und vorbereitet — so wie es sich anfühlen sollte." data-en="Calm and prepared — the way it's supposed to feel.">Ruhig und vorbereitet — so wie es sich anfühlen sollte.</li>
+          <li data-de="Daten bleiben privat. Keine Cloud. Kein Abo. Keine Abhängigkeit." data-en="Data stays private. No cloud. No subscription. No dependency.">Daten bleiben privat. Keine Cloud. Kein Abo.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 7 · CACHLY — Technology credibility ═══ -->
+<section class="alt-bg">
+  <div class="container">
+    <div class="fade-up">
+      <p class="s-label">Powered by Cachly</p>
+      <h2 data-de="Kein zweiter KI-Call für dasselbe Dokument." data-en="No second AI call for the same document.">Kein zweiter KI-Call für dasselbe Dokument.</h2>
+    </div>
+
+    <div class="cachly-row fade-up">
+      <div class="cachly-text">
+        <p class="s-sub"
+           data-de="TCO nutzt Cachly als Redis-Cache-Layer. Jedes Parsing-Ergebnis wird per SHA-256-Content-Hash gespeichert. Gleiches Dokument, zweiter Upload — sofortige Antwort aus dem Cache, kein Ollama-Call, keine Wartezeit."
+           data-en="TCO uses Cachly as its Redis caching layer. Every parse result is stored by SHA-256 content hash. Same document, second upload — instant response from cache, no Ollama call, zero wait time.">
+          TCO nutzt Cachly als Redis-Cache-Layer. Jedes Parsing-Ergebnis wird per SHA-256-Content-Hash gespeichert. Gleiches Dokument, zweiter Upload — sofortige Antwort aus dem Cache.
+        </p>
+        <div class="cachly-stat-row">
+          <div>
+            <div class="cs-val">7 Tage</div>
+            <div class="cs-lbl" data-de="Cache-TTL" data-en="Cache TTL">Cache-TTL</div>
+          </div>
+          <div>
+            <div class="cs-val">~0 ms</div>
+            <div class="cs-lbl" data-de="bei Cache-Hit" data-en="on cache hit">bei Cache-Hit</div>
+          </div>
+          <div>
+            <div class="cs-val">optional</div>
+            <div class="cs-lbl" data-de="läuft auch ohne Redis" data-en="works without Redis too">läuft auch ohne Redis</div>
+          </div>
+        </div>
+      </div>
+      <div class="cachly-card">
+        <div style="font-size:38px;margin-bottom:12px">⚡</div>
+        <div style="font-size:22px;font-weight:900;color:var(--purple);letter-spacing:-1px;margin-bottom:6px">Cachly</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:18px" data-de="Redis-Cache für KI-Ergebnisse" data-en="Redis cache for AI results">Redis-Cache für KI-Ergebnisse</div>
+        <div style="border-top:1px solid var(--border);padding-top:14px;font-size:10px;color:var(--faint);font-family:monospace;line-height:1.7">
+          tco:parse:{sha256[:16]}<br>
+          TTL 604800s<br>
+          redis:7-alpine ✓
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ 8 · FINAL CTA — Success vision ═══ -->
+<section class="final-cta">
+  <div class="container">
+    <h2 class="fade-up"
+        data-de="Stell dir vor, du bist am Gate.<br><em>Ruhig. Vorbereitet. In Kontrolle.</em>"
+        data-en="Imagine being at the gate.<br><em>Calm. Prepared. In control.</em>">
+      Stell dir vor, du bist am Gate.<br><em>Ruhig. Vorbereitet. In Kontrolle.</em>
+    </h2>
+
+    <p class="s-sub fade-up"
+       data-de="Das ist kein Wunschdenken. Das ist ein Tool, das du in 60 Sekunden aufsetzen kannst."
+       data-en="That's not wishful thinking. That's a tool you can set up in 60 seconds.">
+      Das ist kein Wunschdenken. Das ist ein Tool, das du in 60 Sekunden aufsetzen kannst.
+    </p>
+
+    <div class="btn-row fade-up">
+      <a class="btn-primary" href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">
+        <span data-de="Chaos beenden — kostenlos →" data-en="End the chaos — free →">Chaos beenden — kostenlos →</span>
+      </a>
+    </div>
+
     <p class="cta-note fade-up">
-      <span data-de="Benötigt: Docker, Ollama, ~10 Min Setup · " data-en="Requires: Docker, Ollama, ~10 min setup · ">Benötigt: Docker, Ollama, ~10 Min Setup · </span>
-      <a href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener" data-de="Dokumentation lesen" data-en="Read the docs">Dokumentation lesen</a>
+      <span data-de="Benötigt Docker + Ollama · " data-en="Requires Docker + Ollama · ">Benötigt Docker + Ollama · </span>
+      <a href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener"
+         data-de="Dokumentation lesen" data-en="Read the docs">Dokumentation lesen</a>
+      <span data-de=" · MIT Lizenz · Open Source für immer" data-en=" · MIT license · Open source forever"> · MIT Lizenz · Open Source für immer</span>
     </p>
   </div>
 </section>
 
-<!-- ── Footer ── -->
+<!-- FOOTER -->
 <footer>
-  <div class="container" style="display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:16px;width:100%">
-    <span class="footer-copy">© 2025 Travel Chaos Organizer · <span data-de="MIT Lizenz" data-en="MIT License">MIT Lizenz</span></span>
-    <div class="footer-links">
+  <div class="container foot-inner">
+    <span class="foot-copy">© 2025 Travel Chaos Organizer</span>
+    <div class="foot-links">
       <a href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">GitHub</a>
       <a href="https://cachly.dev" target="_blank" rel="noopener">Cachly</a>
     </div>
@@ -635,30 +638,20 @@
 
 <script>
   // ── Language toggle ──
-  let currentLang = 'de';
-
   function setLang(lang) {
-    currentLang = lang;
     document.documentElement.lang = lang;
     document.getElementById('btn-de').classList.toggle('active', lang === 'de');
     document.getElementById('btn-en').classList.toggle('active', lang === 'en');
-
     document.querySelectorAll('[data-de][data-en]').forEach(el => {
       el.innerHTML = el.dataset[lang];
     });
   }
 
   // ── Scroll fade-in ──
-  const observer = new IntersectionObserver((entries) => {
-    entries.forEach(e => {
-      if (e.isIntersecting) {
-        e.target.classList.add('visible');
-        observer.unobserve(e.target);
-      }
-    });
-  }, { threshold: 0.12 });
-
-  document.querySelectorAll('.fade-up').forEach(el => observer.observe(el));
+  const io = new IntersectionObserver(entries => {
+    entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); } });
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.fade-up').forEach(el => io.observe(el));
 </script>
 </body>
 </html>
