@@ -27,6 +27,14 @@ const config: ExpoConfig = {
     "expo-sqlite",
     ["expo-image-picker", { photosPermission: "Allow TCO to access your photos for travel document scanning." }],
     ["expo-document-picker", {}],
+    [
+      "expo-notifications",
+      {
+        icon: "./assets/icon.png",
+        color: "#4f46e5",
+        sounds: [],
+      },
+    ],
   ],
   extra: {
     eas: { projectId: "YOUR_EAS_PROJECT_ID" },
