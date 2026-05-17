@@ -4,6 +4,7 @@ import re
 import httpx
 from app.config import get_settings
 from app.services.errors import ollama_unavailable, ollama_model_not_found
+from app.services import cache as cache_svc
 
 settings = get_settings()
 
@@ -31,6 +32,11 @@ Content to parse:
 
 
 async def parse_text(raw_text: str) -> dict:
+    # Cachly cache hit — skip Ollama call entirely
+    cached = await cache_svc.cache_get(raw_text)
+    if cached is not None:
+        return cached
+
     payload = {
         "model": settings.ollama_model,
         "prompt": PARSE_PROMPT + raw_text,
@@ -44,12 +50,18 @@ async def parse_text(raw_text: str) -> dict:
                 raise ollama_model_not_found(settings.ollama_model)
             resp.raise_for_status()
             response_text = resp.json().get("response", "{}")
-            return _safe_parse(response_text)
+            result = _safe_parse(response_text)
+            await cache_svc.cache_set(raw_text, result)
+            return result
     except httpx.ConnectError:
         raise ollama_unavailable(settings.ollama_url)
 
 
 async def parse_image(image_bytes: bytes, mime_type: str) -> tuple[dict, str]:
+    cached = await cache_svc.cache_get(image_bytes)
+    if cached is not None:
+        return cached, ""
+
     b64 = base64.b64encode(image_bytes).decode()
     payload = {
         "model": settings.ollama_model,
@@ -65,14 +77,15 @@ async def parse_image(image_bytes: bytes, mime_type: str) -> tuple[dict, str]:
                 raise ollama_model_not_found(settings.ollama_model)
             resp.raise_for_status()
             response_text = resp.json().get("response", "{}")
-            return _safe_parse(response_text), response_text
+            result = _safe_parse(response_text)
+            await cache_svc.cache_set(image_bytes, result)
+            return result, response_text
     except httpx.ConnectError:
         raise ollama_unavailable(settings.ollama_url)
 
 
 def _safe_parse(text: str) -> dict:
     try:
-        # strip markdown code fences if present
         cleaned = re.sub(r"```(?:json)?\s*|\s*```", "", text).strip()
         return json.loads(cleaned)
     except json.JSONDecodeError:

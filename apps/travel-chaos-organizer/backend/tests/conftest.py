@@ -31,12 +31,15 @@ TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 @pytest_asyncio.fixture(scope="function")
 async def db_engine():
+    import sqlalchemy
     engine = create_async_engine(TEST_DB_URL, echo=False)
     async with engine.begin() as conn:
-        # SQLite doesn't support ENUM or pgcrypto — create simplified schema
-        await conn.run_sync(lambda c: c.execute(
-            __import__("sqlalchemy").text(SQLITE_SCHEMA)
-        ))
+        # Execute each DDL statement separately — SQLite doesn't support
+        # multi-statement execute() calls.
+        for stmt in SQLITE_SCHEMA.strip().split(";"):
+            stmt = stmt.strip()
+            if stmt:
+                await conn.execute(sqlalchemy.text(stmt))
     yield engine
     await engine.dispose()
 
@@ -124,9 +127,19 @@ def make_item(**kwargs) -> dict[str, Any]:
 
 # ── SQLite-compatible schema (no PostgreSQL ENUMs / pgcrypto) ─────────────────
 
-SQLITE_SCHEMA = """
+def _uuid_default() -> str:
+    """SQLite UUID expression: generates xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx format."""
+    return (
+        "lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' || "
+        "lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' || "
+        "lower(hex(randomblob(6)))"
+    )
+
+_UD = _uuid_default()
+
+SQLITE_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS trips (
-    id          TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    id          TEXT PRIMARY KEY DEFAULT ({_UD}),
     user_id     TEXT NOT NULL,
     name        TEXT NOT NULL,
     description TEXT,
@@ -137,7 +150,7 @@ CREATE TABLE IF NOT EXISTS trips (
 );
 
 CREATE TABLE IF NOT EXISTS trip_items (
-    id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    id            TEXT PRIMARY KEY DEFAULT ({_UD}),
     trip_id       TEXT NOT NULL,
     user_id       TEXT NOT NULL,
     type          TEXT NOT NULL DEFAULT 'other',
@@ -153,7 +166,7 @@ CREATE TABLE IF NOT EXISTS trip_items (
 );
 
 CREATE TABLE IF NOT EXISTS attachments (
-    id            TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    id            TEXT PRIMARY KEY DEFAULT ({_UD}),
     trip_item_id  TEXT,
     inbox_id      TEXT,
     user_id       TEXT NOT NULL,
@@ -165,7 +178,7 @@ CREATE TABLE IF NOT EXISTS attachments (
 );
 
 CREATE TABLE IF NOT EXISTS chaos_inbox (
-    id           TEXT PRIMARY KEY DEFAULT (lower(hex(randomblob(16)))),
+    id           TEXT PRIMARY KEY DEFAULT ({_UD}),
     user_id      TEXT NOT NULL,
     raw_content  TEXT,
     source       TEXT,
