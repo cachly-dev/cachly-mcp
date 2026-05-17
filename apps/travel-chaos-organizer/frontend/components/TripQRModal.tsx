@@ -1,6 +1,6 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
-  Modal, StyleSheet, Text, TouchableOpacity, View, Share,
+  Modal, StyleSheet, Text, TouchableOpacity, View, Share, ActivityIndicator,
 } from "react-native";
 // @ts-ignore — added in Phase 3 deps
 import QRCode from "react-native-qrcode-svg";
@@ -14,6 +14,17 @@ type Props = {
 
 export function TripQRModal({ tripId, tripName, visible, onClose }: Props) {
   const deepLink = `tco://trips/${tripId}`;
+  const [qrReady, setQrReady] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      // Defer QR generation until after the modal animation frame
+      const id = requestAnimationFrame(() => setQrReady(true));
+      return () => { cancelAnimationFrame(id); setQrReady(false); };
+    } else {
+      setQrReady(false);
+    }
+  }, [visible]);
 
   async function handleShare() {
     await Share.share({
@@ -28,7 +39,9 @@ export function TripQRModal({ tripId, tripName, visible, onClose }: Props) {
           <Text style={s.title}>{tripName}</Text>
           <Text style={s.sub}>QR-Code zum Teilen</Text>
           <View style={s.qrBox}>
-            <QRCode value={deepLink} size={180} color="#fff" backgroundColor="#1a1a2e" />
+            {qrReady
+              ? <QRCode value={deepLink} size={180} color="#fff" backgroundColor="#1a1a2e" />
+              : <ActivityIndicator color="#4f46e5" size="large" style={{ width: 180, height: 180 }} />}
           </View>
           <Text style={s.link}>{deepLink}</Text>
           <TouchableOpacity style={s.shareBtn} onPress={handleShare} activeOpacity={0.8} accessibilityLabel="Teilen" accessibilityRole="button">

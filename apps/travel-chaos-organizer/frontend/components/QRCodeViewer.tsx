@@ -3,8 +3,8 @@
  * Uses the booking_ref string to generate the QR locally (no network call).
  * Install: npm install react-native-qrcode-svg react-native-svg
  */
-import { Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
-import { useState } from "react";
+import { ActivityIndicator, Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { useEffect, useState } from "react";
 // @ts-ignore — added in Phase 3 deps
 import QRCode from "react-native-qrcode-svg";
 
@@ -12,6 +12,16 @@ type Props = { bookingRef: string; title?: string };
 
 export default function QRCodeViewer({ bookingRef, title }: Props) {
   const [visible, setVisible] = useState(false);
+  const [qrReady, setQrReady] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      const id = requestAnimationFrame(() => setQrReady(true));
+      return () => { cancelAnimationFrame(id); setQrReady(false); };
+    } else {
+      setQrReady(false);
+    }
+  }, [visible]);
 
   return (
     <>
@@ -24,7 +34,9 @@ export default function QRCodeViewer({ bookingRef, title }: Props) {
           <View style={s.card}>
             <Text style={s.cardTitle}>{title ?? bookingRef}</Text>
             <View style={s.qr}>
-              <QRCode value={bookingRef} size={220} backgroundColor="#fff" color="#0f0f1a" />
+              {qrReady
+                ? <QRCode value={bookingRef} size={220} backgroundColor="#fff" color="#0f0f1a" />
+                : <ActivityIndicator color="#4f46e5" size="large" style={{ width: 220, height: 220 }} />}
             </View>
             <Text style={s.ref}>{bookingRef}</Text>
             <Text style={s.hint}>Antippen zum Schließen</Text>
