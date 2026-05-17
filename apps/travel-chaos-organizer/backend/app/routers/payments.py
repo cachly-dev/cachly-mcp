@@ -141,4 +141,33 @@ async def stripe_webhook(request: Request, db: Annotated[AsyncSession, Depends(g
                 )
                 await db.commit()
 
+    elif event["type"] == "invoice.payment_failed":
+        cust_id = event["data"]["object"].get("customer")
+        attempt_count = event["data"]["object"].get("attempt_count", 1)
+        if cust_id:
+            result = await db.execute(
+                text("SELECT id, email FROM users WHERE stripe_customer_id = :cid"),
+                {"cid": cust_id},
+            )
+            row = result.fetchone()
+            if row:
+                failed_uid, user_email = row[0], row[1]
+                if attempt_count >= 3:
+                    # Too many failures — downgrade to free immediately
+                    await db.execute(
+                        text("""
+                            UPDATE users SET plan = 'free', plan_expires_at = NULL, updated_at = :now
+                            WHERE id = :uid
+                        """),
+                        {"uid": failed_uid, "now": datetime.now(timezone.utc)},
+                    )
+                    await db.commit()
+                # else: keep pro, Stripe will retry (grace period)
+                from app.services import telemetry as tel_svc, notifier as notifier_svc
+                await tel_svc.track(db, failed_uid, "stripe_payment_failed", {"customer": cust_id, "attempt_count": attempt_count})
+                await notifier_svc.notify("tco", "stripe_payment", {"event": "payment_failed", "user_id": failed_uid[:8], "attempt": attempt_count})
+                if user_email and attempt_count == 1:
+                    # TODO: send payment failure email via notifier_svc or a dedicated email service
+                    pass
+
     return {"ok": True}

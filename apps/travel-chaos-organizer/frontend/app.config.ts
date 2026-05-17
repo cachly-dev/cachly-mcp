@@ -12,7 +12,7 @@ const config: ExpoConfig = {
   icon: "./assets/icon.png",
   splash: {
     image: "./assets/splash.png",
-    backgroundColor: "#1a1a2e",
+    backgroundColor: "#0f0f1a",
   },
   updates: {
     url: "https://u.expo.dev/YOUR_EAS_PROJECT_ID",
@@ -28,7 +28,7 @@ const config: ExpoConfig = {
     package: "dev.cachly.tco",
     adaptiveIcon: {
       foregroundImage: "./assets/adaptive-icon.png",
-      backgroundColor: "#1a1a2e",
+      backgroundColor: "#0f0f1a",
     },
   },
   plugins: [
