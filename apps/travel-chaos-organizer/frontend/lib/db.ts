@@ -70,6 +70,10 @@ export function getLocalTrips(): Trip[] {
   return db.getAllSync<Trip>("SELECT * FROM trips ORDER BY start_date ASC");
 }
 
+export function deleteLocalItem(itemId: string): void {
+  db.runSync("DELETE FROM trip_items WHERE id = ?", [itemId]);
+}
+
 export function getLocalItems(tripId: string): TripItem[] {
   const rows = db.getAllSync<Record<string, unknown>>(
     "SELECT * FROM trip_items WHERE trip_id = ? ORDER BY event_at ASC",

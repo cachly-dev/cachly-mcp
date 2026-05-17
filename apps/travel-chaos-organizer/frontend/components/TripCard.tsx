@@ -2,18 +2,38 @@ import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { format, parseISO, differenceInDays } from "date-fns";
 import { de } from "date-fns/locale";
 import { Trip } from "../lib/api";
+import { haptics } from "../lib/haptics";
 
-type Props = { trip: Trip; onPress: () => void };
+type Props = {
+  trip: Trip;
+  onPress: () => void;
+  onLongPress?: () => void;
+};
 
-export default function TripCard({ trip, onPress }: Props) {
+export default function TripCard({ trip, onPress, onLongPress }: Props) {
   const start = trip.start_date ? parseISO(trip.start_date) : null;
   const end = trip.end_date ? parseISO(trip.end_date) : null;
   const duration = start && end ? differenceInDays(end, start) : null;
   const isUpcoming = start && start > new Date();
   const isPast = end && end < new Date();
 
+  async function handleLongPress() {
+    if (onLongPress) {
+      await haptics.confirm();
+      onLongPress();
+    }
+  }
+
   return (
-    <TouchableOpacity style={s.card} onPress={onPress} activeOpacity={0.8}>
+    <TouchableOpacity
+      style={s.card}
+      onPress={onPress}
+      onLongPress={handleLongPress}
+      activeOpacity={0.8}
+      accessibilityLabel={`Trip: ${trip.name}`}
+      accessibilityRole="button"
+      accessibilityHint={onLongPress ? "Gedrückt halten zum Bearbeiten" : undefined}
+    >
       <View style={s.row}>
         <View style={s.info}>
           <Text style={s.name} numberOfLines={1}>{trip.name}</Text>
@@ -31,6 +51,7 @@ export default function TripCard({ trip, onPress }: Props) {
         </View>
       </View>
       {trip.description && <Text style={s.desc} numberOfLines={1}>{trip.description}</Text>}
+      {onLongPress && <Text style={s.editHint}>Gedrückt halten zum Bearbeiten</Text>}
     </TouchableOpacity>
   );
 }
@@ -46,4 +67,5 @@ const s = StyleSheet.create({
   badgeUpcoming: { backgroundColor: "#4f46e522", borderWidth: 1, borderColor: "#4f46e5" },
   badgePast: { backgroundColor: "#1a1a1a" },
   badgeText: { color: "#a5b4fc", fontSize: 12, fontWeight: "500" },
+  editHint: { color: "#3a3a5e", fontSize: 11 },
 });

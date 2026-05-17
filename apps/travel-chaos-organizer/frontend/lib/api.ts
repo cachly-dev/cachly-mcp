@@ -59,6 +59,8 @@ export type TripItem = {
 
 export const itemsApi = {
   list: (tripId: string) => request<TripItem[]>(`/api/v1/trips/${tripId}/items`),
+  delete: (tripId: string, itemId: string) =>
+    request<void>(`/api/v1/trips/${tripId}/items/${itemId}`, { method: "DELETE" }),
 };
 
 // ── Chaos Inbox ────────────────────────────────────────────────────────────
