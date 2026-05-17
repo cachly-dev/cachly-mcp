@@ -3,6 +3,7 @@ import json
 import re
 import httpx
 from app.config import get_settings
+from app.services.errors import ollama_unavailable, ollama_model_not_found
 
 settings = get_settings()
 
@@ -36,11 +37,16 @@ async def parse_text(raw_text: str) -> dict:
         "stream": False,
         "format": "json",
     }
-    async with httpx.AsyncClient(timeout=settings.ollama_timeout) as client:
-        resp = await client.post(f"{settings.ollama_url}/api/generate", json=payload)
-        resp.raise_for_status()
-        response_text = resp.json().get("response", "{}")
-        return _safe_parse(response_text)
+    try:
+        async with httpx.AsyncClient(timeout=settings.ollama_timeout) as client:
+            resp = await client.post(f"{settings.ollama_url}/api/generate", json=payload)
+            if resp.status_code == 404:
+                raise ollama_model_not_found(settings.ollama_model)
+            resp.raise_for_status()
+            response_text = resp.json().get("response", "{}")
+            return _safe_parse(response_text)
+    except httpx.ConnectError:
+        raise ollama_unavailable(settings.ollama_url)
 
 
 async def parse_image(image_bytes: bytes, mime_type: str) -> tuple[dict, str]:
@@ -52,13 +58,16 @@ async def parse_image(image_bytes: bytes, mime_type: str) -> tuple[dict, str]:
         "stream": False,
         "format": "json",
     }
-    async with httpx.AsyncClient(timeout=settings.ollama_timeout) as client:
-        resp = await client.post(f"{settings.ollama_url}/api/generate", json=payload)
-        resp.raise_for_status()
-        data = resp.json()
-        response_text = data.get("response", "{}")
-        # also return the OCR'd text if Ollama provides context
-        return _safe_parse(response_text), response_text
+    try:
+        async with httpx.AsyncClient(timeout=settings.ollama_timeout) as client:
+            resp = await client.post(f"{settings.ollama_url}/api/generate", json=payload)
+            if resp.status_code == 404:
+                raise ollama_model_not_found(settings.ollama_model)
+            resp.raise_for_status()
+            response_text = resp.json().get("response", "{}")
+            return _safe_parse(response_text), response_text
+    except httpx.ConnectError:
+        raise ollama_unavailable(settings.ollama_url)
 
 
 def _safe_parse(text: str) -> dict:
