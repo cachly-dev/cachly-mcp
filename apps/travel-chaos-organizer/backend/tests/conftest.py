@@ -187,4 +187,30 @@ CREATE TABLE IF NOT EXISTS chaos_inbox (
     created_at   TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    id              TEXT PRIMARY KEY,
+    email           TEXT,
+    plan            TEXT NOT NULL DEFAULT 'free',
+    plan_expires_at TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS events (
+    id          TEXT PRIMARY KEY DEFAULT ({_UD}),
+    user_id     TEXT,
+    event_name  TEXT NOT NULL,
+    properties  TEXT,
+    platform    TEXT,
+    app_version TEXT,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS waitlist (
+    id         TEXT PRIMARY KEY DEFAULT ({_UD}),
+    email      TEXT NOT NULL UNIQUE,
+    source     TEXT DEFAULT 'landing',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """

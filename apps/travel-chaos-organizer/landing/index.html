@@ -193,13 +193,34 @@
     .cs-val { font-size: 24px; font-weight: 800; color: var(--purple); }
     .cs-lbl { font-size: 12px; color: var(--muted); margin-top: 2px; }
 
+    /* ─── EMAIL FORM ─── */
+    .email-form { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; max-width: 480px; margin: 0 auto; }
+    .email-input {
+      flex: 1; min-width: 220px; background: var(--bg2); border: 1px solid var(--border);
+      color: var(--text); padding: 15px 18px; border-radius: 12px; font-size: 15px;
+      outline: none; transition: border-color .2s;
+    }
+    .email-input:focus { border-color: var(--accent); }
+    .email-input::placeholder { color: var(--muted); }
+    .email-submit {
+      background: var(--accent); color: #fff; border: none; cursor: pointer;
+      padding: 15px 28px; border-radius: 12px; font-size: 15px; font-weight: 700;
+      box-shadow: 0 4px 24px #4f46e548; transition: transform .15s, box-shadow .15s; white-space: nowrap;
+    }
+    .email-submit:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 8px 32px #4f46e560; }
+    .email-submit:disabled { opacity: .6; cursor: default; }
+    .form-feedback { font-size: 14px; margin-top: 10px; text-align: center; min-height: 20px; }
+    .form-feedback.ok  { color: var(--green); }
+    .form-feedback.err { color: var(--red); }
+    .form-caption { font-size: 12px; color: var(--faint); margin-top: 8px; text-align: center; }
+
     /* ─── FINAL CTA (Success vision) ─── */
     .final-cta {
       padding: 112px 0; text-align: center;
       background: radial-gradient(ellipse 70% 60% at 50% 100%, #4f46e514 0%, transparent 70%);
     }
     .final-cta h2 { font-size: clamp(30px, 5vw, 58px); letter-spacing: -1.5px; margin-bottom: 20px; }
-    .final-cta .s-sub { margin: 0 auto 48px; }
+    .final-cta .s-sub { margin: 0 auto 40px; }
     .cta-note { font-size: 13px; color: var(--faint); margin-top: 18px; }
     .cta-note a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--faint); }
 
@@ -230,8 +251,8 @@
     <div class="nav-right">
       <button class="lang-btn active" onclick="setLang('de')" id="btn-de">DE</button>
       <button class="lang-btn"        onclick="setLang('en')" id="btn-en">EN</button>
-      <a class="nav-cta" href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">
-        <span data-de="Jetzt starten →" data-en="Get started →">Jetzt starten →</span>
+      <a class="nav-cta" href="#waitlist">
+        <span data-de="Early Access →" data-en="Early Access →">Early Access →</span>
       </a>
     </div>
   </div>
@@ -257,12 +278,22 @@
       Du bist Vielreisender — kein Dokumentenverwalter. Wirf deine Tickets, E-Mails und PDFs rein. TCO baut daraus eine saubere Timeline. Automatisch.
     </p>
 
-    <div class="btn-row fade-up">
-      <a class="btn-primary" href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">
-        <span data-de="Chaos beenden →" data-en="End the chaos →">Chaos beenden →</span>
-      </a>
-      <a class="btn-ghost" href="#plan">
-        <span data-de="Wie es funktioniert" data-en="See how it works">Wie es funktioniert</span>
+    <div class="fade-up" id="waitlist">
+      <form class="email-form" onsubmit="submitEmail(event,'hero')">
+        <input class="email-input" type="email" required id="email-hero"
+               data-placeholder-de="deine@email.de" data-placeholder-en="your@email.com"
+               placeholder="deine@email.de"
+               data-de="deine@email.de" data-en="your@email.com" />
+        <button class="email-submit" type="submit" id="btn-hero">
+          <span data-de="Chaos beenden →" data-en="End the chaos →">Chaos beenden →</span>
+        </button>
+      </form>
+      <div class="form-feedback" id="fb-hero"></div>
+      <div class="form-caption" data-de="Kein Spam. Kein Abo. Nur Updates wenn's wirklich wichtig ist." data-en="No spam. No subscription. Only updates when it really matters.">Kein Spam. Kein Abo. Nur Updates wenn's wirklich wichtig ist.</div>
+    </div>
+    <div class="fade-up" style="margin-top:16px">
+      <a class="btn-ghost" href="#plan" style="font-size:14px;padding:10px 22px">
+        <span data-de="Wie es funktioniert ↓" data-en="See how it works ↓">Wie es funktioniert ↓</span>
       </a>
     </div>
 
@@ -497,11 +528,19 @@
     <div class="cta-band-inner fade-up">
       <div class="cta-band-text">
         <h3 data-de="Bereit, das Chaos hinter dir zu lassen?" data-en="Ready to leave the chaos behind?">Bereit, das Chaos hinter dir zu lassen?</h3>
-        <p data-de="Docker Compose, 60 Sekunden, fertig. Kein Abo. Keine Kreditkarte." data-en="Docker Compose, 60 seconds, done. No subscription. No credit card.">Docker Compose, 60 Sekunden, fertig. Kein Abo. Keine Kreditkarte.</p>
+        <p data-de="Trag dich ein — du bekommst Early Access sobald wir live gehen." data-en="Sign up — you'll get early access as soon as we go live.">Trag dich ein — du bekommst Early Access sobald wir live gehen.</p>
       </div>
-      <a class="btn-primary" href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">
-        <span data-de="Jetzt auf GitHub →" data-en="View on GitHub →">Jetzt auf GitHub →</span>
-      </a>
+      <div style="flex-shrink:0">
+        <form class="email-form" style="justify-content:flex-end" onsubmit="submitEmail(event,'band')">
+          <input class="email-input" type="email" required id="email-band"
+                 placeholder="deine@email.de"
+                 data-de="deine@email.de" data-en="your@email.com" />
+          <button class="email-submit" type="submit" id="btn-band">
+            <span data-de="Eintragen →" data-en="Sign up →">Eintragen →</span>
+          </button>
+        </form>
+        <div class="form-feedback" id="fb-band"></div>
+      </div>
     </div>
   </div>
 </section>
@@ -610,17 +649,24 @@
       Das ist kein Wunschdenken. Das ist ein Tool, das du in 60 Sekunden aufsetzen kannst.
     </p>
 
-    <div class="btn-row fade-up">
-      <a class="btn-primary" href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener">
-        <span data-de="Chaos beenden — kostenlos →" data-en="End the chaos — free →">Chaos beenden — kostenlos →</span>
-      </a>
+    <div class="fade-up">
+      <form class="email-form" onsubmit="submitEmail(event,'final')">
+        <input class="email-input" type="email" required id="email-final"
+               placeholder="deine@email.de"
+               data-de="deine@email.de" data-en="your@email.com" />
+        <button class="email-submit" type="submit" id="btn-final">
+          <span data-de="Early Access sichern →" data-en="Get early access →">Early Access sichern →</span>
+        </button>
+      </form>
+      <div class="form-feedback" id="fb-final"></div>
+      <div class="form-caption" data-de="Kein Spam. Kein Abo. Nur Updates wenn's wirklich wichtig ist." data-en="No spam. No subscription. Only updates when it really matters.">Kein Spam. Kein Abo. Nur Updates wenn's wirklich wichtig ist.</div>
     </div>
 
-    <p class="cta-note fade-up">
-      <span data-de="Benötigt Docker + Ollama · " data-en="Requires Docker + Ollama · ">Benötigt Docker + Ollama · </span>
+    <p class="cta-note fade-up" style="margin-top:32px">
+      <span data-de="Open Source · Self-hosted · " data-en="Open source · Self-hosted · ">Open Source · Self-hosted · </span>
       <a href="https://github.com/cachly-dev/cachly-mcp" target="_blank" rel="noopener"
-         data-de="Dokumentation lesen" data-en="Read the docs">Dokumentation lesen</a>
-      <span data-de=" · MIT Lizenz · Open Source für immer" data-en=" · MIT license · Open source forever"> · MIT Lizenz · Open Source für immer</span>
+         data-de="GitHub ansehen" data-en="View on GitHub">GitHub ansehen</a>
+      <span data-de=" · MIT Lizenz" data-en=" · MIT License"> · MIT Lizenz</span>
     </p>
   </div>
 </section>
@@ -637,14 +683,61 @@
 </footer>
 
 <script>
+  // ── Config — point to self-hosted backend in production ──
+  const API = (window.TCO_API_URL || '').replace(/\/$/, '');
+
   // ── Language toggle ──
+  let _lang = 'de';
   function setLang(lang) {
+    _lang = lang;
     document.documentElement.lang = lang;
     document.getElementById('btn-de').classList.toggle('active', lang === 'de');
     document.getElementById('btn-en').classList.toggle('active', lang === 'en');
     document.querySelectorAll('[data-de][data-en]').forEach(el => {
       el.innerHTML = el.dataset[lang];
     });
+    // Update placeholder-only elements (inputs with data-de/data-en as placeholder values)
+    document.querySelectorAll('input[data-de][data-en]').forEach(el => {
+      el.placeholder = el.dataset[lang];
+    });
+  }
+
+  // ── Email form submit ──
+  const MSG = {
+    de: { ok: '✓ Eingetragen! Wir melden uns.', already: '✓ Du bist bereits auf der Liste.', err: '⚠ Ups — bitte versuche es nochmal.' },
+    en: { ok: '✓ You\'re on the list!', already: '✓ Already signed up — you\'re in.', err: '⚠ Oops — please try again.' },
+  };
+
+  async function submitEmail(e, slot) {
+    e.preventDefault();
+    const input  = document.getElementById('email-' + slot);
+    const btn    = document.getElementById('btn-' + slot);
+    const fb     = document.getElementById('fb-' + slot);
+    const email  = input.value.trim();
+
+    btn.disabled = true;
+    fb.textContent = '…';
+    fb.className = 'form-feedback';
+
+    try {
+      let joined = true;
+      if (API) {
+        const res = await fetch(API + '/api/v1/waitlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, source: 'landing-' + slot }),
+        });
+        const data = await res.json();
+        joined = !!data.joined;
+      }
+      fb.textContent = joined ? MSG[_lang].ok : MSG[_lang].already;
+      fb.className = 'form-feedback ok';
+      input.value = '';
+    } catch {
+      fb.textContent = MSG[_lang].err;
+      fb.className = 'form-feedback err';
+      btn.disabled = false;
+    }
   }
 
   // ── Scroll fade-in ──
