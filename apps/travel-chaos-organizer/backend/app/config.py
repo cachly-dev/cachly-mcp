@@ -21,6 +21,11 @@ class Settings(BaseSettings):
     ollama_model: str = "llama3.2-vision"
     ollama_timeout: int = 120
 
+    # Cachly Redis (optional) — caches Ollama parse results by content hash.
+    # Set to your Cachly Redis connection string to enable deduplication.
+    # Format: redis://:<password>@<host>:<port>/0  or  rediss:// for TLS
+    cachly_redis_url: str = ""
+
     class Config:
         env_file = ".env"
 

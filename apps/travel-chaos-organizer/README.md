@@ -86,42 +86,42 @@ npm start
 | POST | `/api/v1/inbox/{id}/assign` | Item einem Trip zuweisen |
 | DELETE | `/api/v1/inbox/{id}` | Item ablehnen |
 
-## Cachly-MCP Integration
+## Cachly Integration
 
-TCO lässt sich direkt als MCP-Toolset in **cachly-mcp** einbinden — Claude kann dann über natürliche Sprache Trips verwalten, Dokumente importieren und den Chaos-Eingang bearbeiten.
+### Redis-Cache für Ollama-Ergebnisse (Kernintegration)
 
-### Setup
+TCO nutzt **Cachly's Redis** als Deduplizierungs-Cache für Ollama-Parse-Ergebnisse.
+Dasselbe PDF zweimal hochgeladen → sofortige Antwort aus dem Cache, kein zweiter AI-Call.
 
-TCO und Cachly verwenden dieselbe Keycloak-Instanz. Das `CACHLY_JWT` wird direkt als Bearer-Token an die TCO-API weitergeleitet — keine separate Auth nötig.
+```
+┌─────────────┐    parse_text(content)    ┌──────────────────┐
+│  TCO Backend│ ──── cache hit? ────────► │  Cachly Redis    │
+│             │ ◄─── hit: return dict ─── │  (tco:parse:*)   │
+│             │      miss: call Ollama    └──────────────────┘
+└─────────────┘         └── store result ──────────────────►┘
+```
+
+**Setup:**
+```bash
+# In apps/travel-chaos-organizer/.env
+CACHLY_REDIS_URL=redis://:<password>@<host>.cachly.dev:6380/0
+```
+
+Die Redis-URL findest du in deiner Cachly-Instanz unter *Connection String*.
+`/health` zeigt `cachly_cache: enabled` sobald die Verbindung steht.
+
+### MCP-Bridge (Power-User, optional)
+
+Für Claude-Nutzer mit cachly-mcp: TCO-Tools sind als MCP-Tools verfügbar.
+Da beide Dienste dieselbe Keycloak-Instanz teilen, wird das JWT direkt forwarded.
 
 ```bash
-# In cachly-mcp env (z.B. .env oder MCP-Config)
+# In cachly-mcp env
 TCO_API_URL=http://localhost:8000
 ```
 
-### Verfügbare MCP Tools
-
-| Tool | Beschreibung |
-|---|---|
-| `tco_list_trips` | Alle Trips auflisten |
-| `tco_create_trip` | Neuen Trip anlegen |
-| `tco_get_timeline` | Timeline eines Trips abrufen |
-| `tco_delete_trip` | Trip löschen |
-| `tco_inbox_list` | Chaos Inbox anzeigen |
-| `tco_inbox_assign` | Inbox-Item einem Trip zuweisen |
-| `tco_inbox_reject` | Inbox-Item verwerfen |
-| `tco_parse_url` | URL mit Ollama parsen und speichern |
-| `tco_import_email` | E-Mail-Text importieren |
-
-### Beispiel-Prompts für Claude
-
-```
-"Zeig mir meine Reisen"
-"Erstelle einen Trip 'Tokyo 2025' vom 1. März bis 15. März"
-"Was steht auf meiner Barcelona-Timeline?"
-"Ich habe 3 ungelesene Buchungsbestätigungen im Posteingang — weise sie alle dem Paris-Trip zu"
-"Importiere diese E-Mail-Bestätigung: [E-Mail einfügen]"
-```
+Verfügbare Tools: `tco_list_trips`, `tco_create_trip`, `tco_get_timeline`,
+`tco_inbox_list`, `tco_inbox_assign`, `tco_parse_url`, `tco_import_email` u.a.
 
 ## Aus dem Repo herauslösen
 

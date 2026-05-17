@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ActivityIndicator, Alert, FlatList, KeyboardAvoidingView,
   Platform, RefreshControl, StyleSheet, Text, TextInput,
@@ -25,6 +25,8 @@ export default function TripsScreen() {
   const [sheetMode, setSheetMode] = useState<SheetMode>("create");
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [name, setName] = useState("");
+  const [startDate, setStartDate] = useState("");
+  const [endDate, setEndDate] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -36,6 +38,8 @@ export default function TripsScreen() {
     setSheetMode("create");
     setEditingTrip(null);
     setName("");
+    setStartDate("");
+    setEndDate("");
     setSheetVisible(true);
   }
 
@@ -43,23 +47,35 @@ export default function TripsScreen() {
     setSheetMode("edit");
     setEditingTrip(trip);
     setName(trip.name);
+    setStartDate(trip.start_date ?? "");
+    setEndDate(trip.end_date ?? "");
     setSheetVisible(true);
   }
 
   function closeSheet() {
     setSheetVisible(false);
     setName("");
+    setStartDate("");
+    setEndDate("");
     setEditingTrip(null);
+  }
+
+  function parsedDate(s: string): string | null {
+    if (!s.trim()) return null;
+    // Accept YYYY-MM-DD; pass through if valid, null otherwise
+    return /^\d{4}-\d{2}-\d{2}$/.test(s.trim()) ? s.trim() : null;
   }
 
   async function save() {
     if (!name.trim()) return;
     setSaving(true);
     try {
+      const start = parsedDate(startDate);
+      const end = parsedDate(endDate);
       if (sheetMode === "create") {
-        await createOffline({ name: name.trim(), description: null, start_date: null, end_date: null });
+        await createOffline({ name: name.trim(), description: null, start_date: start, end_date: end });
       } else if (editingTrip) {
-        await updateOffline(editingTrip.id, { name: name.trim() });
+        await updateOffline(editingTrip.id, { name: name.trim(), start_date: start, end_date: end });
       }
       await haptics.success();
       closeSheet();
@@ -119,22 +135,49 @@ export default function TripsScreen() {
         <Text style={s.fabText}>+</Text>
       </TouchableOpacity>
 
-      <BottomSheet visible={sheetVisible} onClose={closeSheet} heightFraction={0.45}>
+      <BottomSheet visible={sheetVisible} onClose={closeSheet} heightFraction={0.65}>
         <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
           <Text style={s.sheetTitle}>
             {sheetMode === "create" ? "Neuer Trip" : "Trip bearbeiten"}
           </Text>
+
+          <Text style={s.fieldLabel}>Name *</Text>
           <TextInput
             style={s.input}
-            placeholder="z.B. Barcelona Sommer 2024"
+            placeholder="z.B. Barcelona Sommer 2025"
             placeholderTextColor="#6666aa"
             value={name}
             onChangeText={setName}
             autoFocus
-            returnKeyType="done"
-            onSubmitEditing={save}
+            returnKeyType="next"
             accessibilityLabel="Trip-Name"
           />
+
+          <Text style={s.fieldLabel}>Startdatum</Text>
+          <TextInput
+            style={s.input}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor="#6666aa"
+            value={startDate}
+            onChangeText={setStartDate}
+            keyboardType="numbers-and-punctuation"
+            returnKeyType="next"
+            accessibilityLabel="Startdatum"
+          />
+
+          <Text style={s.fieldLabel}>Enddatum</Text>
+          <TextInput
+            style={s.input}
+            placeholder="YYYY-MM-DD"
+            placeholderTextColor="#6666aa"
+            value={endDate}
+            onChangeText={setEndDate}
+            keyboardType="numbers-and-punctuation"
+            returnKeyType="done"
+            onSubmitEditing={save}
+            accessibilityLabel="Enddatum"
+          />
+
           <View style={s.sheetButtons}>
             <TouchableOpacity
               style={s.cancelBtn}
@@ -179,11 +222,12 @@ const s = StyleSheet.create({
   },
   fabText: { color: "#fff", fontSize: 28, lineHeight: 32 },
   sheetTitle: { fontSize: 20, fontWeight: "700", color: "#fff", marginBottom: 16 },
+  fieldLabel: { color: "#6666aa", fontSize: 12, fontWeight: "600", letterSpacing: 0.5, marginBottom: 6, marginTop: 4 },
   input: {
     backgroundColor: "#0f0f1a", borderRadius: 12, padding: 14,
-    color: "#fff", fontSize: 16, borderWidth: 1, borderColor: "#2a2a4e", marginBottom: 16,
+    color: "#fff", fontSize: 16, borderWidth: 1, borderColor: "#2a2a4e", marginBottom: 10,
   },
-  sheetButtons: { flexDirection: "row", gap: 12, justifyContent: "flex-end" },
+  sheetButtons: { flexDirection: "row", gap: 12, justifyContent: "flex-end", marginTop: 8 },
   cancelBtn: { paddingVertical: 12, paddingHorizontal: 20, borderRadius: 10, borderWidth: 1, borderColor: "#2a2a4e" },
   cancelText: { color: "#8888aa", fontSize: 15 },
   saveBtn: { paddingVertical: 12, paddingHorizontal: 28, borderRadius: 10, backgroundColor: "#4f46e5", minWidth: 100, alignItems: "center" },

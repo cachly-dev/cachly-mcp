@@ -13,3 +13,4 @@ Pillow==11.0.0
 PyMuPDF==1.24.14
 aiofiles==24.1.0
 python-magic==0.4.27
+redis[asyncio]==5.2.1

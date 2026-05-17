@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings
 from app.routers import trips, items, parse, inbox, mail
+from app.services.cache import cachly_configured
 
 settings = get_settings()
 
@@ -38,4 +39,8 @@ app.include_router(mail.router, prefix="/api/v1")
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": "0.1.0"}
+    return {
+        "status": "ok",
+        "version": "0.1.0",
+        "cachly_cache": "enabled" if cachly_configured() else "disabled",
+    }

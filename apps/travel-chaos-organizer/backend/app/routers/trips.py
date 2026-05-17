@@ -16,7 +16,7 @@ async def list_trips(
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     result = await db.execute(
-        text("SELECT * FROM trips WHERE user_id = :uid ORDER BY start_date ASC NULLS LAST, created_at DESC"),
+        text("SELECT * FROM trips WHERE user_id = :uid ORDER BY start_date ASC, created_at DESC"),
         {"uid": uid},
     )
     return [dict(r._mapping) for r in result.fetchall()]
@@ -49,7 +49,7 @@ async def get_trip(
 ):
     result = await db.execute(
         text("SELECT * FROM trips WHERE id = :id AND user_id = :uid"),
-        {"id": trip_id, "uid": uid},
+        {"id": str(trip_id), "uid": uid},
     )
     row = result.fetchone()
     if not row:
@@ -69,9 +69,9 @@ async def update_trip(
         raise HTTPException(status_code=400, detail="Nothing to update")
 
     set_clauses = ", ".join(f"{k} = :{k}" for k in updates)
-    updates.update({"id": trip_id, "uid": uid})
+    updates.update({"id": str(trip_id), "uid": uid})
     result = await db.execute(
-        text(f"UPDATE trips SET {set_clauses}, updated_at = now() WHERE id = :id AND user_id = :uid RETURNING *"),
+        text(f"UPDATE trips SET {set_clauses}, updated_at = CURRENT_TIMESTAMP WHERE id = :id AND user_id = :uid RETURNING *"),
         updates,
     )
     row = result.fetchone()
@@ -89,7 +89,7 @@ async def delete_trip(
 ):
     result = await db.execute(
         text("DELETE FROM trips WHERE id = :id AND user_id = :uid"),
-        {"id": trip_id, "uid": uid},
+        {"id": str(trip_id), "uid": uid},
     )
     await db.commit()
     if result.rowcount == 0:
