@@ -2,6 +2,7 @@ import { StyleSheet, Text, View } from "react-native";
 import { format, parseISO } from "date-fns";
 import { de } from "date-fns/locale";
 import { TripItem } from "../lib/api";
+import QRCodeViewer from "./QRCodeViewer";
 
 const TYPE_ICONS: Record<string, string> = {
   flight: "✈️", train: "🚂", bus: "🚌", hotel: "🏨",
@@ -45,7 +46,9 @@ export default function TimelineItem({ item }: Props) {
             <Text style={s.route}>{parsed.origin as string} → {parsed.destination as string}</Text>
           )}
           {item.provider && <Text style={s.chip}>{item.provider}</Text>}
-          {item.booking_ref && <Text style={s.chip}>#{item.booking_ref}</Text>}
+          {item.booking_ref && (
+            <QRCodeViewer bookingRef={item.booking_ref} title={item.title} />
+          )}
           {parsed?.price && <Text style={s.chip}>{parsed.price as string}</Text>}
         </View>
       </View>
