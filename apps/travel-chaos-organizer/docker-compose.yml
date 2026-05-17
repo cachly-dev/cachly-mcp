@@ -1,4 +1,16 @@
 services:
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --save "" --appendonly no
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
@@ -38,12 +50,16 @@ services:
     environment:
       DATABASE_URL: postgresql+asyncpg://tco:tco@postgres:5432/tco
       KEYCLOAK_URL: http://keycloak:8080
+      # Local Redis acts as Cachly cache in dev — replace with your Cachly URL in production
+      CACHLY_REDIS_URL: redis://redis:6379/0
     volumes:
       - uploads_data:/data/uploads
     ports:
       - "8000:8000"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
 volumes:
