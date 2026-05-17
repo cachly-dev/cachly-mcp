@@ -4,6 +4,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.db.database import get_db
+from app.services import notifier, email as email_svc
 
 router = APIRouter(prefix="/waitlist", tags=["waitlist"])
 
@@ -24,6 +25,9 @@ async def join_waitlist(
             {"email": body.email.lower(), "source": body.source},
         )
         await db.commit()
+        # Fire-and-forget: notification + welcome email
+        await notifier.notify("tco", "waitlist_signup", {"email": body.email.lower(), "source": body.source})
+        await email_svc.send_waitlist_welcome(body.email.lower())
         return {"joined": True}
     except Exception:
         await db.rollback()

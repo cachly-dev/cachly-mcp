@@ -2,6 +2,13 @@
 <html lang="de">
 <head>
   <meta charset="UTF-8" />
+  <!--
+    TCO Landing Page Config — add before this script tag on your server:
+    <script>
+      window.TCO_API_URL = 'https://your-tco-backend.example.com';
+      window.TCO_PLAUSIBLE_DOMAIN = 'your-tco-domain.example.com';
+    </script>
+  -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Travel Chaos Organizer — Nie wieder am Gate nach der Buchungsnummer suchen.</title>
   <meta name="description" content="TCO verwandelt Screenshots, PDFs und Booking-E-Mails in eine saubere Reise-Timeline. KI-powered, selbst gehostet, offline-fähig." />
@@ -241,6 +248,21 @@
       .plan-step + .plan-step { border-left: 1px solid var(--border); border-top: none; }
     }
   </style>
+  <!-- Plausible Analytics — replace data-domain with your domain, or remove if self-hosting -->
+  <script>
+    // Set window.TCO_PLAUSIBLE_DOMAIN to your domain to enable Plausible
+    // e.g., <script>window.TCO_PLAUSIBLE_DOMAIN='tco.yourapp.com'</script> before this file
+    if (window.TCO_PLAUSIBLE_DOMAIN) {
+      var s = document.createElement('script');
+      s.defer = true;
+      s.setAttribute('data-domain', window.TCO_PLAUSIBLE_DOMAIN);
+      s.src = 'https://plausible.io/js/script.outbound-links.js';
+      document.head.appendChild(s);
+      window.plausible = window.plausible || function() {
+        (window.plausible.q = window.plausible.q || []).push(arguments);
+      };
+    }
+  </script>
 </head>
 <body>
 

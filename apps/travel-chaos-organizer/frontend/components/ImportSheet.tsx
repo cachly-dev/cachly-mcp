@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import BottomSheet from "./BottomSheet";
 import { haptics } from "../lib/haptics";
+import { useToast } from "./ToastContext";
 
 type Props = {
   visible: boolean;
@@ -20,6 +21,7 @@ type Props = {
 };
 
 export default function ImportSheet({ visible, onClose, tripId, onSuccess }: Props) {
+  const { showToast } = useToast();
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +57,7 @@ export default function ImportSheet({ visible, onClose, tripId, onSuccess }: Pro
       setText("");
       onClose();
       onSuccess();
+      showToast("Dokument erfolgreich importiert", "success");
     } catch (e) {
       await haptics.error();
       setError(e instanceof Error ? e.message : "Unbekannter Fehler");
