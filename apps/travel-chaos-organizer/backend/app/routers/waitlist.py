@@ -1,10 +1,11 @@
 from typing import Annotated
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.db.database import get_db
 from app.services import notifier, email as email_svc
+from app.limiter import limiter
 
 router = APIRouter(prefix="/waitlist", tags=["waitlist"])
 
@@ -14,8 +15,10 @@ class WaitlistBody(BaseModel):
     source: str = "landing"
 
 
+@limiter.limit("5/minute")
 @router.post("")
 async def join_waitlist(
+    request: Request,
     body: WaitlistBody,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):

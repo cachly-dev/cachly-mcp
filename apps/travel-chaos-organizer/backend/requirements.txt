@@ -17,3 +17,4 @@ python-magic==0.4.27
 redis[asyncio]==5.2.1
 slowapi>=0.1.9
 limits>=3.6.0
+sentry-sdk[fastapi]>=2.0

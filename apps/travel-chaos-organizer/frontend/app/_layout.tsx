@@ -7,6 +7,9 @@ import { requestNotificationPermission } from "../lib/notifications";
 import { onShareIntent, getInitialShareIntent } from "../lib/shareIntent";
 import { ToastProvider, useToast } from "../components/ToastContext";
 import { QuotaProvider } from "../lib/quota";
+import { initSentry } from "../lib/sentry";
+
+initSentry();
 
 function SyncManager() {
   const { showToast } = useToast();

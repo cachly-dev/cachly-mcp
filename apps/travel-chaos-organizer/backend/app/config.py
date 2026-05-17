@@ -42,6 +42,10 @@ class Settings(BaseSettings):
     admin_user: str = "admin"
     admin_password: str = "changeme"
 
+    # Sentry (optional)
+    sentry_dsn: str = ""
+    environment: str = "production"
+
     # Upload
     max_upload_bytes: int = 20 * 1024 * 1024  # 20 MB
 
