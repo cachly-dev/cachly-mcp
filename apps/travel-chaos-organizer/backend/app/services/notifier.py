@@ -31,6 +31,11 @@ _EMOJI = {
     "trip_deleted":     "🗑️",
     "cache_hit":        "⚡",
     "error":            "🔴",
+    "stripe_payment":   "💳",
+    "new_user":         "🆕",
+    "pdf_export":       "📑",
+    "trip_search":      "🔍",
+    "stripe_checkout":  "🛒",
     "default":          "🔔",
 }
 

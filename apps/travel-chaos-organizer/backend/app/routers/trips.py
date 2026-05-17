@@ -47,7 +47,10 @@ async def search_trips(
         """),
         {"uid": uid, "p": pattern},
     )
-    return [dict(r._mapping) for r in result.fetchall()]
+    rows = [dict(r._mapping) for r in result.fetchall()]
+    from app.services import telemetry
+    await telemetry.track(db, uid, "trip_search", {"q": q.strip()[:100], "result_count": len(rows)})
+    return rows
 
 
 @router.post("", response_model=TripOut, status_code=status.HTTP_201_CREATED)

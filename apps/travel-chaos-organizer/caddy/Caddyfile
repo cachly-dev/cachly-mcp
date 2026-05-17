@@ -1,14 +1,11 @@
 # Travel Chaos Organizer — Caddyfile
-# Replace tco.example.com with your real domain.
-# Caddy auto-obtains TLS certificates from Let's Encrypt.
+# Set TCO_DOMAIN in .env (e.g. TCO_DOMAIN=tco.example.com)
 
-tco.example.com {
+{$TCO_DOMAIN:localhost} {
     reverse_proxy backend:8000
 
-    # Compress responses
     encode gzip zstd
 
-    # Security headers
     header {
         Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
         X-Content-Type-Options "nosniff"
@@ -17,20 +14,13 @@ tco.example.com {
         -Server
     }
 
-    # Static landing page served from /landing if present
-    # Uncomment and adjust path when deploying landing page:
-    # handle /landing/* {
-    #     root * /srv/landing
-    #     file_server
-    # }
-
     log {
         output stdout
         format json
     }
 }
 
-# Local development — plain HTTP on localhost
+# Local HTTP fallback (always active)
 :8080 {
     reverse_proxy backend:8000
     encode gzip
