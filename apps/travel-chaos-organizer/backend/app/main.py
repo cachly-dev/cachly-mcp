@@ -18,6 +18,10 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.logging_config import setup_logging
+    setup_logging(debug=settings.debug)
+    from app.services import sentry as sentry_svc
+    sentry_svc.init(settings.sentry_dsn, settings.environment)
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     import sys
     if settings.admin_password == "changeme":

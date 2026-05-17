@@ -5,11 +5,20 @@ const config: ExpoConfig = {
   slug: "travel-chaos-organizer",
   version: "0.1.0",
   scheme: "tco",
+  runtimeVersion: {
+    policy: "appVersion",
+  },
   orientation: "portrait",
   icon: "./assets/icon.png",
   splash: {
     image: "./assets/splash.png",
     backgroundColor: "#1a1a2e",
+  },
+  updates: {
+    url: "https://u.expo.dev/YOUR_EAS_PROJECT_ID",
+    enabled: true,
+    fallbackToCacheTimeout: 0,
+    checkAutomatically: "ON_LOAD",
   },
   ios: {
     bundleIdentifier: "dev.cachly.tco",
@@ -25,6 +34,7 @@ const config: ExpoConfig = {
   plugins: [
     "expo-router",
     "expo-sqlite",
+    "expo-updates",
     ["expo-image-picker", { photosPermission: "Allow TCO to access your photos for travel document scanning." }],
     ["expo-document-picker", {}],
     [
