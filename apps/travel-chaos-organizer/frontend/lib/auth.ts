@@ -17,6 +17,9 @@ const discovery = {
 
 const TOKEN_KEY = "tco_tokens";
 
+export let onAuthFailure: (() => void) | null = null;
+export function setAuthFailureCallback(cb: () => void) { onAuthFailure = cb; }
+
 export type Tokens = {
   accessToken: string;
   refreshToken: string;
@@ -83,6 +86,7 @@ export async function getAccessToken(): Promise<string | null> {
     return updated.accessToken;
   } catch {
     await AsyncStorage.removeItem(TOKEN_KEY);
+    onAuthFailure?.();
     return null;
   }
 }

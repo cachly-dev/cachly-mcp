@@ -84,10 +84,10 @@ export default function SwipeableInboxItem({ item, onAssign, onReject }: Props) 
 
         {/* Explicit buttons as fallback for non-swipe users */}
         <View style={s.actions}>
-          <TouchableOpacity style={s.btn} onPress={onAssign} hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}>
+          <TouchableOpacity style={s.btn} onPress={onAssign} hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }} accessibilityLabel="Zuweisen" accessibilityRole="button">
             <Text style={s.btnText}>→</Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[s.btn, s.btnDanger]} onPress={onReject} hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}>
+          <TouchableOpacity style={[s.btn, s.btnDanger]} onPress={onReject} hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }} accessibilityLabel="Ablehnen" accessibilityRole="button">
             <Text style={s.btnText}>✕</Text>
           </TouchableOpacity>
         </View>

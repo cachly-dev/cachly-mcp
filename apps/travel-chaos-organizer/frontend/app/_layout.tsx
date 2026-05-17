@@ -9,6 +9,7 @@ import { ToastProvider, useToast } from "../components/ToastContext";
 import { QuotaProvider } from "../lib/quota";
 import { initSentry } from "../lib/sentry";
 import { ErrorBoundary } from "../components/ErrorBoundary";
+import { setAuthFailureCallback } from "../lib/auth";
 
 initSentry();
 
@@ -40,10 +41,15 @@ function ShareIntentHandler() {
 }
 
 export default function RootLayout() {
+  const router = useRouter();
+
   useEffect(() => {
     initDb();
     initQueue();
     requestNotificationPermission().catch(() => {});
+    setAuthFailureCallback(() => {
+      router.replace('/(auth)/login');
+    });
   }, []);
 
   return (
