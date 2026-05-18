@@ -139,8 +139,11 @@ async def parse_file(
     else:
         await _insert_inbox(uid, raw_text, parsed_dict, file_path, mime, file.filename, db)
 
-    from app.services import telemetry
+    from app.services import telemetry, notifier as notifier_svc
     await telemetry.track(db, uid, "parse_file", {"mime": mime, "trip_id": str(trip_id) if trip_id else None, "cached": was_cached})
+    if not was_cached:
+        dest = f"Trip zugewiesen" if trip_id else "Chaos Inbox"
+        await notifier_svc.notify_user(db, uid, f"✅ *{parsed.title or 'Dokument'}* geparst\nTyp: {parsed.type} · {dest}")
     return ParseResponse(parsed=parsed, raw_text=raw_text, model_used=settings.ollama_model)
 
 

@@ -142,14 +142,47 @@ export default function SettingsScreen() {
 
       <Text style={s.sectionTitle}>Telegram</Text>
       <View style={s.card}>
+        {/* Linked status badge */}
+        <View style={s.infoRow}>
+          <Text style={s.rowText}>Status</Text>
+          <Text style={[s.rowValue, plan?.telegram_linked ? s.telegramLinked : s.telegramUnlinked]}>
+            {plan?.telegram_linked ? "● Verknüpft" : "○ Nicht verknüpft"}
+          </Text>
+        </View>
+
         {telegramPin ? (
           <View style={s.pinBox}>
             <Text style={s.pinLabel}>Dein PIN (gültig 10 Min.)</Text>
             <Text style={s.pinCode}>{telegramPin}</Text>
-            <Text style={s.pinHint}>Sende diesen PIN an @TCOBot: /link {telegramPin}</Text>
+            <Text style={s.pinHint}>Sende diesen PIN an @TCOBot:{"\n"}/link {telegramPin}</Text>
           </View>
+        ) : plan?.telegram_linked ? (
+          <>
+            <View style={s.infoRow}>
+              <Text style={[s.rowText, { color: "#6666aa" }]}>Bot</Text>
+              <Text style={s.rowValue}>@TCOBot</Text>
+            </View>
+            <TouchableOpacity
+              style={[s.row, { borderBottomWidth: 0 }]}
+              onPress={() => setDialog({
+                title: "Telegram trennen?",
+                message: "Du erhältst dann keine Bot-Nachrichten mehr.",
+                onConfirm: async () => {
+                  await usersApi.telegramUnlink();
+                  showToast("Telegram-Verknüpfung aufgehoben", "success");
+                },
+              })}
+              accessibilityRole="button"
+            >
+              <Text style={[s.rowText, s.danger]}>Telegram trennen</Text>
+            </TouchableOpacity>
+          </>
         ) : (
-          <TouchableOpacity style={s.row} onPress={handleGeneratePin} accessibilityRole="button">
+          <TouchableOpacity
+            style={[s.row, { borderBottomWidth: 0 }]}
+            onPress={handleGeneratePin}
+            accessibilityRole="button"
+          >
             <Text style={s.rowText}>Mit Telegram verknüpfen</Text>
             {generatingPin ? <ActivityIndicator size="small" color="#4f46e5" /> : <Text style={s.rowChevron}>›</Text>}
           </TouchableOpacity>
@@ -320,6 +353,8 @@ const s = StyleSheet.create({
   pinLabel: { color: '#6666aa', fontSize: 12 },
   pinCode: { color: '#fff', fontSize: 40, fontWeight: '800', letterSpacing: 8 },
   pinHint: { color: '#3a3a5e', fontSize: 12, textAlign: 'center' },
+  telegramLinked: { color: '#10b981', fontWeight: '600' },
+  telegramUnlinked: { color: '#3a3a5e' },
 
   // Cachly badge
   cachlyBadge: {

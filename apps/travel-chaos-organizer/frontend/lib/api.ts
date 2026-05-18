@@ -117,11 +117,13 @@ export type UserPlan = {
   free_daily_parses: number;
   free_max_trips: number;
   is_pro: boolean;
+  telegram_linked: boolean;
 };
 
 export const usersApi = {
   me: () => request<UserPlan>("/api/v1/users/me"),
   telegramPin: () => request<{ pin: string; expires_in_seconds: number }>("/api/v1/users/telegram-pin", { method: "POST" }),
+  telegramUnlink: () => request<{ ok: boolean }>("/api/v1/users/telegram-unlink", { method: "DELETE" }),
 };
 
 export type CacheStats = {

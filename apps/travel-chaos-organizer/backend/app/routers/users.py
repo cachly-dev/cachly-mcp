@@ -40,7 +40,7 @@ async def me(
 
     row = await db.execute(
         text("""
-            SELECT id, email, plan, plan_expires_at, created_at
+            SELECT id, email, plan, plan_expires_at, created_at, telegram_chat_id
             FROM users WHERE id = :uid
         """),
         {"uid": uid},
@@ -49,9 +49,9 @@ async def me(
     now = datetime.now(timezone.utc)
     plan = r[2] if r else "free"
     plan_expires_at = r[3] if r else None
+    telegram_linked = bool(r[5]) if r else False
     # plan is only active if not expired
     if plan != "free" and plan_expires_at is not None:
-        # compare: plan_expires_at may be a string (SQLite) or datetime (PG)
         if isinstance(plan_expires_at, str):
             from datetime import datetime as _dt
             try:
@@ -70,6 +70,7 @@ async def me(
         "free_daily_parses": 50,
         "free_max_trips": 3,
         "is_pro": plan != "free",
+        "telegram_linked": telegram_linked,
     }
 
 
@@ -105,6 +106,39 @@ async def confirm_telegram_link(
     )
     await db.commit()
     return {"ok": True, "uid": uid}
+
+
+from pydantic import BaseModel as _BaseModel
+
+class TelegramNotifyBody(_BaseModel):
+    message: str
+
+
+@router.post("/telegram-notify")
+async def telegram_notify(
+    uid: Annotated[str, Depends(user_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    body: TelegramNotifyBody,
+):
+    """Send a Telegram message to the current user's linked chat.
+    Used by MCP tools and external integrations."""
+    from app.services import notifier as notifier_svc
+    await notifier_svc.notify_user(db, uid, body.message)
+    return {"ok": True}
+
+
+@router.delete("/telegram-unlink")
+async def telegram_unlink(
+    uid: Annotated[str, Depends(user_id)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Unlink Telegram from the current user account."""
+    await db.execute(
+        text("UPDATE users SET telegram_chat_id = NULL WHERE id = :uid"),
+        {"uid": uid},
+    )
+    await db.commit()
+    return {"ok": True}
 
 
 @router.get("/by-telegram/{chat_id}")

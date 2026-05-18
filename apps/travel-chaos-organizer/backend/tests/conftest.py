@@ -199,6 +199,7 @@ CREATE TABLE IF NOT EXISTS users (
     plan               TEXT NOT NULL DEFAULT 'free',
     plan_expires_at    TEXT,
     stripe_customer_id TEXT,
+    telegram_chat_id   TEXT UNIQUE,
     created_at         TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
 );
