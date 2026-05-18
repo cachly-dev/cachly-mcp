@@ -124,6 +124,19 @@ export const usersApi = {
   telegramPin: () => request<{ pin: string; expires_in_seconds: number }>("/api/v1/users/telegram-pin", { method: "POST" }),
 };
 
+export type CacheStats = {
+  configured: boolean;
+  hits: number;
+  misses: number;
+  key_count: number;
+  hit_rate: number;
+  ttl_days: number;
+};
+
+export const cacheApi = {
+  stats: () => request<CacheStats>("/api/v1/cache/stats"),
+};
+
 // ── Parse ──────────────────────────────────────────────────────────────────
 
 export async function parseFile(

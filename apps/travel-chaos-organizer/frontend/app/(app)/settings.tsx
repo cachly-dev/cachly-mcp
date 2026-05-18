@@ -10,7 +10,7 @@ import { clearCache, cacheSizeBytes } from "../../lib/fileCache";
 import { purgeFailed, getPending } from "../../lib/offlineQueue";
 import { haptics } from "../../lib/haptics";
 import { useQuota } from "../../lib/quota";
-import { usersApi } from "../../lib/api";
+import { usersApi, cacheApi, type CacheStats } from "../../lib/api";
 import { useToast } from "../../components/ToastContext";
 import ConfirmDialog from "../../components/ConfirmDialog";
 
@@ -30,6 +30,7 @@ export default function SettingsScreen() {
   );
   const [telegramPin, setTelegramPin] = useState<string | null>(null);
   const [generatingPin, setGeneratingPin] = useState(false);
+  const [cachlyStats, setCachlyStats] = useState<CacheStats | null>(null);
 
   async function handleGeneratePin() {
     setGeneratingPin(true);
@@ -47,6 +48,7 @@ export default function SettingsScreen() {
   useEffect(() => {
     cacheSizeBytes().then(setCacheSize);
     setQueueSize(getPending().length);
+    cacheApi.stats().then(setCachlyStats).catch(() => {});
   }, []);
 
   async function handleClearCache() {
@@ -227,7 +229,7 @@ export default function SettingsScreen() {
         </TouchableOpacity>
       </View>
 
-      {/* Cachly badge — cross-promotion */}
+      {/* Cachly badge — cross-promotion + live stats */}
       <TouchableOpacity
         style={s.cachlyBadge}
         onPress={() => Linking.openURL("https://cachly.dev")}
@@ -236,14 +238,36 @@ export default function SettingsScreen() {
         accessibilityRole="link"
       >
         <View style={s.cachlyInner}>
-          <View style={s.cachlyDot} />
+          <View style={[s.cachlyDot, cachlyStats?.configured ? s.cachlyDotActive : s.cachlyDotOff]} />
           <Text style={s.cachlyText}>Powered by</Text>
           <Text style={s.cachlyBrand}>Cachly</Text>
+          <Text style={[s.cachlyStatus, cachlyStats?.configured ? s.cachlyStatusOn : s.cachlyStatusOff]}>
+            {cachlyStats ? (cachlyStats.configured ? "● aktiv" : "○ nicht verbunden") : ""}
+          </Text>
         </View>
-        <Text style={s.cachlySubtext}>
-          KI-Ergebnisse werden per Cachly Redis gecacht —{"\n"}
-          kein zweiter AI-Call für dasselbe Dokument.
-        </Text>
+        {cachlyStats?.configured ? (
+          <View style={s.cachlyStatsRow}>
+            <View style={s.cachlyStatCell}>
+              <Text style={s.cachlyStatValue}>{cachlyStats.hits}</Text>
+              <Text style={s.cachlyStatLabel}>Cache Hits</Text>
+            </View>
+            <View style={s.cachlyStatDivider} />
+            <View style={s.cachlyStatCell}>
+              <Text style={s.cachlyStatValue}>{Math.round(cachlyStats.hit_rate * 100)}%</Text>
+              <Text style={s.cachlyStatLabel}>Hit Rate</Text>
+            </View>
+            <View style={s.cachlyStatDivider} />
+            <View style={s.cachlyStatCell}>
+              <Text style={s.cachlyStatValue}>{cachlyStats.key_count}</Text>
+              <Text style={s.cachlyStatLabel}>Gecacht</Text>
+            </View>
+          </View>
+        ) : (
+          <Text style={s.cachlySubtext}>
+            KI-Ergebnisse werden per Cachly Redis gecacht —{"\n"}
+            kein zweiter AI-Call für dasselbe Dokument.
+          </Text>
+        )}
       </TouchableOpacity>
 
       <Text style={s.version}>Travel Chaos Organizer v0.1.0</Text>
@@ -309,9 +333,19 @@ const s = StyleSheet.create({
   },
   cachlyInner: { flexDirection: "row", alignItems: "center", gap: 8 },
   cachlyDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#4f46e5" },
+  cachlyDotActive: { backgroundColor: "#10b981" },
+  cachlyDotOff: { backgroundColor: "#3a3a5e" },
   cachlyText: { color: "#6666aa", fontSize: 13 },
   cachlyBrand: { color: "#a5b4fc", fontSize: 14, fontWeight: "700" },
+  cachlyStatus: { fontSize: 11, marginLeft: "auto" as const },
+  cachlyStatusOn: { color: "#10b981" },
+  cachlyStatusOff: { color: "#3a3a5e" },
   cachlySubtext: { color: "#3a3a5e", fontSize: 12, lineHeight: 18 },
+  cachlyStatsRow: { flexDirection: "row", alignItems: "center", marginTop: 4 },
+  cachlyStatCell: { flex: 1, alignItems: "center", gap: 2 },
+  cachlyStatValue: { color: "#a5b4fc", fontSize: 20, fontWeight: "800" },
+  cachlyStatLabel: { color: "#3a3a5e", fontSize: 11 },
+  cachlyStatDivider: { width: 1, height: 32, backgroundColor: "#2a2a4e" },
 
   version: { color: "#3a3a5e", fontSize: 12, textAlign: "center", marginTop: 20 },
 });

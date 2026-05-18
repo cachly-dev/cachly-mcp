@@ -1861,6 +1861,39 @@ const TOOLS = [
       required: ['raw_email'],
     },
   },
+  {
+    name: 'tco_parse_text',
+    description:
+      'Parse raw text (booking confirmation, itinerary, travel note) with Ollama AI in Travel Chaos Organizer. ' +
+      'Extracts flight, hotel, train, activity and other travel data. ' +
+      'Results are cached in Cachly Redis — identical text returns instantly without a second AI call. ' +
+      'Saves to a specific trip timeline or to the Chaos Inbox if no trip_id is given.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'Raw text to parse (booking confirmation, itinerary, etc.)' },
+        trip_id: { type: 'string', description: 'Trip UUID to assign directly (omit to send to Chaos Inbox)' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'tco_cache_stats',
+    description:
+      'Get Cachly Redis cache statistics for the TCO backend. ' +
+      'Shows how many AI parse results are cached, the cache hit rate, and whether Cachly is connected. ' +
+      'Use this to verify the TCO ↔ Cachly integration is working or to report savings to the user.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'tco_provision_cache',
+    description:
+      'Provision a free Cachly Redis instance for Travel Chaos Organizer and return the connection string. ' +
+      'Creates a "tco-cache" instance on cachly.dev (free tier, 25 MB — enough for thousands of parse results). ' +
+      'After provisioning, instruct the user to set CACHLY_REDIS_URL=<returned URL> in their TCO .env and redeploy. ' +
+      'This wires TCO to Cachly so every Ollama parse result is deduplicated automatically.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
 ] as const;
 
 

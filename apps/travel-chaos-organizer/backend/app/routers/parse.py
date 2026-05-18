@@ -119,14 +119,15 @@ async def parse_file(
     raw_text: str | None = None
     parsed_dict: dict = {}
 
+    was_cached = False
     if is_pdf(mime):
         raw_text = extract_text_from_pdf(content)
-        parsed_dict = await ollama_svc.parse_text(raw_text)
+        parsed_dict, was_cached = await ollama_svc.parse_text(raw_text)
     elif is_image(mime):
-        parsed_dict, raw_text = await ollama_svc.parse_image(content, mime)
+        parsed_dict, raw_text, was_cached = await ollama_svc.parse_image(content, mime)
     elif is_text(mime):
         raw_text = content.decode("utf-8", errors="replace")
-        parsed_dict = await ollama_svc.parse_text(raw_text)
+        parsed_dict, was_cached = await ollama_svc.parse_text(raw_text)
     else:
         raise HTTPException(status_code=415, detail=f"Unsupported file type: {mime}")
 
@@ -139,7 +140,7 @@ async def parse_file(
         await _insert_inbox(uid, raw_text, parsed_dict, file_path, mime, file.filename, db)
 
     from app.services import telemetry
-    await telemetry.track(db, uid, "parse_file", {"mime": mime, "trip_id": str(trip_id) if trip_id else None, "cached": False})
+    await telemetry.track(db, uid, "parse_file", {"mime": mime, "trip_id": str(trip_id) if trip_id else None, "cached": was_cached})
     return ParseResponse(parsed=parsed, raw_text=raw_text, model_used=settings.ollama_model)
 
 
@@ -153,7 +154,7 @@ async def parse_text_endpoint(
     trip_id: UUID | None = Form(None),
 ):
     await quota.check_parse(db, uid)
-    parsed_dict = await ollama_svc.parse_text(raw_text)
+    parsed_dict, was_cached = await ollama_svc.parse_text(raw_text)
     parsed = ParsedTravelData(**{k: parsed_dict.get(k) for k in ParsedTravelData.model_fields})
 
     if trip_id:
@@ -162,7 +163,7 @@ async def parse_text_endpoint(
         await _insert_inbox(uid, raw_text, parsed_dict, None, None, None, db)
 
     from app.services import telemetry
-    await telemetry.track(db, uid, "parse_text", {"mime": None, "trip_id": str(trip_id) if trip_id else None, "cached": False})
+    await telemetry.track(db, uid, "parse_text", {"mime": None, "trip_id": str(trip_id) if trip_id else None, "cached": was_cached})
     return ParseResponse(parsed=parsed, raw_text=raw_text, model_used=settings.ollama_model)
 
 
@@ -245,15 +246,15 @@ async def parse_url(
     else:
         raw_text = resp.text[:8000]
 
-    parsed_dict = await ollama_svc.parse_text(raw_text)
+    parsed_dict, was_cached = await ollama_svc.parse_text(raw_text)
     parsed = ParsedTravelData(**{k: parsed_dict.get(k) for k in ParsedTravelData.model_fields})
 
     from app.services import telemetry
     if body.trip_id:
         await _insert_item_from_parsed(uid, body.trip_id, parsed, raw_text, None, None, body.url, db)
-        await telemetry.track(db, uid, "parse_url", {"mime": None, "trip_id": str(body.trip_id) if body.trip_id else None, "cached": False})
+        await telemetry.track(db, uid, "parse_url", {"mime": None, "trip_id": str(body.trip_id) if body.trip_id else None, "cached": was_cached})
         return ParseResponse(parsed=parsed, raw_text=raw_text, model_used=settings.ollama_model)
     else:
         result = await _insert_inbox(uid, raw_text, parsed_dict, None, None, body.url, db)
-        await telemetry.track(db, uid, "parse_url", {"mime": None, "trip_id": None, "cached": False})
+        await telemetry.track(db, uid, "parse_url", {"mime": None, "trip_id": None, "cached": was_cached})
         return {**ParseResponse(parsed=parsed, raw_text=raw_text, model_used=settings.ollama_model).model_dump(), **result}
