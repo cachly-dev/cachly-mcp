@@ -84,11 +84,16 @@ async def test_cross_user_inbox_assign_blocked(client: AsyncClient, db_session, 
 
 @pytest.mark.asyncio
 async def test_trip_search_returns_correct_results(client: AsyncClient, db_session):
-    """Search finds trips by name and description.
-    NOTE: The search endpoint uses ILIKE which is PostgreSQL-specific.
-    This test is skipped when running with the SQLite in-memory test DB.
-    """
-    pytest.skip("Search endpoint uses ILIKE (PostgreSQL only); not compatible with SQLite test DB")
+    """Search finds trips by name and description."""
+    # Create two trips
+    await client.post("/api/v1/trips", json={"name": "Barcelona Sommer", "description": "Strand"})
+    await client.post("/api/v1/trips", json={"name": "Winter Wien", "description": "Kultur"})
+
+    r = await client.get("/api/v1/trips/search?q=Barcelona")
+    assert r.status_code == 200
+    results = r.json()
+    assert any("Barcelona" in t["name"] for t in results)
+    assert all("Wien" not in t["name"] for t in results)
 
 
 @pytest.mark.asyncio
