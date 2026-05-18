@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.auth.keycloak import user_id
+from app.auth.keycloak import user_id, user_id_or_bot
 from app.db.database import get_db
 from app.models.schemas import TripCreate, TripOut, TripUpdate
 from app.services import quota
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/trips", tags=["trips"])
 
 @router.get("", response_model=list[TripOut])
 async def list_trips(
-    uid: Annotated[str, Depends(user_id)],
+    uid: Annotated[str, Depends(user_id_or_bot)],
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
     result = await db.execute(

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, Uplo
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.auth.keycloak import user_id
+from app.auth.keycloak import user_id, user_id_or_bot
 from app.config import get_settings
 from app.config import get_settings as _get_settings
 from app.db.database import get_db
@@ -105,7 +105,7 @@ async def _insert_inbox(
 @router.post("/file", response_model=ParseResponse)
 async def parse_file(
     request: Request,
-    uid: Annotated[str, Depends(user_id)],
+    uid: Annotated[str, Depends(user_id_or_bot)],
     db: Annotated[AsyncSession, Depends(get_db)],
     file: UploadFile = File(...),
     trip_id: UUID | None = Form(None),
@@ -147,7 +147,7 @@ async def parse_file(
 @router.post("/text", response_model=ParseResponse)
 async def parse_text_endpoint(
     request: Request,
-    uid: Annotated[str, Depends(user_id)],
+    uid: Annotated[str, Depends(user_id_or_bot)],
     db: Annotated[AsyncSession, Depends(get_db)],
     raw_text: str = Form(...),
     trip_id: UUID | None = Form(None),

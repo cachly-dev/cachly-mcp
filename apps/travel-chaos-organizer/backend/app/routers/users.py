@@ -1,13 +1,17 @@
 """
 User profile endpoint — returns current user's plan info and upserts user row.
 """
+import secrets
 from typing import Annotated
-from datetime import datetime, timezone
-from fastapi import APIRouter, Depends
+from datetime import datetime, timedelta, timezone
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import text
 from app.auth.keycloak import user_id
 from app.db.database import get_db
+
+# In-process PIN store (sufficient for single-process; use Redis for multi-replica)
+_pending_links: dict[str, tuple[str, datetime]] = {}  # pin -> (uid, expires_at)
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -67,3 +71,59 @@ async def me(
         "free_max_trips": 3,
         "is_pro": plan != "free",
     }
+
+
+@router.post("/telegram-pin")
+async def generate_telegram_pin(
+    uid: Annotated[str, Depends(user_id)],
+):
+    """Generate a 6-digit PIN valid 10 min to link Telegram account."""
+    pin = str(secrets.randbelow(900000) + 100000)  # 100000-999999
+    expires = datetime.now(timezone.utc) + timedelta(minutes=10)
+    _pending_links[pin] = (uid, expires)
+    return {"pin": pin, "expires_in_seconds": 600}
+
+
+@router.post("/telegram-link")
+async def confirm_telegram_link(
+    pin: str,
+    chat_id: str,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Called by the bot: validates PIN and stores chat_id. No JWT needed — bot uses service token."""
+    entry = _pending_links.get(pin)
+    if not entry:
+        raise HTTPException(status_code=404, detail="PIN not found or expired")
+    uid, expires = entry
+    if datetime.now(timezone.utc) > expires:
+        del _pending_links[pin]
+        raise HTTPException(status_code=410, detail="PIN expired")
+    del _pending_links[pin]
+    await db.execute(
+        text("UPDATE users SET telegram_chat_id = :cid WHERE id = :uid"),
+        {"cid": chat_id, "uid": uid},
+    )
+    await db.commit()
+    return {"ok": True, "uid": uid}
+
+
+@router.get("/by-telegram/{chat_id}")
+async def get_user_by_telegram(
+    chat_id: str,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+):
+    """Bot-internal: get user's trips by telegram chat_id. Authenticated by bot token header."""
+    from app.config import get_settings
+    s = get_settings()
+    bot_token = request.headers.get("X-Bot-Token", "")
+    if not s.telegram_bot_token or bot_token != s.telegram_bot_token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    result = await db.execute(
+        text("SELECT id, email, plan FROM users WHERE telegram_chat_id = :cid"),
+        {"cid": chat_id},
+    )
+    row = result.fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Not linked")
+    return {"id": row[0], "email": row[1], "plan": row[2]}
