@@ -7,10 +7,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install shared monorepo package first (build context = repo root)
+COPY packages/telegram-notify /packages/telegram-notify
+RUN pip install --no-cache-dir /packages/telegram-notify
 
-COPY app/ ./app/
+COPY apps/travel-chaos-organizer/backend/requirements.txt .
+# Strip the file:// line — package is already installed above
+RUN grep -v "telegram-notify" requirements.txt | pip install --no-cache-dir -r /dev/stdin
+
+COPY apps/travel-chaos-organizer/backend/app/ ./app/
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1

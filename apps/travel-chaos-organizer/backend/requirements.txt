@@ -1,3 +1,6 @@
+# shared monorepo package — installed from /packages/telegram-notify in Docker
+# local dev: pip install -e ../../../../packages/telegram-notify
+telegram-notify @ file:///packages/telegram-notify
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
 python-jose[cryptography]==3.3.0
