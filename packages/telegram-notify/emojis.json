@@ -1,0 +1,22 @@
+{
+  "tool_call":             "🔧",
+  "tool_error":            "🔴",
+  "cache_hit":             "⚡",
+  "cache_miss":            "💭",
+  "auth_ok":               "🔑",
+  "auth_fail":             "🚫",
+  "startup":               "🚀",
+  "waitlist_signup":       "📬",
+  "parse_file":            "📄",
+  "parse_text":            "📝",
+  "parse_url":             "🔗",
+  "trip_created":          "🗺️",
+  "trip_deleted":          "🗑️",
+  "error":                 "🔴",
+  "stripe_payment":        "💳",
+  "stripe_checkout":       "🛒",
+  "new_user":              "🆕",
+  "pdf_export":            "📑",
+  "trip_search":           "🔍",
+  "default":               "🔔"
+}

@@ -50,8 +50,8 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: apps/travel-chaos-organizer/backend/Dockerfile
     restart: unless-stopped
     env_file: .env
     environment:
