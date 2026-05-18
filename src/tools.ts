@@ -1894,6 +1894,32 @@ const TOOLS = [
       'This wires TCO to Cachly so every Ollama parse result is deduplicated automatically.',
     inputSchema: { type: 'object', properties: {}, required: [] },
   },
+  {
+    name: 'tco_telegram_status',
+    description:
+      'Check if the current user has linked their Telegram account in Travel Chaos Organizer. ' +
+      'Returns linked status, plan, and guidance to link if not yet connected. ' +
+      'Use before tco_telegram_send to confirm the user will actually receive the message.',
+    inputSchema: { type: 'object', properties: {}, required: [] },
+  },
+  {
+    name: 'tco_telegram_send',
+    description:
+      'Send a Telegram message directly to the current TCO user\'s linked Telegram chat. ' +
+      'Supports Markdown formatting. Use for: summaries, reminders, trip updates, parse results. ' +
+      'Requires the user to have linked Telegram (check with tco_telegram_status first). ' +
+      'Ideal for pushing trip information to the user outside the app.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message: {
+          type: 'string',
+          description: 'Message text to send. Markdown supported (bold **text**, code `value`).',
+        },
+      },
+      required: ['message'],
+    },
+  },
 ] as const;
 
 

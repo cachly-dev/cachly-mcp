@@ -28,6 +28,8 @@ export const TCO_TOOL_NAMES = new Set([
   'tco_parse_text',
   'tco_cache_stats',
   'tco_provision_cache',
+  'tco_telegram_status',
+  'tco_telegram_send',
 ]);
 
 type TcoFetch = (path: string, jwt: string, init?: RequestInit) => Promise<unknown>;
@@ -298,6 +300,41 @@ export async function handleTcoTool(
           `2. Neu deployen:\n\`\`\`bash\nbash scripts/deploy.sh\n\`\`\`\n\n` +
           `Ab sofort werden alle Ollama Parse-Ergebnisse gecacht — kein zweiter AI-Call für dasselbe Dokument.`
         );
+      }
+
+      // ── Telegram: check linked status ────────────────────────────────────
+      case 'tco_telegram_status': {
+        const me = await tcoFetch('/api/v1/users/me', jwt) as Record<string, unknown>;
+        const linked = me.telegram_linked === true;
+        if (linked) {
+          return (
+            `✅ **Telegram ist verknüpft.**\n\n` +
+            `Plan: ${me.plan === 'pro' ? '✦ Pro' : 'Free'}\n\n` +
+            `Du kannst mit \`tco_telegram_send\` direkt Nachrichten an den User senden.`
+          );
+        }
+        return (
+          `🔴 **Telegram nicht verknüpft.**\n\n` +
+          `Der User muss in der TCO-App unter *Einstellungen → Mit Telegram verknüpfen* einen PIN generieren ` +
+          `und diesen an @TCOBot senden (\`/link <PIN>\`).`
+        );
+      }
+
+      // ── Telegram: send message to user ───────────────────────────────────
+      case 'tco_telegram_send': {
+        const { message } = args as { message: string };
+        const me = await tcoFetch('/api/v1/users/me', jwt) as Record<string, unknown>;
+        if (!me.telegram_linked) {
+          return (
+            `🔴 **Telegram nicht verknüpft** — Nachricht wurde nicht gesendet.\n\n` +
+            `Nutze \`tco_telegram_status\` für Details zur Verknüpfung.`
+          );
+        }
+        await tcoFetch('/api/v1/users/telegram-notify', jwt, {
+          method: 'POST',
+          body: JSON.stringify({ message }),
+        });
+        return `✅ Telegram-Nachricht gesendet:\n\n> ${message.slice(0, 200)}${message.length > 200 ? '…' : ''}`;
       }
 
       default:

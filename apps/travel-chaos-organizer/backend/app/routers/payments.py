@@ -96,6 +96,7 @@ async def stripe_webhook(request: Request, db: Annotated[AsyncSession, Depends(g
             from app.services import notifier as notifier_svc
             await tel_svc.track(db, uid, "stripe_payment_completed", {"amount": obj.get("amount_total"), "currency": obj.get("currency")})
             await notifier_svc.notify("tco", "stripe_payment", {"user_id": uid, "amount": obj.get("amount_total"), "currency": obj.get("currency")})
+            await notifier_svc.notify_user(db, uid, "🎉 *Du bist jetzt Pro!*\n\nAlle Features sind freigeschaltet. Viel Spaß beim Reisen ✈️")
 
     elif event["type"] in ("customer.subscription.deleted", "customer.subscription.paused"):
         cust_id = event["data"]["object"].get("customer")
@@ -117,6 +118,7 @@ async def stripe_webhook(request: Request, db: Annotated[AsyncSession, Depends(g
                 await db.commit()
                 from app.services import telemetry as tel_svc, notifier as notifier_svc
                 await tel_svc.track(db, downgrade_uid, "stripe_subscription_cancelled", {"customer": cust_id})
+                await notifier_svc.notify_user(db, downgrade_uid, "ℹ️ *Dein Pro-Abo wurde beendet.*\n\nDu bist jetzt wieder im Free-Plan. Deine Daten bleiben erhalten.")
                 await notifier_svc.notify("tco", "stripe_payment", {"event": "cancelled", "user_id": downgrade_uid[:8]})
 
     elif event["type"] == "invoice.payment_succeeded":
@@ -166,6 +168,10 @@ async def stripe_webhook(request: Request, db: Annotated[AsyncSession, Depends(g
                 from app.services import telemetry as tel_svc, notifier as notifier_svc
                 await tel_svc.track(db, failed_uid, "stripe_payment_failed", {"customer": cust_id, "attempt_count": attempt_count})
                 await notifier_svc.notify("tco", "stripe_payment", {"event": "payment_failed", "user_id": failed_uid[:8], "attempt": attempt_count})
+                if attempt_count < 3:
+                    await notifier_svc.notify_user(db, failed_uid, f"⚠️ *Zahlung fehlgeschlagen* (Versuch {attempt_count}/3)\n\nBitte aktualisiere deine Zahlungsmethode in Stripe. Dein Pro-Zugang bleibt noch aktiv.")
+                else:
+                    await notifier_svc.notify_user(db, failed_uid, "🔴 *Pro-Zugang deaktiviert*\n\nNach 3 fehlgeschlagenen Zahlungsversuchen wurde dein Abo beendet. Bitte erneuere dein Abo in der App.")
                 if user_email and attempt_count == 1:
                     # TODO: send payment failure email via notifier_svc or a dedicated email service
                     pass

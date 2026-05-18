@@ -50,18 +50,44 @@ def _format(app: str, event: str, payload: dict[str, Any]) -> str:
 
 
 async def notify(app: str, event: str, payload: dict[str, Any] | None = None) -> None:
-    """Send event to Telegram. No-op if not configured."""
+    """Send event to admin Telegram chat. No-op if not configured."""
     token = _token()
     chat_id = _chat_id()
     if not token or not chat_id:
         return
     try:
         import httpx
-        text = _format(app, event, payload or {})
+        msg = _format(app, event, payload or {})
         async with httpx.AsyncClient(timeout=5) as client:
             await client.post(
                 f"https://api.telegram.org/bot{token}/sendMessage",
-                json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
+                json={"chat_id": chat_id, "text": msg, "parse_mode": "Markdown"},
+            )
+    except Exception:
+        pass  # never raises
+
+
+async def notify_user(db: Any, user_id: str, message: str) -> None:
+    """Send a direct Telegram message to a specific user (by their user_id).
+    Looks up telegram_chat_id from DB. No-op if user has not linked Telegram."""
+    token = _token()
+    if not token:
+        return
+    try:
+        from sqlalchemy import text as sql_text
+        result = await db.execute(
+            sql_text("SELECT telegram_chat_id FROM users WHERE id = :uid"),
+            {"uid": user_id},
+        )
+        row = result.fetchone()
+        if not row or not row[0]:
+            return
+        chat_id = row[0]
+        import httpx
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.post(
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                json={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
             )
     except Exception:
         pass  # never raises
