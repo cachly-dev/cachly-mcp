@@ -15,8 +15,6 @@ from httpx import AsyncClient
 from app.routers.mail import strip_email_headers
 from tests.conftest import make_trip, mock_ollama_flight
 
-pytestmark = pytest.mark.asyncio
-
 RAW_EMAIL = """\
 From: booking@lufthansa.com
 To: max@example.com
@@ -68,6 +66,7 @@ def test_strip_collapses_blank_lines():
 
 # ── import_mail endpoint ──────────────────────────────────────────────────────
 
+@pytest.mark.asyncio
 async def test_import_mail_goes_to_inbox_without_trip(client: AsyncClient, mock_ollama_flight):
     r = await client.post(
         "/api/v1/mail/import",
@@ -84,6 +83,7 @@ async def test_import_mail_goes_to_inbox_without_trip(client: AsyncClient, mock_
     assert len(inbox.json()) == 1
 
 
+@pytest.mark.asyncio
 async def test_import_mail_assigned_to_trip(client: AsyncClient, mock_ollama_flight):
     trip_r = await client.post("/api/v1/trips", json=make_trip())
     trip_id = trip_r.json()["id"]
@@ -102,6 +102,7 @@ async def test_import_mail_assigned_to_trip(client: AsyncClient, mock_ollama_fli
     assert inbox.json() == []
 
 
+@pytest.mark.asyncio
 async def test_import_mail_low_confidence_still_saves(client: AsyncClient, mock_ollama_low_confidence):
     r = await client.post(
         "/api/v1/mail/import",

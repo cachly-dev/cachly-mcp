@@ -24,7 +24,6 @@ async def list_trips(
     return [dict(r._mapping) for r in result.fetchall()]
 
 
-# NOTE: ILIKE is PostgreSQL-specific. In tests (SQLite) it falls back to LIKE (case-insensitive in SQLite).
 @router.get("/search", response_model=list[TripOut])
 async def search_trips(
     uid: Annotated[str, Depends(user_id)],
@@ -40,9 +39,9 @@ async def search_trips(
             LEFT JOIN trip_items ti ON ti.trip_id = t.id
             WHERE t.user_id = :uid
               AND (
-                t.name ILIKE :p OR t.description ILIKE :p
-                OR ti.title ILIKE :p OR ti.provider ILIKE :p
-                OR ti.booking_ref ILIKE :p
+                t.name LIKE :p OR t.description LIKE :p
+                OR ti.title LIKE :p OR ti.provider LIKE :p
+                OR ti.booking_ref LIKE :p
               )
             ORDER BY t.start_date ASC, t.created_at DESC
         """),

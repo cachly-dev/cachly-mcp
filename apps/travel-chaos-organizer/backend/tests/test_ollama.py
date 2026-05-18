@@ -17,9 +17,6 @@ import pytest
 
 from app.services.ollama import _safe_parse, parse_image, parse_text
 
-pytestmark = pytest.mark.asyncio
-
-
 # ── _safe_parse (pure, synchronous) ──────────────────────────────────────────
 
 def test_safe_parse_valid_json():
@@ -60,6 +57,7 @@ def test_safe_parse_truncates_long_summary():
 
 # ── parse_text ────────────────────────────────────────────────────────────────
 
+@pytest.mark.asyncio
 async def test_parse_text_happy_path():
     expected = {"type": "flight", "title": "LH 400 FRA→JFK", "confidence": 0.9}
     mock_response = MagicMock()
@@ -78,6 +76,7 @@ async def test_parse_text_happy_path():
     assert result["confidence"] == 0.9
 
 
+@pytest.mark.asyncio
 async def test_parse_text_ollama_returns_garbage():
     mock_response = MagicMock()
     mock_response.json.return_value = {"response": "I cannot parse this."}
@@ -95,6 +94,7 @@ async def test_parse_text_ollama_returns_garbage():
     assert result["confidence"] == 0.0
 
 
+@pytest.mark.asyncio
 async def test_parse_text_ollama_empty_response():
     mock_response = MagicMock()
     mock_response.json.return_value = {}
@@ -113,6 +113,7 @@ async def test_parse_text_ollama_empty_response():
 
 # ── parse_image ───────────────────────────────────────────────────────────────
 
+@pytest.mark.asyncio
 async def test_parse_image_sends_base64():
     payload_sent = {}
     expected = {"type": "hotel", "title": "Marriott Berlin", "confidence": 0.85}
