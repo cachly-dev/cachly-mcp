@@ -70,10 +70,11 @@ async def test_parse_text_happy_path():
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_cls.return_value = mock_client
 
-        result = await parse_text("Flight LH 400 from Frankfurt to New York")
+        result, was_cached = await parse_text("Flight LH 400 from Frankfurt to New York")
 
     assert result["type"] == "flight"
     assert result["confidence"] == 0.9
+    assert was_cached is False
 
 
 @pytest.mark.asyncio
@@ -88,10 +89,11 @@ async def test_parse_text_ollama_returns_garbage():
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_cls.return_value = mock_client
 
-        result = await parse_text("some text")
+        result, was_cached = await parse_text("some text")
 
     assert result["type"] == "other"
     assert result["confidence"] == 0.0
+    assert was_cached is False
 
 
 @pytest.mark.asyncio
@@ -106,9 +108,10 @@ async def test_parse_text_ollama_empty_response():
         mock_client.post = AsyncMock(return_value=mock_response)
         mock_cls.return_value = mock_client
 
-        result = await parse_text("anything")
+        result, was_cached = await parse_text("anything")
 
     assert isinstance(result, dict)
+    assert was_cached is False
 
 
 # ── parse_image ───────────────────────────────────────────────────────────────
@@ -133,9 +136,10 @@ async def test_parse_image_sends_base64():
         mock_client.post = AsyncMock(side_effect=fake_post)
         mock_cls.return_value = mock_client
 
-        result, raw = await parse_image(b"\xff\xd8\xff", "image/jpeg")
+        result, raw, was_cached = await parse_image(b"\xff\xd8\xff", "image/jpeg")
 
     assert "images" in payload_sent
     assert len(payload_sent["images"]) == 1
     assert isinstance(payload_sent["images"][0], str)
     assert result["type"] == "hotel"
+    assert was_cached is False

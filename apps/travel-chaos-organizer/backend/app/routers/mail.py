@@ -45,7 +45,7 @@ async def import_mail(
     trip_id: UUID | None = Query(None, description="Assign directly to this trip (optional)"),
 ):
     body_text = strip_email_headers(raw_email)
-    parsed_dict = await ollama_svc.parse_text(body_text)
+    parsed_dict, _was_cached = await ollama_svc.parse_text(body_text)
     parsed = ParsedTravelData(**{k: parsed_dict.get(k) for k in ParsedTravelData.model_fields})
 
     if trip_id:

@@ -21,14 +21,17 @@ FAKE_HTML = """
 @pytest.fixture
 def mock_ollama_parse():
     with patch("app.services.ollama.parse_text", new_callable=AsyncMock) as m:
-        m.return_value = {
-            "type": "flight",
-            "title": "LH 400 Frankfurt → New York",
-            "booking_ref": "XYZ789",
-            "provider": "Lufthansa",
-            "event_at": "2025-08-15T10:30:00",
-            "confidence": 0.88,
-        }
+        m.return_value = (
+            {
+                "type": "flight",
+                "title": "LH 400 Frankfurt → New York",
+                "booking_ref": "XYZ789",
+                "provider": "Lufthansa",
+                "event_at": "2025-08-15T10:30:00",
+                "confidence": 0.88,
+            },
+            False,
+        )
         yield m
 
 

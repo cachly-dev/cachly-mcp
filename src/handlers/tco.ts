@@ -25,6 +25,9 @@ export const TCO_TOOL_NAMES = new Set([
   'tco_inbox_reject',
   'tco_parse_url',
   'tco_import_email',
+  'tco_parse_text',
+  'tco_cache_stats',
+  'tco_provision_cache',
 ]);
 
 type TcoFetch = (path: string, jwt: string, init?: RequestInit) => Promise<unknown>;
@@ -195,6 +198,106 @@ export async function handleTcoTool(
         const r = result as Record<string, unknown>;
         const dest = trip_id ? `trip \`${trip_id}\`` : 'chaos inbox';
         return `✅ Email imported to ${dest}. Inbox id: \`${r.inbox_id ?? '?'}\``;
+      }
+
+      // ── Parse raw text via Ollama (Cachly-cached) ────────────────────────
+      case 'tco_parse_text': {
+        const { text, trip_id } = args as { text: string; trip_id?: string };
+        const params = new URLSearchParams();
+        params.set('raw_text', text);
+        if (trip_id) params.set('trip_id', trip_id);
+        const result = await tcoFetch('/api/v1/parse/text', jwt, {
+          method: 'POST',
+          body: params.toString(),
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        });
+        const r = result as Record<string, unknown>;
+        const parsed = r.parsed as Record<string, unknown> | undefined;
+        const cached = (r as Record<string, unknown>).cached;
+        const dest = trip_id ? `trip \`${trip_id}\`` : 'Chaos Inbox';
+        const cacheNote = cached ? ' ⚡ **(Cache Hit — kein AI-Call)**' : '';
+        const confidence = typeof parsed?.confidence === 'number'
+          ? ` (confidence: ${Math.round((parsed.confidence as number) * 100)}%)`
+          : '';
+        return `✅ Text geparst und in ${dest} gespeichert${confidence}${cacheNote}.\n\nParsed: ${fmt(parsed ?? r)}`;
+      }
+
+      // ── Cachly Redis cache stats ─────────────────────────────────────────
+      case 'tco_cache_stats': {
+        const stats = await tcoFetch('/api/v1/cache/stats', jwt) as Record<string, unknown>;
+        if (!stats.configured) {
+          return (
+            '📭 **Cachly Redis ist nicht verbunden.**\n\n' +
+            'Setze `CACHLY_REDIS_URL=redis://<host>:6379/0` in der TCO `.env` und deploye neu.\n' +
+            'Nutze `tco_provision_cache` um eine kostenlose Cachly-Instanz zu erstellen.'
+          );
+        }
+        const hits = stats.hits as number;
+        const misses = stats.misses as number;
+        const total = hits + misses;
+        const hitPct = total > 0 ? Math.round((hits / total) * 100) : 0;
+        const saved = hits > 0
+          ? `\n\n💡 **~${hits} AI-Calls eingespart** (jeder Cache Hit = kein Ollama-Aufruf).`
+          : '';
+        return (
+          `✅ **Cachly Redis — aktiv**\n\n` +
+          `| Metric | Wert |\n|--------|------|\n` +
+          `| Cache Hits | **${hits}** |\n` +
+          `| Cache Misses | ${misses} |\n` +
+          `| Hit Rate | **${hitPct}%** |\n` +
+          `| Gecachte Dokumente | ${stats.key_count} |\n` +
+          `| TTL | ${stats.ttl_days} Tage |` +
+          saved
+        );
+      }
+
+      // ── Provision a Cachly free instance for TCO ─────────────────────────
+      case 'tco_provision_cache': {
+        const CACHLY_API = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
+        const res = await fetch(`${CACHLY_API}/instances`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${jwt}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ name: 'tco-cache', tier: 'free' }),
+          signal: AbortSignal.timeout(30_000),
+        });
+
+        if (!res.ok) {
+          const txt = await res.text().catch(() => '');
+          // Instance may already exist — try to fetch it
+          if (res.status === 409 || txt.includes('already')) {
+            const listRes = await fetch(`${CACHLY_API}/instances`, {
+              headers: { Authorization: `Bearer ${jwt}` },
+            });
+            if (listRes.ok) {
+              const list = await listRes.json() as Array<Record<string, unknown>>;
+              const existing = list.find((i) => i.name === 'tco-cache');
+              if (existing) {
+                return (
+                  `ℹ️ **Instanz "tco-cache" existiert bereits.**\n\n` +
+                  `Redis URL: \`${existing.redis_url ?? existing.connection_string ?? '(siehe Cachly Dashboard)'}\`\n\n` +
+                  `Setze in der TCO \`.env\`:\n\`\`\`\nCACHLY_REDIS_URL=${existing.redis_url ?? existing.connection_string}\n\`\`\`\n` +
+                  `Dann: \`bash scripts/deploy.sh\``
+                );
+              }
+            }
+          }
+          throw new Error(`Cachly API ${res.status}: ${txt}`);
+        }
+
+        const instance = await res.json() as Record<string, unknown>;
+        const redisUrl = instance.redis_url ?? instance.connection_string ?? '';
+        return (
+          `🎉 **Cachly Redis Instanz erstellt!**\n\n` +
+          `Name: \`tco-cache\` (Free Tier, 25 MB)\n` +
+          `Redis URL: \`${redisUrl}\`\n\n` +
+          `**Setup (2 Schritte):**\n` +
+          `1. Füge zur TCO \`.env\` hinzu:\n\`\`\`\nCACHLY_REDIS_URL=${redisUrl}\n\`\`\`\n` +
+          `2. Neu deployen:\n\`\`\`bash\nbash scripts/deploy.sh\n\`\`\`\n\n` +
+          `Ab sofort werden alle Ollama Parse-Ergebnisse gecacht — kein zweiter AI-Call für dasselbe Dokument.`
+        );
       }
 
       default:

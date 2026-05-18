@@ -31,11 +31,11 @@ Content to parse:
 """
 
 
-async def parse_text(raw_text: str) -> dict:
-    # Cachly cache hit — skip Ollama call entirely
+async def parse_text(raw_text: str) -> tuple[dict, bool]:
+    """Returns (parsed_dict, was_cached). Cachly cache hit skips Ollama entirely."""
     cached = await cache_svc.cache_get(raw_text)
     if cached is not None:
-        return cached
+        return cached, True
 
     payload = {
         "model": settings.ollama_model,
@@ -52,15 +52,16 @@ async def parse_text(raw_text: str) -> dict:
             response_text = resp.json().get("response", "{}")
             result = _safe_parse(response_text)
             await cache_svc.cache_set(raw_text, result)
-            return result
+            return result, False
     except httpx.ConnectError:
         raise ollama_unavailable(settings.ollama_url)
 
 
-async def parse_image(image_bytes: bytes, mime_type: str) -> tuple[dict, str]:
+async def parse_image(image_bytes: bytes, mime_type: str) -> tuple[dict, str, bool]:
+    """Returns (parsed_dict, raw_text, was_cached)."""
     cached = await cache_svc.cache_get(image_bytes)
     if cached is not None:
-        return cached, ""
+        return cached, "", True
 
     b64 = base64.b64encode(image_bytes).decode()
     payload = {
@@ -79,7 +80,7 @@ async def parse_image(image_bytes: bytes, mime_type: str) -> tuple[dict, str]:
             response_text = resp.json().get("response", "{}")
             result = _safe_parse(response_text)
             await cache_svc.cache_set(image_bytes, result)
-            return result, response_text
+            return result, response_text, False
     except httpx.ConnectError:
         raise ollama_unavailable(settings.ollama_url)
 

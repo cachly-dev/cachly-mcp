@@ -9,6 +9,7 @@ from app.routers import admin as admin_router
 from app.routers import users as users_router
 from app.routers import payments as payments_router
 from app.routers import export as export_router
+from app.routers import cache as cache_router
 from app.services.cache import cachly_configured
 from app.limiter import limiter
 from slowapi import _rate_limit_exceeded_handler
@@ -64,6 +65,7 @@ app.include_router(admin_router.router)   # no /api/v1 prefix — admin is at /a
 app.include_router(users_router.router, prefix="/api/v1")
 app.include_router(payments_router.router, prefix="/api/v1")
 app.include_router(export_router.router, prefix="/api/v1")
+app.include_router(cache_router.router, prefix="/api/v1")
 
 
 @app.get("/health")

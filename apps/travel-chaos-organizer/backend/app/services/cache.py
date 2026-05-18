@@ -1,14 +1,15 @@
 """
-Optional Cachly Redis cache for Ollama parse results.
+Cachly Redis cache for Ollama parse results.
 
 When CACHLY_REDIS_URL is configured, parsed documents are stored by
 content hash (SHA-256). Uploading the same PDF or text twice returns
 the cached result instantly — no second AI call.
 
-This is the core Cachly integration: TCO uses Cachly's Redis as its
-AI result deduplication layer.
+Hit/miss counters are stored in Redis (tco:stats:hits / tco:stats:misses)
+so they survive restarts and are visible in the /api/v1/cache/stats endpoint.
 
 Cache key format: tco:parse:{hex16}
+Stats keys:       tco:stats:hits, tco:stats:misses
 TTL: 7 days (parse results are deterministic for the same input)
 """
 import hashlib
@@ -51,7 +52,8 @@ def _cache_key(content: str | bytes) -> str:
 
 
 async def cache_get(content: str | bytes) -> dict | None:
-    """Return cached parse result for this content, or None on miss/error."""
+    """Return cached parse result for this content, or None on miss/error.
+    Increments tco:stats:hits on hit, tco:stats:misses on miss."""
     client = _get_client()
     if client is None:
         return None
@@ -59,7 +61,9 @@ async def cache_get(content: str | bytes) -> dict | None:
         key = _cache_key(content)
         raw = await client.get(key)
         if raw is None:
+            await client.incr("tco:stats:misses")
             return None
+        await client.incr("tco:stats:hits")
         return json.loads(raw)
     except Exception:
         return None
@@ -75,6 +79,50 @@ async def cache_set(content: str | bytes, parsed: dict) -> None:
         await client.set(key, json.dumps(parsed), ex=CACHE_TTL)
     except Exception:
         pass
+
+
+async def cache_stats() -> dict:
+    """Return cache statistics. Returns zeros if Redis is not configured."""
+    client = _get_client()
+    configured = cachly_configured()
+    if client is None:
+        return {
+            "configured": configured,
+            "hits": 0,
+            "misses": 0,
+            "key_count": 0,
+            "hit_rate": 0.0,
+            "ttl_days": CACHE_TTL // 86400,
+        }
+    try:
+        hits_raw, misses_raw = await client.mget("tco:stats:hits", "tco:stats:misses")
+        hits = int(hits_raw or 0)
+        misses = int(misses_raw or 0)
+        total = hits + misses
+        hit_rate = round(hits / total, 4) if total > 0 else 0.0
+
+        # count tco:parse:* keys — SCAN is O(1) per call, safe on large keyspaces
+        key_count = 0
+        async for _ in client.scan_iter("tco:parse:*", count=100):
+            key_count += 1
+
+        return {
+            "configured": True,
+            "hits": hits,
+            "misses": misses,
+            "key_count": key_count,
+            "hit_rate": hit_rate,
+            "ttl_days": CACHE_TTL // 86400,
+        }
+    except Exception:
+        return {
+            "configured": configured,
+            "hits": 0,
+            "misses": 0,
+            "key_count": 0,
+            "hit_rate": 0.0,
+            "ttl_days": CACHE_TTL // 86400,
+        }
 
 
 def cachly_configured() -> bool:

@@ -104,18 +104,17 @@ PARSED_FLIGHT = ParsedTravelData(
 @pytest.fixture
 def mock_ollama_flight():
     with patch("app.services.ollama.parse_text", new_callable=AsyncMock) as m:
-        m.return_value = PARSED_FLIGHT.model_dump()
+        m.return_value = (PARSED_FLIGHT.model_dump(), False)
         yield m
 
 
 @pytest.fixture
 def mock_ollama_low_confidence():
     with patch("app.services.ollama.parse_text", new_callable=AsyncMock) as m:
-        m.return_value = {
-            "type": "other",
-            "title": "Unrecognized document",
-            "confidence": 0.1,
-        }
+        m.return_value = (
+            {"type": "other", "title": "Unrecognized document", "confidence": 0.1},
+            False,
+        )
         yield m
 
 
