@@ -64,13 +64,19 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient, None]:
     from app.auth.keycloak import get_current_user
     from app.db.database import get_db
 
+    from app.auth.keycloak import user_id_or_bot
+
     async def override_auth():
         return FAKE_USER_PAYLOAD
+
+    async def override_user_id_or_bot():
+        return FAKE_USER_ID
 
     async def override_db():
         yield db_session
 
     app.dependency_overrides[get_current_user] = override_auth
+    app.dependency_overrides[user_id_or_bot] = override_user_id_or_bot
     app.dependency_overrides[get_db] = override_db
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:

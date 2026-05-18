@@ -77,6 +77,19 @@ services:
       keycloak:
         condition: service_healthy
 
+  telegram-bot:
+    build: ./telegram-bot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - TCO_API_URL=http://backend:8000
+      - TCO_BOT_SECRET=${TELEGRAM_BOT_TOKEN}
+    depends_on:
+      backend:
+        condition: service_healthy
+    profiles:
+      - telegram
+
   caddy:
     image: caddy:2-alpine
     restart: unless-stopped

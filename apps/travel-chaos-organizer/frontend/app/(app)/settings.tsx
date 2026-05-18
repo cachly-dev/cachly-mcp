@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import {
-  Linking, ScrollView, StyleSheet, Text,
+  ActivityIndicator, Linking, ScrollView, StyleSheet, Text,
   TouchableOpacity, View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -10,6 +10,8 @@ import { clearCache, cacheSizeBytes } from "../../lib/fileCache";
 import { purgeFailed, getPending } from "../../lib/offlineQueue";
 import { haptics } from "../../lib/haptics";
 import { useQuota } from "../../lib/quota";
+import { usersApi } from "../../lib/api";
+import { useToast } from "../../components/ToastContext";
 import ConfirmDialog from "../../components/ConfirmDialog";
 
 const OLLAMA_MODELS = ["llama3.2-vision", "llava", "llava-phi3", "bakllava"];
@@ -18,6 +20,7 @@ export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { plan, isPro } = useQuota();
+  const { showToast } = useToast();
   const [cacheSize, setCacheSize] = useState(0);
   const [queueSize, setQueueSize] = useState(0);
   const [loggingOut, setLoggingOut] = useState(false);
@@ -25,6 +28,21 @@ export default function SettingsScreen() {
   const [selectedModel, setSelectedModel] = useState(
     process.env.EXPO_PUBLIC_OLLAMA_MODEL ?? "llama3.2-vision"
   );
+  const [telegramPin, setTelegramPin] = useState<string | null>(null);
+  const [generatingPin, setGeneratingPin] = useState(false);
+
+  async function handleGeneratePin() {
+    setGeneratingPin(true);
+    try {
+      const { pin } = await usersApi.telegramPin();
+      setTelegramPin(pin);
+      setTimeout(() => setTelegramPin(null), 600_000);
+    } catch {
+      showToast('Fehler beim Generieren des PINs', 'error');
+    } finally {
+      setGeneratingPin(false);
+    }
+  }
 
   useEffect(() => {
     cacheSizeBytes().then(setCacheSize);
@@ -118,6 +136,22 @@ export default function SettingsScreen() {
           Das Modell muss auf deinem Ollama-Server verfügbar sein.{"\n"}
           Für Screenshot-Parsing wird ein Vision-Modell benötigt.
         </Text>
+      </View>
+
+      <Text style={s.sectionTitle}>Telegram</Text>
+      <View style={s.card}>
+        {telegramPin ? (
+          <View style={s.pinBox}>
+            <Text style={s.pinLabel}>Dein PIN (gültig 10 Min.)</Text>
+            <Text style={s.pinCode}>{telegramPin}</Text>
+            <Text style={s.pinHint}>Sende diesen PIN an @TCOBot: /link {telegramPin}</Text>
+          </View>
+        ) : (
+          <TouchableOpacity style={s.row} onPress={handleGeneratePin} accessibilityRole="button">
+            <Text style={s.rowText}>Mit Telegram verknüpfen</Text>
+            {generatingPin ? <ActivityIndicator size="small" color="#4f46e5" /> : <Text style={s.rowChevron}>›</Text>}
+          </TouchableOpacity>
+        )}
       </View>
 
       <Text style={s.sectionTitle}>Offline & Cache</Text>
@@ -258,6 +292,10 @@ const s = StyleSheet.create({
   dangerRow: { borderWidth: 1, borderColor: "#ff6b6b22", backgroundColor: "#ff6b6b11" },
   dangerText: { color: "#ff8888", fontSize: 15, fontWeight: "600" },
   hint: { color: "#4a4a7a", fontSize: 12, padding: 16, lineHeight: 18 },
+  pinBox: { padding: 18, alignItems: 'center', gap: 8 },
+  pinLabel: { color: '#6666aa', fontSize: 12 },
+  pinCode: { color: '#fff', fontSize: 40, fontWeight: '800', letterSpacing: 8 },
+  pinHint: { color: '#3a3a5e', fontSize: 12, textAlign: 'center' },
 
   // Cachly badge
   cachlyBadge: {

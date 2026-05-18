@@ -1,9 +1,11 @@
 from typing import Annotated
 import httpx
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from app.config import get_settings
+from app.db.database import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 
 settings = get_settings()
 bearer_scheme = HTTPBearer()
@@ -53,4 +55,22 @@ async def get_current_user(
 
 
 def user_id(user: Annotated[dict, Depends(get_current_user)]) -> str:
+    return user["sub"]
+
+
+async def user_id_or_bot(request: Request, db: AsyncSession = Depends(get_db)) -> str:
+    """Accept either JWT auth or X-User-Id header (when X-Bot-Token matches)."""
+    s = get_settings()
+    bot_token = request.headers.get("X-Bot-Token", "")
+    if bot_token and s.telegram_bot_token and bot_token == s.telegram_bot_token:
+        uid = request.headers.get("X-User-Id")
+        if uid:
+            return uid
+    # Fall back to normal JWT auth — extract bearer token from request directly
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    from fastapi.security import HTTPAuthorizationCredentials
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_header[7:])
+    user = await get_current_user(credentials)
     return user["sub"]

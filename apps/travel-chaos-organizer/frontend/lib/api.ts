@@ -121,6 +121,7 @@ export type UserPlan = {
 
 export const usersApi = {
   me: () => request<UserPlan>("/api/v1/users/me"),
+  telegramPin: () => request<{ pin: string; expires_in_seconds: number }>("/api/v1/users/telegram-pin", { method: "POST" }),
 };
 
 // ── Parse ──────────────────────────────────────────────────────────────────
