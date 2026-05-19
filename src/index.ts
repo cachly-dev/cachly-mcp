@@ -569,8 +569,6 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       sendFunnelEvent('session_end', telemetryExtra);
     } else if (name === 'smart_recall') {
       sendFunnelEvent('smart_recall', telemetryExtra);
-    } else if (name === 'brain_from_git') {
-      sendFunnelEvent('brain_from_git', telemetryExtra);
     }
     return brainResult;
   }
@@ -603,10 +601,28 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   if (advancedResult !== null) return advancedResult;
 
   const syndicateResult = await handleSyndicateTool(name, args, getConnection, apiFetch);
-  if (syndicateResult !== null) return syndicateResult;
+  if (syndicateResult !== null) {
+    // brain_predict is in syndicate handler — track telemetry here.
+    if (name === 'brain_predict') {
+      const instanceId = (args.instance_id as string | undefined) ?? _defaultInstanceId ?? '';
+      const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
+      sendFunnelEvent('brain_predict', telemetryExtra);
+    }
+    return syndicateResult;
+  }
 
   const fedbrainResult = await handleFedbrainTool(name, args, getConnection, apiFetch);
-  if (fedbrainResult !== null) return fedbrainResult;
+  if (fedbrainResult !== null) {
+    // brain_from_git and brain_predict_failures are in fedbrain handler.
+    const instanceId = (args.instance_id as string | undefined) ?? _defaultInstanceId ?? '';
+    const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
+    if (name === 'brain_from_git') {
+      sendFunnelEvent('brain_from_git', telemetryExtra);
+    } else if (name === 'brain_predict_failures') {
+      sendFunnelEvent('brain_predict_failures', telemetryExtra);
+    }
+    return fedbrainResult;
+  }
 
   switch (name) {
     // ── Instance management ──────────────────────────────────────────────
