@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.29';
+const CURRENT_VERSION = '0.10.30';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -1012,9 +1012,13 @@ function buildClaudeMdBlock(instanceId: string): string {
 
 The Brain MCP server runs automatically. Instance: \`${instanceId}\`
 
-Sessions start and end automatically — never call \`session_start\` or \`session_end\`.
-
 ---
+
+### AT THE START of every new conversation (mandatory — first thing, before anything else):
+\`\`\`
+session_start(instance_id="${instanceId}", workspace_path="<absolute path to this project>", focus="<first topic the user mentioned>")
+\`\`\`
+Show the full briefing output to the user verbatim. This is their "arrive pre-briefed" moment — don't skip it.
 
 ### BEFORE every task (mandatory — no exceptions):
 \`\`\`
@@ -1033,6 +1037,11 @@ When done: update content to \`"DONE: <file> — <summary>"\`.
 learn_from_attempts(instance_id="${instanceId}", topic="<category:keyword>", outcome="success"|"failure",
   what_worked="...", what_failed="...", severity="critical"|"major"|"minor",
   file_paths=["..."], commands=["..."], tags=["..."])
+\`\`\`
+
+### AT THE END of every conversation (mandatory):
+\`\`\`
+session_end(instance_id="${instanceId}", summary="<one sentence: what was done>", files_changed=["..."])
 \`\`\`
 
 ### WHEN debugging any error (mandatory before grepping/reading files):
