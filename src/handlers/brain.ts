@@ -734,17 +734,23 @@ export async function handleBrainTool(
       const isFirstSession = !lastSession && lessons.length === 0 && ctxCount === 0;
       if (isFirstSession) {
         lines.push('🎉 **Welcome! Your AI Brain is live.**', '');
-        lines.push('It learns from your work automatically. After your first session it will look like this:', '');
-        lines.push('  ✅ `api:auth` — Bearer token in header, not cookie; 401 on missing scope');
-        lines.push('  ✅ `database:migrations` — always run migrations before deploy');
-        lines.push('  ⚠️ `docker:build` — ARG changes bust all subsequent cache layers');
+        if (workspace_path) {
+          lines.push(`🚀 **Auto-bootstrapping from your git history...** (this takes a few seconds)`);
+          lines.push(`   Your brain will learn from your recent commits — no setup needed.`, '');
+        } else {
+          lines.push('It learns from your work automatically. After your first session it will look like this:', '');
+          lines.push('  ✅ `api:auth` — Bearer token in header, not cookie; 401 on missing scope');
+          lines.push('  ✅ `database:migrations` — always run migrations before deploy');
+          lines.push('  ⚠️ `docker:build` — ARG changes bust all subsequent cache layers');
+          lines.push('');
+          lines.push('**Tip:** Pass `workspace_path` to `session_start` to auto-learn from git history instantly.');
+          lines.push('');
+        }
+        lines.push('**Your brain grows automatically:**');
+        lines.push('  • End each session → `session_end(summary="What I did")` — auto-learns from git commits');
+        lines.push('  • After fixing bugs → `learn_from_attempts(topic="...", outcome="success", what_worked="...")`');
         lines.push('');
-        lines.push('**3 steps to grow your brain:**');
-        lines.push('  1. Fix something → `learn_from_attempts(topic="bug:name", outcome="success", what_worked="...")`');
-        lines.push('  2. Save context → `remember_context(key="arch", value="...")`');
-        lines.push('  3. End session → `session_end(summary="What I did")`');
-        lines.push('');
-        lines.push('💡 Run `brain_doctor` for a setup health-check and personalised tips.');
+        lines.push('💡 Run `brain_doctor` for a health-check and personalised tips.');
         lines.push('');
       }
 

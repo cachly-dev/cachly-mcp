@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.27';
+const CURRENT_VERSION = '0.10.28';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -565,14 +565,38 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       sendFunnelEvent('learn_from_attempts', telemetryExtra);
     } else if (name === 'session_start') {
       sendFunnelEvent('session_start', telemetryExtra);
-      // When brain has lessons, session_start acts as an implicit recall.
-      // Firing recall_best_solution here increments BrainRecallCount so the
-      // dashboard nudge + first-recall email trigger correctly.
       const resultText = typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult
         ? JSON.stringify(brainResult)
         : String(brainResult ?? '');
-      if (!resultText.includes('Welcome! Your AI Brain is live.') && resultText.length > 100) {
+      const isFirstSession = resultText.includes('Welcome! Your AI Brain is live.');
+
+      if (!isFirstSession && resultText.length > 100) {
+        // Existing brain — session_start acts as implicit recall → increment counter.
         sendFunnelEvent('recall_best_solution', telemetryExtra);
+      } else if (isFirstSession && args.workspace_path) {
+        // First session with a known workspace: auto-bootstrap from git history.
+        // Runs synchronously so the user sees the result in the same response.
+        try {
+          const gitBootstrap = await handleFedbrainTool('brain_from_git', {
+            instance_id: instanceId,
+            repo_dir: args.workspace_path as string,
+            max_commits: 50,
+          }, getConnection, apiFetch);
+          if (gitBootstrap !== null) {
+            sendFunnelEvent('brain_from_git', telemetryExtra);
+            sendFunnelEvent('recall_best_solution', telemetryExtra);
+            // Append bootstrap summary to the session_start briefing.
+            const bootstrapText = typeof gitBootstrap === 'object' && gitBootstrap !== null && 'content' in gitBootstrap
+              ? (gitBootstrap as { content: { text?: string }[] }).content.map((c) => c.text ?? '').join('\n')
+              : String(gitBootstrap);
+            if (typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult) {
+              (brainResult as { content: { type: string; text: string }[] }).content.push({
+                type: 'text',
+                text: '\n---\n' + bootstrapText,
+              });
+            }
+          }
+        } catch { /* git bootstrap errors must never break session_start */ }
       }
     } else if (name === 'session_end') {
       sendFunnelEvent('session_end', telemetryExtra);
