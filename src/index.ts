@@ -554,6 +554,31 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       _firstCallSuccessSent = true;
       sendFunnelEvent('first_call_success', { tool: name, instance_id: args.instance_id ?? _defaultInstanceId ?? '' });
     }
+    // Per-tool telemetry — fires after every successful brain tool call.
+    // api_key carries the cky_live_... token so the backend can resolve tenant + increment counters.
+    const instanceId = (args.instance_id as string | undefined) ?? _defaultInstanceId ?? '';
+    const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
+    if (name === 'recall_best_solution') {
+      // recall_best_solution → increments BrainRecallCount + triggers level-up logic
+      sendFunnelEvent('recall_best_solution', telemetryExtra);
+    } else if (name === 'learn_from_attempts') {
+      sendFunnelEvent('learn_from_attempts', telemetryExtra);
+    } else if (name === 'session_start') {
+      sendFunnelEvent('session_start', telemetryExtra);
+      // When brain has lessons, session_start acts as an implicit recall.
+      // Firing recall_best_solution here increments BrainRecallCount so the
+      // dashboard nudge + first-recall email trigger correctly.
+      const resultText = typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult
+        ? JSON.stringify(brainResult)
+        : String(brainResult ?? '');
+      if (!resultText.includes('Welcome! Your AI Brain is live.') && resultText.length > 100) {
+        sendFunnelEvent('recall_best_solution', telemetryExtra);
+      }
+    } else if (name === 'session_end') {
+      sendFunnelEvent('session_end', telemetryExtra);
+    } else if (name === 'smart_recall') {
+      sendFunnelEvent('smart_recall', telemetryExtra);
+    }
     return brainResult;
   }
 
