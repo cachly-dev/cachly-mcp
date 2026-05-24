@@ -53,7 +53,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.28';
+const CURRENT_VERSION = '0.10.29';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -602,6 +602,15 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       sendFunnelEvent('session_end', telemetryExtra);
     } else if (name === 'smart_recall') {
       sendFunnelEvent('smart_recall', telemetryExtra);
+      // smart_recall is the primary recall tool in CLAUDE.md — it retrieves brain lessons
+      // just like recall_best_solution. Count it toward BrainRecallCount so the dashboard
+      // nudge clears and the first-recall email fires for users following CLAUDE.md.
+      const srText = typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult
+        ? JSON.stringify(brainResult)
+        : String(brainResult ?? '');
+      if (srText.length > 50 && !srText.includes('No lessons found') && !srText.includes('no lessons')) {
+        sendFunnelEvent('recall_best_solution', telemetryExtra);
+      }
     }
     return brainResult;
   }
@@ -795,7 +804,7 @@ async function autoStartSession(instanceId: string): Promise<void> {
     _autoSessionStarted = true;
     _autoSessionInstanceId = instanceId;
     try {
-      await handleTool('session_start', { instance_id: instanceId, focus: 'auto (MCP session)' });
+      await handleTool('session_start', { instance_id: instanceId, focus: 'auto (MCP session)', workspace_path: process.cwd() });
     } catch { /* non-fatal — session tracking is a best-effort feature */ } finally {
       _autoSessionStarting = null;
     }
