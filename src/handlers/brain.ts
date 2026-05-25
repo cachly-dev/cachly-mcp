@@ -1090,27 +1090,63 @@ export async function handleBrainTool(
       }
 
       // ── 🔮 Predictive Pre-Warning — intent-based danger detection ────────────
-      // Fires BEFORE work starts. If focus area has known failure patterns → warn loudly.
-      if (focusTerms.length > 0) {
+      // Fires BEFORE work starts. Uses explicit focus when given; otherwise
+      // derives the likely work area from the last session's changed files +
+      // summary (you usually keep working where you left off). This makes the
+      // warning fire even when the caller forgets to pass `focus`.
+      {
         type LessonAny = typeof lessons[0] & { author?: string; tags?: string[] };
-        const dangerLessons = (lessons as LessonAny[]).filter(l => {
-          if (l.outcome === 'success') return false;
-          const topicCategory = l.topic.split(':')[0];
-          return focusTerms.some(term =>
-            l.topic.toLowerCase().includes(term) ||
-            topicCategory === term ||
-            (l.tags ?? []).some((t: string) => t.toLowerCase() === term),
-          );
-        });
-        if (dangerLessons.length >= 1) {
-          // Insert warning block right after the title line (index 1 = blank line after title)
-          const warning = [
-            `🚨 **PRE-WARNING** — Read this BEFORE starting:`,
-            `  Known pitfalls for **"${focus}"** (${dangerLessons.length} past failure${dangerLessons.length > 1 ? 's' : ''}):`,
-            ...dangerLessons.slice(0, 3).map(l => `  ❌ \`${l.topic}\` — ${(l.what_failed ?? l.what_worked).slice(0, 80)}`),
-            '',
-          ];
-          lines.splice(2, 0, ...warning); // after '🧠 **Session Briefing**' + empty line
+
+        // Common path noise / extensions to drop when deriving terms from files.
+        const PATH_NOISE = new Set([
+          'src', 'lib', 'test', 'tests', 'dist', 'index', 'main', 'app',
+          'internal', 'pkg', 'cmd', 'node_modules', 'components', 'utils',
+          'ts', 'tsx', 'js', 'jsx', 'go', 'py', 'rs', 'java', 'json', 'yaml', 'yml',
+        ]);
+        const deriveTermsFromFiles = (files: string[]): string[] => {
+          const terms = new Set<string>();
+          for (const f of files) {
+            for (const seg of f.toLowerCase().split(/[/\\._-]/)) {
+              if (seg.length > 3 && !PATH_NOISE.has(seg)) terms.add(seg);
+            }
+          }
+          return [...terms];
+        };
+
+        let warnTerms = focusTerms;
+        let warnLabel = focus;
+        let derived = false;
+        if (warnTerms.length === 0 && lastSession) {
+          const fromFiles = deriveTermsFromFiles(lastSession.files_changed ?? []);
+          const fromSummary = (lastSession.summary ?? '').toLowerCase()
+            .replace(/[^a-z0-9\s:_-]/g, ' ').split(/\s+/).filter(t => t.length > 3 && !PATH_NOISE.has(t));
+          warnTerms = [...new Set([...fromFiles, ...fromSummary])];
+          warnLabel = 'where you left off last session';
+          derived = true;
+        }
+
+        if (warnTerms.length > 0) {
+          const dangerLessons = (lessons as LessonAny[]).filter(l => {
+            if (l.outcome === 'success') return false;
+            const topicCategory = l.topic.split(':')[0];
+            return warnTerms.some(term =>
+              l.topic.toLowerCase().includes(term) ||
+              topicCategory === term ||
+              (l.tags ?? []).some((t: string) => t.toLowerCase() === term),
+            );
+          });
+          if (dangerLessons.length >= 1) {
+            const headline = derived
+              ? `  You're likely to continue **${warnLabel}** — ${dangerLessons.length} known pitfall${dangerLessons.length > 1 ? 's' : ''} there:`
+              : `  Known pitfalls for **"${warnLabel}"** (${dangerLessons.length} past failure${dangerLessons.length > 1 ? 's' : ''}):`;
+            const warning = [
+              `🚨 **PRE-WARNING** — Read this BEFORE starting:`,
+              headline,
+              ...dangerLessons.slice(0, 3).map(l => `  ❌ \`${l.topic}\` — ${(l.what_failed ?? l.what_worked).slice(0, 80)}`),
+              '',
+            ];
+            lines.splice(2, 0, ...warning); // after '🧠 **Session Briefing**' + empty line
+          }
         }
       }
 
