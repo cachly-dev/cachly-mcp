@@ -417,8 +417,27 @@ export async function handleBrainTool(
           ? `📌 **You've looked this up 3 times.** Consider pinning it for instant access: add \`pinned: true\` via \`learn_from_attempts\` to always surface it first.`
           : '';
 
+        // ── Trust signal (today-safe consensus layer) ───────────────────────
+        // A lesson recalled many times — or confirmed by multiple distinct
+        // authors — has proven its value. Surface that as social proof.
+        const lessonAuthors = (lesson as { authors?: string[]; author?: string }).authors
+          ?? ((lesson as { author?: string }).author ? [(lesson as { author?: string }).author!] : []);
+        const distinctAuthors = [...new Set(lessonAuthors.filter(Boolean))];
+        const rc = updatedLesson.recall_count;
+        let trustBadge = '';
+        if (distinctAuthors.length >= 2 && rc >= 5) {
+          trustBadge = `🏆 **Battle-tested** — recalled ${rc}× · verified by ${distinctAuthors.length} developers. Trust this.`;
+        } else if (rc >= 10) {
+          trustBadge = `🏆 **Battle-tested** — recalled ${rc}×. This is one of your most-proven solutions.`;
+        } else if (distinctAuthors.length >= 2) {
+          trustBadge = `✅ **Team-verified** — confirmed by ${distinctAuthors.length} developers.`;
+        } else if (rc >= 5) {
+          trustBadge = `✅ **Proven** — recalled ${rc}× without contradiction.`;
+        }
+
         return [
           rememberWhen,
+          trustBadge,
           `${badge} **Best solution for \`${topic}\`** ${sevEmoji}${lesson.severity ? ` (${lesson.severity})` : ''} · recalled ${updatedLesson.recall_count}×`,
           ``,
           `**What worked:** ${lesson.what_worked}`,
@@ -996,8 +1015,14 @@ export async function handleBrainTool(
           for (const l of topRecalled) {
             const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
             const sev   = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
-            const rct   = l.recall_count && l.recall_count > 1 ? ` _(${l.recall_count}× recalled)_` : '';
-            lines.push(`  ${emoji}${sev} \`${l.topic}\`${rct} — ${l.what_worked.slice(0, 100)}`);
+            const rc    = l.recall_count ?? 0;
+            const la     = (l as { authors?: string[]; author?: string }).authors
+              ?? ((l as { author?: string }).author ? [(l as { author?: string }).author!] : []);
+            const nAuthors = new Set(la.filter(Boolean)).size;
+            const trust  = (nAuthors >= 2 && rc >= 5) || rc >= 10 ? ' 🏆'
+              : nAuthors >= 2 || rc >= 5 ? ' ✅' : '';
+            const rct   = rc > 1 ? ` _(${rc}× recalled)_` : '';
+            lines.push(`  ${emoji}${sev}${trust} \`${l.topic}\`${rct} — ${l.what_worked.slice(0, 100)}`);
           }
           lines.push('');
         }
