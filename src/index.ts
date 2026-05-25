@@ -60,7 +60,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.31';
+const CURRENT_VERSION = '0.10.32';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -1161,16 +1161,38 @@ if (process.argv[2] === 'digest') {
       }
     }
 
-    console.log('├─────────────────────────────────────────────────────────────┤');
-    console.log('│  \x1b[32m📋 Share this digest:\x1b[0m                                        │');
-    console.log('│  \x1b[90m   npx @cachly-dev/mcp-server@latest share\x1b[0m                   │');
-    console.log('│  \x1b[90m   Add more: npx @cachly-dev/mcp-server@latest invite\x1b[0m         │');
     console.log('└─────────────────────────────────────────────────────────────┘');
     console.log('');
 
-    // Pro tip for cron
-    console.log('  \x1b[2m💡 Automate: add to crontab for a weekly team email\x1b[0m');
-    console.log('  \x1b[2m   0 9 * * 1 npx @cachly-dev/mcp-server@latest digest\x1b[0m');
+    // ── Shareable tweet card ────────────────────────────────────────────────
+    const topLesson = topLessons[0];
+    const tweetLines = [
+      `🧠 My AI Brain weekly digest (${fmt(weekStart)} – ${fmt(now)}):`,
+      ``,
+      `  📚 ${lessons} lessons learned`,
+      `  🔁 ${recalls} recalls · ~${Math.round(tokensSaved / 1000)}K tokens saved`,
+      `  🎯 Brain Level: ${level}`,
+      topLesson ? `  🔥 Top lesson: "${topLesson.topic}: ${topLesson.what_worked.slice(0, 60)}${topLesson.what_worked.length > 60 ? '…' : ''}"` : '',
+      ``,
+      `Built with @cachly_dev — AI that actually remembers 🚀`,
+      `cachly.dev`,
+    ].filter(Boolean).join('\n');
+
+    const tweetUrl = 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(tweetLines);
+
+    console.log('\x1b[1m📣 Share your digest:\x1b[0m');
+    console.log('');
+    console.log('\x1b[90m' + '─'.repeat(63) + '\x1b[0m');
+    for (const line of tweetLines.split('\n')) {
+      console.log(`  ${line}`);
+    }
+    console.log('\x1b[90m' + '─'.repeat(63) + '\x1b[0m');
+    console.log('');
+    console.log('  \x1b[36m🐦 Tweet this:\x1b[0m');
+    console.log(`  \x1b[4m${tweetUrl.slice(0, 90)}...\x1b[0m`);
+    console.log('');
+    console.log('  \x1b[2m💡 Invite your team: npx @cachly-dev/mcp-server@latest invite\x1b[0m');
+    console.log('  \x1b[2m   Cron: 0 9 * * 1 npx @cachly-dev/mcp-server@latest digest\x1b[0m');
     console.log('');
   } catch (e) {
     console.log(`\n❌ Could not fetch digest: ${(e as Error).message}\n`);

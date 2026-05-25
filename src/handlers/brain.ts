@@ -754,6 +754,49 @@ export async function handleBrainTool(
         lines.push('');
       }
 
+      // ── Team-virality: first-team-briefing wow moment ────────────────────
+      // When a user joins a team brain (has team lessons from colleagues but
+      // has never been briefed on them), show a dedicated "Welcome to your
+      // team's brain" section. Only fires once per user.
+      if (author && !isFirstSession) {
+        try {
+          const briefingKey = `cachly:team:first_briefing:${author}`;
+          const alreadyBriefed = await redis.get(briefingKey);
+          if (!alreadyBriefed) {
+            type LessonAny = typeof lessons[0] & { author?: string };
+            const teamLessons = (lessons as LessonAny[]).filter(l => l.author && l.author !== author);
+            if (teamLessons.length > 0) {
+              // Mark briefed so this only fires once
+              await redis.set(briefingKey, '1', 'EX', 365 * 86400);
+              const byAuthor = new Map<string, LessonAny[]>();
+              for (const l of teamLessons) {
+                const a = l.author!;
+                if (!byAuthor.has(a)) byAuthor.set(a, []);
+                byAuthor.get(a)!.push(l);
+              }
+              lines.push('');
+              lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              lines.push('🤝 **Your team\'s AI brain has been briefing you.**');
+              lines.push('');
+              lines.push(`Your teammates have already solved problems you\'re about to hit:`);
+              lines.push('');
+              for (const [teamAuthor, tls] of byAuthor) {
+                lines.push(`  👤 **${teamAuthor}** fixed ${tls.length} thing${tls.length > 1 ? 's' : ''}:`);
+                for (const l of tls.slice(0, 2)) {
+                  const emoji = l.outcome === 'success' ? '✅' : '⚠️';
+                  lines.push(`    ${emoji} \`${l.topic}\` — ${l.what_worked.slice(0, 90)}`);
+                }
+                if (tls.length > 2) lines.push(`    … and ${tls.length - 2} more lessons`);
+              }
+              lines.push('');
+              lines.push(`💡 Use \`team_learn\` after your next fix to pay it forward.`);
+              lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              lines.push('');
+            }
+          }
+        } catch { /* team briefing errors must never break session_start */ }
+      }
+
       // Handoff from previous window (if any)
       const handoffRaw = await redis.get('cachly:session:handoff');
       if (handoffRaw) {
