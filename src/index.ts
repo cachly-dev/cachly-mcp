@@ -60,7 +60,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.35';
+const CURRENT_VERSION = '0.10.39';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -586,8 +586,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         try {
           const gitBootstrap = await handleFedbrainTool('brain_from_git', {
             instance_id: instanceId,
-            repo_dir: args.workspace_path as string,
-            max_commits: 50,
+            repo_path: args.workspace_path as string,
+            limit: 50,
           }, getConnection, apiFetch);
           if (gitBootstrap !== null) {
             sendFunnelEvent('brain_from_git', telemetryExtra);
@@ -1025,13 +1025,17 @@ The Brain MCP server runs automatically. Instance: \`${instanceId}\`
 \`\`\`
 session_start(instance_id="${instanceId}", workspace_path="<absolute path to this project>", focus="<first topic the user mentioned>")
 \`\`\`
-Show the full briefing output to the user verbatim. This is their "arrive pre-briefed" moment — don't skip it.
+Show the full briefing output to the user. If the response says the brain is empty or has 0 lessons, immediately seed it:
+\`\`\`
+brain_from_git(instance_id="${instanceId}", repo_path="<workspace_path>", limit=100)
+\`\`\`
+Then tell the user: "Your brain just learned from your git history. You're now pre-briefed."
 
 ### BEFORE every task (mandatory — no exceptions):
 \`\`\`
 smart_recall(instance_id="${instanceId}", query="<what you are about to do>")
 \`\`\`
-Report any relevant lessons found to the user before proceeding.
+If relevant lessons are found, say: "Your brain knows this pattern — [lesson]." Then proceed.
 
 ### BEFORE editing any file (mandatory):
 \`\`\`
@@ -2412,8 +2416,8 @@ if (process.argv[2] === 'setup') {
       JWT = token; // set global JWT so handleTool can authenticate
       const gitResult = await handleTool('brain_from_git', {
         instance_id: instance.id,
-        dir: cwd,
-        max_commits: 100,
+        repo_path: cwd,
+        limit: 100,
       });
       const match = gitResult.match(/(\d+) lesson/);
       console.log(` ✓  ${match ? match[1] + ' lessons' : 'done'} extracted from git history`);
@@ -2625,8 +2629,8 @@ if (process.argv[2] === 'learn-git') {
   try {
     const result = await handleTool('brain_from_git', {
       instance_id: instanceId,
-      repo_dir: repoDir,
-      max_commits: maxCommits,
+      repo_path: repoDir,
+      limit: maxCommits,
     });
     console.log(result);
     sendFunnelEvent('brain_from_git', { api_key: JWT, instance_id: instanceId });
