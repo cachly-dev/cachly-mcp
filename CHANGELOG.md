@@ -7,6 +7,14 @@
 
 ---
 
+## [0.10.38] – 2026-05-25
+
+### `cachly status` — Brain health at a glance
+
+- New CLI command `npx @cachly-dev/mcp-server@latest status`: shows lessons, recalls, quality score, Brain level, team contributors (with count), and your personal invite link — all in one terminal card.
+
+---
+
 ## [0.10.37] – 2026-05-25
 
 ### Viral wow moments — invite link + first-recall tweet button

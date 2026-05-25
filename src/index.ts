@@ -1851,6 +1851,90 @@ if (process.argv[2] === 'init') {
 // Usage: npx @cachly-dev/mcp-server@latest health
 // Checks: JWT valid, Brain API reachable, editor configs found, git hook present.
 
+// ── CLI: cachly status ────────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest status
+// Shows Brain health, team size, and quick stats at a glance.
+
+if (process.argv[2] === 'status') {
+  const apiKey = process.env.CACHLY_JWT ?? '';
+  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+
+  if (!apiKey || !instanceId) {
+    console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest setup\n');
+    process.exit(1);
+  }
+
+  try {
+    const [statsRes, referralRes] = await Promise.all([
+      fetch(`${API_URL}/api/v1/instances/${instanceId}/brain/stats`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(8000),
+      }),
+      fetch(`${API_URL}/api/v1/referral/me`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(8000),
+      }),
+    ]);
+
+    if (!statsRes.ok) throw new Error(`stats HTTP ${statsRes.status}`);
+    const stats = await statsRes.json() as {
+      lesson_count?: number; total_recall_count?: number;
+      quality_score?: number; team_authors?: string[];
+    };
+    const referral = referralRes.ok
+      ? await referralRes.json() as { url?: string; referral_count?: number }
+      : null;
+
+    const lessons = stats.lesson_count ?? 0;
+    const recalls = stats.total_recall_count ?? 0;
+    const score   = Math.round((stats.quality_score ?? 0) * 100);
+    const team    = stats.team_authors ?? [];
+    const refCount = referral?.referral_count ?? 0;
+    const refUrl   = referral?.url ?? '';
+
+    const level = lessons === 0 ? 'Intern 🌱' :
+      lessons < 10  ? 'Junior Dev 🔧' :
+      lessons < 30  ? 'Mid Dev ⚡' :
+      lessons < 60  ? 'Senior Dev 🧠' :
+      lessons < 100 ? 'Staff Eng 🚀' : 'Principal Eng 🏆';
+
+    const statusIcon = lessons > 0 ? '\x1b[32m●\x1b[0m' : '\x1b[33m●\x1b[0m';
+
+    console.log('');
+    console.log('┌─────────────────────────────────────────────────────────────┐');
+    console.log(`│  ${statusIcon} \x1b[1mBrain status\x1b[0m · instance ${instanceId.slice(0, 8)}...              │`);
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log(`│  Lessons       : \x1b[33m${String(lessons).padEnd(8)}\x1b[0m  Level        : \x1b[32m${level.padEnd(18)}\x1b[0m│`);
+    console.log(`│  Recalls       : \x1b[36m${String(recalls).padEnd(8)}\x1b[0m  Quality score: \x1b[32m${String(score).padEnd(3)}%\x1b[0m              │`);
+
+    if (team.length > 0) {
+      console.log('├─────────────────────────────────────────────────────────────┤');
+      const teamStr = team.slice(0, 4).join(', ');
+      console.log(`│  \x1b[36m👥 Team Brain\x1b[0m · ${String(team.length).padEnd(2)} developer${team.length === 1 ? ' ' : 's'} sharing lessons${' '.repeat(Math.max(0, 19 - teamStr.length))} │`);
+      console.log(`│     ${teamStr.slice(0, 56).padEnd(56)} │`);
+    }
+
+    if (refUrl) {
+      console.log('├─────────────────────────────────────────────────────────────┤');
+      const refLine = `${refUrl.slice(0, 44)}${refUrl.length > 44 ? '…' : ''}`;
+      console.log(`│  \x1b[35m🔗 Invite link\x1b[0m · ${refCount > 0 ? `\x1b[32m${refCount} joined\x1b[0m` : 'share to grow your team'}${' '.repeat(Math.max(0, 35 - String(refCount).length))} │`);
+      console.log(`│     \x1b[2m${refLine.padEnd(56)}\x1b[0m │`);
+    }
+
+    console.log('└─────────────────────────────────────────────────────────────┘');
+    console.log('');
+    if (lessons === 0) {
+      console.log('  \x1b[33m💡 No lessons yet.\x1b[0m Run a session with cachly connected to start learning.');
+      console.log('');
+    }
+  } catch (e) {
+    console.log(`\n❌ Could not fetch status: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 if (process.argv[2] === 'health') {
   const { existsSync } = await import('node:fs');
   const { readFile } = await import('node:fs/promises');
