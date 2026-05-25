@@ -60,7 +60,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.33';
+const CURRENT_VERSION = '0.10.34';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -2507,6 +2507,49 @@ if (process.argv[2] === 'index') {
     console.log('\n✅  Indexing complete.\n');
   } catch (err) {
     console.error(`\n❌  Indexing failed: ${(err as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+// ── CLI: cachly learn-git ─────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest learn-git [./repo] [--max-commits 50]
+// Auto-learns brain lessons from recent git commits — ideal for CI on PR merge.
+// Each meaningful commit becomes a lesson, so the Brain grows with zero manual work.
+
+if (process.argv[2] === 'learn-git') {
+  const { resolve } = await import('node:path');
+  const argv = process.argv.slice(3);
+  const flag = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
+
+  const repoDir    = resolve(flag('dir') ?? argv.find(a => !a.startsWith('--')) ?? '.');
+  const instanceId = flag('instance-id') ?? process.env.CACHLY_BRAIN_INSTANCE_ID;
+  const maxCommits = parseInt(flag('max-commits') ?? '50', 10);
+
+  if (!instanceId || !JWT) {
+    console.error('\n❌  CACHLY_BRAIN_INSTANCE_ID and CACHLY_JWT must be set\n');
+    console.error('   export CACHLY_BRAIN_INSTANCE_ID=<uuid>');
+    console.error('   export CACHLY_JWT=<cky_live_...>');
+    console.error('   npx @cachly-dev/mcp-server@latest learn-git .\n');
+    process.exit(1);
+  }
+
+  console.log(`\n🧠  Learning from git history: ${repoDir}`);
+  console.log(`    Instance: ${instanceId.slice(0, 8)}…  Max commits: ${maxCommits}\n`);
+
+  try {
+    const result = await handleTool('brain_from_git', {
+      instance_id: instanceId,
+      repo_dir: repoDir,
+      max_commits: maxCommits,
+    });
+    console.log(result);
+    sendFunnelEvent('brain_from_git', { api_key: JWT, instance_id: instanceId });
+    console.log('\n✅  Brain learned from your commits.\n');
+    // Let fire-and-forget telemetry flush before exit.
+    await new Promise(r => setTimeout(r, 300));
+  } catch (err) {
+    console.error(`\n❌  learn-git failed: ${(err as Error).message}\n`);
     process.exit(1);
   }
   process.exit(0);
