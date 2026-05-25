@@ -982,16 +982,36 @@ export async function handleBrainTool(
         lines.push('');
       }
 
-      // Recent lessons
+      // Top lessons — sorted by recall_count desc (most-used = most proven value).
+      // If focus is set, focus-matched lessons already shown above; show remaining here.
       if (lessons.length > 0) {
-        lines.push(`🕐 **Recent lessons:**`);
-        const toShow = focusLessons.length > 0 ? lessons.filter(l => !focusLessons.includes(l)).slice(0, 4) : lessons.slice(0, 5);
-        for (const l of toShow) {
-          const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
-          const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
-          lines.push(`  ${emoji}${sev} \`${l.topic}\` — ${l.what_worked.slice(0, 90)}`);
+        const byRecall = [...lessons].sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0));
+        const topRecalled = byRecall.filter(l => (l.recall_count ?? 0) > 0).slice(0, 3);
+        const remaining   = (focusLessons.length > 0 ? lessons.filter(l => !focusLessons.includes(l)) : lessons)
+          .filter(l => !topRecalled.includes(l))
+          .slice(0, focusLessons.length > 0 ? 3 : 4);
+
+        if (topRecalled.length > 0) {
+          lines.push(`🏆 **Most valuable** (recalled ${topRecalled[0]!.recall_count}× before):`);
+          for (const l of topRecalled) {
+            const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
+            const sev   = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
+            const rct   = l.recall_count && l.recall_count > 1 ? ` _(${l.recall_count}× recalled)_` : '';
+            lines.push(`  ${emoji}${sev} \`${l.topic}\`${rct} — ${l.what_worked.slice(0, 100)}`);
+          }
+          lines.push('');
         }
-        lines.push('');
+
+        if (remaining.length > 0) {
+          const header = topRecalled.length > 0 ? `🕐 **Recent:**` : `🕐 **Recent lessons:**`;
+          lines.push(header);
+          for (const l of remaining) {
+            const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
+            const sev   = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
+            lines.push(`  ${emoji}${sev} \`${l.topic}\` — ${l.what_worked.slice(0, 100)}`);
+          }
+          lines.push('');
+        }
       } else {
         lines.push('📭 No lessons yet. Use `learn_from_attempts` after solving tasks.', '');
       }
