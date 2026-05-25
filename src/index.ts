@@ -3,6 +3,13 @@ import { jwtExpiryMs, checkJwt, handleApiError } from './auth.js';
 import { readFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// True only when this file is the entry point (not imported by tests or other modules).
+const _isMain = process.argv[1] != null &&
+  (process.argv[1] === fileURLToPath(import.meta.url) ||
+   process.argv[1].endsWith('/dist/index.js') ||
+   process.argv[1].endsWith('/src/index.ts'));
 /**
  * cachly MCP Server v0.4.0
  *
@@ -53,7 +60,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.30';
+const CURRENT_VERSION = '0.10.31';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -2484,7 +2491,9 @@ if (process.argv[2] === 'index') {
 // Skip for CLI commands that intentionally run without credentials.
 const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '') && !(!process.argv[2] && process.stdout.isTTY)) {
-  process.stderr.write(
+  // No args + no JWT in a non-TTY context = running as MCP server without credentials.
+  // Print actionable setup banner to stdout so it's captured by callers/tests.
+  const banner =
     '\n' +
     '╔══════════════════════════════════════════════════════════════════╗\n' +
     '║  🧠  cachly AI Brain — Setup required                           ║\n' +
@@ -2500,8 +2509,15 @@ if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '') && !(!process.ar
     '║                                                                  ║\n' +
     '║  Free tier — no credit card required.                           ║\n' +
     '╚══════════════════════════════════════════════════════════════════╝\n' +
-    '\n',
-  );
+    '\n';
+  // When invoked with no args as the main entry point, write to stdout + exit cleanly.
+  // When used as MCP server (args present), write to stderr so editors see it.
+  if (!process.argv[2] && _isMain) {
+    process.stdout.write(banner);
+    process.exit(0);
+  } else {
+    process.stderr.write(banner);
+  }
 } else {
   // Warn if the JWT is already expired or expiring within the hour.
   const expMs = jwtExpiryMs(JWT);
