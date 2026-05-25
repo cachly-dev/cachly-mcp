@@ -7,6 +7,17 @@
 
 ---
 
+## [0.10.36] – 2026-05-25
+
+### ESLint flat-config (ESLint 10 / v9 API)
+
+- Added `eslint` v9 and `typescript-eslint` v8 as devDependencies.
+- Created `eslint.config.js` using ESLint flat-config API — replaces the legacy `--ext .ts` syntax that broke with ESLint 10.
+- Updated lint script: `eslint src --ext .ts` → `eslint src`.
+- Rules: `no-explicit-any` warn, `no-unused-vars` warns but ignores `_`-prefixed params.
+
+---
+
 ## [0.10.35] – 2026-05-25
 
 ### Docs catch-up
