@@ -153,6 +153,45 @@ npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git
 
 ---
 
+## Read your Brain from anything — REST API (no MCP required)
+
+MCP is the easiest path, but any agent, robot, script, or service can read the
+Brain over plain HTTP. No Node.js, no MCP client — just your instance token.
+
+**Search the Brain (BM25+ keyword search):**
+
+```bash
+curl -s -X POST "https://api.cachly.dev/v1/cache/$CACHLY_TOKEN/brain-search" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "redis connection timeout", "top_k": 5}'
+```
+
+Returns ranked matches with previews:
+
+```json
+{
+  "results": [
+    { "key": "lesson:best:redis:pool", "score": 8.4,
+      "matched_words": ["redis", "timeout"],
+      "preview": "set max_retries=3 + ConnMaxLifetime=30m; ..." }
+  ],
+  "total_docs": 142,
+  "duration_ms": 6
+}
+```
+
+**Get Brain stats:**
+
+```bash
+curl -s "https://api.cachly.dev/v1/cache/$CACHLY_TOKEN/brain-stats"
+```
+
+`$CACHLY_TOKEN` is your instance token (`cky_live_…`) — the same one the setup
+wizard writes into your editor config. This is all a non-MCP agent needs to
+arrive pre-briefed.
+
+---
+
 ## Brain Badge — show your lessons live
 
 Add a live lesson-count badge to any README — updates every hour, no auth required:

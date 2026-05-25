@@ -916,6 +916,31 @@ export async function handleBrainTool(
       // Brain health
       lines.push(`📊 **Brain:** ${lessons.length} lessons · ${ctxCount} context entries`, '');
 
+      // ── 📌 Proven Laws — auto-crystallized lessons (quick win 3) ─────────────
+      // A lesson that has proven itself (recalled ≥ CRYSTALLIZE_RECALLS times) or
+      // was explicitly pinned becomes a "law" — surfaced at the top of every
+      // briefing so the most battle-tested knowledge is never buried. This is
+      // the today-safe version of swarm crystallization: enough confirmations
+      // auto-promote a lesson without any manual step.
+      {
+        type LessonPin = typeof lessons[0] & { pinned?: boolean };
+        const CRYSTALLIZE_RECALLS = 5;
+        const laws = (lessons as LessonPin[])
+          .filter(l => l.outcome === 'success' && (l.pinned === true || (l.recall_count ?? 0) >= CRYSTALLIZE_RECALLS))
+          .sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0))
+          .slice(0, 5);
+        if (laws.length > 0) {
+          lines.push(`📌 **Proven Laws** (auto-crystallized — your most-trusted knowledge):`);
+          for (const l of laws) {
+            const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
+            const rc  = l.recall_count ?? 0;
+            const why = l.pinned === true ? 'pinned' : `recalled ${rc}×`;
+            lines.push(`  🏆${sev} \`${l.topic}\` _(${why})_ — ${l.what_worked.slice(0, 100)}`);
+          }
+          lines.push('');
+        }
+      }
+
       // ── Layer 7: MCM Domain Coverage Map ────────────────────────────────────
       if (lessons.length >= 3) {
         const domainMap = new Map<string, { total: number; success: number; critical: number }>();
