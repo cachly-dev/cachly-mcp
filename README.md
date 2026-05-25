@@ -132,14 +132,20 @@ Run it once. It handles everything:
 ## CLI Commands
 
 ```bash
-npx @cachly-dev/mcp-server@latest demo     # Preview your Brain (no account needed)
-npx @cachly-dev/mcp-server@latest setup    # Wire up all your AI editors (1–5 minutes)
-npx @cachly-dev/mcp-server@latest health   # Check token, API, editors, git hook
-npx @cachly-dev/mcp-server@latest digest   # Weekly Brain summary — shareable
-npx @cachly-dev/mcp-server@latest share    # Generate a shareable stats card + tweet
-npx @cachly-dev/mcp-server@latest badge    # Get a live README badge for your Brain
-npx @cachly-dev/mcp-server@latest invite   # Invite a teammate to share your Brain
+npx @cachly-dev/mcp-server@latest demo      # Preview your Brain (no account needed)
+npx @cachly-dev/mcp-server@latest setup     # Wire up all your AI editors (1–5 minutes)
+npx @cachly-dev/mcp-server@latest health    # Check token, API, editors, git hook
+npx @cachly-dev/mcp-server@latest digest    # Weekly Brain summary — shareable
+npx @cachly-dev/mcp-server@latest share     # Generate a shareable stats card + tweet
+npx @cachly-dev/mcp-server@latest badge     # Get a live README badge for your Brain
+npx @cachly-dev/mcp-server@latest invite    # Invite a teammate to share your Brain
+npx @cachly-dev/mcp-server@latest index .   # Index a project's code into the Brain (CI-friendly)
+npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git commits (PR-merge ready)
 ```
+
+> **Tip — auto-learn on every merged PR:** run `learn-git` in CI via the
+> [cachly-brain-setup GitHub Action](https://github.com/cachly-dev/cachly/tree/main/sdk/github-action)
+> with `mode: learn`. Each merged PR teaches your Brain automatically — no manual calls.
 
 ---
 
