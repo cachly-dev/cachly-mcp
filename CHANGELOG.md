@@ -7,6 +7,15 @@
 
 ---
 
+## [0.10.37] – 2026-05-25
+
+### Viral wow moments — invite link + first-recall tweet button
+
+- **`cachly invite` fixed** — previously called a non-existent `/api/v1/team/invite` endpoint (always 404). Now calls `GET /api/v1/referral/me` and shows your personal referral link with pre-written Slack DM + tweet text. One command = shareable invite.
+- **First-recall email** — the "Your AI just remembered" email now includes a one-click `𝕏 Share this moment` tweet button and a `🤝 Share with your team` section with your personal referral link (shows only if referral code exists). The highest-value wow moment now has a viral exit.
+
+---
+
 ## [0.10.36] – 2026-05-25
 
 ### ESLint flat-config (ESLint 10 / v9 API)

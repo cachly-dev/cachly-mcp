@@ -1206,7 +1206,7 @@ if (process.argv[2] === 'digest') {
 // Invites a teammate to share your Brain. Fastest referral loop.
 
 if (process.argv[2] === 'invite') {
-  const { createInterface } = await import('node:readline');
+  // ── invite: fetch the user's unique referral link and show shareable messages ──
   const apiKey = process.env.CACHLY_JWT ?? '';
 
   if (!apiKey) {
@@ -1215,43 +1215,44 @@ if (process.argv[2] === 'invite') {
     process.exit(1);
   }
 
-  let email = process.argv[3] ?? '';
-
-  if (!email) {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    email = await new Promise<string>((resolve) => {
-      rl.question('\n  📬 Teammate email to invite: ', (ans) => { rl.close(); resolve(ans.trim()); });
-    });
-  }
-
-  if (!email || !email.includes('@')) {
-    console.log('\n❌ Invalid email address.\n');
-    process.exit(1);
-  }
-
-  console.log(`\n  ⏳ Inviting ${email}...`);
-
   try {
-    const res = await fetch(`${API_URL}/api/v1/team/invite`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, role: 'member', source: 'cli-invite' }),
+    const res = await fetch(`${API_URL}/api/v1/referral/me`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8000),
     });
 
-    if (res.ok) {
-      console.log(`\n  ✅ Invite sent to \x1b[32m${email}\x1b[0m`);
-      console.log(`     They'll get a link to join your Brain — one click, 1–5 minutes.\n`);
-      console.log(`  💡 Once they join, your AI assistants share lessons automatically.\n`);
-    } else if (res.status === 409) {
-      console.log(`\n  ✓  ${email} is already a team member.\n`);
-    } else {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      console.log(`\n  ❌ Invite failed: ${body.error ?? `HTTP ${res.status}`}\n`);
-      process.exit(1);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json() as { code?: string; url?: string; referral_count?: number };
+    const referralUrl = data.url ?? `https://cachly.dev/r/${data.code}`;
+    const count = data.referral_count ?? 0;
+
+    const slackMsg = `Hey, I've been using cachly to give my AI persistent memory across sessions — no more re-explaining my stack every morning.\n\nYou get a free Brain: ${referralUrl}`;
+    const tweetText = encodeURIComponent(`I gave my AI persistent memory. It remembers fixes, patterns, and context across every session — no more re-explaining.\n\nTry it free: ${referralUrl}\n\n@cachlydev`);
+
+    console.log('');
+    console.log('┌─────────────────────────────────────────────────────────────┐');
+    console.log('│  🧠 Your cachly Brain invite link                            │');
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log(`│  ${referralUrl.padEnd(61)}│`);
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    if (count > 0) {
+      console.log(`│  \x1b[32m✓  ${count} developer${count === 1 ? '' : 's'} joined via your link so far\x1b[0m`.padEnd(72) + '│');
+      console.log('├─────────────────────────────────────────────────────────────┤');
     }
+    console.log('│  \x1b[33mSlack / DM message:\x1b[0m                                         │');
+    console.log('│                                                              │');
+    for (const line of slackMsg.split('\n')) {
+      console.log(`│  \x1b[90m${line.slice(0, 58).padEnd(58)}\x1b[0m  │`);
+    }
+    console.log('│                                                              │');
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log(`│  \x1b[36m𝕏 Tweet:\x1b[0m https://twitter.com/intent/tweet?text=${tweetText.slice(0, 10)}...  │`);
+    console.log('└─────────────────────────────────────────────────────────────┘');
+    console.log('');
+    console.log('\x1b[2m  Each developer who signs up via your link earns you 1 month Pro.\x1b[0m');
+    console.log('');
   } catch (e) {
-    console.log(`\n  ❌ Network error: ${(e as Error).message}\n`);
+    console.log(`\n❌ Could not fetch invite link: ${(e as Error).message}\n`);
     process.exit(1);
   }
   process.exit(0);
