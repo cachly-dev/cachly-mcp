@@ -60,7 +60,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.32';
+const CURRENT_VERSION = '0.10.33';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -2460,7 +2460,13 @@ if (process.argv[2] === 'setup') {
     }
   } catch { /* non-critical */ }
 
+  // Setup reached the end successfully — close the funnel.
+  JWT = token;
+  sendFunnelEvent('setup_completed', { instance_id: instance.id });
+
   rl.close();
+  // Give the fire-and-forget telemetry a moment to flush before exit.
+  await new Promise(r => setTimeout(r, 300));
   process.exit(0);
 }
 
