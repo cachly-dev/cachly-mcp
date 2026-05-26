@@ -24,10 +24,6 @@
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
   &nbsp;
-  <a href="https://smithery.ai/server/@cachly-dev/mcp-server">
-    <img src="https://smithery.ai/badge/@cachly-dev/mcp-server" alt="Smithery" />
-  </a>
-  &nbsp;
   <a href="https://cachly.dev">
     <img src="https://img.shields.io/badge/Brain%20badge-embed%20in%20README-7c3aed" alt="Brain badge" />
   </a>
