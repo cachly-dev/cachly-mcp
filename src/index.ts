@@ -60,7 +60,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.43';
+const CURRENT_VERSION = '0.10.44';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -2156,6 +2156,7 @@ if (process.argv[2] === 'setup') {
     const CLIENT_ID = 'cachly-cli';
 
     console.log('Step 1: Sign in to cachly (free, no credit card)\n');
+    sendFunnelEvent('setup_auth_started');
 
     // Start device flow
     let deviceCode = '', userCode = '', verifyUri = '', pollInterval = 5000;
@@ -2179,6 +2180,7 @@ if (process.argv[2] === 'setup') {
       console.error('Falling back: sign in at https://cachly.dev/setup-ai and paste your API token.\n');
       token = await ask('   Paste API token (cky_live_...): ');
       if (!token) { console.error('\nToken is required. Aborting.\n'); rl.close(); process.exit(1); }
+      sendFunnelEvent('setup_auth_completed');
       console.log('');
       deviceCode = ''; // mark as fallback so we skip polling
     }
@@ -2212,6 +2214,7 @@ if (process.argv[2] === 'setup') {
           if (tokenData.access_token) {
             token = tokenData.access_token;
             console.log(' \x1b[32m✓ Authorized!\x1b[0m\n');
+            sendFunnelEvent('setup_auth_completed');
             break;
           }
           // authorization_pending = keep polling; slow_down = increase interval
@@ -2328,6 +2331,7 @@ if (process.argv[2] === 'setup') {
     console.log(`   (Run with --instance-id <id> to use a different one)\n`);
   }
   console.log(`✓  Instance: ${instance.name} (${instance.id.slice(0, 8)}…)\n`);
+  sendFunnelEvent('setup_instance_ready', { instance_id: instance.id });
 
   // ── Step 3: Detect editors ────────────────────────────────────────────────
   const cwd = process.cwd();

@@ -502,6 +502,22 @@ export async function handleBrainTool(
         10,
       );
 
+      // Increment recall_count on matched lessons (fire-and-forget — same as recall_best_solution).
+      // This ensures the dashboard metric, Proven Laws, and trust badges reflect real smart_recall usage.
+      const lessonMatches = kwMatches.filter(m => m.key.startsWith('cachly:lesson:best:'));
+      for (const m of lessonMatches.slice(0, 5)) {
+        const existing = await redis.get(m.key).catch(() => null);
+        if (existing) {
+          const lesson = safeJsonParse(existing, null as null | { recall_count?: number; [k: string]: unknown });
+          if (lesson) {
+            const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, verified_at: new Date().toISOString() };
+            redis.set(m.key, JSON.stringify(updated)).catch(() => {});
+            const savedMins = (lesson.severity as string) === 'critical' ? 240 : (lesson.severity as string) === 'major' ? 60 : 30;
+            redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
+          }
+        }
+      }
+
       const lines: string[] = [`🧠 **Smart Recall** for: _"${query}"_\n`];
 
       // Show sub-query info if multi-topic was detected
