@@ -1,7 +1,7 @@
 # 🧠 cachly AI Brain — MCP Server
 
-> **You're a senior developer. Your AI should act like one.**  
-> Stop re-teaching your AI every morning. cachly gives it a permanent brain — pre-briefed every session, learns from every commit, never makes the same mistake twice.
+> **Your AI forgets everything between sessions. cachly fixes that.**  
+> Stop re-teaching your stack every morning. cachly gives your AI a permanent brain — pre-briefed every session, learns from every commit, never makes the same mistake twice. Works whether you write 10 lines or 10,000.
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@cachly-dev/mcp-server">
@@ -37,33 +37,33 @@
 npx @cachly-dev/mcp-server@latest demo
 ```
 
-Run this in any project directory. It reads your git history and shows exactly what your AI would know:
+Run it in any project folder. It scans your git history and shows a preview of what your AI would know — YOUR bugs fixed, YOUR patterns, YOUR past decisions. No account needed.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  🧠 Brain Preview — What your AI would know                 │
+│  Brain Preview — What your AI would know                    │
 ├─────────────────────────────────────────────────────────────┤
-│  Commits analysed : 847     Date range: 2024-01-12 → 2026-05-14  │
-│  Lessons extracted: 634     Contributors: 7                  │
+│  Commits: 847   Lessons: 634   Contributors: 7              │
+│  Date range: 2024-01-12 → 2026-05-14                        │
 ├─────────────────────────────────────────────────────────────┤
-│  Category breakdown:                                         │
-│  🔧 fix        ████████████████████ 312                     │
-│  ✨ feat        ███████████████     189                     │
-│  🔒 security    ██                   18                     │
-│  🚀 deploy      ██                   15                     │
+│  Category breakdown:                                        │
+│  fix        ████████████████████  312                       │
+│  feat       ███████████████       189                       │
+│  security   ██                     18                       │
+│  deploy     ██                     15                       │
 ├─────────────────────────────────────────────────────────────┤
-│  🔒 Security fixes your AI would know:                      │
-│  • fix(auth): JWT expiry check before signature validation   │
-│  • security: sanitize webhook payload before JSON.parse      │
+│  Security fixes your AI would know:                         │
+│  • fix(auth): JWT expiry check before signature validation  │
+│  • security: sanitize webhook payload before JSON.parse     │
 ├─────────────────────────────────────────────────────────────┤
-│  🔧 Bug fixes your AI would remember:                       │
-│  • fix: Redis pub/sub race condition under high concurrency  │
-│  • fix: k8s readinessProbe threshold too low for cold start  │
-│  • fix: Stripe idempotency_key missing on retry path         │
-│  • fix: tRPC context not forwarded to background jobs        │
+│  Bug fixes your AI would remember:                          │
+│  • fix: Redis pub/sub race condition under high concurrency │
+│  • fix: k8s readinessProbe threshold too low for cold start │
+│  • fix: Stripe idempotency_key missing on retry path        │
+│  • fix: tRPC context not forwarded to background jobs       │
 ├─────────────────────────────────────────────────────────────┤
-│  💡 With cachly, your AI arrives pre-briefed every session. │
-│     No more re-explaining. No more repeated mistakes.        │
+│  With cachly, your AI arrives pre-briefed every session.    │
+│  No more re-explaining. No more repeated mistakes.          │
 └─────────────────────────────────────────────────────────────┘
 
   Make this permanent (free, 1–5 minutes):
@@ -72,6 +72,24 @@ Run this in any project directory. It reads your git history and shows exactly w
   Works with: Claude Code · Cursor · Windsurf · Copilot · Cline · Zed
   Free forever · GDPR · German servers · No credit card
 ```
+
+---
+
+## Already in Claude / Cursor / Copilot? Just paste this
+
+Skip the setup guide — copy the prompt below and paste it directly into your AI. It will run the command and configure everything automatically:
+
+```
+Set up cachly for this project. Run this in the terminal:
+  npx @cachly-dev/mcp-server@latest setup
+
+It gives you persistent memory across sessions — your AI recalls past
+decisions, avoids repeated bugs, and arrives briefed every time you
+open it. Follow the browser login (one click, no credit card), then
+restart your editor. Free forever.
+```
+
+Your AI will execute the command, detect your editors, write the config, and brief itself on your project.
 
 ---
 
@@ -146,45 +164,6 @@ npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git
 > **Tip — auto-learn on every merged PR:** run `learn-git` in CI via the
 > [cachly-brain-setup GitHub Action](https://github.com/cachly-dev/cachly/tree/main/sdk/github-action)
 > with `mode: learn`. Each merged PR teaches your Brain automatically — no manual calls.
-
----
-
-## Read your Brain from anything — REST API (no MCP required)
-
-MCP is the easiest path, but any agent, robot, script, or service can read the
-Brain over plain HTTP. No Node.js, no MCP client — just your instance token.
-
-**Search the Brain (BM25+ keyword search):**
-
-```bash
-curl -s -X POST "https://api.cachly.dev/v1/cache/$CACHLY_TOKEN/brain-search" \
-  -H "Content-Type: application/json" \
-  -d '{"query": "redis connection timeout", "top_k": 5}'
-```
-
-Returns ranked matches with previews:
-
-```json
-{
-  "results": [
-    { "key": "lesson:best:redis:pool", "score": 8.4,
-      "matched_words": ["redis", "timeout"],
-      "preview": "set max_retries=3 + ConnMaxLifetime=30m; ..." }
-  ],
-  "total_docs": 142,
-  "duration_ms": 6
-}
-```
-
-**Get Brain stats:**
-
-```bash
-curl -s "https://api.cachly.dev/v1/cache/$CACHLY_TOKEN/brain-stats"
-```
-
-`$CACHLY_TOKEN` is your instance token (`cky_live_…`) — the same one the setup
-wizard writes into your editor config. This is all a non-MCP agent needs to
-arrive pre-briefed.
 
 ---
 
