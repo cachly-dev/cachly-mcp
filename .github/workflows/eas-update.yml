@@ -1,0 +1,41 @@
+name: EAS Update — TCO Production
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'apps/travel-chaos-organizer/frontend/**'
+  workflow_dispatch:
+    inputs:
+      message:
+        description: 'Update message'
+        default: 'OTA update'
+
+jobs:
+  update:
+    name: Publish EAS Update to production
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/travel-chaos-organizer/frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Publish EAS Update
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          MESSAGE="${{ github.event.inputs.message || github.event.head_commit.message }}"
+          # Truncate to 100 chars for EAS
+          MESSAGE="${MESSAGE:0:100}"
+          npx eas-cli update \
+            --branch production \
+            --message "$MESSAGE" \
+            --non-interactive
