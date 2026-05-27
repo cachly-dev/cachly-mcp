@@ -17,6 +17,7 @@ import { EventEmitter } from 'node:events';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge } from '../ckg.js';
 import { EMBED_PROVIDER, hasEmbedProvider, embedProviderHint, embedConfig, setEmbedJwt } from '../embeddings.js';
 import { keywordSearch } from '../search.js';
+import { handleBrainTool } from '../handlers/brain.js';
 import type { Redis } from 'ioredis';
 
 // ── In-memory Redis mock ──────────────────────────────────────────────────────
@@ -65,6 +66,21 @@ class MockRedis {
 
   async smembers(key: string): Promise<string[]> {
     return [...(this.sets.get(key) ?? [])];
+  }
+
+  async mget(...keys: string[]): Promise<(string | null)[]> {
+    return keys.map(k => this.store.get(k) ?? null);
+  }
+
+  async exists(key: string): Promise<number> {
+    return this.store.has(key) ? 1 : 0;
+  }
+
+  async incrbyfloat(key: string, increment: number): Promise<string> {
+    const cur = parseFloat(this.store.get(key) ?? '0');
+    const next = cur + increment;
+    this.store.set(key, String(next));
+    return String(next);
   }
 
   /** Simplified scanStream: returns all matching keys in a single 'data' event. */
@@ -870,5 +886,163 @@ describe('Brain Flow: advanced scenarios', () => {
       expect(edge.confidence).toBeGreaterThan(0.5);
       expect(edge.confidence).toBeLessThan(0.75);
     });
+  });
+});
+
+// ── New feature coverage (0.10.41 / 0.10.42) ─────────────────────────────────
+// Trust badges, Proven Laws crystallization, and focus-less predictive warning.
+// These exercise the REAL handleBrainTool code path with the MockRedis.
+
+const noopApiFetch = (async () => null) as unknown as Parameters<typeof handleBrainTool>[3];
+
+/** Seed a best-solution lesson with an explicit recall_count / authors / pinned. */
+async function seedLesson(
+  redis: MockRedis,
+  topic: string,
+  opts: {
+    outcome?: 'success' | 'failure' | 'partial';
+    what_worked?: string;
+    what_failed?: string;
+    recall_count?: number;
+    severity?: 'critical' | 'major' | 'minor';
+    pinned?: boolean;
+    author?: string;
+    tags?: string[];
+  } = {},
+): Promise<void> {
+  const ts = new Date().toISOString();
+  const obj = {
+    topic,
+    outcome: opts.outcome ?? 'success',
+    what_worked: opts.what_worked ?? `solution for ${topic}`,
+    what_failed: opts.what_failed,
+    severity: opts.severity ?? 'minor',
+    recall_count: opts.recall_count ?? 0,
+    ts,
+    verified_at: ts,
+    confidence: 1.0,
+    tags: opts.tags ?? [],
+    ...(opts.pinned ? { pinned: true } : {}),
+    ...(opts.author ? { author: opts.author } : {}),
+  };
+  await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(obj));
+}
+
+describe('Trust badges (recall_best_solution)', () => {
+  let redis: MockRedis;
+  const getConn = async () => redis as unknown as Redis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('shows "Battle-tested" when recall_count crosses 10', async () => {
+    await seedLesson(redis, 'redis:pool', { recall_count: 9, what_worked: 'set max_retries=3' });
+    const out = (await handleBrainTool('recall_best_solution', { instance_id: 'i1', topic: 'redis:pool' }, getConn, noopApiFetch))!;
+    expect(out).toContain('Battle-tested');
+    expect(out).toContain('recalled 10×');
+  });
+
+  it('shows "Proven" when recall_count is between 5 and 9', async () => {
+    await seedLesson(redis, 'api:auth', { recall_count: 4 });
+    const out = (await handleBrainTool('recall_best_solution', { instance_id: 'i1', topic: 'api:auth' }, getConn, noopApiFetch))!;
+    expect(out).toContain('Proven');
+    expect(out).toContain('recalled 5×');
+    expect(out).not.toContain('Battle-tested');
+  });
+
+  it('shows no trust badge for a fresh low-recall lesson', async () => {
+    await seedLesson(redis, 'misc:thing', { recall_count: 0 });
+    const out = (await handleBrainTool('recall_best_solution', { instance_id: 'i1', topic: 'misc:thing' }, getConn, noopApiFetch))!;
+    expect(out).not.toContain('Battle-tested');
+    expect(out).not.toContain('Proven —');
+    expect(out).not.toContain('Team-verified');
+  });
+
+  it('increments recall_count and persists it', async () => {
+    await seedLesson(redis, 'deploy:x', { recall_count: 2 });
+    await handleBrainTool('recall_best_solution', { instance_id: 'i1', topic: 'deploy:x' }, getConn, noopApiFetch);
+    const stored = JSON.parse((await redis.get('cachly:lesson:best:deploy:x'))!);
+    expect(stored.recall_count).toBe(3);
+  });
+});
+
+describe('Proven Laws crystallization (session_start)', () => {
+  let redis: MockRedis;
+  const getConn = async () => redis as unknown as Redis;
+  beforeEach(async () => {
+    redis = new MockRedis();
+    // Provide a last session so session_start does not attempt git reconstruction.
+    await redis.set('cachly:session:last', JSON.stringify({ summary: 'prior work', ts: new Date().toISOString(), files_changed: [] }));
+  });
+
+  it('surfaces lessons recalled >= 5 in the Proven Laws section', async () => {
+    await seedLesson(redis, 'infra:k3s', { recall_count: 7, what_worked: 'add WireGuard IP to TLS-SAN' });
+    await seedLesson(redis, 'random:note', { recall_count: 1 });
+    const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
+    expect(out).toContain('Proven Laws');
+    expect(out).toContain('infra:k3s');
+    expect(out).toContain('recalled 7×');
+  });
+
+  it('surfaces an explicitly pinned lesson even with low recall', async () => {
+    await seedLesson(redis, 'team:convention', { recall_count: 0, pinned: true, what_worked: 'always snake_case handlers' });
+    const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
+    expect(out).toContain('Proven Laws');
+    expect(out).toContain('team:convention');
+    expect(out).toContain('pinned');
+  });
+
+  it('omits the Proven Laws section when nothing qualifies', async () => {
+    await seedLesson(redis, 'small:thing', { recall_count: 1 });
+    const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
+    expect(out).not.toContain('Proven Laws');
+  });
+
+  it('does not crystallize failure lessons', async () => {
+    await seedLesson(redis, 'broken:flow', { recall_count: 9, outcome: 'failure', what_failed: 'never works' });
+    const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
+    expect(out).not.toContain('Proven Laws');
+  });
+});
+
+describe('Predictive pre-warning without explicit focus (session_start)', () => {
+  let redis: MockRedis;
+  const getConn = async () => redis as unknown as Redis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('derives danger area from last session files and warns', async () => {
+    // Last session touched payment files → likely to continue there.
+    await redis.set('cachly:session:last', JSON.stringify({
+      summary: 'worked on payment integration',
+      ts: new Date().toISOString(),
+      files_changed: ['api/payment/stripe_webhook.go'],
+    }));
+    // A known failure in the payment area.
+    await seedLesson(redis, 'payment:webhook', { outcome: 'failure', what_failed: 'missed idempotency key → double charge', tags: ['payment'] });
+    const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
+    expect(out).toContain('PRE-WARNING');
+    expect(out).toContain('payment:webhook');
+  });
+
+  it('does not warn when last-session area has no known failures', async () => {
+    await redis.set('cachly:session:last', JSON.stringify({
+      summary: 'wrote docs',
+      ts: new Date().toISOString(),
+      files_changed: ['docs/readme.md'],
+    }));
+    await seedLesson(redis, 'payment:webhook', { outcome: 'failure', what_failed: 'x', tags: ['payment'] });
+    const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
+    expect(out).not.toContain('PRE-WARNING');
+  });
+
+  it('filters path noise so common segments do not trigger false matches', async () => {
+    // Last session only touched generic noise paths (src/lib/index).
+    await redis.set('cachly:session:last', JSON.stringify({
+      summary: 'refactor',
+      ts: new Date().toISOString(),
+      files_changed: ['src/lib/index.ts'],
+    }));
+    // A failure tagged 'src' — should NOT match because 'src' is noise.
+    await seedLesson(redis, 'src:thing', { outcome: 'failure', what_failed: 'noise', tags: ['src'] });
+    const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
+    expect(out).not.toContain('PRE-WARNING');
   });
 });

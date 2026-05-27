@@ -9,6 +9,9 @@ import { keywordSearch, tokenize } from '../search.js';
 import { safeJsonParse } from '../utils.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
+// Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
+export let _lastBrainFromGitCounts: { fixes: number; features: number; refactors: number; total: number } | null = null;
+
 // Git concurrency semaphore (for brain_from_git parallel workers)
 let _gitSemCount = 0;
 const _GIT_SEM_MAX = 10;
@@ -1032,6 +1035,13 @@ export async function handleFedbrainTool(
       }
 
       const categoryBreakdown = [...categoryCount.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `  • **${k}** (${v})`).join('\n');
+
+      _lastBrainFromGitCounts = {
+        fixes: categoryCount.get('fix') ?? 0,
+        features: categoryCount.get('feat') ?? 0,
+        refactors: categoryCount.get('refactor') ?? 0,
+        total: ingested,
+      };
 
       return [
         `🔁 **brain_from_git: ${repoDir}**`,

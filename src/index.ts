@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 import { jwtExpiryMs, checkJwt, handleApiError } from './auth.js';
+import { handleTcoTool, TCO_TOOL_NAMES } from './handlers/tco.js';
+import { notify } from './notifier.js';
 import { readFile } from 'node:fs/promises';
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// True only when this file is the entry point (not imported by tests or other modules).
+const _isMain = process.argv[1] != null &&
+  (process.argv[1] === fileURLToPath(import.meta.url) ||
+   process.argv[1].endsWith('/dist/index.js') ||
+   process.argv[1].endsWith('/src/index.ts'));
 /**
  * cachly MCP Server v0.4.0
  *
@@ -30,11 +39,24 @@ import { join } from 'node:path';
  * ── Auth & Status ────────────────────────────────────────────────────────────
  *   • get_api_status        – check API health + JWT auth info (Keycloak)
  *
+ * ── Travel Chaos Organizer (TCO) ────────────────────────────────────────────
+ *   • tco_list_trips    – list all trips
+ *   • tco_create_trip   – create a new trip
+ *   • tco_get_timeline  – get timeline items for a trip
+ *   • tco_delete_trip   – delete a trip
+ *   • tco_inbox_list    – list Chaos Inbox items
+ *   • tco_inbox_assign  – assign inbox item to a trip
+ *   • tco_inbox_reject  – reject/discard an inbox item
+ *   • tco_parse_url     – fetch a URL and parse with Ollama
+ *   • tco_import_email  – import raw email text
+ *   (Requires TCO_API_URL env var; auth forwarded from CACHLY_JWT — same Keycloak realm)
+ *
  * Configuration (env vars):
  *   CACHLY_API_URL      – default https://api.cachly.dev
  *   CACHLY_JWT          – your JWT (Keycloak access token)
  *   CACHLY_EMBED_PROVIDER – embedding backend: openai (default), gemini, mistral, cohere, ollama, cachly (server fallback)
  *   CACHLY_EMBED_MODEL  – override embedding model (optional)
+ *   TCO_API_URL         – Travel Chaos Organizer backend URL (optional, enables tco_* tools)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -53,7 +75,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.24';
+const CURRENT_VERSION = '0.10.46';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -418,7 +440,7 @@ import { handleTeamTool } from './handlers/team.js';
 import { handleRoadmapTool } from './handlers/roadmap.js';
 import { handleAdvancedTool } from './handlers/advanced.js';
 import { handleSyndicateTool } from './handlers/syndicate.js';
-import { handleFedbrainTool } from './handlers/fedbrain.js';
+import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
 import type { Instance } from './handlers/brain.js';
 
 // ── Tools (imported from tools.ts) ─────────────────────────────────────────
@@ -565,19 +587,53 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       sendFunnelEvent('learn_from_attempts', telemetryExtra);
     } else if (name === 'session_start') {
       sendFunnelEvent('session_start', telemetryExtra);
-      // When brain has lessons, session_start acts as an implicit recall.
-      // Firing recall_best_solution here increments BrainRecallCount so the
-      // dashboard nudge + first-recall email trigger correctly.
       const resultText = typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult
         ? JSON.stringify(brainResult)
         : String(brainResult ?? '');
-      if (!resultText.includes('Welcome! Your AI Brain is live.') && resultText.length > 100) {
+      const isFirstSession = resultText.includes('Welcome! Your AI Brain is live.');
+
+      if (!isFirstSession && resultText.length > 100) {
+        // Existing brain — session_start acts as implicit recall → increment counter.
         sendFunnelEvent('recall_best_solution', telemetryExtra);
+      } else if (isFirstSession && args.workspace_path) {
+        // First session with a known workspace: auto-bootstrap from git history.
+        // Runs synchronously so the user sees the result in the same response.
+        try {
+          const gitBootstrap = await handleFedbrainTool('brain_from_git', {
+            instance_id: instanceId,
+            repo_path: args.workspace_path as string,
+            limit: 50,
+          }, getConnection, apiFetch);
+          if (gitBootstrap !== null) {
+            const gitCounts = _lastBrainFromGitCounts;
+            sendFunnelEvent('brain_from_git', { ...telemetryExtra, ...(gitCounts ?? {}) });
+            sendFunnelEvent('recall_best_solution', telemetryExtra);
+            // Append bootstrap summary to the session_start briefing.
+            const bootstrapText = typeof gitBootstrap === 'object' && gitBootstrap !== null && 'content' in gitBootstrap
+              ? (gitBootstrap as { content: { text?: string }[] }).content.map((c) => c.text ?? '').join('\n')
+              : String(gitBootstrap);
+            if (typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult) {
+              (brainResult as { content: { type: string; text: string }[] }).content.push({
+                type: 'text',
+                text: '\n---\n' + bootstrapText,
+              });
+            }
+          }
+        } catch { /* git bootstrap errors must never break session_start */ }
       }
     } else if (name === 'session_end') {
       sendFunnelEvent('session_end', telemetryExtra);
     } else if (name === 'smart_recall') {
       sendFunnelEvent('smart_recall', telemetryExtra);
+      // smart_recall is the primary recall tool in CLAUDE.md — it retrieves brain lessons
+      // just like recall_best_solution. Count it toward BrainRecallCount so the dashboard
+      // nudge clears and the first-recall email fires for users following CLAUDE.md.
+      const srText = typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult
+        ? JSON.stringify(brainResult)
+        : String(brainResult ?? '');
+      if (srText.length > 50 && !srText.includes('No lessons found') && !srText.includes('no lessons')) {
+        sendFunnelEvent('recall_best_solution', telemetryExtra);
+      }
     }
     return brainResult;
   }
@@ -610,10 +666,33 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   if (advancedResult !== null) return advancedResult;
 
   const syndicateResult = await handleSyndicateTool(name, args, getConnection, apiFetch);
-  if (syndicateResult !== null) return syndicateResult;
+  if (syndicateResult !== null) {
+    // brain_predict is in syndicate handler — track telemetry here.
+    if (name === 'brain_predict') {
+      const instanceId = (args.instance_id as string | undefined) ?? _defaultInstanceId ?? '';
+      const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
+      sendFunnelEvent('brain_predict', telemetryExtra);
+    }
+    return syndicateResult;
+  }
 
   const fedbrainResult = await handleFedbrainTool(name, args, getConnection, apiFetch);
-  if (fedbrainResult !== null) return fedbrainResult;
+  if (fedbrainResult !== null) {
+    // brain_from_git and brain_predict_failures are in fedbrain handler.
+    const instanceId = (args.instance_id as string | undefined) ?? _defaultInstanceId ?? '';
+    const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
+    if (name === 'brain_from_git') {
+      const gitCounts = _lastBrainFromGitCounts;
+      sendFunnelEvent('brain_from_git', { ...telemetryExtra, ...(gitCounts ?? {}) });
+    } else if (name === 'brain_predict_failures') {
+      sendFunnelEvent('brain_predict_failures', telemetryExtra);
+    }
+    return fedbrainResult;
+  }
+
+  // Delegate Travel Chaos Organizer tools (requires TCO_API_URL env var)
+  const tcoResult = await handleTcoTool(name, args, JWT ?? '');
+  if (tcoResult !== null) return tcoResult;
 
   switch (name) {
     // ── Instance management ──────────────────────────────────────────────
@@ -753,7 +832,7 @@ async function autoStartSession(instanceId: string): Promise<void> {
     _autoSessionStarted = true;
     _autoSessionInstanceId = instanceId;
     try {
-      await handleTool('session_start', { instance_id: instanceId, focus: 'auto (MCP session)' });
+      await handleTool('session_start', { instance_id: instanceId, focus: 'auto (MCP session)', workspace_path: process.cwd() });
     } catch { /* non-fatal — session tracking is a best-effort feature */ } finally {
       _autoSessionStarting = null;
     }
@@ -822,7 +901,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     return { content: [{ type: 'text', text }] };
   } catch (err) {
     if (err instanceof McpError) throw err;
-    throw new McpError(ErrorCode.InternalError, (err as Error).message);
+    const msg = (err as Error).message ?? String(err);
+    notify('cachly', 'tool_error', { tool: name, error: msg }).catch(() => undefined);
+    throw new McpError(ErrorCode.InternalError, msg);
   }
 });
 
@@ -961,15 +1042,23 @@ function buildClaudeMdBlock(instanceId: string): string {
 
 The Brain MCP server runs automatically. Instance: \`${instanceId}\`
 
-Sessions start and end automatically — never call \`session_start\` or \`session_end\`.
-
 ---
+
+### AT THE START of every new conversation (mandatory — first thing, before anything else):
+\`\`\`
+session_start(instance_id="${instanceId}", workspace_path="<absolute path to this project>", focus="<first topic the user mentioned>")
+\`\`\`
+Show the full briefing output to the user. If the response says the brain is empty or has 0 lessons, immediately seed it:
+\`\`\`
+brain_from_git(instance_id="${instanceId}", repo_path="<workspace_path>", limit=100)
+\`\`\`
+Then tell the user: "Your brain just learned from your git history. You're now pre-briefed."
 
 ### BEFORE every task (mandatory — no exceptions):
 \`\`\`
 smart_recall(instance_id="${instanceId}", query="<what you are about to do>")
 \`\`\`
-Report any relevant lessons found to the user before proceeding.
+If relevant lessons are found, say: "Your brain knows this pattern — [lesson]." Then proceed.
 
 ### BEFORE editing any file (mandatory):
 \`\`\`
@@ -982,6 +1071,11 @@ When done: update content to \`"DONE: <file> — <summary>"\`.
 learn_from_attempts(instance_id="${instanceId}", topic="<category:keyword>", outcome="success"|"failure",
   what_worked="...", what_failed="...", severity="critical"|"major"|"minor",
   file_paths=["..."], commands=["..."], tags=["..."])
+\`\`\`
+
+### AT THE END of every conversation (mandatory):
+\`\`\`
+session_end(instance_id="${instanceId}", summary="<one sentence: what was done>", files_changed=["..."])
 \`\`\`
 
 ### WHEN debugging any error (mandatory before grepping/reading files):
@@ -1094,16 +1188,38 @@ if (process.argv[2] === 'digest') {
       }
     }
 
-    console.log('├─────────────────────────────────────────────────────────────┤');
-    console.log('│  \x1b[32m📋 Share this digest:\x1b[0m                                        │');
-    console.log('│  \x1b[90m   npx @cachly-dev/mcp-server@latest share\x1b[0m                   │');
-    console.log('│  \x1b[90m   Add more: npx @cachly-dev/mcp-server@latest invite\x1b[0m         │');
     console.log('└─────────────────────────────────────────────────────────────┘');
     console.log('');
 
-    // Pro tip for cron
-    console.log('  \x1b[2m💡 Automate: add to crontab for a weekly team email\x1b[0m');
-    console.log('  \x1b[2m   0 9 * * 1 npx @cachly-dev/mcp-server@latest digest\x1b[0m');
+    // ── Shareable tweet card ────────────────────────────────────────────────
+    const topLesson = topLessons[0];
+    const tweetLines = [
+      `🧠 My AI Brain weekly digest (${fmt(weekStart)} – ${fmt(now)}):`,
+      ``,
+      `  📚 ${lessons} lessons learned`,
+      `  🔁 ${recalls} recalls · ~${Math.round(tokensSaved / 1000)}K tokens saved`,
+      `  🎯 Brain Level: ${level}`,
+      topLesson ? `  🔥 Top lesson: "${topLesson.topic}: ${topLesson.what_worked.slice(0, 60)}${topLesson.what_worked.length > 60 ? '…' : ''}"` : '',
+      ``,
+      `Built with @cachly_dev — AI that actually remembers 🚀`,
+      `cachly.dev`,
+    ].filter(Boolean).join('\n');
+
+    const tweetUrl = 'https://twitter.com/intent/tweet?text=' + encodeURIComponent(tweetLines);
+
+    console.log('\x1b[1m📣 Share your digest:\x1b[0m');
+    console.log('');
+    console.log('\x1b[90m' + '─'.repeat(63) + '\x1b[0m');
+    for (const line of tweetLines.split('\n')) {
+      console.log(`  ${line}`);
+    }
+    console.log('\x1b[90m' + '─'.repeat(63) + '\x1b[0m');
+    console.log('');
+    console.log('  \x1b[36m🐦 Tweet this:\x1b[0m');
+    console.log(`  \x1b[4m${tweetUrl.slice(0, 90)}...\x1b[0m`);
+    console.log('');
+    console.log('  \x1b[2m💡 Invite your team: npx @cachly-dev/mcp-server@latest invite\x1b[0m');
+    console.log('  \x1b[2m   Cron: 0 9 * * 1 npx @cachly-dev/mcp-server@latest digest\x1b[0m');
     console.log('');
   } catch (e) {
     console.log(`\n❌ Could not fetch digest: ${(e as Error).message}\n`);
@@ -1117,7 +1233,7 @@ if (process.argv[2] === 'digest') {
 // Invites a teammate to share your Brain. Fastest referral loop.
 
 if (process.argv[2] === 'invite') {
-  const { createInterface } = await import('node:readline');
+  // ── invite: fetch the user's unique referral link and show shareable messages ──
   const apiKey = process.env.CACHLY_JWT ?? '';
 
   if (!apiKey) {
@@ -1126,43 +1242,44 @@ if (process.argv[2] === 'invite') {
     process.exit(1);
   }
 
-  let email = process.argv[3] ?? '';
-
-  if (!email) {
-    const rl = createInterface({ input: process.stdin, output: process.stdout });
-    email = await new Promise<string>((resolve) => {
-      rl.question('\n  📬 Teammate email to invite: ', (ans) => { rl.close(); resolve(ans.trim()); });
-    });
-  }
-
-  if (!email || !email.includes('@')) {
-    console.log('\n❌ Invalid email address.\n');
-    process.exit(1);
-  }
-
-  console.log(`\n  ⏳ Inviting ${email}...`);
-
   try {
-    const res = await fetch(`${API_URL}/api/v1/team/invite`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, role: 'member', source: 'cli-invite' }),
+    const res = await fetch(`${API_URL}/api/v1/referral/me`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8000),
     });
 
-    if (res.ok) {
-      console.log(`\n  ✅ Invite sent to \x1b[32m${email}\x1b[0m`);
-      console.log(`     They'll get a link to join your Brain — one click, 1–5 minutes.\n`);
-      console.log(`  💡 Once they join, your AI assistants share lessons automatically.\n`);
-    } else if (res.status === 409) {
-      console.log(`\n  ✓  ${email} is already a team member.\n`);
-    } else {
-      const body = await res.json().catch(() => ({})) as { error?: string };
-      console.log(`\n  ❌ Invite failed: ${body.error ?? `HTTP ${res.status}`}\n`);
-      process.exit(1);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json() as { code?: string; url?: string; referral_count?: number };
+    const referralUrl = data.url ?? `https://cachly.dev/r/${data.code}`;
+    const count = data.referral_count ?? 0;
+
+    const slackMsg = `Hey, I've been using cachly to give my AI persistent memory across sessions — no more re-explaining my stack every morning.\n\nYou get a free Brain: ${referralUrl}`;
+    const tweetText = encodeURIComponent(`I gave my AI persistent memory. It remembers fixes, patterns, and context across every session — no more re-explaining.\n\nTry it free: ${referralUrl}\n\n@cachlydev`);
+
+    console.log('');
+    console.log('┌─────────────────────────────────────────────────────────────┐');
+    console.log('│  🧠 Your cachly Brain invite link                            │');
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log(`│  ${referralUrl.padEnd(61)}│`);
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    if (count > 0) {
+      console.log(`│  \x1b[32m✓  ${count} developer${count === 1 ? '' : 's'} joined via your link so far\x1b[0m`.padEnd(72) + '│');
+      console.log('├─────────────────────────────────────────────────────────────┤');
     }
+    console.log('│  \x1b[33mSlack / DM message:\x1b[0m                                         │');
+    console.log('│                                                              │');
+    for (const line of slackMsg.split('\n')) {
+      console.log(`│  \x1b[90m${line.slice(0, 58).padEnd(58)}\x1b[0m  │`);
+    }
+    console.log('│                                                              │');
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log(`│  \x1b[36m𝕏 Tweet:\x1b[0m https://twitter.com/intent/tweet?text=${tweetText.slice(0, 10)}...  │`);
+    console.log('└─────────────────────────────────────────────────────────────┘');
+    console.log('');
+    console.log('\x1b[2m  Each developer who signs up via your link earns you 1 month Pro.\x1b[0m');
+    console.log('');
   } catch (e) {
-    console.log(`\n  ❌ Network error: ${(e as Error).message}\n`);
+    console.log(`\n❌ Could not fetch invite link: ${(e as Error).message}\n`);
     process.exit(1);
   }
   process.exit(0);
@@ -1513,8 +1630,21 @@ if (process.argv[2] === 'demo') {
   console.log('│  \x1b[32m   No more re-explaining. No more repeated mistakes.\x1b[0m         │');
   console.log('└─────────────────────────────────────────────────────────────┘');
   console.log('');
+  // Generate shareable preview URL with encoded stats
+  const previewParams = new URLSearchParams({
+    repo: projectName,
+    commits: String(commits.length),
+    lessons: String(totalLessons),
+    level: brainLevelName,
+    authors: String(authors.size),
+    hours: String(hoursWasted),
+  });
+  const previewURL = `https://cachly.dev/preview?${previewParams.toString()}`;
+
   console.log('  \x1b[1mMake this permanent (free, 1–5 minutes):\x1b[0m');
   console.log('  \x1b[32m$ npx @cachly-dev/mcp-server@latest setup\x1b[0m');
+  console.log('');
+  console.log(`  \x1b[90m🔗 Shareable preview:\x1b[0m \x1b[36m${previewURL}\x1b[0m`);
   console.log('');
   console.log('  Works with: Claude Code · Cursor · Windsurf · Copilot · Cline · Zed');
   console.log('  Free forever · GDPR · German servers · No credit card');
@@ -1748,6 +1878,90 @@ if (process.argv[2] === 'init') {
 // Usage: npx @cachly-dev/mcp-server@latest health
 // Checks: JWT valid, Brain API reachable, editor configs found, git hook present.
 
+// ── CLI: cachly status ────────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest status
+// Shows Brain health, team size, and quick stats at a glance.
+
+if (process.argv[2] === 'status') {
+  const apiKey = process.env.CACHLY_JWT ?? '';
+  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+
+  if (!apiKey || !instanceId) {
+    console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest setup\n');
+    process.exit(1);
+  }
+
+  try {
+    const [statsRes, referralRes] = await Promise.all([
+      fetch(`${API_URL}/api/v1/instances/${instanceId}/brain/stats`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(8000),
+      }),
+      fetch(`${API_URL}/api/v1/referral/me`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(8000),
+      }),
+    ]);
+
+    if (!statsRes.ok) throw new Error(`stats HTTP ${statsRes.status}`);
+    const stats = await statsRes.json() as {
+      lesson_count?: number; total_recall_count?: number;
+      quality_score?: number; team_authors?: string[];
+    };
+    const referral = referralRes.ok
+      ? await referralRes.json() as { url?: string; referral_count?: number }
+      : null;
+
+    const lessons = stats.lesson_count ?? 0;
+    const recalls = stats.total_recall_count ?? 0;
+    const score   = Math.round((stats.quality_score ?? 0) * 100);
+    const team    = stats.team_authors ?? [];
+    const refCount = referral?.referral_count ?? 0;
+    const refUrl   = referral?.url ?? '';
+
+    const level = lessons === 0 ? 'Intern 🌱' :
+      lessons < 10  ? 'Junior Dev 🔧' :
+      lessons < 30  ? 'Mid Dev ⚡' :
+      lessons < 60  ? 'Senior Dev 🧠' :
+      lessons < 100 ? 'Staff Eng 🚀' : 'Principal Eng 🏆';
+
+    const statusIcon = lessons > 0 ? '\x1b[32m●\x1b[0m' : '\x1b[33m●\x1b[0m';
+
+    console.log('');
+    console.log('┌─────────────────────────────────────────────────────────────┐');
+    console.log(`│  ${statusIcon} \x1b[1mBrain status\x1b[0m · instance ${instanceId.slice(0, 8)}...              │`);
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log(`│  Lessons       : \x1b[33m${String(lessons).padEnd(8)}\x1b[0m  Level        : \x1b[32m${level.padEnd(18)}\x1b[0m│`);
+    console.log(`│  Recalls       : \x1b[36m${String(recalls).padEnd(8)}\x1b[0m  Quality score: \x1b[32m${String(score).padEnd(3)}%\x1b[0m              │`);
+
+    if (team.length > 0) {
+      console.log('├─────────────────────────────────────────────────────────────┤');
+      const teamStr = team.slice(0, 4).join(', ');
+      console.log(`│  \x1b[36m👥 Team Brain\x1b[0m · ${String(team.length).padEnd(2)} developer${team.length === 1 ? ' ' : 's'} sharing lessons${' '.repeat(Math.max(0, 19 - teamStr.length))} │`);
+      console.log(`│     ${teamStr.slice(0, 56).padEnd(56)} │`);
+    }
+
+    if (refUrl) {
+      console.log('├─────────────────────────────────────────────────────────────┤');
+      const refLine = `${refUrl.slice(0, 44)}${refUrl.length > 44 ? '…' : ''}`;
+      console.log(`│  \x1b[35m🔗 Invite link\x1b[0m · ${refCount > 0 ? `\x1b[32m${refCount} joined\x1b[0m` : 'share to grow your team'}${' '.repeat(Math.max(0, 35 - String(refCount).length))} │`);
+      console.log(`│     \x1b[2m${refLine.padEnd(56)}\x1b[0m │`);
+    }
+
+    console.log('└─────────────────────────────────────────────────────────────┘');
+    console.log('');
+    if (lessons === 0) {
+      console.log('  \x1b[33m💡 No lessons yet.\x1b[0m Run a session with cachly connected to start learning.');
+      console.log('');
+    }
+  } catch (e) {
+    console.log(`\n❌ Could not fetch status: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 if (process.argv[2] === 'health') {
   const { existsSync } = await import('node:fs');
   const { readFile } = await import('node:fs/promises');
@@ -1965,6 +2179,7 @@ if (process.argv[2] === 'setup') {
     const CLIENT_ID = 'cachly-cli';
 
     console.log('Step 1: Sign in to cachly (free, no credit card)\n');
+    sendFunnelEvent('setup_auth_started');
 
     // Start device flow
     let deviceCode = '', userCode = '', verifyUri = '', pollInterval = 5000;
@@ -1988,6 +2203,7 @@ if (process.argv[2] === 'setup') {
       console.error('Falling back: sign in at https://cachly.dev/setup-ai and paste your API token.\n');
       token = await ask('   Paste API token (cky_live_...): ');
       if (!token) { console.error('\nToken is required. Aborting.\n'); rl.close(); process.exit(1); }
+      sendFunnelEvent('setup_auth_completed');
       console.log('');
       deviceCode = ''; // mark as fallback so we skip polling
     }
@@ -2021,6 +2237,7 @@ if (process.argv[2] === 'setup') {
           if (tokenData.access_token) {
             token = tokenData.access_token;
             console.log(' \x1b[32m✓ Authorized!\x1b[0m\n');
+            sendFunnelEvent('setup_auth_completed');
             break;
           }
           // authorization_pending = keep polling; slow_down = increase interval
@@ -2137,6 +2354,7 @@ if (process.argv[2] === 'setup') {
     console.log(`   (Run with --instance-id <id> to use a different one)\n`);
   }
   console.log(`✓  Instance: ${instance.name} (${instance.id.slice(0, 8)}…)\n`);
+  sendFunnelEvent('setup_instance_ready', { instance_id: instance.id });
 
   // ── Step 3: Detect editors ────────────────────────────────────────────────
   const cwd = process.cwd();
@@ -2225,8 +2443,8 @@ if (process.argv[2] === 'setup') {
       JWT = token; // set global JWT so handleTool can authenticate
       const gitResult = await handleTool('brain_from_git', {
         instance_id: instance.id,
-        dir: cwd,
-        max_commits: 100,
+        repo_path: cwd,
+        limit: 100,
       });
       const match = gitResult.match(/(\d+) lesson/);
       console.log(` ✓  ${match ? match[1] + ' lessons' : 'done'} extracted from git history`);
@@ -2358,7 +2576,13 @@ if (process.argv[2] === 'setup') {
     }
   } catch { /* non-critical */ }
 
+  // Setup reached the end successfully — close the funnel.
+  JWT = token;
+  sendFunnelEvent('setup_completed', { instance_id: instance.id });
+
   rl.close();
+  // Give the fire-and-forget telemetry a moment to flush before exit.
+  await new Promise(r => setTimeout(r, 300));
   process.exit(0);
 }
 
@@ -2404,6 +2628,49 @@ if (process.argv[2] === 'index') {
   process.exit(0);
 }
 
+// ── CLI: cachly learn-git ─────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest learn-git [./repo] [--max-commits 50]
+// Auto-learns brain lessons from recent git commits — ideal for CI on PR merge.
+// Each meaningful commit becomes a lesson, so the Brain grows with zero manual work.
+
+if (process.argv[2] === 'learn-git') {
+  const { resolve } = await import('node:path');
+  const argv = process.argv.slice(3);
+  const flag = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
+
+  const repoDir    = resolve(flag('dir') ?? argv.find(a => !a.startsWith('--')) ?? '.');
+  const instanceId = flag('instance-id') ?? process.env.CACHLY_BRAIN_INSTANCE_ID;
+  const maxCommits = parseInt(flag('max-commits') ?? '50', 10);
+
+  if (!instanceId || !JWT) {
+    console.error('\n❌  CACHLY_BRAIN_INSTANCE_ID and CACHLY_JWT must be set\n');
+    console.error('   export CACHLY_BRAIN_INSTANCE_ID=<uuid>');
+    console.error('   export CACHLY_JWT=<cky_live_...>');
+    console.error('   npx @cachly-dev/mcp-server@latest learn-git .\n');
+    process.exit(1);
+  }
+
+  console.log(`\n🧠  Learning from git history: ${repoDir}`);
+  console.log(`    Instance: ${instanceId.slice(0, 8)}…  Max commits: ${maxCommits}\n`);
+
+  try {
+    const result = await handleTool('brain_from_git', {
+      instance_id: instanceId,
+      repo_path: repoDir,
+      limit: maxCommits,
+    });
+    console.log(result);
+    sendFunnelEvent('brain_from_git', { api_key: JWT, instance_id: instanceId });
+    console.log('\n✅  Brain learned from your commits.\n');
+    // Let fire-and-forget telemetry flush before exit.
+    await new Promise(r => setTimeout(r, 300));
+  } catch (err) {
+    console.error(`\n❌  learn-git failed: ${(err as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 // Warn on stderr when credentials are missing so the user sees a clear
@@ -2411,7 +2678,9 @@ if (process.argv[2] === 'index') {
 // Skip for CLI commands that intentionally run without credentials.
 const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '') && !(!process.argv[2] && process.stdout.isTTY)) {
-  process.stderr.write(
+  // No args + no JWT in a non-TTY context = running as MCP server without credentials.
+  // Print actionable setup banner to stdout so it's captured by callers/tests.
+  const banner =
     '\n' +
     '╔══════════════════════════════════════════════════════════════════╗\n' +
     '║  🧠  cachly AI Brain — Setup required                           ║\n' +
@@ -2427,8 +2696,15 @@ if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '') && !(!process.ar
     '║                                                                  ║\n' +
     '║  Free tier — no credit card required.                           ║\n' +
     '╚══════════════════════════════════════════════════════════════════╝\n' +
-    '\n',
-  );
+    '\n';
+  // When invoked with no args as the main entry point, write to stdout + exit cleanly.
+  // When used as MCP server (args present), write to stderr so editors see it.
+  if (!process.argv[2] && _isMain) {
+    process.stdout.write(banner);
+    process.exit(0);
+  } else {
+    process.stderr.write(banner);
+  }
 } else {
   // Warn if the JWT is already expired or expiring within the hour.
   const expMs = jwtExpiryMs(JWT);
@@ -2509,4 +2785,6 @@ if (httpPort) {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
+
+notify('cachly', 'startup', { version: CURRENT_VERSION, mode: process.env.MCP_HTTP_PORT ? 'http' : 'stdio' }).catch(() => undefined);
 

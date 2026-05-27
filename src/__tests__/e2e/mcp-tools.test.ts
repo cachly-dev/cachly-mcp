@@ -64,15 +64,14 @@ describe('Redis connectivity', () => {
 
 describe('session_start', () => {
   it('returns a non-empty briefing string', async () => {
-    const result = await handleContextTool(
+    // session_start is handled by handleBrainTool, not handleContextTool
+    const result = await handleBrainTool(
       'session_start',
-      { instance_id: cfg.instanceId, project: 'e2e-test' },
+      { instance_id: cfg.instanceId, focus: 'e2e-test' },
       getConn,
       apiFetch,
     );
-    // handleContextTool returns string | null
     expect(typeof result === 'string' || result === null).toBe(true);
-    // either null (no sessions yet) or a non-empty string
     if (result !== null) expect(result.length).toBeGreaterThan(0);
   });
 });

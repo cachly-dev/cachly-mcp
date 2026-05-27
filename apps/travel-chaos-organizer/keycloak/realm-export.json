@@ -1,0 +1,46 @@
+{
+  "realm": "travel-chaos",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": true,
+  "registrationEmailAsUsername": true,
+  "loginWithEmailAllowed": true,
+  "resetPasswordAllowed": true,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 300,
+  "ssoSessionMaxLifespan": 36000,
+  "refreshTokenMaxReuse": 0,
+  "clients": [
+    {
+      "clientId": "tco-backend",
+      "enabled": true,
+      "clientAuthenticatorType": "client-secret",
+      "bearerOnly": true,
+      "publicClient": false
+    },
+    {
+      "clientId": "tco-mobile",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "exp://*",
+        "tco://*",
+        "http://localhost:*",
+        "https://auth.expo.io/*"
+      ],
+      "webOrigins": ["*"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256"
+      }
+    }
+  ],
+  "roles": {
+    "realm": [
+      { "name": "user" },
+      { "name": "admin" }
+    ]
+  },
+  "defaultRoles": ["user"]
+}

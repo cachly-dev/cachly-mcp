@@ -417,8 +417,27 @@ export async function handleBrainTool(
           ? `📌 **You've looked this up 3 times.** Consider pinning it for instant access: add \`pinned: true\` via \`learn_from_attempts\` to always surface it first.`
           : '';
 
+        // ── Trust signal (today-safe consensus layer) ───────────────────────
+        // A lesson recalled many times — or confirmed by multiple distinct
+        // authors — has proven its value. Surface that as social proof.
+        const lessonAuthors = (lesson as { authors?: string[]; author?: string }).authors
+          ?? ((lesson as { author?: string }).author ? [(lesson as { author?: string }).author!] : []);
+        const distinctAuthors = [...new Set(lessonAuthors.filter(Boolean))];
+        const rc = updatedLesson.recall_count;
+        let trustBadge = '';
+        if (distinctAuthors.length >= 2 && rc >= 5) {
+          trustBadge = `🏆 **Battle-tested** — recalled ${rc}× · verified by ${distinctAuthors.length} developers. Trust this.`;
+        } else if (rc >= 10) {
+          trustBadge = `🏆 **Battle-tested** — recalled ${rc}×. This is one of your most-proven solutions.`;
+        } else if (distinctAuthors.length >= 2) {
+          trustBadge = `✅ **Team-verified** — confirmed by ${distinctAuthors.length} developers.`;
+        } else if (rc >= 5) {
+          trustBadge = `✅ **Proven** — recalled ${rc}× without contradiction.`;
+        }
+
         return [
           rememberWhen,
+          trustBadge,
           `${badge} **Best solution for \`${topic}\`** ${sevEmoji}${lesson.severity ? ` (${lesson.severity})` : ''} · recalled ${updatedLesson.recall_count}×`,
           ``,
           `**What worked:** ${lesson.what_worked}`,
@@ -482,6 +501,22 @@ export async function handleBrainTool(
         query,
         10,
       );
+
+      // Increment recall_count on matched lessons (fire-and-forget — same as recall_best_solution).
+      // This ensures the dashboard metric, Proven Laws, and trust badges reflect real smart_recall usage.
+      const lessonMatches = kwMatches.filter(m => m.key.startsWith('cachly:lesson:best:'));
+      for (const m of lessonMatches.slice(0, 5)) {
+        const existing = await redis.get(m.key).catch(() => null);
+        if (existing) {
+          const lesson = safeJsonParse(existing, null as null | { recall_count?: number; [k: string]: unknown });
+          if (lesson) {
+            const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, verified_at: new Date().toISOString() };
+            redis.set(m.key, JSON.stringify(updated)).catch(() => {});
+            const savedMins = (lesson.severity as string) === 'critical' ? 240 : (lesson.severity as string) === 'major' ? 60 : 30;
+            redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
+          }
+        }
+      }
 
       const lines: string[] = [`🧠 **Smart Recall** for: _"${query}"_\n`];
 
@@ -734,18 +769,67 @@ export async function handleBrainTool(
       const isFirstSession = !lastSession && lessons.length === 0 && ctxCount === 0;
       if (isFirstSession) {
         lines.push('🎉 **Welcome! Your AI Brain is live.**', '');
-        lines.push('It learns from your work automatically. After your first session it will look like this:', '');
-        lines.push('  ✅ `api:auth` — Bearer token in header, not cookie; 401 on missing scope');
-        lines.push('  ✅ `database:migrations` — always run migrations before deploy');
-        lines.push('  ⚠️ `docker:build` — ARG changes bust all subsequent cache layers');
+        if (workspace_path) {
+          lines.push(`🚀 **Auto-bootstrapping from your git history...** (this takes a few seconds)`);
+          lines.push(`   Your brain will learn from your recent commits — no setup needed.`, '');
+        } else {
+          lines.push('It learns from your work automatically. After your first session it will look like this:', '');
+          lines.push('  ✅ `api:auth` — Bearer token in header, not cookie; 401 on missing scope');
+          lines.push('  ✅ `database:migrations` — always run migrations before deploy');
+          lines.push('  ⚠️ `docker:build` — ARG changes bust all subsequent cache layers');
+          lines.push('');
+          lines.push('**Tip:** Pass `workspace_path` to `session_start` to auto-learn from git history instantly.');
+          lines.push('');
+        }
+        lines.push('**Your brain grows automatically:**');
+        lines.push('  • End each session → `session_end(summary="What I did")` — auto-learns from git commits');
+        lines.push('  • After fixing bugs → `learn_from_attempts(topic="...", outcome="success", what_worked="...")`');
         lines.push('');
-        lines.push('**3 steps to grow your brain:**');
-        lines.push('  1. Fix something → `learn_from_attempts(topic="bug:name", outcome="success", what_worked="...")`');
-        lines.push('  2. Save context → `remember_context(key="arch", value="...")`');
-        lines.push('  3. End session → `session_end(summary="What I did")`');
+        lines.push('💡 Run `brain_doctor` for a health-check and personalised tips.');
         lines.push('');
-        lines.push('💡 Run `brain_doctor` for a setup health-check and personalised tips.');
-        lines.push('');
+      }
+
+      // ── Team-virality: first-team-briefing wow moment ────────────────────
+      // When a user joins a team brain (has team lessons from colleagues but
+      // has never been briefed on them), show a dedicated "Welcome to your
+      // team's brain" section. Only fires once per user.
+      if (author && !isFirstSession) {
+        try {
+          const briefingKey = `cachly:team:first_briefing:${author}`;
+          const alreadyBriefed = await redis.get(briefingKey);
+          if (!alreadyBriefed) {
+            type LessonAny = typeof lessons[0] & { author?: string };
+            const teamLessons = (lessons as LessonAny[]).filter(l => l.author && l.author !== author);
+            if (teamLessons.length > 0) {
+              // Mark briefed so this only fires once
+              await redis.set(briefingKey, '1', 'EX', 365 * 86400);
+              const byAuthor = new Map<string, LessonAny[]>();
+              for (const l of teamLessons) {
+                const a = l.author!;
+                if (!byAuthor.has(a)) byAuthor.set(a, []);
+                byAuthor.get(a)!.push(l);
+              }
+              lines.push('');
+              lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              lines.push('🤝 **Your team\'s AI brain has been briefing you.**');
+              lines.push('');
+              lines.push(`Your teammates have already solved problems you\'re about to hit:`);
+              lines.push('');
+              for (const [teamAuthor, tls] of byAuthor) {
+                lines.push(`  👤 **${teamAuthor}** fixed ${tls.length} thing${tls.length > 1 ? 's' : ''}:`);
+                for (const l of tls.slice(0, 2)) {
+                  const emoji = l.outcome === 'success' ? '✅' : '⚠️';
+                  lines.push(`    ${emoji} \`${l.topic}\` — ${l.what_worked.slice(0, 90)}`);
+                }
+                if (tls.length > 2) lines.push(`    … and ${tls.length - 2} more lessons`);
+              }
+              lines.push('');
+              lines.push(`💡 Use \`team_learn\` after your next fix to pay it forward.`);
+              lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+              lines.push('');
+            }
+          }
+        } catch { /* team briefing errors must never break session_start */ }
       }
 
       // Handoff from previous window (if any)
@@ -848,6 +932,31 @@ export async function handleBrainTool(
       // Brain health
       lines.push(`📊 **Brain:** ${lessons.length} lessons · ${ctxCount} context entries`, '');
 
+      // ── 📌 Proven Laws — auto-crystallized lessons (quick win 3) ─────────────
+      // A lesson that has proven itself (recalled ≥ CRYSTALLIZE_RECALLS times) or
+      // was explicitly pinned becomes a "law" — surfaced at the top of every
+      // briefing so the most battle-tested knowledge is never buried. This is
+      // the today-safe version of swarm crystallization: enough confirmations
+      // auto-promote a lesson without any manual step.
+      {
+        type LessonPin = typeof lessons[0] & { pinned?: boolean };
+        const CRYSTALLIZE_RECALLS = 5;
+        const laws = (lessons as LessonPin[])
+          .filter(l => l.outcome === 'success' && (l.pinned === true || (l.recall_count ?? 0) >= CRYSTALLIZE_RECALLS))
+          .sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0))
+          .slice(0, 5);
+        if (laws.length > 0) {
+          lines.push(`📌 **Proven Laws** (auto-crystallized — your most-trusted knowledge):`);
+          for (const l of laws) {
+            const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
+            const rc  = l.recall_count ?? 0;
+            const why = l.pinned === true ? 'pinned' : `recalled ${rc}×`;
+            lines.push(`  🏆${sev} \`${l.topic}\` _(${why})_ — ${l.what_worked.slice(0, 100)}`);
+          }
+          lines.push('');
+        }
+      }
+
       // ── Layer 7: MCM Domain Coverage Map ────────────────────────────────────
       if (lessons.length >= 3) {
         const domainMap = new Map<string, { total: number; success: number; critical: number }>();
@@ -933,16 +1042,42 @@ export async function handleBrainTool(
         lines.push('');
       }
 
-      // Recent lessons
+      // Top lessons — sorted by recall_count desc (most-used = most proven value).
+      // If focus is set, focus-matched lessons already shown above; show remaining here.
       if (lessons.length > 0) {
-        lines.push(`🕐 **Recent lessons:**`);
-        const toShow = focusLessons.length > 0 ? lessons.filter(l => !focusLessons.includes(l)).slice(0, 4) : lessons.slice(0, 5);
-        for (const l of toShow) {
-          const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
-          const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
-          lines.push(`  ${emoji}${sev} \`${l.topic}\` — ${l.what_worked.slice(0, 90)}`);
+        const byRecall = [...lessons].sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0));
+        const topRecalled = byRecall.filter(l => (l.recall_count ?? 0) > 0).slice(0, 3);
+        const remaining   = (focusLessons.length > 0 ? lessons.filter(l => !focusLessons.includes(l)) : lessons)
+          .filter(l => !topRecalled.includes(l))
+          .slice(0, focusLessons.length > 0 ? 3 : 4);
+
+        if (topRecalled.length > 0) {
+          lines.push(`🏆 **Most valuable** (recalled ${topRecalled[0]!.recall_count}× before):`);
+          for (const l of topRecalled) {
+            const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
+            const sev   = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
+            const rc    = l.recall_count ?? 0;
+            const la     = (l as { authors?: string[]; author?: string }).authors
+              ?? ((l as { author?: string }).author ? [(l as { author?: string }).author!] : []);
+            const nAuthors = new Set(la.filter(Boolean)).size;
+            const trust  = (nAuthors >= 2 && rc >= 5) || rc >= 10 ? ' 🏆'
+              : nAuthors >= 2 || rc >= 5 ? ' ✅' : '';
+            const rct   = rc > 1 ? ` _(${rc}× recalled)_` : '';
+            lines.push(`  ${emoji}${sev}${trust} \`${l.topic}\`${rct} — ${l.what_worked.slice(0, 100)}`);
+          }
+          lines.push('');
         }
-        lines.push('');
+
+        if (remaining.length > 0) {
+          const header = topRecalled.length > 0 ? `🕐 **Recent:**` : `🕐 **Recent lessons:**`;
+          lines.push(header);
+          for (const l of remaining) {
+            const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
+            const sev   = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
+            lines.push(`  ${emoji}${sev} \`${l.topic}\` — ${l.what_worked.slice(0, 100)}`);
+          }
+          lines.push('');
+        }
       } else {
         lines.push('📭 No lessons yet. Use `learn_from_attempts` after solving tasks.', '');
       }
@@ -996,27 +1131,63 @@ export async function handleBrainTool(
       }
 
       // ── 🔮 Predictive Pre-Warning — intent-based danger detection ────────────
-      // Fires BEFORE work starts. If focus area has known failure patterns → warn loudly.
-      if (focusTerms.length > 0) {
+      // Fires BEFORE work starts. Uses explicit focus when given; otherwise
+      // derives the likely work area from the last session's changed files +
+      // summary (you usually keep working where you left off). This makes the
+      // warning fire even when the caller forgets to pass `focus`.
+      {
         type LessonAny = typeof lessons[0] & { author?: string; tags?: string[] };
-        const dangerLessons = (lessons as LessonAny[]).filter(l => {
-          if (l.outcome === 'success') return false;
-          const topicCategory = l.topic.split(':')[0];
-          return focusTerms.some(term =>
-            l.topic.toLowerCase().includes(term) ||
-            topicCategory === term ||
-            (l.tags ?? []).some((t: string) => t.toLowerCase() === term),
-          );
-        });
-        if (dangerLessons.length >= 1) {
-          // Insert warning block right after the title line (index 1 = blank line after title)
-          const warning = [
-            `🚨 **PRE-WARNING** — Read this BEFORE starting:`,
-            `  Known pitfalls for **"${focus}"** (${dangerLessons.length} past failure${dangerLessons.length > 1 ? 's' : ''}):`,
-            ...dangerLessons.slice(0, 3).map(l => `  ❌ \`${l.topic}\` — ${(l.what_failed ?? l.what_worked).slice(0, 80)}`),
-            '',
-          ];
-          lines.splice(2, 0, ...warning); // after '🧠 **Session Briefing**' + empty line
+
+        // Common path noise / extensions to drop when deriving terms from files.
+        const PATH_NOISE = new Set([
+          'src', 'lib', 'test', 'tests', 'dist', 'index', 'main', 'app',
+          'internal', 'pkg', 'cmd', 'node_modules', 'components', 'utils',
+          'ts', 'tsx', 'js', 'jsx', 'go', 'py', 'rs', 'java', 'json', 'yaml', 'yml',
+        ]);
+        const deriveTermsFromFiles = (files: string[]): string[] => {
+          const terms = new Set<string>();
+          for (const f of files) {
+            for (const seg of f.toLowerCase().split(/[/\\._-]/)) {
+              if (seg.length > 3 && !PATH_NOISE.has(seg)) terms.add(seg);
+            }
+          }
+          return [...terms];
+        };
+
+        let warnTerms = focusTerms;
+        let warnLabel = focus;
+        let derived = false;
+        if (warnTerms.length === 0 && lastSession) {
+          const fromFiles = deriveTermsFromFiles(lastSession.files_changed ?? []);
+          const fromSummary = (lastSession.summary ?? '').toLowerCase()
+            .replace(/[^a-z0-9\s:_-]/g, ' ').split(/\s+/).filter(t => t.length > 3 && !PATH_NOISE.has(t));
+          warnTerms = [...new Set([...fromFiles, ...fromSummary])];
+          warnLabel = 'where you left off last session';
+          derived = true;
+        }
+
+        if (warnTerms.length > 0) {
+          const dangerLessons = (lessons as LessonAny[]).filter(l => {
+            if (l.outcome === 'success') return false;
+            const topicCategory = l.topic.split(':')[0];
+            return warnTerms.some(term =>
+              l.topic.toLowerCase().includes(term) ||
+              topicCategory === term ||
+              (l.tags ?? []).some((t: string) => t.toLowerCase() === term),
+            );
+          });
+          if (dangerLessons.length >= 1) {
+            const headline = derived
+              ? `  You're likely to continue **${warnLabel}** — ${dangerLessons.length} known pitfall${dangerLessons.length > 1 ? 's' : ''} there:`
+              : `  Known pitfalls for **"${warnLabel}"** (${dangerLessons.length} past failure${dangerLessons.length > 1 ? 's' : ''}):`;
+            const warning = [
+              `🚨 **PRE-WARNING** — Read this BEFORE starting:`,
+              headline,
+              ...dangerLessons.slice(0, 3).map(l => `  ❌ \`${l.topic}\` — ${(l.what_failed ?? l.what_worked).slice(0, 80)}`),
+              '',
+            ];
+            lines.splice(2, 0, ...warning); // after '🧠 **Session Briefing**' + empty line
+          }
         }
       }
 
@@ -1419,6 +1590,33 @@ export async function handleBrainTool(
       }
 
       const durationStr = durationMin !== undefined ? ` · ${durationMin} min` : '';
+      const totalAutoLearned = autoLearned.length + ambientLearned.length;
+
+      // ── Shareable Session Summary Card ────────────────────────────────────────
+      // Generated after each session so the user can share their progress.
+      const tweetLines: string[] = [];
+      if (durationMin !== undefined && durationMin > 0) tweetLines.push(`⏱ ${durationMin} min session`);
+      if (totalAutoLearned > 0) tweetLines.push(`🧠 ${totalAutoLearned} lessons saved to Brain`);
+      if (files_changed.length > 0) tweetLines.push(`📁 ${files_changed.length} file${files_changed.length > 1 ? 's' : ''} changed`);
+      const tweetBody = tweetLines.length > 0
+        ? `${tweetLines.join(' · ')}\n\nMy AI Brain remembers this so I never repeat it. @cachlydev\ncachly.dev`
+        : `Session saved to my AI Brain. No more re-explaining this tomorrow. @cachlydev\ncachly.dev`;
+      const tweetURL = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetBody)}`;
+
+      const sessionCard = [
+        ``,
+        `┌─────────────────────────────────────────────┐`,
+        `│  🧠 Session Summary Card                    │`,
+        `│  Share your progress — cached forever       │`,
+        `├─────────────────────────────────────────────┤`,
+        durationMin !== undefined ? `│  ⏱  Duration   : ${String(durationMin + ' min').padEnd(26)}│` : '',
+        totalAutoLearned > 0     ? `│  📚 Learned    : ${String(totalAutoLearned + ' lessons').padEnd(26)}│` : '',
+        files_changed.length > 0 ? `│  📁 Changed    : ${String(files_changed.length + ' file' + (files_changed.length > 1 ? 's' : '')).padEnd(26)}│` : '',
+        `├─────────────────────────────────────────────┤`,
+        `│  📣 Share: ${tweetURL.slice(0, 34).padEnd(34)}│`,
+        `└─────────────────────────────────────────────┘`,
+      ].filter(l => l !== '').join('\n');
+
       return [
         `✅ **Session saved**${durationStr}`,
         ``,
@@ -1427,6 +1625,7 @@ export async function handleBrainTool(
         lessons_learned !== undefined ? `🧠 **Lessons stored:** ${lessons_learned}` : '',
         autoLearned.length > 0 ? `🤖 **Auto-learned:** ${autoLearned.length} lessons extracted from summary (${autoLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${autoLearned.length > 3 ? '…' : ''})` : '',
         ambientLearned.length > 0 ? `🌿 **Ambient git learning:** ${ambientLearned.length} commit${ambientLearned.length > 1 ? 's' : ''} auto-learned (${ambientLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${ambientLearned.length > 3 ? '…' : ''})` : '',
+        sessionCard,
         ``,
         `💡 Next session: \`session_start(focus="...")\` to see this summary.`,
       ].filter(l => l !== '').join('\n');

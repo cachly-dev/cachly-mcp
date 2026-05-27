@@ -28,6 +28,15 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
+# ── Load .env.test if present (convenience for local dev) ─────────────────────
+if [[ -f "$ROOT/.env.test" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$ROOT/.env.test"
+  set +a
+  echo -e "\033[90m[e2e] Loaded $ROOT/.env.test\033[0m"
+fi
+
 # ── Defaults ──────────────────────────────────────────────────────────────────
 export E2E_API_URL="${E2E_API_URL:-https://api.cachly.dev}"
 export E2E_REDIS_PORT="${E2E_REDIS_PORT:-6380}"

@@ -1,7 +1,7 @@
 # 🧠 cachly AI Brain — MCP Server
 
-> **You're a senior developer. Your AI should act like one.**  
-> Stop re-teaching your AI every morning. cachly gives it a permanent brain — pre-briefed every session, learns from every commit, never makes the same mistake twice.
+> **Your AI forgets everything between sessions. cachly fixes that.**  
+> Stop re-teaching your stack every morning. cachly gives your AI a permanent brain — pre-briefed every session, learns from every commit, never makes the same mistake twice. Works whether you write 10 lines or 10,000.
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@cachly-dev/mcp-server">
@@ -20,7 +20,7 @@
     <img src="https://img.shields.io/badge/GDPR-EU%20servers-green" alt="GDPR: EU servers" />
   </a>
   &nbsp;
-  <img src="https://img.shields.io/badge/89%20MCP%20tools-violet" alt="89 MCP tools" />
+  <img src="https://img.shields.io/badge/80%20MCP%20tools-violet" alt="80 MCP tools" />
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
   &nbsp;
@@ -37,33 +37,33 @@
 npx @cachly-dev/mcp-server@latest demo
 ```
 
-Run this in any project directory. It reads your git history and shows exactly what your AI would know:
+Run it in any project folder. It scans your git history and shows a preview of what your AI would know — YOUR bugs fixed, YOUR patterns, YOUR past decisions. No account needed.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  🧠 Brain Preview — What your AI would know                 │
+│  Brain Preview — What your AI would know                    │
 ├─────────────────────────────────────────────────────────────┤
-│  Commits analysed : 847     Date range: 2024-01-12 → 2026-05-14  │
-│  Lessons extracted: 634     Contributors: 7                  │
+│  Commits: 847   Lessons: 634   Contributors: 7              │
+│  Date range: 2024-01-12 → 2026-05-14                        │
 ├─────────────────────────────────────────────────────────────┤
-│  Category breakdown:                                         │
-│  🔧 fix        ████████████████████ 312                     │
-│  ✨ feat        ███████████████     189                     │
-│  🔒 security    ██                   18                     │
-│  🚀 deploy      ██                   15                     │
+│  Category breakdown:                                        │
+│  fix        ████████████████████  312                       │
+│  feat       ███████████████       189                       │
+│  security   ██                     18                       │
+│  deploy     ██                     15                       │
 ├─────────────────────────────────────────────────────────────┤
-│  🔒 Security fixes your AI would know:                      │
-│  • fix(auth): JWT expiry check before signature validation   │
-│  • security: sanitize webhook payload before JSON.parse      │
+│  Security fixes your AI would know:                         │
+│  • fix(auth): JWT expiry check before signature validation  │
+│  • security: sanitize webhook payload before JSON.parse     │
 ├─────────────────────────────────────────────────────────────┤
-│  🔧 Bug fixes your AI would remember:                       │
-│  • fix: Redis pub/sub race condition under high concurrency  │
-│  • fix: k8s readinessProbe threshold too low for cold start  │
-│  • fix: Stripe idempotency_key missing on retry path         │
-│  • fix: tRPC context not forwarded to background jobs        │
+│  Bug fixes your AI would remember:                          │
+│  • fix: Redis pub/sub race condition under high concurrency │
+│  • fix: k8s readinessProbe threshold too low for cold start │
+│  • fix: Stripe idempotency_key missing on retry path        │
+│  • fix: tRPC context not forwarded to background jobs       │
 ├─────────────────────────────────────────────────────────────┤
-│  💡 With cachly, your AI arrives pre-briefed every session. │
-│     No more re-explaining. No more repeated mistakes.        │
+│  With cachly, your AI arrives pre-briefed every session.    │
+│  No more re-explaining. No more repeated mistakes.          │
 └─────────────────────────────────────────────────────────────┘
 
   Make this permanent (free, 1–5 minutes):
@@ -72,6 +72,24 @@ Run this in any project directory. It reads your git history and shows exactly w
   Works with: Claude Code · Cursor · Windsurf · Copilot · Cline · Zed
   Free forever · GDPR · German servers · No credit card
 ```
+
+---
+
+## Already in Claude / Cursor / Copilot? Just paste this
+
+Skip the setup guide — copy the prompt below and paste it directly into your AI. It will run the command and configure everything automatically:
+
+```
+Set up cachly for this project. Run this in the terminal:
+  npx @cachly-dev/mcp-server@latest setup
+
+It gives you persistent memory across sessions — your AI recalls past
+decisions, avoids repeated bugs, and arrives briefed every time you
+open it. Follow the browser login (one click, no credit card), then
+restart your editor. Free forever.
+```
+
+Your AI will execute the command, detect your editors, write the config, and brief itself on your project.
 
 ---
 
@@ -132,14 +150,20 @@ Run it once. It handles everything:
 ## CLI Commands
 
 ```bash
-npx @cachly-dev/mcp-server@latest demo     # Preview your Brain (no account needed)
-npx @cachly-dev/mcp-server@latest setup    # Wire up all your AI editors (1–5 minutes)
-npx @cachly-dev/mcp-server@latest health   # Check token, API, editors, git hook
-npx @cachly-dev/mcp-server@latest digest   # Weekly Brain summary — shareable
-npx @cachly-dev/mcp-server@latest share    # Generate a shareable stats card + tweet
-npx @cachly-dev/mcp-server@latest badge    # Get a live README badge for your Brain
-npx @cachly-dev/mcp-server@latest invite   # Invite a teammate to share your Brain
+npx @cachly-dev/mcp-server@latest demo      # Preview your Brain (no account needed)
+npx @cachly-dev/mcp-server@latest setup     # Wire up all your AI editors (1–5 minutes)
+npx @cachly-dev/mcp-server@latest health    # Check token, API, editors, git hook
+npx @cachly-dev/mcp-server@latest digest    # Weekly Brain summary — shareable
+npx @cachly-dev/mcp-server@latest share     # Generate a shareable stats card + tweet
+npx @cachly-dev/mcp-server@latest badge     # Get a live README badge for your Brain
+npx @cachly-dev/mcp-server@latest invite    # Invite a teammate to share your Brain
+npx @cachly-dev/mcp-server@latest index .   # Index a project's code into the Brain (CI-friendly)
+npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git commits (PR-merge ready)
 ```
+
+> **Tip — auto-learn on every merged PR:** run `learn-git` in CI via the
+> [cachly-brain-setup GitHub Action](https://github.com/cachly-dev/cachly/tree/main/sdk/github-action)
+> with `mode: learn`. Each merged PR teaches your Brain automatically — no manual calls.
 
 ---
 
@@ -203,7 +227,7 @@ causal_trace(problem="auth breaks after restart")
 
 ---
 
-## MCP Tools (89 total)
+## MCP Tools (80 total)
 
 ### 🧠 Session & Memory (most used)
 

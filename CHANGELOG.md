@@ -7,6 +7,127 @@
 
 ---
 
+## [0.10.38] – 2026-05-25
+
+### `cachly status` — Brain health at a glance
+
+- New CLI command `npx @cachly-dev/mcp-server@latest status`: shows lessons, recalls, quality score, Brain level, team contributors (with count), and your personal invite link — all in one terminal card.
+
+---
+
+## [0.10.37] – 2026-05-25
+
+### Viral wow moments — invite link + first-recall tweet button
+
+- **`cachly invite` fixed** — previously called a non-existent `/api/v1/team/invite` endpoint (always 404). Now calls `GET /api/v1/referral/me` and shows your personal referral link with pre-written Slack DM + tweet text. One command = shareable invite.
+- **First-recall email** — the "Your AI just remembered" email now includes a one-click `𝕏 Share this moment` tweet button and a `🤝 Share with your team` section with your personal referral link (shows only if referral code exists). The highest-value wow moment now has a viral exit.
+
+---
+
+## [0.10.36] – 2026-05-25
+
+### ESLint flat-config (ESLint 10 / v9 API)
+
+- Added `eslint` v9 and `typescript-eslint` v8 as devDependencies.
+- Created `eslint.config.js` using ESLint flat-config API — replaces the legacy `--ext .ts` syntax that broke with ESLint 10.
+- Updated lint script: `eslint src --ext .ts` → `eslint src`.
+- Rules: `no-explicit-any` warn, `no-unused-vars` warns but ignores `_`-prefixed params.
+
+---
+
+## [0.10.35] – 2026-05-25
+
+### Docs catch-up
+
+- Backfilled CHANGELOG entries for 0.10.25–0.10.34 (they were missing).
+- README now documents the `index` and `learn-git` CLI commands plus the PR-merge auto-learn GitHub Action tip.
+
+---
+
+## [0.10.34] – 2026-05-25
+
+### `learn-git` CLI — auto-learn from commits (PR-merge ready)
+
+- New command `npx @cachly-dev/mcp-server learn-git [./repo] [--max-commits N]` runs `brain_from_git` over recent commits and fires the `brain_from_git` telemetry event. Building block for PR-merge auto-learning in CI.
+
+---
+
+## [0.10.33] – 2026-05-25
+
+### Close the setup funnel
+
+- The setup wizard now fires `setup_completed` at the end of a successful run (with `instance_id` + JWT attribution), so the onboarding funnel `setup_started → setup_completed` is finally traceable.
+
+---
+
+## [0.10.32] – 2026-05-25
+
+### Viral moments: shareable digest card + team first-briefing
+
+- `cachly digest` now prints a tweet-ready card with a pre-filled X/Twitter URL (lessons, recalls, tokens saved, top lesson, brain level).
+- **Team-virality**: when `session_start` runs for a user who has lessons from teammates but has never seen them, a one-time "Your team's AI brain has been briefing you" section surfaces exactly which teammate solved what.
+
+---
+
+## [0.10.31] – 2026-05-25
+
+### Unblock npm publish — tests green
+
+- `vitest.config.ts` excludes `**/__tests__/e2e/**` from the unit-test suite (E2E tests require live credentials and were failing CI, blocking every publish since 0.10.27).
+- CLI with no args now writes the setup banner to **stdout** and exits 0 (was stderr + exit 1, invisible to callers).
+- `process.exit(0)` guarded with an `_isMain` check so importing modules never trigger early exit.
+
+---
+
+## [0.10.30] – 2026-05-24
+
+### CLAUDE.md delivers a visible briefing
+
+- CLAUDE.md template now calls `session_start` (with `workspace_path`) as the first action of every conversation and `session_end` as the last, so the brain briefing is visible to the user instead of running silently.
+
+---
+
+## [0.10.29] – 2026-05-24
+
+### Fix: recall counting + git bootstrap actually fires
+
+- `smart_recall` (the primary recall tool in CLAUDE.md) now also fires `recall_best_solution` when it returns lessons, so `BrainRecallCount` reflects real usage.
+- Auto-session-start now passes `process.cwd()` as `workspace_path` so the git auto-bootstrap introduced in 0.10.28 actually triggers.
+
+---
+
+## [0.10.28] – 2026-05-24
+
+### Auto-bootstrap the brain from git on first session
+
+- On a first session with a `workspace_path`, `brain_from_git` runs automatically and its summary is appended inline to the `session_start` briefing — the brain learns from your repo history with zero setup.
+
+---
+
+## [0.10.27] – 2026-05-24
+
+### Fix: session_start counts as a recall
+
+- `session_start` now fires `recall_best_solution` when the brain has lessons (not the first-session welcome), so the dashboard activation nudge clears and the first-recall email fires for active users.
+
+---
+
+## [0.10.26] – 2026-05-14
+
+### Fix: brain_from_git + brain_predict telemetry
+
+- `brain_from_git` and `brain_predict` telemetry events were dead code paths and never fired; both now correctly send per-tool telemetry.
+
+---
+
+## [0.10.25] – 2026-05-14
+
+### Per-tool telemetry events for all brain tools
+
+- Every brain tool (`session_start`, `session_end`, `learn_from_attempts`, `smart_recall`, `recall_best_solution`) now emits a dedicated telemetry event for accurate funnel + report breakdowns.
+
+---
+
 ## [0.10.24] – 2026-05-14
 
 ### Funnel visibility + server.json version sync
