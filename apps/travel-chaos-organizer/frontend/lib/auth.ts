@@ -3,6 +3,8 @@ import * as WebBrowser from "expo-web-browser";
 import * as Crypto from "expo-crypto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
+// NOTE: maybeCompleteAuthSession() must also be called in app/auth.tsx
+// (the callback route). The call here is a belt-and-suspenders fallback.
 WebBrowser.maybeCompleteAuthSession();
 
 const KEYCLOAK_URL = process.env.EXPO_PUBLIC_KEYCLOAK_URL!;
@@ -27,7 +29,7 @@ export type Tokens = {
 };
 
 export async function login(): Promise<Tokens | null> {
-  const redirectUri = AuthSession.makeRedirectUri({ scheme: "tco" });
+  const redirectUri = AuthSession.makeRedirectUri({ scheme: "tco", path: "auth" });
   const codeVerifier = await Crypto.digestStringAsync(
     Crypto.CryptoDigestAlgorithm.SHA256,
     Math.random().toString(),
