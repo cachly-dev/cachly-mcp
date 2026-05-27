@@ -440,7 +440,7 @@ import { handleTeamTool } from './handlers/team.js';
 import { handleRoadmapTool } from './handlers/roadmap.js';
 import { handleAdvancedTool } from './handlers/advanced.js';
 import { handleSyndicateTool } from './handlers/syndicate.js';
-import { handleFedbrainTool } from './handlers/fedbrain.js';
+import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
 import type { Instance } from './handlers/brain.js';
 
 // ── Tools (imported from tools.ts) ─────────────────────────────────────────
@@ -605,7 +605,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
             limit: 50,
           }, getConnection, apiFetch);
           if (gitBootstrap !== null) {
-            sendFunnelEvent('brain_from_git', telemetryExtra);
+            const gitCounts = _lastBrainFromGitCounts;
+            sendFunnelEvent('brain_from_git', { ...telemetryExtra, ...(gitCounts ?? {}) });
             sendFunnelEvent('recall_best_solution', telemetryExtra);
             // Append bootstrap summary to the session_start briefing.
             const bootstrapText = typeof gitBootstrap === 'object' && gitBootstrap !== null && 'content' in gitBootstrap
@@ -681,7 +682,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     const instanceId = (args.instance_id as string | undefined) ?? _defaultInstanceId ?? '';
     const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
     if (name === 'brain_from_git') {
-      sendFunnelEvent('brain_from_git', telemetryExtra);
+      const gitCounts = _lastBrainFromGitCounts;
+      sendFunnelEvent('brain_from_git', { ...telemetryExtra, ...(gitCounts ?? {}) });
     } else if (name === 'brain_predict_failures') {
       sendFunnelEvent('brain_predict_failures', telemetryExtra);
     }
