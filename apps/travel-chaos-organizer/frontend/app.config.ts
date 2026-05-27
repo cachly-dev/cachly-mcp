@@ -15,7 +15,7 @@ const config: ExpoConfig = {
     backgroundColor: "#0f0f1a",
   },
   updates: {
-    url: "https://u.expo.dev/019e60b1-8dec-75a9-b252-9cebadf30bd2",
+    url: "https://u.expo.dev/ed92c1f4-4f25-411f-a945-3c77f58d8550",
     enabled: true,
     fallbackToCacheTimeout: 0,
     checkAutomatically: "ON_LOAD",
@@ -47,7 +47,7 @@ const config: ExpoConfig = {
     ],
   ],
   extra: {
-    eas: { projectId: "019e60b1-8dec-75a9-b252-9cebadf30bd2" },
+    eas: { projectId: "ed92c1f4-4f25-411f-a945-3c77f58d8550" },
   },
 };
 
