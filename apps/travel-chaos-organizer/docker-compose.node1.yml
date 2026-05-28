@@ -12,10 +12,16 @@ services:
     profiles:
       - disabled
 
-  # Backend: bind only to localhost so main Caddy can reach it
+  # Backend: bind only to localhost so main Caddy can reach it.
+  # Override depends_on to remove the keycloak dependency (disabled above).
   backend:
     ports:
       - "127.0.0.1:8000:8000"
     environment:
       DEBUG: "false"
       KEYCLOAK_URL: "https://auth.cachly.dev"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
