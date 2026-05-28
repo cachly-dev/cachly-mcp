@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -7,6 +8,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.keycloak import user_id
 from app.db.database import get_db
 from app.models.schemas import InboxItemOut, InboxAssign
+
+
+def _safe_dt(val: str | None) -> datetime | None:
+    """Convert an ISO 8601 string to datetime, returning None on failure."""
+    if not val or not isinstance(val, str):
+        return None
+    try:
+        return datetime.fromisoformat(val.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 router = APIRouter(prefix="/inbox", tags=["inbox"])
 
@@ -64,16 +75,25 @@ async def assign_to_trip(
 
     result = await db.execute(
         text("""
-            INSERT INTO trip_items (trip_id, user_id, type, title, raw_text, parsed_data)
-            VALUES (:trip_id, :uid, :type, :title, :raw, :pd)
-            RETURNING id
+            INSERT INTO trip_items (trip_id, user_id, type, title, raw_text, parsed_data,
+                                    event_at, event_end_at, booking_ref, provider)
+            VALUES (:trip_id, :uid, :type, :title, :raw, :pd,
+                    :event_at, :event_end_at, :booking_ref, :provider)
+            RETURNING id, title, event_at
         """),
         {
             "trip_id": str(body.trip_id), "uid": uid, "type": body.type, "title": title,
             "raw": item.get("raw_content"), "pd": json.dumps(parsed),
+            "event_at": _safe_dt(parsed.get("event_at") if isinstance(parsed, dict) else None),
+            "event_end_at": _safe_dt(parsed.get("event_end_at") if isinstance(parsed, dict) else None),
+            "booking_ref": parsed.get("booking_ref") if isinstance(parsed, dict) else None,
+            "provider": parsed.get("provider") if isinstance(parsed, dict) else None,
         },
     )
-    trip_item_id = result.fetchone()[0]
+    row = result.fetchone()
+    trip_item_id = row[0]
+    item_title = row[1]
+    event_at = row[2].isoformat() if row[2] else None
 
     await db.execute(
         text("UPDATE chaos_inbox SET status = 'assigned', updated_at = CURRENT_TIMESTAMP WHERE id = :id"),
@@ -84,7 +104,7 @@ async def assign_to_trip(
         {"tid": trip_item_id, "iid": iid},
     )
     await db.commit()
-    return {"trip_item_id": str(trip_item_id)}
+    return {"trip_item_id": str(trip_item_id), "title": item_title, "event_at": event_at}
 
 
 @router.delete("/{inbox_id}", status_code=status.HTTP_204_NO_CONTENT)

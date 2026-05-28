@@ -12,6 +12,7 @@ import BottomSheet from "../../components/BottomSheet";
 import { haptics } from "../../lib/haptics";
 import { TripCardSkeleton } from "../../components/Skeleton";
 import { useToast } from "../../components/ToastContext";
+import { scheduleItemReminder } from "../../lib/notifications";
 
 export default function InboxScreen() {
   const { showToast } = useToast();
@@ -33,8 +34,14 @@ export default function InboxScreen() {
     assigningRef.current = true;
     setAssigning(true);
     try {
-      await inboxApi.assign(selected.id, tripId, (selected.parsed_data?.type as string) ?? "other");
+      const result = await inboxApi.assign(selected.id, tripId, (selected.parsed_data?.type as string) ?? "other");
       await haptics.success();
+      // Schedule a reminder for the newly assigned item if it has a date.
+      // Find the trip name for a meaningful notification text.
+      if (result.event_at) {
+        const tripName = trips.find((t) => t.id === tripId)?.name ?? "Dein Trip";
+        await scheduleItemReminder(tripId, tripName, result.trip_item_id, result.title, result.event_at);
+      }
       showToast("Dem Trip zugeordnet ✓", "success");
       setSelected(null);
       await refresh();

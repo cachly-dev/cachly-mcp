@@ -101,7 +101,7 @@ export type InboxItem = {
 export const inboxApi = {
   list: (status = "pending") => request<InboxItem[]>(`/api/v1/inbox?status_filter=${status}`),
   assign: (inboxId: string, tripId: string, type = "other") =>
-    request<{ trip_item_id: string }>(`/api/v1/inbox/${inboxId}/assign`, {
+    request<{ trip_item_id: string; title: string; event_at: string | null }>(`/api/v1/inbox/${inboxId}/assign`, {
       method: "POST",
       body: JSON.stringify({ trip_id: tripId, type }),
     }),
@@ -159,6 +159,9 @@ export async function parseFile(
     headers: { Authorization: `Bearer ${token}` },
     body: form,
   });
-  if (!res.ok) throw new Error(`Parse failed: ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new ApiError(`Parse failed: ${res.status}`, res.status, body);
+  }
   return res.json();
 }

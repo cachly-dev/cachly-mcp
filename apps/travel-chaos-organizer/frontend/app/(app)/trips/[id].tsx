@@ -10,7 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as DocumentPicker from "expo-document-picker";
 import * as ImagePicker from "expo-image-picker";
 import { useTripItems, useTrips } from "../../../hooks/useTrips";
-import { parseFile, TripItem } from "../../../lib/api";
+import { ApiError, parseFile, TripItem } from "../../../lib/api";
 import SwipeableTimelineItem from "../../../components/SwipeableTimelineItem";
 import TimelineItemDetail from "../../../components/TimelineItemDetail";
 import ImportSheet from "../../../components/ImportSheet";
@@ -97,9 +97,17 @@ export default function TripDetailScreen() {
       }
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 1500);
-    } catch {
+    } catch (err) {
       await haptics.error();
-      showToast("Datei konnte nicht verarbeitet werden. Prüfe Ollama.", "error");
+      if (err instanceof ApiError && err.status === 429) {
+        showToast("Tageslimit erreicht (50 Parses/Tag). Upgrade auf Pro.", "warning");
+      } else if (err instanceof ApiError && err.status === 413) {
+        showToast("Datei zu groß (max. 10 MB).", "error");
+      } else if (err instanceof ApiError && err.status === 415) {
+        showToast("Dateityp nicht unterstützt (PDF, Bild oder Text).", "error");
+      } else {
+        showToast("Datei konnte nicht verarbeitet werden. Prüfe Ollama.", "error");
+      }
     } finally {
       setParsing(false);
     }
