@@ -3,7 +3,10 @@ import { enqueueRequest } from "./offlineQueue";
 
 const BASE_URL = process.env.EXPO_PUBLIC_API_URL!;
 
-const MUTATION_METHODS = new Set(["POST", "PATCH", "DELETE"]);
+/** Default timeout for regular API calls (trips, items, users, etc.) */
+const DEFAULT_TIMEOUT_MS = 30_000;
+/** Extended timeout for AI parse calls (Ollama can be slow on first run) */
+const PARSE_TIMEOUT_MS = 120_000;
 
 export class ApiError extends Error {
   constructor(
@@ -23,21 +26,31 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const method = (init.method ?? "GET").toUpperCase();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
   try {
     const headers = await authHeaders();
-    const res = await fetch(`${BASE_URL}${path}`, { ...init, headers: { ...headers, ...init.headers } });
+    const res = await fetch(`${BASE_URL}${path}`, {
+      ...init,
+      headers: { ...headers, ...init.headers },
+      signal: controller.signal,
+    });
     if (!res.ok) {
       const body = await res.text();
       throw new ApiError(`API ${res.status}: ${body}`, res.status, body);
     }
     return res.json() as Promise<T>;
   } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new ApiError("Timeout: Server antwortet nicht", 408, "timeout");
+    }
     // Network error (no status) — queue for offline retry
     if (!(err instanceof ApiError) && init.method && ["POST","PATCH","DELETE"].includes(init.method)) {
       enqueueRequest(init.method as "POST" | "PATCH" | "DELETE", path, init.body as string | undefined);
     }
     throw err;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -146,16 +159,28 @@ export const mailApi = {
     const token = await getAccessToken();
     if (!token) throw new Error("Not authenticated");
     const qs = tripId ? `?trip_id=${encodeURIComponent(tripId)}` : "";
-    const res = await fetch(`${BASE_URL}/api/v1/mail/import${qs}`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "text/plain" },
-      body: rawEmail,
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new ApiError(`Mail import failed: ${res.status}`, res.status, body);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PARSE_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${BASE_URL}/api/v1/mail/import${qs}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "text/plain" },
+        body: rawEmail,
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new ApiError(`Mail import failed: ${res.status}`, res.status, body);
+      }
+      return res.json();
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") {
+        throw new ApiError("Timeout: KI antwortet nicht", 408, "timeout");
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
-    return res.json();
   },
 };
 
@@ -172,14 +197,26 @@ export async function parseFile(
   form.append("file", { uri: fileUri, type: mimeType, name: fileName } as unknown as Blob);
   if (tripId) form.append("trip_id", tripId);
 
-  const res = await fetch(`${BASE_URL}/api/v1/parse/file`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}` },
-    body: form,
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new ApiError(`Parse failed: ${res.status}`, res.status, body);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), PARSE_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${BASE_URL}/api/v1/parse/file`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: form,
+      signal: controller.signal,
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new ApiError(`Parse failed: ${res.status}`, res.status, body);
+    }
+    return res.json();
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new ApiError("Timeout: KI antwortet nicht", 408, "timeout");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
   }
-  return res.json();
 }

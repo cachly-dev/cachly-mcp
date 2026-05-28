@@ -44,6 +44,8 @@ export default function ImportSheet({ visible, onClose, tripId, onSuccess }: Pro
       await haptics.error();
       if (err instanceof ApiError && err.status === 429) {
         showToast("Tageslimit erreicht (50 Parses/Tag). Upgrade auf Pro.", "warning");
+      } else if (err instanceof ApiError && err.status === 408) {
+        showToast("Timeout — Ollama antwortet nicht. Bitte warte und versuche es erneut.", "error");
       } else {
         setError(err instanceof Error ? err.message : "Unbekannter Fehler");
       }

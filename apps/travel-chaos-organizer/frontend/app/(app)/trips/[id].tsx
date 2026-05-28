@@ -101,6 +101,8 @@ export default function TripDetailScreen() {
       await haptics.error();
       if (err instanceof ApiError && err.status === 429) {
         showToast("Tageslimit erreicht (50 Parses/Tag). Upgrade auf Pro.", "warning");
+      } else if (err instanceof ApiError && err.status === 408) {
+        showToast("Timeout — Ollama antwortet nicht. Bitte warte und versuche es erneut.", "error");
       } else if (err instanceof ApiError && err.status === 413) {
         showToast("Datei zu groß (max. 10 MB).", "error");
       } else if (err instanceof ApiError && err.status === 415) {

@@ -61,9 +61,13 @@ export default function InboxScreen() {
 
   async function reject(id: string) {
     await haptics.warning();
-    await inboxApi.reject(id);
-    showToast("Eintrag abgelehnt", "warning");
-    await refresh();
+    try {
+      await inboxApi.reject(id);
+      showToast("Eintrag abgelehnt", "warning");
+      await refresh();
+    } catch {
+      showToast("Ablehnen fehlgeschlagen", "error");
+    }
   }
 
   if (loading && items.length === 0) {

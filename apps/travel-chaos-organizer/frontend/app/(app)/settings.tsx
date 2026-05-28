@@ -2,8 +2,7 @@ import { useState, useEffect } from "react";
 import {
   ActivityIndicator, Linking, ScrollView, StyleSheet, Text,
   TouchableOpacity, View,
-} from "react-native";
-import { useSafeAreaInsets } from "react-native-safe-area-context";
+} from "react-native";import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from "expo-router";
 import { logout } from "../../lib/auth";
 import { clearCache, cacheSizeBytes } from "../../lib/fileCache";
@@ -14,8 +13,6 @@ import { usersApi, cacheApi, type CacheStats } from "../../lib/api";
 import { useToast } from "../../components/ToastContext";
 import ConfirmDialog from "../../components/ConfirmDialog";
 
-const OLLAMA_MODELS = ["llama3.2-vision", "llava", "llava-phi3", "bakllava"];
-
 export default function SettingsScreen() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -25,9 +22,6 @@ export default function SettingsScreen() {
   const [queueSize, setQueueSize] = useState(0);
   const [loggingOut, setLoggingOut] = useState(false);
   const [dialog, setDialog] = useState<{ title: string; message?: string; onConfirm: () => void } | null>(null);
-  const [selectedModel, setSelectedModel] = useState(
-    process.env.EXPO_PUBLIC_OLLAMA_MODEL ?? "llama3.2-vision"
-  );
   const [telegramPin, setTelegramPin] = useState<string | null>(null);
   const [generatingPin, setGeneratingPin] = useState(false);
   const [cachlyStats, setCachlyStats] = useState<CacheStats | null>(null);
@@ -77,8 +71,13 @@ export default function SettingsScreen() {
       onConfirm: async () => {
         setLoggingOut(true);
         await haptics.tap();
-        await logout();
-        router.replace("/(auth)/login");
+        try {
+          await logout();
+          router.replace("/(auth)/login");
+        } catch {
+          setLoggingOut(false);
+          showToast("Abmelden fehlgeschlagen", "error");
+        }
       },
     });
   }
@@ -122,20 +121,12 @@ export default function SettingsScreen() {
 
       <Text style={s.sectionTitle}>KI Modell</Text>
       <View style={s.card}>
-        {OLLAMA_MODELS.map((model) => (
-          <TouchableOpacity
-            key={model}
-            style={s.row}
-            onPress={async () => { await haptics.tap(); setSelectedModel(model); }}
-            accessibilityLabel={`Modell ${model} auswählen`}
-            accessibilityRole="button"
-          >
-            <Text style={s.rowText}>{model}</Text>
-            {selectedModel === model && <Text style={s.check}>✓</Text>}
-          </TouchableOpacity>
-        ))}
+        <View style={s.infoRow}>
+          <Text style={s.rowText}>Aktives Modell</Text>
+          <Text style={s.rowValue}>{process.env.EXPO_PUBLIC_OLLAMA_MODEL ?? "llama3.2-vision"}</Text>
+        </View>
         <Text style={s.hint}>
-          Das Modell muss auf deinem Ollama-Server verfügbar sein.{"\n"}
+          Das Modell wird auf dem Server konfiguriert (OLLAMA_MODEL).{"\n"}
           Für Screenshot-Parsing wird ein Vision-Modell benötigt.
         </Text>
       </View>
@@ -168,8 +159,12 @@ export default function SettingsScreen() {
                 title: "Telegram trennen?",
                 message: "Du erhältst dann keine Bot-Nachrichten mehr.",
                 onConfirm: async () => {
-                  await usersApi.telegramUnlink();
-                  showToast("Telegram-Verknüpfung aufgehoben", "success");
+                  try {
+                    await usersApi.telegramUnlink();
+                    showToast("Telegram-Verknüpfung aufgehoben", "success");
+                  } catch {
+                    showToast("Trennen fehlgeschlagen", "error");
+                  }
                 },
               })}
               accessibilityRole="button"
