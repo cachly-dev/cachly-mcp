@@ -12,15 +12,17 @@ import { computeEmbedding, hasEmbedProvider, embedProviderHint, EMBED_PROVIDER }
 import { detectNamespace } from '../namespace.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.0';
+const MCP_VERSION = '0.10.46';
 const WHATS_NEW: Record<string, string[]> = {
-  '0.10.0': [
+  '0.10.46': [
     `🆕 **What's new in v${MCP_VERSION}:**`,
-    `  ✅ Zero-friction setup — auto-provisions your Brain, no manual config needed`,
-    `  ✅ 10× faster briefings — batch Redis fetches replace per-key loops`,
-    `  ✅ Crash-proof data reads — corrupted cache entries no longer break tools`,
-    `  ✅ \`session_end\` warns when called without an active session`,
-    `  ✅ \`get_api_status\` now shows live Redis ping + all instance statuses`,
+    `  ✅ \`brain_from_git\` — auto-seed your Brain from git history in seconds`,
+    `  ✅ \`brain_predict_failures\` — predict CI/build failures before they happen`,
+    `  ✅ \`smart_recall\` — semantic + keyword hybrid recall, now in every CLAUDE.md`,
+    `  ✅ VS Code extension — Brain status bar, ambient learning, CodeLens hints`,
+    `  ✅ Team Brain — share lessons across your whole engineering team`,
+    `  ✅ 89 MCP tools — roadmap, A/B tests, cache, index, predict, syndicate`,
+    `  💡 Run \`brain_from_git\` to seed your Brain from existing commits instantly`,
   ],
 };
 

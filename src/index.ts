@@ -75,7 +75,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.46';
+const CURRENT_VERSION = '0.10.49';
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -182,6 +182,36 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
       setEmbedJwt(apiKey); // keep embeddings.ts in sync
       _deviceFlow = null;
       sendFunnelEvent('device_flow_completed');
+      // Persist the API key to ~/.claude/mcp.json so subsequent MCP server restarts
+      // keep the token. Without this, JWT is lost on restart and brain_recall_count
+      // is never incremented (telemetry has no api_key → no tenant resolution).
+      void (async () => {
+        try {
+          const { writeFile, mkdir, readFile } = await import('node:fs/promises');
+          const { existsSync } = await import('node:fs');
+          const { resolve, dirname } = await import('node:path');
+          const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+          if (!home) return;
+          const configPath = resolve(home, '.claude', 'mcp.json');
+          let cfg: { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> } = {};
+          if (existsSync(configPath)) {
+            try { cfg = JSON.parse(await readFile(configPath, 'utf-8')) as typeof cfg; } catch { /* corrupt — start fresh */ }
+          }
+          cfg.mcpServers ??= {};
+          const existing = cfg.mcpServers['cachly'];
+          if (existing) {
+            existing.env ??= {};
+            existing.env['CACHLY_JWT'] = apiKey;
+          } else {
+            cfg.mcpServers['cachly'] = {
+              command: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'],
+              env: { CACHLY_JWT: apiKey },
+            };
+          }
+          await mkdir(dirname(configPath), { recursive: true });
+          await writeFile(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+        } catch { /* non-critical — don't break the flow on filesystem errors */ }
+      })();
       // Auto-provision: find or create the user's brain instance.
       _defaultInstanceLastAttempt = 0;
       await resolveDefaultInstanceId();
