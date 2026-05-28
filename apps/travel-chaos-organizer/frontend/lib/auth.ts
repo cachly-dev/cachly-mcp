@@ -1,6 +1,5 @@
 import * as AuthSession from "expo-auth-session";
 import * as WebBrowser from "expo-web-browser";
-import * as Crypto from "expo-crypto";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 // NOTE: maybeCompleteAuthSession() must also be called in app/auth.tsx
@@ -30,18 +29,15 @@ export type Tokens = {
 
 export async function login(): Promise<Tokens | null> {
   const redirectUri = AuthSession.makeRedirectUri({ scheme: "tco", path: "auth" });
-  const codeVerifier = await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    Math.random().toString(),
-    { encoding: Crypto.CryptoEncoding.BASE64 }
-  );
 
+  // Let expo-auth-session generate a cryptographically secure code verifier.
+  // Manual generation with Math.random() + BASE64 produces non-URL-safe chars
+  // (+, /, =) that are invalid in PKCE and cause Keycloak to reject the exchange.
   const request = new AuthSession.AuthRequest({
     clientId: CLIENT_ID,
     redirectUri,
     scopes: ["openid", "profile", "email", "offline_access"],
     usePKCE: true,
-    codeVerifier,
   });
 
   const result = await request.promptAsync(discovery);
@@ -52,7 +48,7 @@ export async function login(): Promise<Tokens | null> {
       clientId: CLIENT_ID,
       code: result.params.code,
       redirectUri,
-      extraParams: { code_verifier: codeVerifier },
+      extraParams: { code_verifier: request.codeVerifier! },
     },
     discovery
   );
