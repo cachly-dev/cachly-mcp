@@ -33,14 +33,14 @@ _HEADER_RE = re.compile(
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
-def _safe_dt(val: str | None) -> str | None:
-    """Sanitise an Ollama-produced datetime string to strict ISO-8601 so that
-    asyncpg can cast it to TIMESTAMPTZ without raising a DataError."""
+def _safe_dt(val: str | None) -> datetime | None:
+    """Parse an Ollama-produced datetime string to a proper datetime object.
+    asyncpg requires a datetime object (not a string) for TIMESTAMPTZ columns.
+    Returns None on missing or unparseable input."""
     if val is None:
         return None
     try:
-        dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
-        return dt.astimezone(timezone.utc).isoformat()
+        return datetime.fromisoformat(val.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         return None
 

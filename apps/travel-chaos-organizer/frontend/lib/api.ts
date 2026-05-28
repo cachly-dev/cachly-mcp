@@ -141,6 +141,24 @@ export const cacheApi = {
 
 // ── Parse ──────────────────────────────────────────────────────────────────
 
+export const mailApi = {
+  import: async (rawEmail: string, tripId?: string): Promise<unknown> => {
+    const token = await getAccessToken();
+    if (!token) throw new Error("Not authenticated");
+    const qs = tripId ? `?trip_id=${encodeURIComponent(tripId)}` : "";
+    const res = await fetch(`${BASE_URL}/api/v1/mail/import${qs}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "text/plain" },
+      body: rawEmail,
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new ApiError(`Mail import failed: ${res.status}`, res.status, body);
+    }
+    return res.json();
+  },
+};
+
 export async function parseFile(
   fileUri: string,
   mimeType: string,

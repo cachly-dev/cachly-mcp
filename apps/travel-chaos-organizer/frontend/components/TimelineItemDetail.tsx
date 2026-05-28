@@ -20,6 +20,19 @@ type Props = {
   onClose: () => void;
 };
 
+function eventLabels(type: string): { start: string; end: string } {
+  const map: Record<string, { start: string; end: string }> = {
+    flight:     { start: "Abflug",   end: "Ankunft" },
+    train:      { start: "Abfahrt",  end: "Ankunft" },
+    bus:        { start: "Abfahrt",  end: "Ankunft" },
+    hotel:      { start: "Check-in", end: "Check-out" },
+    rental_car: { start: "Abholung", end: "Rückgabe" },
+    activity:   { start: "Beginn",   end: "Ende" },
+    transfer:   { start: "Abholung", end: "Ankunft" },
+  };
+  return map[type] ?? { start: "Beginn", end: "Ende" };
+}
+
 export default function TimelineItemDetail({ item, onClose }: Props) {
   if (!item) return null;
   const parsed = item.parsed_data as Record<string, unknown> | null;
@@ -48,8 +61,8 @@ export default function TimelineItemDetail({ item, onClose }: Props) {
 
         {/* Core details */}
         <View style={s.section}>
-          {item.event_at && <DetailRow label="Abflug / Check-in" value={fmtDate(item.event_at)} />}
-          {item.event_end_at && <DetailRow label="Ankunft / Check-out" value={fmtDate(item.event_end_at)} />}
+          {item.event_at && <DetailRow label={eventLabels(item.type).start} value={fmtDate(item.event_at)} />}
+          {item.event_end_at && <DetailRow label={eventLabels(item.type).end} value={fmtDate(item.event_end_at)} />}
           {parsed?.origin && parsed?.destination && (
             <DetailRow label="Route" value={`${parsed.origin} → ${parsed.destination}`} />
           )}

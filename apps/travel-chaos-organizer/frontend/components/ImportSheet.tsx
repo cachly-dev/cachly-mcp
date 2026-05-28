@@ -9,7 +9,7 @@ import {
   StyleSheet, Text, TextInput, TouchableOpacity, View,
 } from "react-native";
 import BottomSheet from "./BottomSheet";
-import { ApiError } from "../lib/api";
+import { ApiError, mailApi } from "../lib/api";
 import { haptics } from "../lib/haptics";
 import { useToast } from "./ToastContext";
 
@@ -34,26 +34,7 @@ export default function ImportSheet({ visible, onClose, tripId, onSuccess }: Pro
     await haptics.confirm();
 
     try {
-      const { getAccessToken } = await import("../lib/auth");
-      const BASE = process.env.EXPO_PUBLIC_API_URL!;
-      const token = await getAccessToken();
-      if (!token) throw new Error("Not authenticated");
-
-      const form = new FormData();
-      form.append("raw_text", text.trim());
-      if (tripId) form.append("trip_id", tripId);
-
-      const res = await fetch(`${BASE}/api/v1/parse/text`, {
-        method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
-        body: form,
-      });
-
-      if (!res.ok) {
-        const body = await res.text();
-        throw new ApiError(`${res.status}: ${body}`, res.status, body);
-      }
-
+      await mailApi.import(text.trim(), tripId);
       await haptics.success();
       setText("");
       onClose();
@@ -80,16 +61,16 @@ export default function ImportSheet({ visible, onClose, tripId, onSuccess }: Pro
   return (
     <BottomSheet visible={visible} onClose={handleClose} heightFraction={0.75} hasInputs>
       <View style={{ flex: 1 }}>
-        <Text style={s.title}>Text importieren</Text>
+        <Text style={s.title}>Text / E-Mail importieren</Text>
         <Text style={s.subtitle}>
           {tripId
-            ? "Füge eine Buchungsbestätigung, E-Mail oder Tickettext ein."
-            : "Inhalt wird in den Chaos Inbox importiert."}
+            ? "Buchungsbestätigung, E-Mail-Text oder Ticketinhalt einfügen."
+            : "Inhalt wird in den Chaos Inbox importiert. E-Mail-Header werden automatisch entfernt."}
         </Text>
 
         <TextInput
           style={s.input}
-          placeholder={"Buchungsbestätigung, E-Mail oder Tickettext hier einfügen…"}
+          placeholder={"Buchungsbestätigung, weitergeleitete E-Mail oder Tickettext hier einfügen…"}
           placeholderTextColor="#4a4a7a"
           value={text}
           onChangeText={setText}

@@ -28,6 +28,13 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Create .env with production variables
+        run: |
+          echo "EXPO_PUBLIC_API_URL=${{ secrets.EXPO_PUBLIC_API_URL }}" >> .env
+          echo "EXPO_PUBLIC_KEYCLOAK_URL=${{ secrets.EXPO_PUBLIC_KEYCLOAK_URL }}" >> .env
+          echo "EXPO_PUBLIC_KEYCLOAK_REALM=${{ secrets.EXPO_PUBLIC_KEYCLOAK_REALM || 'travel-chaos' }}" >> .env
+          echo "EXPO_PUBLIC_KEYCLOAK_CLIENT_ID=${{ secrets.EXPO_PUBLIC_KEYCLOAK_CLIENT_ID || 'tco-mobile' }}" >> .env
+
       - name: Publish EAS Update
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}

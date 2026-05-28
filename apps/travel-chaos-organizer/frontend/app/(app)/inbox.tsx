@@ -90,7 +90,7 @@ export default function InboxScreen() {
         onRefresh={refresh}
         ListHeaderComponent={
           items.length > 0
-            ? <Text style={s.hint}>← Wischen zum Zuweisen · Ablehnen →</Text>
+            ? <Text style={s.hint}>→ Wischen zum Zuweisen · Ablehnen ←</Text>
             : null
         }
         ListEmptyComponent={

@@ -204,7 +204,9 @@ export default function TripDetailScreen() {
           <Text style={s.backText}>← Zurück</Text>
         </TouchableOpacity>
 
-        <Text style={s.headerTitle}>Timeline</Text>
+        <Text style={s.headerTitle} numberOfLines={1}>
+          {trips.find((t) => t.id === id)?.name ?? "Timeline"}
+        </Text>
 
         <TouchableOpacity
           onPress={handleShareTrip}
@@ -274,7 +276,7 @@ export default function TripDetailScreen() {
         <FileUploadButton icon="🖼️" label="Screenshot" onPress={uploadScreenshot} disabled={parsing} />
         <FileUploadButton
           icon="📝"
-          label="Text einfügen"
+          label="Text / E-Mail"
           onPress={() => setImportVisible(true)}
           disabled={parsing}
         />
