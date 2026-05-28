@@ -270,7 +270,7 @@ async def parse_url(
         raise HTTPException(status_code=422, detail="Invalid URL")
 
     try:
-        async with _httpx.AsyncClient(timeout=20, follow_redirects=False) as client:
+        async with _httpx.AsyncClient(timeout=20, follow_redirects=True) as client:
             resp = await client.get(body.url, headers={"User-Agent": "Mozilla/5.0 TCO/0.1"})
             resp.raise_for_status()
     except HTTPException:
@@ -290,7 +290,7 @@ async def parse_url(
         raw_text = resp.text[:8000]
 
     parsed_dict, was_cached = await ollama_svc.parse_text(raw_text)
-    parsed = ParsedTravelData(**{k: parsed_dict.get(k) for k in ParsedTravelData.model_fields})
+    parsed = _build_parsed(parsed_dict)
 
     from app.services import telemetry
     if body.trip_id:
