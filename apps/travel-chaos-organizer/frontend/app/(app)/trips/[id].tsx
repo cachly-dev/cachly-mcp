@@ -77,14 +77,22 @@ export default function TripDetailScreen() {
   async function parseAndRefresh(uri: string, mime: string, name: string) {
     setParsing(true);
     await haptics.confirm();
+    // Capture existing item IDs before upload so we can identify the new item
+    // after refresh — and only schedule a reminder for that one item.
+    // Without this, every upload would re-schedule reminders for ALL existing
+    // items, causing duplicate (or spam) notifications.
+    const itemIdsBefore = new Set(getLocalItems(id).map((i) => i.id));
+    const currentTrip = trips.find((t) => t.id === id);
+    const tripName = currentTrip?.name ?? "Dein Trip";
     try {
       await parseFile(uri, mime, name, id);
       await haptics.success();
       await refresh();
-      const currentItems = getLocalItems(id);
-      for (const item of currentItems) {
-        if (item.event_at) {
-          await scheduleItemReminder(id, "Dein Trip", item.id, item.title, item.event_at);
+      // After refresh, SQLite is up-to-date. Find only the newly added item(s).
+      const allItems = getLocalItems(id);
+      for (const item of allItems) {
+        if (!itemIdsBefore.has(item.id) && item.event_at) {
+          await scheduleItemReminder(id, tripName, item.id, item.title, item.event_at);
         }
       }
       setShowConfetti(true);

@@ -3,13 +3,14 @@ Parse endpoint — accepts file upload, raw text, or a public URL.
 Returns structured travel data via Ollama AI.
 Results are deduplicated via Cachly Redis when CACHLY_REDIS_URL is configured.
 """
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 import aiofiles
 import os
 from pathlib import Path
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.keycloak import user_id, user_id_or_bot
@@ -26,6 +27,40 @@ router = APIRouter(prefix="/parse", tags=["parse"])
 settings = get_settings()
 
 # ── helpers ────────────────────────────────────────────────────────────────────
+
+def _safe_dt(val: str | None) -> datetime | None:
+    """Parse an ISO 8601 datetime string from Ollama to a proper datetime.
+    Returns None if the value is missing, empty, or not parseable.
+    asyncpg requires a proper datetime object or None for TIMESTAMPTZ columns.
+    """
+    if not val or not isinstance(val, str):
+        return None
+    try:
+        # Python 3.11+ fromisoformat handles most ISO 8601 variants.
+        # Replace trailing Z (UTC) so older code paths also work.
+        return datetime.fromisoformat(val.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _build_parsed(parsed_dict: dict) -> ParsedTravelData:
+    """Construct ParsedTravelData from Ollama output.
+    Falls back to safe defaults if Ollama returns an unexpected 'type' value
+    (e.g. 'taxi', 'parking') that is not in the Literal enum — which would
+    otherwise raise an unhandled Pydantic ValidationError and return a 500.
+    """
+    try:
+        return ParsedTravelData(**{k: parsed_dict.get(k) for k in ParsedTravelData.model_fields})
+    except ValidationError:
+        return ParsedTravelData(
+            type="other",
+            title=str(parsed_dict.get("title") or "Dokument"),
+            booking_ref=parsed_dict.get("booking_ref"),
+            provider=parsed_dict.get("provider"),
+            event_at=parsed_dict.get("event_at"),
+            raw_summary=parsed_dict.get("raw_summary"),
+        )
+
 
 async def _save_file(content: bytes, filename: str, uid: str) -> str:
     dest_dir = Path(settings.upload_dir) / uid
@@ -55,7 +90,10 @@ async def _insert_item_from_parsed(
         {
             "trip_id": str(trip_id), "uid": uid, "type": parsed.type, "title": parsed.title,
             "raw_text": raw_text, "pd": json.dumps(parsed.model_dump()),
-            "event_at": parsed.event_at, "booking_ref": parsed.booking_ref, "provider": parsed.provider,
+            # _safe_dt converts Ollama's freeform date strings to proper datetime objects.
+            # asyncpg / PostgreSQL rejects non-ISO strings for TIMESTAMPTZ columns,
+            # which would crash the INSERT and roll back the whole transaction.
+            "event_at": _safe_dt(parsed.event_at), "booking_ref": parsed.booking_ref, "provider": parsed.provider,
         },
     )
     item_id = result.fetchone()[0]
@@ -66,7 +104,9 @@ async def _insert_item_from_parsed(
                 INSERT INTO attachments (trip_item_id, user_id, file_path, file_name, mime_type)
                 VALUES (:item_id, :uid, :fp, :fn, :mime)
             """),
-            {"item_id": item_id, "uid": uid, "fp": file_path, "fn": filename, "mime": mime},
+            # file_name is NOT NULL in the schema. Use a fallback to avoid a constraint
+            # violation that would roll back the trip_item insert in the same transaction.
+            {"item_id": item_id, "uid": uid, "fp": file_path, "fn": filename or "attachment", "mime": mime or "application/octet-stream"},
         )
     await db.commit()
 
@@ -93,7 +133,7 @@ async def _insert_inbox(
                 INSERT INTO attachments (inbox_id, user_id, file_path, file_name, mime_type)
                 VALUES (:inbox_id, :uid, :fp, :fn, :mime)
             """),
-            {"inbox_id": inbox_id, "uid": uid, "fp": file_path, "fn": filename, "mime": mime},
+            {"inbox_id": inbox_id, "uid": uid, "fp": file_path, "fn": filename or "attachment", "mime": mime or "application/octet-stream"},
         )
     await db.commit()
     return {"inbox_id": str(inbox_id)}
@@ -131,7 +171,7 @@ async def parse_file(
         raise HTTPException(status_code=415, detail=f"Unsupported file type: {mime}")
 
     file_path = await _save_file(content, file.filename or "upload", uid)
-    parsed = ParsedTravelData(**{k: parsed_dict.get(k) for k in ParsedTravelData.model_fields})
+    parsed = _build_parsed(parsed_dict)
 
     if trip_id:
         await _insert_item_from_parsed(uid, trip_id, parsed, raw_text, file_path, mime, file.filename, db)
@@ -157,7 +197,7 @@ async def parse_text_endpoint(
 ):
     await quota.check_parse(db, uid)
     parsed_dict, was_cached = await ollama_svc.parse_text(raw_text)
-    parsed = ParsedTravelData(**{k: parsed_dict.get(k) for k in ParsedTravelData.model_fields})
+    parsed = _build_parsed(parsed_dict)
 
     if trip_id:
         await _insert_item_from_parsed(uid, trip_id, parsed, raw_text, None, None, None, db)

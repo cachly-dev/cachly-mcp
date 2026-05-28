@@ -80,7 +80,10 @@ async def parse_image(image_bytes: bytes, mime_type: str) -> tuple[dict, str, bo
             response_text = resp.json().get("response", "{}")
             result = _safe_parse(response_text)
             await cache_svc.cache_set(image_bytes, result)
-            return result, response_text, False
+            # For images, Ollama returns structured JSON directly — there is no
+            # separate OCR text output. Store the human-readable raw_summary
+            # (from the parsed result) as raw_text instead of the JSON blob.
+            return result, result.get("raw_summary") or None, False
     except httpx.ConnectError:
         raise ollama_unavailable(settings.ollama_url)
 
