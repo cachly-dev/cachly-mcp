@@ -1,0 +1,25 @@
+/*
+ * Copyright (c) 2026 VEDA GmbH. All rights reserved.
+ * Use is subject to license terms
+ */
+# Production override for node-1 deployment.
+# Disables local Caddy and Keycloak (production uses auth.cachly.dev).
+# Usage: docker compose -f docker-compose.yml -f docker-compose.node1.yml up -d
+services:
+  # Remove local Caddy — main Caddy on node-1 proxies tco.cachly.dev → 127.0.0.1:8000
+  caddy:
+    profiles:
+      - disabled
+
+  # Remove local Keycloak — production uses auth.cachly.dev
+  keycloak:
+    profiles:
+      - disabled
+
+  # Backend: bind only to localhost so main Caddy can reach it
+  backend:
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      DEBUG: "false"
+      KEYCLOAK_URL: "https://auth.cachly.dev"
