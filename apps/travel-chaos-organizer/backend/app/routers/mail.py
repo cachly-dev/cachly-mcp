@@ -6,10 +6,12 @@ Results are Cachly-cached by content hash when CACHLY_REDIS_URL is configured.
 """
 import json
 import re
+from datetime import datetime, timezone
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, Query
+from pydantic import ValidationError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +33,28 @@ _HEADER_RE = re.compile(
 _BLANK_LINES_RE = re.compile(r"\n{3,}")
 
 
+def _safe_dt(val: str | None) -> str | None:
+    """Sanitise an Ollama-produced datetime string to strict ISO-8601 so that
+    asyncpg can cast it to TIMESTAMPTZ without raising a DataError."""
+    if val is None:
+        return None
+    try:
+        dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+        return dt.astimezone(timezone.utc).isoformat()
+    except (ValueError, AttributeError):
+        return None
+
+
+def _build_parsed(parsed_dict: dict) -> ParsedTravelData:
+    """Build a ParsedTravelData, falling back to type='other' on ValidationError."""
+    try:
+        return ParsedTravelData(**{k: parsed_dict.get(k) for k in ParsedTravelData.model_fields})
+    except ValidationError:
+        safe = {k: parsed_dict.get(k) for k in ParsedTravelData.model_fields}
+        safe["type"] = "other"
+        return ParsedTravelData(**safe)
+
+
 def strip_email_headers(raw: str) -> str:
     cleaned = _HEADER_RE.sub("", raw)
     cleaned = _BLANK_LINES_RE.sub("\n\n", cleaned)
@@ -46,19 +70,23 @@ async def import_mail(
 ):
     body_text = strip_email_headers(raw_email)
     parsed_dict, _was_cached = await ollama_svc.parse_text(body_text)
-    parsed = ParsedTravelData(**{k: parsed_dict.get(k) for k in ParsedTravelData.model_fields})
+    parsed = _build_parsed(parsed_dict)
 
     if trip_id:
         await db.execute(
             text("""
                 INSERT INTO trip_items
-                  (trip_id, user_id, type, title, raw_text, parsed_data, event_at, booking_ref, provider)
-                VALUES (:trip_id, :uid, :type, :title, :raw, :pd, :event_at, :booking_ref, :provider)
+                  (trip_id, user_id, type, title, raw_text, parsed_data,
+                   event_at, event_end_at, booking_ref, provider)
+                VALUES (:trip_id, :uid, :type, :title, :raw, :pd,
+                        :event_at, :event_end_at, :booking_ref, :provider)
             """),
             {
                 "trip_id": str(trip_id), "uid": uid, "type": parsed.type, "title": parsed.title,
                 "raw": body_text, "pd": json.dumps(parsed.model_dump()),
-                "event_at": parsed.event_at, "booking_ref": parsed.booking_ref, "provider": parsed.provider,
+                "event_at": _safe_dt(parsed.event_at),
+                "event_end_at": _safe_dt(parsed.event_end_at),
+                "booking_ref": parsed.booking_ref, "provider": parsed.provider,
             },
         )
     else:
