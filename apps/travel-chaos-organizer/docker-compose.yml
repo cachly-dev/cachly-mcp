@@ -23,6 +23,7 @@ services:
       - ./backend/app/db/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql
       - ./backend/app/db/migrations/002_telemetry_freemium.sql:/docker-entrypoint-initdb.d/002_telemetry_freemium.sql
       - ./backend/app/db/migrations/003_telegram_chat_id.sql:/docker-entrypoint-initdb.d/003_telegram_chat_id.sql
+      - ./backend/app/db/migrations/004_stripe_and_email.sql:/docker-entrypoint-initdb.d/004_stripe_and_email.sql
     ports:
       - "5432:5432"
     healthcheck:

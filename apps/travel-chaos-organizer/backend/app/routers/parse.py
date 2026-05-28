@@ -110,7 +110,7 @@ async def parse_file(
     trip_id: UUID | None = Form(None),
 ):
     await quota.check_parse(db, uid)
-    _s = _get_settings()
+    _s = get_settings()
     content = await file.read()
     if len(content) > _s.max_upload_bytes:
         raise HTTPException(status_code=413, detail=f"File too large. Max {_s.max_upload_bytes // 1024 // 1024} MB.")
