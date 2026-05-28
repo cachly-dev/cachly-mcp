@@ -1,7 +1,3 @@
-/*
- * Copyright (c) 2026 VEDA GmbH. All rights reserved.
- * Use is subject to license terms
- */
 # Production override for node-1 deployment.
 # Disables local Caddy and Keycloak (production uses auth.cachly.dev).
 # Usage: docker compose -f docker-compose.yml -f docker-compose.node1.yml up -d
