@@ -82,9 +82,9 @@ async def _insert_item_from_parsed(
         text("""
             INSERT INTO trip_items
               (trip_id, user_id, type, title, raw_text, parsed_data,
-               event_at, booking_ref, provider)
+               event_at, event_end_at, booking_ref, provider)
             VALUES (:trip_id, :uid, :type, :title, :raw_text, :pd,
-                    :event_at, :booking_ref, :provider)
+                    :event_at, :event_end_at, :booking_ref, :provider)
             RETURNING id
         """),
         {
@@ -93,7 +93,8 @@ async def _insert_item_from_parsed(
             # _safe_dt converts Ollama's freeform date strings to proper datetime objects.
             # asyncpg / PostgreSQL rejects non-ISO strings for TIMESTAMPTZ columns,
             # which would crash the INSERT and roll back the whole transaction.
-            "event_at": _safe_dt(parsed.event_at), "booking_ref": parsed.booking_ref, "provider": parsed.provider,
+            "event_at": _safe_dt(parsed.event_at), "event_end_at": _safe_dt(parsed.event_end_at),
+            "booking_ref": parsed.booking_ref, "provider": parsed.provider,
         },
     )
     item_id = result.fetchone()[0]
