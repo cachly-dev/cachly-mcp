@@ -269,6 +269,29 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
           }
         } catch { /* non-fatal — getConnection will handle the wait if still provisioning */ }
       }
+      // Persist instance_id to ~/.claude/mcp.json after it's known.
+      // Without this, every restart loses CACHLY_BRAIN_INSTANCE_ID → resolveDefaultInstanceId
+      // makes an extra API call on every startup (with 30s cooldown on failure).
+      if (_defaultInstanceId) {
+        void (async () => {
+          try {
+            const { writeFile, readFile } = await import('node:fs/promises');
+            const { existsSync } = await import('node:fs');
+            const { resolve } = await import('node:path');
+            const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+            if (!home) return;
+            const configPath = resolve(home, '.claude', 'mcp.json');
+            if (!existsSync(configPath)) return;
+            let cfg: { mcpServers?: Record<string, { env?: Record<string, string> }> } = {};
+            try { cfg = JSON.parse(await readFile(configPath, 'utf-8')) as typeof cfg; } catch { return; }
+            const entry = cfg.mcpServers?.['cachly'];
+            if (entry?.env) {
+              entry.env['CACHLY_BRAIN_INSTANCE_ID'] = _defaultInstanceId;
+              await writeFile(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+            }
+          } catch { /* non-critical */ }
+        })();
+      }
       return 'done';
     }
     if (data.error === 'slow_down') flow.pollInterval = Math.min(flow.pollInterval + 2000, 15000);
@@ -399,6 +422,7 @@ async function getConnection(instance_id: string): Promise<Redis> {
     host: inst.host,
     port: inst.port,
     password: password || undefined,
+    commandTimeout: 8000,
     ...(tlsEnabled ? { tls: {} } : {}),
     lazyConnect: true,
     enableReadyCheck: true,
@@ -639,14 +663,10 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
             sendFunnelEvent('brain_from_git', { ...telemetryExtra, ...(gitCounts ?? {}) });
             sendFunnelEvent('recall_best_solution', telemetryExtra);
             // Append bootstrap summary to the session_start briefing.
-            const bootstrapText = typeof gitBootstrap === 'object' && gitBootstrap !== null && 'content' in gitBootstrap
-              ? (gitBootstrap as { content: { text?: string }[] }).content.map((c) => c.text ?? '').join('\n')
-              : String(gitBootstrap);
-            if (typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult) {
-              (brainResult as { content: { type: string; text: string }[] }).content.push({
-                type: 'text',
-                text: '\n---\n' + bootstrapText,
-              });
+            // brainResult is always a string here (handleBrainTool returns string for session_start).
+            const bootstrapText = String(gitBootstrap);
+            if (bootstrapText) {
+              return String(brainResult) + '\n---\n' + bootstrapText;
             }
           }
         } catch { /* git bootstrap errors must never break session_start */ }
@@ -661,7 +681,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       const srText = typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult
         ? JSON.stringify(brainResult)
         : String(brainResult ?? '');
-      if (srText.length > 50 && !srText.includes('No lessons found') && !srText.includes('no lessons')) {
+      if (srText.length > 50 && !srText.includes('No lessons found') && !srText.includes('no lessons') && !srText.includes('No matches found')) {
         sendFunnelEvent('recall_best_solution', telemetryExtra);
       }
     }

@@ -256,7 +256,7 @@ export async function handleTcoTool(
       // ── Provision a Cachly free instance for TCO ─────────────────────────
       case 'tco_provision_cache': {
         const CACHLY_API = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
-        const res = await fetch(`${CACHLY_API}/instances`, {
+        const res = await fetch(`${CACHLY_API}/api/v1/instances`, {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${jwt}`,
@@ -270,7 +270,7 @@ export async function handleTcoTool(
           const txt = await res.text().catch(() => '');
           // Instance may already exist — try to fetch it
           if (res.status === 409 || txt.includes('already')) {
-            const listRes = await fetch(`${CACHLY_API}/instances`, {
+            const listRes = await fetch(`${CACHLY_API}/api/v1/instances`, {
               headers: { Authorization: `Bearer ${jwt}` },
             });
             if (listRes.ok) {

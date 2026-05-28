@@ -30,11 +30,11 @@ export type Tokens = {
 
 export async function login(): Promise<Tokens | null> {
   const redirectUri = AuthSession.makeRedirectUri({ scheme: "tco", path: "auth" });
-  const codeVerifier = await Crypto.digestStringAsync(
-    Crypto.CryptoDigestAlgorithm.SHA256,
-    Math.random().toString(),
-    { encoding: Crypto.CryptoEncoding.BASE64 }
-  );
+  // RFC 7636: code_verifier must be 43–128 chars of unreserved ASCII (Base64URL, no padding).
+  // Use cryptographically secure random bytes, not Math.random() + SHA256.
+  const randomBytes = await Crypto.getRandomBytesAsync(32);
+  const codeVerifier = btoa(String.fromCharCode(...randomBytes))
+    .replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
 
   const request = new AuthSession.AuthRequest({
     clientId: CLIENT_ID,

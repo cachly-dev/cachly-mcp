@@ -185,7 +185,7 @@ export async function handleBrainTool(
         const existing = await redis.get(depKey);
         const depTopics: string[] = safeJsonParse<string[]>(existing, []);
         if (!depTopics.includes(topic)) depTopics.push(topic);
-        await redis.set(depKey, JSON.stringify(depTopics));
+        await redis.set(depKey, JSON.stringify(depTopics), 'EX', 90 * 86400);
       }
 
       const lessonObj = {
@@ -209,9 +209,11 @@ export async function handleBrainTool(
       };
       const lesson = JSON.stringify(lessonObj);
 
-      // Always append to the history list (audit log)
+      // Always append to the history list (audit log); keep last 100 entries, 90-day TTL
       const listKey = `cachly:lessons:${topic}`;
       await redis.rpush(listKey, lesson);
+      await redis.ltrim(listKey, -100, -1);
+      await redis.expire(listKey, 90 * 86400);
 
       // Update best key for success/partial; for failure only update if no success exists
       if (outcome === 'success' || outcome === 'partial') {
