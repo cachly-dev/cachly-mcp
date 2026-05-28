@@ -76,8 +76,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      keycloak:
-        condition: service_healthy
 
   telegram-bot:
     build: ./telegram-bot
