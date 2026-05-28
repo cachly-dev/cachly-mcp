@@ -1,3 +1,4 @@
+from datetime import datetime, timedelta, timezone
 from typing import Annotated
 import httpx
 from fastapi import Depends, HTTPException, Request, status
@@ -11,17 +12,21 @@ settings = get_settings()
 bearer_scheme = HTTPBearer()
 
 _jwks_cache: dict | None = None
+_jwks_cached_at: datetime | None = None
+_JWKS_TTL = timedelta(hours=1)  # refresh every hour to pick up key rotations
 
 
 async def _get_jwks() -> dict:
-    global _jwks_cache
-    if _jwks_cache:
+    global _jwks_cache, _jwks_cached_at
+    now = datetime.now(timezone.utc)
+    if _jwks_cache and _jwks_cached_at and (now - _jwks_cached_at) < _JWKS_TTL:
         return _jwks_cache
     url = f"{settings.keycloak_url}/realms/{settings.keycloak_realm}/protocol/openid-connect/certs"
     async with httpx.AsyncClient() as client:
         resp = await client.get(url, timeout=10)
         resp.raise_for_status()
         _jwks_cache = resp.json()
+        _jwks_cached_at = now
         return _jwks_cache
 
 

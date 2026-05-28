@@ -89,9 +89,15 @@ async def generate_telegram_pin(
 async def confirm_telegram_link(
     pin: str,
     chat_id: str,
+    request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
 ):
-    """Called by the bot: validates PIN and stores chat_id. No JWT needed — bot uses service token."""
+    """Called by the bot: validates PIN and stores chat_id. Requires X-Bot-Token header."""
+    from app.config import get_settings as _gs
+    s = _gs()
+    bot_token = request.headers.get("X-Bot-Token", "")
+    if not s.telegram_bot_token or bot_token != s.telegram_bot_token:
+        raise HTTPException(status_code=401, detail="Unauthorized")
     entry = _pending_links.get(pin)
     if not entry:
         raise HTTPException(status_code=404, detail="PIN not found or expired")

@@ -14,7 +14,6 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.auth.keycloak import user_id, user_id_or_bot
 from app.config import get_settings
-from app.config import get_settings as _get_settings
 from app.db.database import get_db
 from app.models.schemas import ParseResponse, ParsedTravelData
 from app.services import ollama as ollama_svc
