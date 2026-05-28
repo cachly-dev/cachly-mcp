@@ -6,7 +6,7 @@ Results are Cachly-cached by content hash when CACHLY_REDIS_URL is configured.
 """
 import json
 import re
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -46,13 +46,19 @@ def _safe_dt(val: str | None) -> datetime | None:
 
 
 def _build_parsed(parsed_dict: dict) -> ParsedTravelData:
-    """Build a ParsedTravelData, falling back to type='other' on ValidationError."""
+    """Build a ParsedTravelData, falling back to safe defaults on ValidationError.
+    Matches the same pattern as parse.py to avoid a double-fail scenario."""
     try:
         return ParsedTravelData(**{k: parsed_dict.get(k) for k in ParsedTravelData.model_fields})
     except ValidationError:
-        safe = {k: parsed_dict.get(k) for k in ParsedTravelData.model_fields}
-        safe["type"] = "other"
-        return ParsedTravelData(**safe)
+        return ParsedTravelData(
+            type="other",
+            title=str(parsed_dict.get("title") or "E-Mail"),
+            booking_ref=parsed_dict.get("booking_ref"),
+            provider=parsed_dict.get("provider"),
+            event_at=parsed_dict.get("event_at"),
+            raw_summary=parsed_dict.get("raw_summary"),
+        )
 
 
 def strip_email_headers(raw: str) -> str:

@@ -109,7 +109,7 @@ export default function TripsScreen() {
   function handleStartDateChange(val: string) {
     setStartDate(val);
     if (val.length > 0 && !/^\d{4}-\d{2}-\d{2}$/.test(val.trim())) {
-      setStartDateError("Format: TT.MM.JJJJ (z.B. 2025-06-15)");
+      setStartDateError("Format: JJJJ-MM-TT (z.B. 2025-06-15)");
     } else {
       setStartDateError(null);
     }
@@ -118,7 +118,7 @@ export default function TripsScreen() {
   function handleEndDateChange(val: string) {
     setEndDate(val);
     if (val.length > 0 && !/^\d{4}-\d{2}-\d{2}$/.test(val.trim())) {
-      setEndDateError("Format: TT.MM.JJJJ (z.B. 2025-06-15)");
+      setEndDateError("Format: JJJJ-MM-TT (z.B. 2025-06-15)");
     } else {
       setEndDateError(null);
     }
