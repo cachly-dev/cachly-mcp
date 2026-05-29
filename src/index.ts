@@ -604,7 +604,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         '',
         'After sign-in: call **any tool again** — your Brain activates instantly.',
         '',
-        '✨ Free forever · No credit card · 89 MCP tools · GDPR · EU servers',
+        '✨ Free forever · No credit card · 95 MCP tools · GDPR · EU servers',
       ].join('\n');
     }
 
@@ -1848,7 +1848,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
-  console.log('  \x1b[90mFree forever · GDPR · German servers · 89 MCP tools\x1b[0m');
+  console.log('  \x1b[90mFree forever · GDPR · German servers · 95 MCP tools\x1b[0m');
   console.log('');
   process.exit(0);
 }
@@ -2809,7 +2809,7 @@ const httpPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;
 
 if (httpPort) {
   // ── HTTP mode (Streamable HTTP transport) ───────────────────────────────
-  // Used for Smithery URL deployment: PORT=3000 node dist/index.js
+  // Used for Smithery URL deployment: PORT=3000 node dist/src/index.js
   const { createServer } = await import('node:http');
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   await server.connect(transport);

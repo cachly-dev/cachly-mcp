@@ -7,6 +7,50 @@
 
 ---
 
+## [0.10.57] – 2026-05-29
+
+### Critical: fixed broken npm entry point + version hygiene
+
+- **Fixed the package entry point.** When the shared `telegram-notify` package was
+  added to the TypeScript build, tsc began emitting to `dist/src/index.js`, but
+  `bin`/`main`/`start` still pointed at `dist/index.js`. Versions **0.10.50–0.10.52
+  shipped a non-existent entry point** (`npx @cachly-dev/mcp-server` failed). All
+  paths now correctly point to `dist/src/index.js`, verified by running the built
+  binary.
+- **Version re-sync.** `package.json`, `server.json` (MCP registry manifest, was
+  stuck at 0.10.23), `package-lock.json` (was 0.10.49), and `MCP_VERSION` are now
+  all `0.10.57`. Bumped ahead of the previously published 0.10.55/0.10.56 so
+  `latest` points forward again instead of regressing to 0.10.52.
+- **Accurate tool count (95).** README badge, `server.json`, `package.json`, and CLI
+  banners claimed 80/89 tools; corrected to the actual 95.
+
+## [0.10.52] – 2026-05-29
+
+- `smart_recall`: CKG traversal as a 3rd retrieval signal — surfaces lessons that
+  *fixed* causal-graph-similar problems even when vocabulary differs (🕸️ badge).
+- Cachly-Bench corpus expanded with a governance adversarial pair; headline lift
+  rose to **Precision@1 +22.2%, MRR +10.9%**.
+
+## [0.10.51] – 2026-05-29
+
+- `team_confirm`: human review (🛡️ senior / ✔️ peer) raises a lesson's recall
+  ranking — confirmed knowledge outranks unreviewed auto-learned entries.
+
+## [0.10.50] – 2026-05-29
+
+- `smart_recall`: unified keyword + semantic results into one hybrid-ranked list.
+- "Brain saved you here" banner surfaces estimated time saved per proven recall.
+
+## [0.10.49] – 2026-05-29
+
+- Persist JWT after device flow (telemetry showed zero authenticated calls after
+  restarts). Quality-aware reranking + Cachly-Bench (the moat proof) introduced.
+
+> Note: 0.10.39–0.10.48 and 0.10.53–0.10.56 were interim/parallel publishes; see
+> git history for details. 0.10.57 supersedes all of them.
+
+---
+
 ## [0.10.38] – 2026-05-25
 
 ### `cachly status` — Brain health at a glance

@@ -11,10 +11,16 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.52';
+const MCP_VERSION = '0.10.57';
 const WHATS_NEW: Record<string, string[]> = {
-  '0.10.52': [
+  '0.10.57': [
     `🆕 **What's new in v${MCP_VERSION}:**`,
+    `  🔧 **Critical fix** — corrected the npm bin/main entry path (\`dist/src/index.js\`); 0.10.50–0.10.52 shipped a broken entry point`,
+    `  🔧 Version hygiene — synced package.json, server.json, lockfile, MCP_VERSION; \`latest\` now points forward again`,
+    `  ✅ Accurate tool count (95) across README, server.json, CLI banners`,
+    `  ✅ Includes all Phase 2/3 work: quality reranking, Cachly-Bench, hybrid + CKG recall, team_confirm governance`,
+  ],
+  '0.10.52': [
     `  ✅ \`smart_recall\` — CKG traversal as Layer 3: finds lessons that FIXED causal-graph-similar problems (🕸️ causal graph badge)`,
     `  ✅ Bench corpus expanded: governance adversarial pair proves review-boost end-to-end (+22% P@1 headline)`,
     `  🔧 Import cleanup: unused symbols removed from brain.ts (no functional change)`,
