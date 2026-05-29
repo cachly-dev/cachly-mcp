@@ -13,7 +13,7 @@ const { height: SCREEN_HEIGHT } = Dimensions.get("window");
 type Props = {
   visible: boolean;
   onClose: () => void;
-  children: ReactNode;
+  children?: ReactNode;
   /** Sheet takes up this fraction of screen height (default 0.5) */
   heightFraction?: number;
   /** Set true when sheet contains text inputs so keyboard doesn't cover them */
