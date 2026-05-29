@@ -15,7 +15,7 @@ import { EventEmitter } from 'node:events';
 
 // ── Modules under test ────────────────────────────────────────────────────────
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
-         ckgUpsertPersonNode, ckgUpsertFileNode } from '../ckg.js';
+         ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration } from '../ckg.js';
 import type { PersonNode, FileNode } from '../ckg.js';
 import { EMBED_PROVIDER, hasEmbedProvider, embedProviderHint, embedConfig, setEmbedJwt } from '../embeddings.js';
 import { keywordSearch } from '../search.js';
@@ -1468,5 +1468,71 @@ describe('Phase 3C: brain_metrics — the three decisive metrics', () => {
     await handleBrainTool('smart_recall', { instance_id: iid, query: 'plimsoll threshold', author: 'dave' }, getConn, noopApiFetch);
     const out = await handleBrainTool('smart_recall', { instance_id: iid, query: 'plimsoll threshold', author: 'dave' }, getConn, noopApiFetch);
     expect(out).toContain('Team knowledge reuse');
+  });
+});
+
+describe('Phase 3: collaboration graph (person↔person)', () => {
+  let redis: MockRedis;
+  const iid = 'i1';
+  const getConn = async () => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('ckgRecordCollaboration links co-touchers bidirectionally', async () => {
+    const r = redis as unknown as Redis;
+    await ckgRecordCollaboration(r, 'file:src-api-ts', 'person:alice');
+    await ckgRecordCollaboration(r, 'file:src-api-ts', 'person:bob');
+    // alice↔bob edges should now exist in both directions
+    const ab = await redis.get('cachly:ckg:edge:person:bob:collaborates:person:alice');
+    const ba = await redis.get('cachly:ckg:edge:person:alice:collaborates:person:bob');
+    expect(ab).not.toBeNull();
+    expect(ba).not.toBeNull();
+  });
+
+  it('does not create a self-collaboration edge', async () => {
+    const r = redis as unknown as Redis;
+    await ckgRecordCollaboration(r, 'file:x', 'person:alice');
+    await ckgRecordCollaboration(r, 'file:x', 'person:alice'); // same person again
+    const self = await redis.get('cachly:ckg:edge:person:alice:collaborates:person:alice');
+    expect(self).toBeNull();
+  });
+
+  it('builds collaboration via learn_from_attempts on a shared file', async () => {
+    // alice and bob both touch the same file in separate lessons
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:auth-a', outcome: 'success',
+      what_worked: 'patch a', author: 'alice', file_paths: ['src/auth/jwt.ts'],
+    }, getConn, noopApiFetch);
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:auth-b', outcome: 'success',
+      what_worked: 'patch b', author: 'bob', file_paths: ['src/auth/jwt.ts'],
+    }, getConn, noopApiFetch);
+
+    const fileId = `file:${ckgSlug('src/auth/jwt.ts')}`;
+    const touchers = await redis.smembers(`cachly:ckg:file:touchers:${fileId}`);
+    expect(touchers).toContain('person:alice');
+    expect(touchers).toContain('person:bob');
+    // bob (second toucher) should have a collaborates edge to alice
+    const edge = await redis.get('cachly:ckg:edge:person:bob:collaborates:person:alice');
+    expect(edge).not.toBeNull();
+  });
+
+  it('surfaces collaborators in brain_who_knows for the top expert', async () => {
+    // alice authors twice on a shared file; bob authors once on the same file
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'deploy:k8s-1', outcome: 'success',
+      what_worked: 'rollout fix one', author: 'alice', file_paths: ['k8s/deploy.yaml'],
+    }, getConn, noopApiFetch);
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'deploy:k8s-2', outcome: 'success',
+      what_worked: 'rollout fix two', author: 'alice', file_paths: ['k8s/deploy.yaml'],
+    }, getConn, noopApiFetch);
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'deploy:k8s-3', outcome: 'success',
+      what_worked: 'rollout fix three', author: 'bob', file_paths: ['k8s/deploy.yaml'],
+    }, getConn, noopApiFetch);
+
+    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: 'deploy' }, getConn, noopApiFetch);
+    expect(out).toContain('frequently works with');
   });
 });

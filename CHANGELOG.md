@@ -7,6 +7,19 @@
 
 ---
 
+## [0.10.68] – 2026-05-29
+
+### Collaboration graph (Phase 3) — person↔person edges
+
+- **The knowledge graph now models who works with whom.** When two people touch the
+  same file (via `learn_from_attempts` or `brain_from_git`), cachly records a
+  bidirectional `collaborates` edge between them (`ckgRecordCollaboration`). Bounded
+  to the first 25 co-touchers per file so a hot file can't blow up the write path.
+- **`brain_who_knows` now surfaces collaborators.** For the top expert on a topic, it
+  shows who they frequently work with: *"alice frequently works with bob, carol — ask
+  them together."* Bus-factor insight + better onboarding routing.
+- Built organically from existing person/file nodes — zero new setup. +4 tests.
+
 ## [0.10.67] – 2026-05-29
 
 ### Network timeouts everywhere in the agent hot path

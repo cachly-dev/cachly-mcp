@@ -1,7 +1,7 @@
 import { createHmac } from 'node:crypto';
 import type { Redis } from 'ioredis';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
-         ckgUpsertPersonNode, ckgUpsertFileNode } from '../ckg.js';
+         ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse, normalizeGitPath } from '../utils.js';
 
@@ -1049,6 +1049,8 @@ export async function handleFedbrainTool(
             for (const fp of commitFiles.slice(0, 8)) {
               const fileId = await ckgUpsertFileNode(redis, fp);
               await ckgUpdateEdge(redis, personId, 'touched', fileId, true);
+              // Phase 3: build the person↔person collaboration graph from shared files.
+              await ckgRecordCollaboration(redis, fileId, personId);
             }
           } catch { /* non-critical */ }
         }

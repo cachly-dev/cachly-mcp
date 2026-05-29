@@ -3,7 +3,7 @@ import type { Redis } from 'ioredis';
 import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
          CONFIDENCE_WARN_VALUE, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_DAYS } from '../confidence.js';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
-         ckgUpsertPersonNode, ckgUpsertFileNode } from '../ckg.js';
+         ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration } from '../ckg.js';
 import { safeJsonParse, scanKeys } from '../utils.js';
 import type { CKGEdge, CKGNode, PersonNode } from '../ckg.js';
 import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
@@ -12,8 +12,14 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.67';
+const MCP_VERSION = '0.10.68';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.68': [
+    `🤝 **Collaboration graph (Phase 3)** — person↔person edges from shared files`,
+    `  👥 \`brain_who_knows\` now shows who the top expert frequently works with`,
+    `  🚌 Bus-factor insight: "ask X and Y together — they solved this on shared files"`,
+    `  🛡️ Stability: every network call in the agent hot path is now timeout-bounded`,
+  ],
   '0.10.64': [
     `📈 **The three decisive metrics, now measurable**`,
     `  ⏱️ \`brain_metrics()\` — time-to-first-recall, recall-lift, team-knowledge-reuse in one view`,
@@ -431,6 +437,8 @@ export async function handleBrainTool(
           for (const fp of file_paths.slice(0, 8)) {
             const fileId = await ckgUpsertFileNode(redis, fp);
             await ckgUpdateEdge(redis, personId, 'touched', fileId, true);
+            // Phase 3: link this author to everyone else who touched the same file.
+            await ckgRecordCollaboration(redis, fileId, personId);
           }
         } catch { /* non-critical */ }
       }
@@ -2148,7 +2156,8 @@ export async function handleBrainTool(
 
       // Step 3: Sort by expertise score (lesson count × avg confidence)
       const ranked = [...personScores.entries()]
-        .map(([, s]) => ({
+        .map(([id, s]) => ({
+          id,
           handle: s.handle,
           lessonCount: s.lessonCount,
           avgConfidence: s.totalConfidence / s.lessonCount,
@@ -2157,6 +2166,27 @@ export async function handleBrainTool(
         }))
         .sort((a, b) => (b.lessonCount * b.avgConfidence) - (a.lessonCount * a.avgConfidence))
         .slice(0, safeLimit);
+
+      // Step 4: For the top expert, find frequent collaborators (person↔person edges).
+      const topCollaborators: string[] = [];
+      const topExpert = ranked[0];
+      if (topExpert) {
+        try {
+          const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${topExpert.id}`);
+          const collabs: Array<{ handle: string; trials: number }> = [];
+          for (const ek of edgeKeys) {
+            const er = await redis.get(ek);
+            if (!er) continue;
+            const edge = safeJsonParse<CKGEdge | null>(er, null);
+            if (!edge || edge.edgeType !== 'collaborates') continue;
+            const pr = await redis.get(`cachly:ckg:node:${edge.to}`);
+            const pn = pr ? safeJsonParse<PersonNode | null>(pr, null) : null;
+            if (pn?.handle) collabs.push({ handle: pn.handle, trials: edge.trials });
+          }
+          collabs.sort((a, b) => b.trials - a.trials);
+          for (const c of collabs.slice(0, 3)) topCollaborators.push(c.handle);
+        } catch { /* non-critical */ }
+      }
 
       const lines = [
         `## 👥 Who Knows About \`${topic}\`?`,
@@ -2173,6 +2203,14 @@ export async function handleBrainTool(
         lines.push(
           `${medal} **${p.handle}** — ${p.lessonCount} lesson${p.lessonCount !== 1 ? 's' : ''} · ${conf}% confidence · last active ${recency}`,
           `   _domains: ${p.domains}_`,
+          ``,
+        );
+      }
+
+      if (topCollaborators.length > 0 && topExpert) {
+        lines.push(
+          `🤝 **${topExpert.handle}** frequently works with: ${topCollaborators.map(h => `**${h}**`).join(', ')}`,
+          `   _(ask them together — they've solved structurally similar things on shared files)_`,
           ``,
         );
       }

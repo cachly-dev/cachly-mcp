@@ -101,3 +101,23 @@ export async function ckgUpdateEdge(redis: Redis, from: string, edgeType: string
   await redis.sadd(`cachly:ckg:idx:from:${from}`, key);
   await redis.sadd(`cachly:ckg:idx:to:${to}`, key);
 }
+
+/**
+ * Phase 3: Collaboration graph. When `personId` touches `fileId`, record a
+ * bidirectional `collaborates` edge to every *other* person who has touched the
+ * same file. Builds the person↔person graph organically — "who works with whom".
+ * Bounded: only the first MAX_CO_TOUCHERS prior touchers are linked, so a hot file
+ * touched by hundreds of people can't blow up the write path.
+ */
+const MAX_CO_TOUCHERS = 25;
+export async function ckgRecordCollaboration(redis: Redis, fileId: string, personId: string): Promise<void> {
+  const touchersKey = `cachly:ckg:file:touchers:${fileId}`;
+  const priorTouchers = await redis.smembers(touchersKey);
+  for (const other of priorTouchers.slice(0, MAX_CO_TOUCHERS)) {
+    if (other === personId) continue;
+    // Symmetric edges so traversal works from either node.
+    await ckgUpdateEdge(redis, personId, 'collaborates', other, true);
+    await ckgUpdateEdge(redis, other, 'collaborates', personId, true);
+  }
+  await redis.sadd(touchersKey, personId);
+}
