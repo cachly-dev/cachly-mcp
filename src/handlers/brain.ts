@@ -13,18 +13,23 @@ import { computeEmbedding, hasEmbedProvider, embedProviderHint, EMBED_PROVIDER }
 import { detectNamespace } from '../namespace.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.49';
+const MCP_VERSION = '0.10.50';
 const WHATS_NEW: Record<string, string[]> = {
-  '0.10.49': [
+  '0.10.50': [
     `🆕 **What's new in v${MCP_VERSION}:**`,
+    `  ✅ \`smart_recall\` — unified keyword + semantic hybrid list (one ranked result, not two sections)`,
+    `  ✅ \`smart_recall\` — "Brain saved you here" banner surfaces time saved inline per proven lesson`,
+    `  ✅ Quality reranking — proven successes outrank symptom-dense failures (+11% Precision@1)`,
+    `  ✅ Cachly-Bench — IR benchmark with CI regression guard (see BENCH.md for the proof)`,
+    `  🔧 Contradiction resolution now persisted to Redis (90-day TTL)`,
+    `  💡 Run \`smart_recall\` to see your Brain's recall quality in action`,
+  ],
+  '0.10.49': [
     `  ✅ \`brain_from_git\` — auto-seed your Brain from git history in seconds`,
     `  ✅ \`brain_predict_failures\` — predict CI/build failures before they happen`,
-    `  ✅ \`smart_recall\` — semantic + keyword hybrid recall, now in every CLAUDE.md`,
     `  ✅ VS Code extension — Brain status bar, ambient learning, CodeLens hints`,
     `  ✅ Team Brain — share lessons across your whole engineering team`,
-    `  ✅ 89 MCP tools — roadmap, A/B tests, cache, index, predict, syndicate`,
     `  🔧 Stability — auto-expiring memory keys, longer provisioning wait, robust recall`,
-    `  💡 Run \`brain_from_git\` to seed your Brain from existing commits instantly`,
   ],
 };
 
@@ -524,74 +529,37 @@ export async function handleBrainTool(
       // text-similar failed attempts (the moat; see src/rerank.ts + Cachly-Bench). ──
       const kwMatches = rerankByQuality(rawMatches);
 
-      // Increment recall_count on matched lessons (fire-and-forget — same as recall_best_solution).
-      // This ensures the dashboard metric, Proven Laws, and trust badges reflect real smart_recall usage.
+      // Increment recall_count on matched lessons (fire-and-forget) + collect "Brain saved you here" signal.
+      type RecalledLesson = { topic: string; severity: string; recall_count: number; savedMins: number };
+      const savedHere: RecalledLesson[] = [];
       const lessonMatches = kwMatches.filter(m => m.key.startsWith('cachly:lesson:best:'));
       for (const m of lessonMatches.slice(0, 5)) {
         const existing = await redis.get(m.key).catch(() => null);
         if (existing) {
-          const lesson = safeJsonParse(existing, null as null | { recall_count?: number; [k: string]: unknown });
+          const lesson = safeJsonParse(existing, null as null | { recall_count?: number; outcome?: string; severity?: string; [k: string]: unknown });
           if (lesson) {
             const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, verified_at: new Date().toISOString() };
             redis.set(m.key, JSON.stringify(updated)).catch(() => {});
-            const savedMins = (lesson.severity as string) === 'critical' ? 240 : (lesson.severity as string) === 'major' ? 60 : 30;
+            const sev = lesson.severity as string;
+            const savedMins = sev === 'critical' ? 240 : sev === 'major' ? 60 : 30;
             redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
-          }
-        }
-      }
-
-      const lines: string[] = [`🧠 **Smart Recall** for: _"${query}"_\n`];
-
-      // Show sub-query info if multi-topic was detected
-      const subQueries = splitMultiQuery(query);
-      if (subQueries.length > 1) {
-        lines.push(`_Detected ${subQueries.length} sub-topics:_ ${subQueries.map((s, i) => `${i + 1}. "${s}"`).join(', ')}\n`);
-      }
-
-      if (kwMatches.length > 0) {
-        lines.push(`### 🔍 BM25 Matches (${kwMatches.length})\n`);
-
-        // Group by sub-query if multi-topic
-        if (subQueries.length > 1) {
-          const grouped = new Map<string, KeywordMatch[]>();
-          for (const m of kwMatches.slice(0, 12)) {
-            const sq = m.subQuery ?? query;
-            if (!grouped.has(sq)) grouped.set(sq, []);
-            grouped.get(sq)!.push(m);
-          }
-          for (const [sq, matches] of grouped) {
-            lines.push(`**Topic: "${sq}"** (${matches.length} results)\n`);
-            for (const m of matches.slice(0, 4)) {
-              const label = m.key
-                .replace('cachly:ctx:', '📝 ')
-                .replace('cachly:lesson:best:', '💡 ')
-                .replace('cachly:idx:', '📂 ');
-              const preview = m.content.slice(0, 300).replace(/\n/g, ' ');
-              lines.push(`  **${label}** _(BM25: ${m.score.toFixed(2)}, matched: ${m.matchedWords.join(', ')})_`);
-              lines.push(`  > ${preview}${m.content.length > 300 ? '…' : ''}\n`);
+            // Surface banner for proven successes (recall_count >= 1 means it's been validated)
+            if (lesson.outcome === 'success' && (lesson.recall_count ?? 0) >= 1) {
+              savedHere.push({
+                topic: m.key.replace('cachly:lesson:best:', ''),
+                severity: sev ?? 'major',
+                recall_count: (lesson.recall_count ?? 0) + 1,
+                savedMins,
+              });
             }
           }
-          // Summary: which sub-queries had matches
-          const matched = [...grouped.keys()];
-          const unmatched = subQueries.filter(sq => !matched.includes(sq));
-          if (unmatched.length > 0) {
-            lines.push(`\n⚠️ **No results for:** ${unmatched.map(s => `"${s}"`).join(', ')}`);
-          }
-        } else {
-          for (const m of kwMatches.slice(0, 8)) {
-            const label = m.key
-              .replace('cachly:ctx:', '📝 ')
-              .replace('cachly:lesson:best:', '💡 ')
-              .replace('cachly:idx:', '📂 ');
-            const preview = m.content.slice(0, 400).replace(/\n/g, ' ');
-            lines.push(`**${label}** _(BM25: ${m.score.toFixed(2)}, matched: ${m.matchedWords.join(', ')})_`);
-            lines.push(`> ${preview}${m.content.length > 400 ? '…' : ''}\n`);
-          }
         }
       }
 
-      // ── Layer 2: Semantic search (optional, only if embedding provider + vector_token available) ──
+      // ── Layer 2: Semantic search (parallel, optional) ────────────────────────
       const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
+      type SemHit = { key: string; similarity: number; content: string };
+      const semHits: SemHit[] = [];
       if (inst.vector_token && hasEmbedProvider()) {
         try {
           const embedding = await computeEmbedding(query);
@@ -601,22 +569,15 @@ export async function handleBrainTool(
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ embedding, namespace: 'cachly:ctx', threshold, top_k: 5 }),
           });
-
           if (searchRes.ok) {
             const results = (await searchRes.json()) as SemanticSearchResponse[];
-            const semHits = results.filter(r => r.found && r.id);
-            if (semHits.length > 0) {
-              lines.push(`\n### 🎯 Semantic Matches (${semHits.length})\n`);
-              for (const hit of semHits) {
-                const parts = hit.id!.replace('ctx:', '').split(':');
-                const category = parts[0];
-                const key = parts.slice(1).join(':');
-                const content = await redis.get(`cachly:ctx:${category}:${key}`);
-                lines.push(
-                  `**${key}** _(${((hit.similarity ?? 0) * 100).toFixed(0)}% similar)_`,
-                  `> ${content?.slice(0, 300) ?? '(evicted)'}${(content?.length ?? 0) > 300 ? '…' : ''}\n`,
-                );
-              }
+            for (const hit of results.filter(r => r.found && r.id)) {
+              const parts = hit.id!.replace('ctx:', '').split(':');
+              const category = parts[0];
+              const key = parts.slice(1).join(':');
+              const redisKey = `cachly:ctx:${category}:${key}`;
+              const content = await redis.get(redisKey).catch(() => null);
+              semHits.push({ key: redisKey, similarity: hit.similarity ?? 0, content: content ?? '(evicted)' });
             }
           }
         } catch {
@@ -624,7 +585,106 @@ export async function handleBrainTool(
         }
       }
 
-      if (kwMatches.length === 0) {
+      // ── Layer 3: Hybrid merge — one unified ranked list ──────────────────────
+      // BM25 quality scores (already reranked) are re-normalized to [0,1] for merging.
+      type HybridResult = {
+        key: string; content: string; hybridScore: number;
+        bm25Score?: number; semScore?: number; matchedWords?: string[];
+        matchType: 'keyword' | 'semantic' | 'hybrid'; subQuery?: string;
+      };
+
+      const bm25Scores = kwMatches.map(m => m.score);
+      const bm25Min = bm25Scores.length ? Math.min(...bm25Scores) : 0;
+      const bm25Range = bm25Scores.length ? (Math.max(...bm25Scores) - bm25Min) || 1 : 1;
+      const bm25Norm = (s: number) => (s - bm25Min) / bm25Range;
+
+      const hybridMap = new Map<string, HybridResult>();
+      for (const m of kwMatches) {
+        const n = bm25Norm(m.score);
+        hybridMap.set(m.key, {
+          key: m.key, content: m.content, bm25Score: n,
+          hybridScore: n * (semHits.length > 0 ? 0.7 : 1.0),
+          matchedWords: m.matchedWords, matchType: 'keyword', subQuery: m.subQuery,
+        });
+      }
+      for (const hit of semHits) {
+        const existing = hybridMap.get(hit.key);
+        if (existing) {
+          existing.semScore = hit.similarity;
+          existing.hybridScore = (existing.bm25Score ?? 0) * 0.6 + hit.similarity * 0.4;
+          existing.matchType = 'hybrid';
+        } else {
+          hybridMap.set(hit.key, {
+            key: hit.key, content: hit.content, semScore: hit.similarity,
+            hybridScore: hit.similarity * 0.5, matchType: 'semantic',
+          });
+        }
+      }
+      const hybridResults = [...hybridMap.values()].sort((a, b) => b.hybridScore - a.hybridScore);
+
+      // ── Build output ──────────────────────────────────────────────────────────
+      const lines: string[] = [`🧠 **Smart Recall** for: _"${query}"_\n`];
+
+      // "Brain saved you here" banner — surfaces value inline for proven recalled lessons
+      const SORDER: Record<string, number> = { critical: 0, major: 1, minor: 2 };
+      const topLesson = savedHere.sort((a, b) => (SORDER[a.severity] ?? 1) - (SORDER[b.severity] ?? 1))[0];
+      if (topLesson) {
+        lines.push(`> 💡 **Brain saved you ~${topLesson.savedMins}m here** — ${topLesson.severity} issue from \`${topLesson.topic}\` recalled ${topLesson.recall_count}× proven\n`);
+      }
+
+      // Show sub-query info if multi-topic was detected
+      const subQueries = splitMultiQuery(query);
+      if (subQueries.length > 1) {
+        lines.push(`_Detected ${subQueries.length} sub-topics:_ ${subQueries.map((s, i) => `${i + 1}. "${s}"`).join(', ')}\n`);
+      }
+
+      if (hybridResults.length > 0) {
+        const modeLabel = semHits.length > 0
+          ? `keyword + semantic hybrid`
+          : `keyword`;
+        lines.push(`### 🔍 Results (${hybridResults.length} — ${modeLabel})\n`);
+
+        // Group by sub-query for multi-topic queries
+        if (subQueries.length > 1) {
+          const grouped = new Map<string, HybridResult[]>();
+          for (const r of hybridResults.slice(0, 12)) {
+            const sq = r.subQuery ?? query;
+            if (!grouped.has(sq)) grouped.set(sq, []);
+            grouped.get(sq)!.push(r);
+          }
+          for (const [sq, results] of grouped) {
+            lines.push(`**Topic: "${sq}"** (${results.length} results)\n`);
+            for (const r of results.slice(0, 4)) {
+              const label = r.key.replace('cachly:ctx:', '📝 ').replace('cachly:lesson:best:', '💡 ').replace('cachly:idx:', '📂 ');
+              const scorePart = r.matchType === 'hybrid'
+                ? `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🔀 hybrid`
+                : r.matchType === 'semantic'
+                ? `sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🎯 semantic`
+                : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
+              const preview = r.content.slice(0, 300).replace(/\n/g, ' ');
+              lines.push(`  **${label}** _(${scorePart})_`);
+              lines.push(`  > ${preview}${r.content.length > 300 ? '…' : ''}\n`);
+            }
+          }
+          const matched = [...grouped.keys()];
+          const unmatched = subQueries.filter(sq => !matched.includes(sq));
+          if (unmatched.length > 0) {
+            lines.push(`\n⚠️ **No results for:** ${unmatched.map(s => `"${s}"`).join(', ')}`);
+          }
+        } else {
+          for (const r of hybridResults.slice(0, 8)) {
+            const label = r.key.replace('cachly:ctx:', '📝 ').replace('cachly:lesson:best:', '💡 ').replace('cachly:idx:', '📂 ');
+            const scorePart = r.matchType === 'hybrid'
+              ? `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🔀 hybrid`
+              : r.matchType === 'semantic'
+              ? `sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🎯 semantic`
+              : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
+            const preview = r.content.slice(0, 400).replace(/\n/g, ' ');
+            lines.push(`**${label}** _(${scorePart})_`);
+            lines.push(`> ${preview}${r.content.length > 400 ? '…' : ''}\n`);
+          }
+        }
+      } else {
         lines.push(`⚠️ No matches found for: "${query}"`);
 
         // Did-You-Mean: find nearest token in index vocab
