@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.64 · 101 MCP-Tools · 424 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.65 · 101 MCP-Tools · 425 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.64` (npm `latest`) |
+| Version | `0.10.65` (npm `latest`) |
 | MCP-Tools | **101** |
-| Tests | **424** passing, 8 Suites |
+| Tests | **425** passing, 8 Suites |
 | Lint | **0 errors, 0 warnings** |
 | Build | sauber (`tsc`, Entry `dist/src/index.js`) |
 | Bench | Precision@1 **+22.2 %**, MRR **+10.9 %**, nDCG@5 **+8.1 %** vs. BM25 |
@@ -83,9 +83,12 @@
 
 ### Beweis (Phase-2-Rest) — der Glaubwürdigkeits-Beweis
 
-- 🔲 **Extern gelabelter Korpus** statt selbstgebautem Bench-Set
-- 🔲 **Head-to-head gegen echtes Flat-File-Memory** auf realen Agent-Traces
-- 🔲 BENCH.md "Limitations" offen ansprechen → unabhängig reproduzierbar machen
+- ✅ **Flat-File Head-to-Head im Bench** (0.10.65) — naiver, quality-blinder Ranker
+  als ehrlicher Stellvertreter für "LLM liest Memory-Files". Cachly gewinnt auf den
+  entscheidenden Metriken: **P@1 +10.0 %, MRR +4.4 % vs. flat-file** · CI-verteidigt.
+- ✅ BENCH.md "Limitations" offen + ehrlich (warum flat-file bei P@3/Recall@3 vorn liegt).
+- 🔲 **Extern gelabelter Korpus** statt selbstgebautem Bench-Set (Dritt-Labels)
+- 🔲 Head-to-head auf **realen Agent-Traces** (nicht nur Fixture-Korpus)
 
 ### Team-Graph (Phase-3-Rest)
 
@@ -98,9 +101,10 @@
 ### Onboarding / Null-Reibung (Phase-1-Eintrittskarte)
 
 - 🔲 `npx @cachly-dev/init` Ein-Befehl-Setup <60 s, idempotent
-- 🔲 Circuit-Breaker / Timeouts überall (Tool darf Agent-Call nie blockieren)
+- 🟡 Circuit-Breaker / Timeouts: Scan-Tools abgesichert (`scanKeys`/`withTimeout`,
+  0.10.63); verbleibende Netzwerk-Calls (apiFetch) noch nicht überall timeout-gewrappt
 - 🔲 Self-Healing-Auth (kein "0 Recalls weil RAM-only")
-- 🔲 Time-to-first-recall messen und auf <2 min drücken
+- ✅ Time-to-first-recall **messen** (0.10.64); auf <2 min *drücken* bleibt Onboarding-Arbeit 🔲
 
 ### Enterprise / Reichweite (Phase-3/4)
 

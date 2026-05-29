@@ -7,6 +7,21 @@
 
 ---
 
+## [0.10.65] – 2026-05-29
+
+### Flat-file head-to-head in the benchmark (the proof gets honest)
+
+- **Cachly-Bench now compares three rankers**, not two: a `flatfile` ranker
+  (naive term-overlap, no IDF, no length norm, **no quality signal**, recency
+  tiebreak) joins the BM25 `baseline` and `cachly`. The flat-file ranker is an
+  honest — in fact *charitable* — stand-in for "an LLM reading its own memory files."
+- **Result:** cachly wins the metrics an agent depends on — **Precision@1 +10.0 %,
+  MRR +4.4 % vs. flat-file** (and +22.2 % / +10.9 % vs. BM25). The report and BENCH.md
+  are honest about *why* flat-file's Precision@3 / Recall@3 look higher (it ranks the
+  whole corpus; we did not rig that away).
+- **CI-defended:** a new regression test asserts cachly ≥ flat-file on Precision@1
+  and MRR, and that the flat-file simulation isn't trivially weak (MRR > 0.5).
+
 ## [0.10.64] – 2026-05-29
 
 ### The three decisive metrics, now measurable

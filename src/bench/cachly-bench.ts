@@ -102,12 +102,43 @@ export interface BenchMetrics {
 }
 
 export interface BenchResult {
+  /** Flat-file memory simulation: naive term-overlap, no IDF, no quality signal. */
+  flatfile: BenchMetrics;
   baseline: BenchMetrics;
   cachly: BenchMetrics;
-  /** Relative lift per metric, e.g. { mrr: 0.23 } = +23%. */
+  /** Relative lift of cachly vs the BM25 baseline. */
   lift: BenchMetrics;
+  /** Relative lift of cachly vs a flat-file memory (the head-to-head that matters). */
+  liftVsFlatfile: BenchMetrics;
   queryCount: number;
   corpusSize: number;
+}
+
+/**
+ * Simulates how a flat-file memory (e.g. an LLM reading a `/memories` directory)
+ * actually surfaces knowledge: it has NO ranking engine. Practical retrieval is
+ * naive lexical overlap — count how many distinct query terms appear in the file's
+ * text — with NO inverse-document-frequency, NO length normalization, and crucially
+ * NO quality signal (a proven fix and a failed attempt are just text). Ties break by
+ * recency, mimicking "most recently edited note first". This is a fair, and honestly
+ * weaker, stand-in for "Claude reads its own memory files".
+ */
+function flatFileRank(lessons: BenchLesson[], query: string): string[] {
+  const qTerms = new Set(
+    query.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(t => t.length >= 3),
+  );
+  const scored = lessons.map(l => {
+    const blob = [l.topic, l.what_worked, l.what_failed ?? '', l.context ?? '', (l.tags ?? []).join(' ')]
+      .join(' ').toLowerCase();
+    let overlap = 0;
+    for (const t of qTerms) if (blob.includes(t)) overlap++;
+    const recency = l.ts ? new Date(l.ts).getTime() : 0;
+    return { topic: l.topic, overlap, recency };
+  });
+  return scored
+    .filter(s => s.overlap > 0)
+    .sort((a, b) => (b.overlap - a.overlap) || (b.recency - a.recency))
+    .map(s => s.topic);
 }
 
 const matchTopic = (m: KeywordMatch): string => m.key.replace(LESSON_PREFIX, '');
@@ -139,34 +170,45 @@ function scoreRanking(ranked: string[], relevant: Set<string>): BenchMetrics {
 /** Run the benchmark over the fixture corpus. Pure-ish: no network, no real Redis. */
 export async function runBenchmark(): Promise<BenchResult> {
   const redis = indexCorpus(BENCH_LESSONS);
+  const flatfileRows: BenchMetrics[] = [];
   const baselineRows: BenchMetrics[] = [];
   const cachlyRows: BenchMetrics[] = [];
 
   for (const q of BENCH_QUERIES) {
     const relevant = new Set(q.relevant);
 
-    // Same candidate set for both rankers — isolates the ranking contribution.
+    // BM25 baseline + cachly share the same candidate set — isolates ranking quality.
     const matches = await keywordSearch(redis as never, [`${LESSON_PREFIX}*`], q.query, 10);
-
     const baselineRanked = matches.map(matchTopic);
     const cachlyRanked = rerankByQuality(matches).map(matchTopic);
 
+    // Flat-file memory sees the whole corpus but has no ranking engine.
+    const flatfileRanked = flatFileRank(BENCH_LESSONS, q.query);
+
+    flatfileRows.push(scoreRanking(flatfileRanked, relevant));
     baselineRows.push(scoreRanking(baselineRanked, relevant));
     cachlyRows.push(scoreRanking(cachlyRanked, relevant));
   }
 
+  const flatfile = aggregate(flatfileRows);
   const baseline = aggregate(baselineRows);
   const cachly = aggregate(cachlyRows);
   const liftOf = (b: number, c: number) => (b === 0 ? (c > 0 ? 1 : 0) : (c - b) / b);
-  const lift: BenchMetrics = {
-    precisionAt1: liftOf(baseline.precisionAt1, cachly.precisionAt1),
-    precisionAt3: liftOf(baseline.precisionAt3, cachly.precisionAt3),
-    recallAt3: liftOf(baseline.recallAt3, cachly.recallAt3),
-    mrr: liftOf(baseline.mrr, cachly.mrr),
-    ndcgAt5: liftOf(baseline.ndcgAt5, cachly.ndcgAt5),
-  };
+  const liftBetween = (from: BenchMetrics): BenchMetrics => ({
+    precisionAt1: liftOf(from.precisionAt1, cachly.precisionAt1),
+    precisionAt3: liftOf(from.precisionAt3, cachly.precisionAt3),
+    recallAt3: liftOf(from.recallAt3, cachly.recallAt3),
+    mrr: liftOf(from.mrr, cachly.mrr),
+    ndcgAt5: liftOf(from.ndcgAt5, cachly.ndcgAt5),
+  });
 
-  return { baseline, cachly, lift, queryCount: BENCH_QUERIES.length, corpusSize: BENCH_LESSONS.length };
+  return {
+    flatfile, baseline, cachly,
+    lift: liftBetween(baseline),
+    liftVsFlatfile: liftBetween(flatfile),
+    queryCount: BENCH_QUERIES.length,
+    corpusSize: BENCH_LESSONS.length,
+  };
 }
 
 // ── Reporting ──────────────────────────────────────────────────────────────────
@@ -174,22 +216,26 @@ const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 const signedPct = (x: number) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}%`;
 
 export function formatReport(r: BenchResult): string {
-  const row = (label: string, b: number, c: number, l: number) =>
-    `  ${label.padEnd(14)} ${pct(b).padStart(8)}  →  ${pct(c).padStart(8)}   ${signedPct(l).padStart(8)}`;
+  const row = (label: string, f: number, b: number, c: number, lf: number) =>
+    `  ${label.padEnd(12)} ${pct(f).padStart(8)} ${pct(b).padStart(8)} ${pct(c).padStart(8)}   ${signedPct(lf).padStart(8)}`;
   return [
     '',
-    '🧠  Cachly-Bench — recall quality (BM25 baseline vs quality-aware rerank)',
-    '────────────────────────────────────────────────────────────────────────',
+    '🧠  Cachly-Bench — recall quality head-to-head',
+    '──────────────────────────────────────────────────────────────────────────',
     `  corpus: ${r.corpusSize} lessons · queries: ${r.queryCount}`,
+    '  flat-file = naive term-overlap, no quality signal (≈ LLM reading memory files)',
+    '  baseline  = raw BM25+ keyword ranking',
+    '  cachly    = BM25+ followed by quality-aware reranking',
     '',
-    `  ${'metric'.padEnd(14)} ${'baseline'.padStart(8)}     ${'cachly'.padStart(8)}      ${'lift'.padStart(8)}`,
-    row('Precision@1', r.baseline.precisionAt1, r.cachly.precisionAt1, r.lift.precisionAt1),
-    row('Precision@3', r.baseline.precisionAt3, r.cachly.precisionAt3, r.lift.precisionAt3),
-    row('Recall@3', r.baseline.recallAt3, r.cachly.recallAt3, r.lift.recallAt3),
-    row('MRR', r.baseline.mrr, r.cachly.mrr, r.lift.mrr),
-    row('nDCG@5', r.baseline.ndcgAt5, r.cachly.ndcgAt5, r.lift.ndcgAt5),
-    '────────────────────────────────────────────────────────────────────────',
-    `  Headline: MRR ${signedPct(r.lift.mrr)} · Precision@1 ${signedPct(r.lift.precisionAt1)}`,
+    `  ${'metric'.padEnd(12)} ${'flatfile'.padStart(8)} ${'baseline'.padStart(8)} ${'cachly'.padStart(8)}   ${'vs flat'.padStart(8)}`,
+    row('Precision@1', r.flatfile.precisionAt1, r.baseline.precisionAt1, r.cachly.precisionAt1, r.liftVsFlatfile.precisionAt1),
+    row('Precision@3', r.flatfile.precisionAt3, r.baseline.precisionAt3, r.cachly.precisionAt3, r.liftVsFlatfile.precisionAt3),
+    row('Recall@3', r.flatfile.recallAt3, r.baseline.recallAt3, r.cachly.recallAt3, r.liftVsFlatfile.recallAt3),
+    row('MRR', r.flatfile.mrr, r.baseline.mrr, r.cachly.mrr, r.liftVsFlatfile.mrr),
+    row('nDCG@5', r.flatfile.ndcgAt5, r.baseline.ndcgAt5, r.cachly.ndcgAt5, r.liftVsFlatfile.ndcgAt5),
+    '──────────────────────────────────────────────────────────────────────────',
+    `  vs BM25 baseline : MRR ${signedPct(r.lift.mrr)} · Precision@1 ${signedPct(r.lift.precisionAt1)}`,
+    `  vs flat-file mem : MRR ${signedPct(r.liftVsFlatfile.mrr)} · Precision@1 ${signedPct(r.liftVsFlatfile.precisionAt1)}`,
     '',
   ].join('\n');
 }

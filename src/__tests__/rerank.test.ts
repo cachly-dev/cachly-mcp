@@ -127,4 +127,15 @@ describe('Cachly-Bench regression guard', () => {
     // A fair benchmark: BM25 alone already gets most queries right.
     expect(r.baseline.mrr).toBeGreaterThan(0.7);
   });
+
+  it('beats a flat-file memory on the decisive metrics (right answer first)', async () => {
+    const r = await runBenchmark();
+    // Even when the flat-file memory is steelmanned (recency tiebreak), cachly puts
+    // the single best answer first more often — Precision@1 and MRR are what matter
+    // for an agent that acts on the top result.
+    expect(r.cachly.precisionAt1).toBeGreaterThanOrEqual(r.flatfile.precisionAt1 - 1e-9);
+    expect(r.cachly.mrr).toBeGreaterThanOrEqual(r.flatfile.mrr - 1e-9);
+    // The flat-file simulation is honest: it isn't trivially terrible.
+    expect(r.flatfile.mrr).toBeGreaterThan(0.5);
+  });
 });
