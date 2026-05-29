@@ -1,7 +1,9 @@
 # 🧠 cachly AI Brain — MCP Server
 
-> **Your AI forgets everything between sessions. cachly fixes that.**  
-> Stop re-teaching your stack every morning. cachly gives your AI a permanent brain — pre-briefed every session, learns from every commit, never makes the same mistake twice. Works whether you write 10 lines or 10,000.
+> ### Your AI is brilliant for one session. Then it forgets you.
+> Every morning you re-explain your architecture, your deploy process, the bug you
+> already fixed last week. **cachly gives your AI — and your whole team — a permanent,
+> shared brain that gets smarter with every commit.**
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@cachly-dev/mcp-server">
@@ -23,21 +25,57 @@
   <img src="https://img.shields.io/badge/100%20MCP%20tools-violet" alt="100 MCP tools" />
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
-  &nbsp;
-  <a href="https://cachly.dev">
-    <img src="https://img.shields.io/badge/Brain%20badge-embed%20in%20README-7c3aed" alt="Brain badge" />
-  </a>
 </p>
 
 ---
 
-## Try it right now — no account needed
+## The story you already live every day
+
+You are a good engineer. You want to **ship**, not babysit a forgetful assistant.
+
+But every session starts at zero. Your AI doesn't remember the race condition you
+chased for three hours on Tuesday. It doesn't know your deploy gotchas. It can't tell
+you that **Carol already solved this exact bug in March** — because Carol's knowledge
+lives in Carol's head, and yours in yours.
+
+So you re-explain. You re-research. Your team makes the same mistake in five different
+branches. And when someone leaves, their hard-won knowledge walks out the door with them.
+
+> **The villain isn't your AI. It's amnesia.** Context death between sessions, and
+> knowledge silos between people. The average developer loses **~45 minutes a day**
+> re-establishing context that should already exist.
+
+You don't need a smarter model. **You need a memory that doesn't reset — and one that
+your whole team shares.**
+
+---
+
+## Meet your guide
+
+cachly is the brain layer that sits under whatever AI you already use. We've watched
+hundreds of teams lose the same knowledge the same way, and we built the fix:
+
+- **It learns automatically** — from every commit, every fix, every session. No extra calls.
+- **It arrives pre-briefed** — your AI opens each session already knowing your stack.
+- **It's shared** — one engineer's solved bug becomes the whole team's reflex.
+- **It's provable** — quality-aware recall beats raw text search by **+22.2 % Precision@1**
+  ([see the benchmark](./BENCH.md)). A claim without a number is marketing; this is the number.
+- **It's neutral** — speaks [MCP](https://modelcontextprotocol.io), so it works with
+  Claude, Cursor, Copilot, Windsurf, Cline, Zed. Switch models anytime — **your brain stays.**
+
+We're not the hero of this story. **You are.** cachly is the thing that makes you the
+engineer whose AI never forgets and whose team compounds knowledge instead of losing it.
+
+---
+
+## Taste it first — no account, no risk
 
 ```bash
 npx @cachly-dev/mcp-server@latest demo
 ```
 
-Run it in any project folder. It scans your git history and shows a preview of what your AI would know — YOUR bugs fixed, YOUR patterns, YOUR past decisions. No account needed.
+Run it in any project folder. It reads YOUR git history and shows what your AI *would*
+know — your bugs fixed, your patterns, your past decisions. Nothing leaves your machine.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -45,12 +83,6 @@ Run it in any project folder. It scans your git history and shows a preview of w
 ├─────────────────────────────────────────────────────────────┤
 │  Commits: 847   Lessons: 634   Contributors: 7              │
 │  Date range: 2024-01-12 → 2026-05-14                        │
-├─────────────────────────────────────────────────────────────┤
-│  Category breakdown:                                        │
-│  fix        ████████████████████  312                       │
-│  feat       ███████████████       189                       │
-│  security   ██                     18                       │
-│  deploy     ██                     15                       │
 ├─────────────────────────────────────────────────────────────┤
 │  Security fixes your AI would know:                         │
 │  • fix(auth): JWT expiry check before signature validation  │
@@ -60,90 +92,142 @@ Run it in any project folder. It scans your git history and shows a preview of w
 │  • fix: Redis pub/sub race condition under high concurrency │
 │  • fix: k8s readinessProbe threshold too low for cold start │
 │  • fix: Stripe idempotency_key missing on retry path        │
-│  • fix: tRPC context not forwarded to background jobs       │
 ├─────────────────────────────────────────────────────────────┤
 │  With cachly, your AI arrives pre-briefed every session.    │
-│  No more re-explaining. No more repeated mistakes.          │
 └─────────────────────────────────────────────────────────────┘
-
-  Make this permanent (free, 1–5 minutes):
-  $ npx @cachly-dev/mcp-server@latest setup
-
-  Works with: Claude Code · Cursor · Windsurf · Copilot · Cline · Zed
-  Free forever · GDPR · German servers · No credit card
 ```
+
+Like what you see? Make it permanent in the next step.
 
 ---
 
-## Already in Claude / Cursor / Copilot? Just paste this
+## The plan — three steps, then it's automatic
 
-Skip the setup guide — copy the prompt below and paste it directly into your AI. It will run the command and configure everything automatically:
-
-```
-Set up cachly for this project. Run this in the terminal:
-  npx @cachly-dev/mcp-server@latest setup
-
-It gives you persistent memory across sessions — your AI recalls past
-decisions, avoids repeated bugs, and arrives briefed every time you
-open it. Follow the browser login (one click, no credit card), then
-restart your editor. Free forever.
-```
-
-Your AI will execute the command, detect your editors, write the config, and brief itself on your project.
-
----
-
-## The Problem
-
-Every morning, you open your AI coding assistant. It doesn't remember yesterday.  
-You explain your architecture. You explain the deployment process. You explain the bug you fixed last week.
-
-**The average developer wastes 45 minutes/day re-establishing context.**
-
----
-
-## One Command. Fully Automatic.
+### 1. Run one command
 
 ```bash
 npx @cachly-dev/mcp-server@latest setup
 ```
 
-Run it once. It handles everything:
+It signs you in (one browser click, no password, no credit card), detects every AI
+editor you use, writes the MCP config, seeds your brain from git history, and installs
+a git hook so it keeps learning.
 
-1. **Signs you in** — one click in your browser, no password, no credit card
-2. **Detects your editors** — Claude Code, Cursor, Windsurf, VS Code, Copilot, Cline & Zed
-3. **Writes the MCP config** for every detected editor automatically
-4. **Creates `CLAUDE.md`** with Brain rules so your AI acts autonomously
-5. **Reads your git history** — extracts lessons from years of commits before your first session
-6. **Installs a git hook** — learns from every future commit automatically
+### 2. Restart your editor
 
-**Restart your editor.** From now on your AI arrives pre-briefed — every session.
+That's it. From now on your AI arrives pre-briefed — every session.
 
----
+### 3. Just work
 
-## What happens after setup — everything is automatic
+cachly learns in the background. You never have to "remember to save." Every fix,
+every commit, every session feeds the brain automatically.
 
-| Trigger | What the Brain does automatically |
-|---------|----------------------------------|
-| First tool call | Session starts, project gets indexed in background |
-| Before every task | AI recalls relevant past lessons |
-| During debugging | AI traces root causes through causal memory |
-| Before deploys | AI predicts failure risks from past patterns |
-| After every fix | AI stores the lesson with commands and file paths |
-| Every git commit | Hook extracts lessons from commit message |
-| Editor closes | Session summary saved for next time |
+> **Already inside Claude / Cursor / Copilot?** Paste this to your AI and it configures everything itself:
+> ```
+> Set up cachly for this project. Run: npx @cachly-dev/mcp-server@latest setup
+> It gives my AI persistent memory across sessions. Follow the browser login
+> (one click, no credit card), then restart the editor.
+> ```
+
+**Our agreement with you:** Free forever tier. GDPR, EU servers. No model lock-in —
+leave anytime and take your data. No code content is ever stored.
 
 ---
 
-## With vs. Without cachly
+## What changes the moment you turn it on
 
-| Situation | Without cachly | With cachly |
+| The moment | Without cachly | With cachly |
 |-----------|----------------|-------------|
-| Session start | "What's your architecture?" | "Ready. 23 lessons, last session: deployed API." |
-| Known bug hits again | Re-researches from scratch | "You fixed this March 12, here's the exact command" |
-| After holiday / handoff | Context dead | Fully briefed in < 10 seconds |
-| New team member | Weeks to onboard | `setup` gives full context instantly |
-| Pre-deploy check | Hope nothing breaks | Brain predicts failures before they happen |
+| Session start | *"What's your architecture again?"* | *"Ready. 23 lessons. Last session: deployed API."* |
+| A known bug returns | Re-researches from scratch | *"You fixed this March 12 — here's the exact command."* |
+| You open an unfamiliar file | Cold start | *"Carol fixed 3 bugs here. Related: `fix:stripe-retry`."* |
+| A teammate leaves | Their knowledge leaves too | Their lessons stay, attributed, searchable |
+| New hire, day one | Weeks to onboard | `setup` → full team context instantly |
+| Pre-deploy | Hope nothing breaks | Brain predicts failure risks from past patterns |
+
+This is the transformation: from the engineer who **re-explains everything every
+morning** → to the team whose **collective brain never forgets and gets sharper with
+every commit.**
+
+---
+
+## cachly vs. Claude's built-in memory
+
+Anthropic now ships memory for Claude — and it's genuinely good for **one developer,
+using only Claude, alone.** That's not the game we're playing. Here's the honest map:
+
+| | **cachly** | **Claude built-in memory** |
+|--|------------|----------------------------|
+| Works across **teams** | ✅ one engineer's fix → everyone's reflex | ❌ per-user / per-agent only |
+| Works across **models & tools** | ✅ MCP — Claude, Cursor, Copilot, Windsurf, Zed… | ❌ Claude + Anthropic API only |
+| **Structured** knowledge | ✅ topic · outcome · severity · causal graph | ⚠️ flat text files, read linearly |
+| **Causal root-cause** (`causal_trace`) | ✅ problem → chain → proven fix | ❌ |
+| **Provable recall quality** | ✅ +22.2 % Precision@1 vs. BM25 ([benchmark](./BENCH.md)) | ❌ no public metric |
+| **Governance** (review, attribution, audit) | ✅ `team_confirm`, roles, audit trail | ❌ |
+| **Self-hosting / BYOK / VPC** | ✅ data stays in your infra | ❌ Anthropic-hosted |
+| Survives a **model switch** | ✅ your brain is yours | ❌ memory is gone or fragmented |
+| Zero-setup for one solo user | ⚠️ ~1 command | ✅ built in |
+
+**The honest takeaway:** if you're a solo dev who only ever uses Claude, the built-in
+memory is great — use it. If you work on a **team**, switch tools, care about **proof**,
+or need **governance and data residency**, that's a gap Anthropic structurally can't
+close without breaking its own lock-in. **That gap is where cachly wins.**
+*(Full strategic analysis: [STRATEGY.md](./STRATEGY.md).)*
+
+---
+
+## vs. other memory tools
+
+| | cachly | mem0 | MemGPT / Letta | Plain CLAUDE.md |
+|--|--------|------|----------------|-----------------|
+| Persistent memory | ✅ | ✅ | ✅ | Manual |
+| MCP server (no code changes) | ✅ | ✅ | ❌ | ✅ |
+| Causal root cause analysis | ✅ | ❌ | ❌ | ❌ |
+| Fully automatic (no explicit calls) | ✅ | ❌ | ❌ | ❌ |
+| Team knowledge graph + attribution | ✅ | Paid | ❌ | ❌ |
+| Provable recall lift (published) | ✅ | ❌ | ❌ | ❌ |
+| Git-ambient learning | ✅ | ❌ | ❌ | ❌ |
+| GDPR / EU servers | ✅ | ❌ | ❌ | ✅ |
+| Free tier forever | ✅ | Limited | ❌ | ✅ |
+
+---
+
+## The standout moves
+
+| Capability | What it does |
+|---------|-------------|
+| **`causal_trace`** | Root-cause analysis *through memory*: problem → causal chain → the fix that worked, with date and commands. **No other system builds and queries a causal graph.** |
+| **`brain_who_knows`** | *"Who on my team knows about Kubernetes deploys?"* → ranked experts 🥇🥈🥉, built automatically from authorship. |
+| **`brain_file_map`** | Before you touch a file: who's worked on it and which lessons reference it. |
+| **`team_expertise_map`** | The whole team's skills matrix in one table — onboarding and bus-factor insurance. |
+| **`brain_from_git`** | Reads your entire git history and populates the team knowledge graph (people + files + lessons) — zero setup, retroactively. |
+| **`brain_coverage` / `skill_gaps`** | A 0–100 health score for your knowledge + a ranked list of blind spots to fix. |
+| **`brain_predict`** | Predicts likely failures *before* they happen, from past incident patterns. |
+| **Ambient Git** | A git hook auto-extracts lessons from every commit. Zero extra calls. |
+
+**`causal_trace` in action:**
+```
+causal_trace(problem="auth breaks after restart")
+
+→ Root: k8s:namespace-terminating
+→ Via:  keycloak:jwks-race
+→ Fix:  PollUntilContextTimeout 3min  ← used this March 12, worked
+```
+*30 minutes of git blame in one call.*
+
+---
+
+## What runs automatically after setup
+
+| Trigger | What the Brain does — no prompting |
+|---------|----------------------------------|
+| First tool call | Session starts; project indexed in background |
+| Before every task | Recalls relevant past lessons |
+| During debugging | Traces root causes through causal memory |
+| Before deploys | Predicts failure risks from past patterns |
+| After every fix | Stores the lesson with commands + file paths + author |
+| Every git commit | Hook extracts a lesson from the commit |
+| Editor closes | Session summary saved for next time |
 
 ---
 
@@ -158,152 +242,92 @@ npx @cachly-dev/mcp-server@latest share     # Generate a shareable stats card + 
 npx @cachly-dev/mcp-server@latest badge     # Get a live README badge for your Brain
 npx @cachly-dev/mcp-server@latest invite    # Invite a teammate to share your Brain
 npx @cachly-dev/mcp-server@latest index .   # Index a project's code into the Brain (CI-friendly)
-npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git commits (PR-merge ready)
+npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git commits
 ```
 
 > **Tip — auto-learn on every merged PR:** run `learn-git` in CI via the
 > [cachly-brain-setup GitHub Action](https://github.com/cachly-dev/cachly/tree/main/sdk/github-action)
-> with `mode: learn`. Each merged PR teaches your Brain automatically — no manual calls.
+> with `mode: learn`. Each merged PR teaches your Brain automatically.
 
 ---
 
-## Brain Badge — show your lessons live
-
-Add a live lesson-count badge to any README — updates every hour, no auth required:
-
-```bash
-npx @cachly-dev/mcp-server@latest badge
-```
-
-Outputs your personal Markdown snippet:
-
-```markdown
-[![cachly Brain](https://api.cachly.dev/api/v1/badge/YOUR_INSTANCE_ID)](https://cachly.dev)
-```
-
-Drop it in your repo's README and anyone visiting sees how many lessons your AI has accumulated. The badge endpoint is public, rate-limited, and only exposes the lesson count — no topic names, no content.
-
----
-
-## What makes cachly different
-
-| Feature | What it does |
-|---------|-------------|
-| **`causal_trace`** | Root Cause Analysis through memory: problem → chain → solution. **No other system does this.** |
-| **`brain_from_git`** | Reads your entire git history and loads every lesson before your first session. Incremental on repeat runs. |
-| **`brain_predict`** | Predicts failures before they happen based on past incident patterns |
-| **`memory_consolidate`** | Weekly garbage collector — detects contradictions, merges duplicates, expires stale lessons |
-| **Team Brain** | Shared lessons across your whole team with author attribution |
-| **Ambient Git** | git hook auto-extracts lessons from every commit. Zero extra calls. |
-| **Memory Crystals** | Distills all lessons into a compact snapshot for instant session briefing |
-| **11 languages** | BM25+ search in EN, DE, FR, ES, IT, PT, ZH, JA, KO, AR, HE — no config |
-
-**`causal_trace` in action:**
-```
-causal_trace(problem="auth breaks after restart")
-
-→ Root: k8s:namespace-terminating
-→ Via:  keycloak:jwks-race
-→ Fix:  PollUntilContextTimeout 3min  ← used this March 12, worked
-```
-*30 minutes of git blame in one call.*
-
----
-
-## cachly vs. alternatives
-
-| | cachly | mem0 | MemGPT / Letta | Plain CLAUDE.md |
-|--|--------|------|----------------|-----------------|
-| Persistent memory | ✅ | ✅ | ✅ | Manual |
-| MCP server (no code changes) | ✅ | ✅ | ❌ | ✅ |
-| Causal root cause analysis | ✅ | ❌ | ❌ | ❌ |
-| Fully automatic (no explicit calls) | ✅ | ❌ | ❌ | ❌ |
-| Failure prediction | ✅ | ❌ | ❌ | ❌ |
-| Team knowledge sharing | ✅ | Paid | ❌ | ❌ |
-| Git-ambient learning | ✅ | ❌ | ❌ | ❌ |
-| 11-language search | ✅ | ❌ | ❌ | ❌ |
-| GDPR / EU servers | ✅ | ❌ | ❌ | ✅ |
-| Free tier forever | ✅ | Limited | ❌ | ✅ |
-
----
-
-## MCP Tools (80 total)
+## MCP Tools (100 total)
 
 ### 🧠 Session & Memory (most used)
 
 | Tool | What it does |
 |------|-------------|
-| **`session_start`** | Full briefing: last session summary, open failures, recent lessons, brain health |
-| **`session_end`** | Save what you built, auto-extract lessons from summary + git log |
-| **`learn_from_attempts`** | Store structured lessons after any fix, deploy, or discovery |
+| **`session_start`** | Full briefing: last session, open failures, recent lessons, brain health |
+| **`session_end`** | Save what you built; auto-extract lessons from summary + git log |
+| **`learn_from_attempts`** | Store structured lessons after any fix, deploy, or discovery (with `author`, `visibility`) |
 | **`recall_best_solution`** | Best known solution for a topic — with success/failure history |
+| **`smart_recall`** | Hybrid BM25 + semantic + causal-graph search — 11 languages, quality-reranked |
 | **`remember_context`** | Cache architecture findings, decisions, file summaries |
-| **`smart_recall`** | BM25+ full-text search across all brain data — 11 languages |
-| **`causal_trace`** | Root cause analysis through memory |
-| **`brain_predict`** | Predict likely failures before they happen |
-| **`brain_from_git`** | Bootstrap from git history — incremental, only new commits each run |
-| **`memory_consolidate`** | Deduplicate and expire stale lessons |
-| **`compact_recover`** | Full context recovery after hitting context window limit |
+| **`compact_recover`** | Full context recovery after hitting the context-window limit |
 
-### 👥 Team Brain
+### 👥 Team Brain & Org Knowledge Graph
 
 | Tool | What it does |
 |------|-------------|
 | `team_learn` / `team_recall` | Share lessons across the team with author attribution |
-| `team_synthesize` | Merge conflicting lessons into one canonical version |
-| `madc_deliberate` | 6 specialist AI agents vote to resolve contradictory lessons |
+| `team_confirm` | A reviewer confirms a lesson (🛡️ senior / ✔️ peer) → ranks higher in recall |
+| **`brain_who_knows`** | Find your team's experts on any topic — ranked 🥇🥈🥉 |
+| **`brain_file_map`** | Experts + lessons per file, before you touch it |
+| **`team_expertise_map`** | Full team skills matrix in one table |
+| **`skill_gaps`** | Knowledge blind spots: unresolved failures, missing attribution |
+| **`brain_coverage`** | 0–100 knowledge-health score for your codebase |
+| `madc_deliberate` | Specialist AI agents vote to resolve contradictory lessons |
 | `memory_crystalize` | Distill all lessons into a Crystal for instant team context |
-| `brain_doctor` | Health check: lesson count, IQ boost %, open failures |
-| `autopilot` | Generate a self-managing `CLAUDE.md` from Brain content |
-| `global_learn` / `global_recall` | Cross-project universal lessons |
 
-### 🌍 Knowledge Commons
+### 🧬 Causal Intelligence
 
 | Tool | What it does |
 |------|-------------|
-| `syndicate` | Contribute verified lesson to global Knowledge Commons |
-| `fedbrain_search` | Context-weighted global search |
+| **`causal_trace`** | Root-cause analysis through the Causal Knowledge Graph |
+| **`brain_predict`** / `brain_predict_failures` | Predict likely failures before they happen |
+| **`brain_from_git`** | Bootstrap people + files + lessons from git history — incremental |
+| `memory_consolidate` | Detect contradictions, merge duplicates, expire stale lessons |
+| `ckg_inspect` | Inspect the causal graph around any concept |
 
-### ⚙️ Infrastructure
+### 🌍 Knowledge Commons · ⚙️ Infrastructure · 📋 Roadmap
 
 | Tool | What it does |
 |------|-------------|
+| `syndicate` / `fedbrain_search` | Contribute to / search the global Knowledge Commons |
+| `cache_get` / `cache_set` / `semantic_search` / `index_project` | Cache + semantic ops |
 | `list_instances` / `create_instance` / `delete_instance` | Manage Brain instances |
-| `cache_get` / `cache_set` / `cache_delete` | Standard cache operations |
-| `semantic_search` | Find cached entries by meaning |
-| `index_project` | Index source files for semantic retrieval |
+| `roadmap_add` / `roadmap_next` | Persistent project roadmap stored in the Brain |
 
-### 📋 Roadmap & Planning
-
-| Tool | What it does |
-|------|-------------|
-| `roadmap_add` / `roadmap_update` | Persistent project roadmap stored in Brain |
-| `roadmap_list` / `roadmap_next` | List items or get the single most important next action |
+*…and ~70 more. Run `health` to see what's wired up in your editor.*
 
 ---
 
 ## FAQ
 
-**Does my AI need to call `session_start` manually?**  
+**Does my AI need to call `session_start` manually?**
 No. Sessions start and end automatically on the first tool call and when the editor closes.
 
-**What is incremental `brain_from_git`?**  
-After the first run, only new commits since the last scan are processed. Repeated calls are instant.
+**How is this different from Claude's built-in memory?**
+Claude's memory is per-user, Claude-only, flat-file, and unbenchmarked. cachly is
+team-shared, model-neutral (any MCP client), structured + causal, governed, and has a
+[published recall benchmark](./BENCH.md). See the comparison table above.
 
-**Can my whole team share the same Brain?**  
-Yes. Use `team_learn` / `team_recall` or run `npx @cachly-dev/mcp-server@latest invite teammate@example.com`.
+**Can my whole team share one Brain?**
+Yes — that's the point. `team_learn` / `team_recall`, or
+`npx @cachly-dev/mcp-server@latest invite teammate@example.com`.
 
-**What is a Memory Crystal?**  
-A compressed snapshot of all lessons injected at every session start. The AI arrives pre-briefed even with a cold context window.
+**Is my code sent to cachly servers?**
+No code content is stored. cachly stores lesson text, commit messages, session
+summaries, and key-value context. All data on EU servers, GDPR-compliant.
 
-**What is `causal_trace` and why is it unique?**  
-Given any error, `causal_trace` walks the Causal Knowledge Graph to find: root cause, intermediate causes, and the exact fix that worked — including the date and commands used. No other memory system builds or queries a causal graph.
+**What is `causal_trace` and why is it unique?**
+Given any error, it walks the Causal Knowledge Graph to find root cause, intermediate
+causes, and the exact fix that worked — including date and commands. No other memory
+system builds or queries a causal graph.
 
-**Is my code sent to cachly servers?**  
-No code content is stored. cachly stores: lesson text, commit messages, session summaries, key-value context entries. All data on German servers, GDPR-compliant.
-
-**What if I hit the context window limit mid-session?**  
-Call `compact_recover`. It reconstructs full context from Memory Crystal + recent sessions + WIP registry — typically one tool call.
+**What if I hit the context-window limit mid-session?**
+Call `compact_recover`. It reconstructs full context from Memory Crystal + recent
+sessions + WIP registry — typically one tool call.
 
 ---
 
@@ -370,7 +394,7 @@ On the first tool call your AI will prompt you to sign in — takes 10 seconds.
 | **Speed** | 900 MB + Dragonfly | €79/mo | AI-heavy workloads |
 | **Business** | 7 GB | €199/mo | Scale-ups |
 
-✅ All plans: **German servers · GDPR-compliant · 99.9% SLA · No credit card for Free**
+✅ All plans: **EU servers · GDPR-compliant · 99.9% SLA · No credit card for Free**
 
 ---
 
@@ -385,18 +409,24 @@ On the first tool call your AI will prompt you to sign in — takes 10 seconds.
 
 ---
 
-## 🛠️ Ecosystem
+## 🛠️ Ecosystem & Docs
 
 | Package | What it does |
 |---------|-------------|
 | **[`@cachly-dev/mcp-server`](https://www.npmjs.com/package/@cachly-dev/mcp-server)** | ← you are here |
 | **[`@cachly-dev/openclaw`](https://www.npmjs.com/package/@cachly-dev/openclaw)** | Cut LLM costs 60–90% in JS/TS apps |
 
----
-
-## Links
-
 - 🌐 [cachly.dev](https://cachly.dev) — Dashboard & free signup
 - 📖 [Docs](https://cachly.dev/docs/ai-memory) — Full documentation
-- 💬 [GitHub Issues](https://github.com/cachly-dev/cachly-mcp/issues) — Bug reports & feature requests
-- ⭐ [Star on GitHub](https://github.com/cachly-dev/cachly-mcp) — If cachly saves you time, a star means a lot!
+- 📊 [BENCH.md](./BENCH.md) — The recall-quality proof
+- 🧭 [STRATEGY.md](./STRATEGY.md) · [VISION_10X.md](./VISION_10X.md) · [PROGRESS.md](./PROGRESS.md)
+- 💬 [GitHub Issues](https://github.com/cachly-dev/cachly-mcp/issues) — Bugs & feature requests
+
+---
+
+> **Stop re-explaining yourself to your own tools.** Give your AI — and your team — a
+> brain that remembers, learns, and gets sharper with every commit.
+>
+> ```bash
+> npx @cachly-dev/mcp-server@latest setup
+> ```
