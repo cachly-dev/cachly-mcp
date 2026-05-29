@@ -73,7 +73,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.61';
+const CURRENT_VERSION = '0.10.62';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the

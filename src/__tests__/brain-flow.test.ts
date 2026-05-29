@@ -1352,3 +1352,40 @@ describe('Phase 3C: brain_coverage', () => {
     expect(scoreAfter).toBeGreaterThan(scoreBefore);
   });
 });
+
+describe('Phase 3 stability: input guards', () => {
+  let redis: MockRedis;
+  const iid = 'i1';
+  const getConn = async () => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('brain_who_knows rejects empty topic without crashing', async () => {
+    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: '' }, getConn, noopApiFetch);
+    expect(out).toContain('requires a non-empty');
+  });
+
+  it('brain_who_knows rejects undefined topic without crashing', async () => {
+    const out = await handleBrainTool('brain_who_knows', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('requires a non-empty');
+  });
+
+  it('brain_who_knows clamps an absurd limit', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:x', outcome: 'success',
+      what_worked: 'patch', author: 'alice',
+    }, getConn, noopApiFetch);
+    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: 'fix', limit: 99999 }, getConn, noopApiFetch);
+    expect(out).toContain('alice');
+  });
+
+  it('brain_file_map filters out empty path strings', async () => {
+    const out = await handleBrainTool('brain_file_map', { instance_id: iid, file_paths: ['', '  ', ''] }, getConn, noopApiFetch);
+    expect(out).toContain('Pass at least one file path');
+  });
+
+  it('brain_file_map handles non-array file_paths gracefully', async () => {
+    const out = await handleBrainTool('brain_file_map', { instance_id: iid, file_paths: 'not-an-array' as unknown as string[] }, getConn, noopApiFetch);
+    expect(out).toContain('Pass at least one file path');
+  });
+});

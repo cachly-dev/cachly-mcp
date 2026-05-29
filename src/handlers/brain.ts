@@ -12,7 +12,7 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.61';
+const MCP_VERSION = '0.10.62';
 const WHATS_NEW: Record<string, string[]> = {
   '0.10.61': [
     `🎯 **Phase 3C: 100 MCP tools milestone — zero-setup knowledge graph**`,
@@ -2037,6 +2037,11 @@ export async function handleBrainTool(
         limit = 10,
       } = args as { instance_id: string; topic: string; limit?: number };
 
+      if (!topic || typeof topic !== 'string' || !topic.trim()) {
+        return '⚠️ `brain_who_knows` requires a non-empty `topic`. Example: `brain_who_knows(topic="kubernetes deployment")`.';
+      }
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 50));
+
       const redis = await getConnection(instance_id);
 
       // Step 1: Find candidate concept node IDs matching the query
@@ -2118,7 +2123,7 @@ export async function handleBrainTool(
           lastActive: s.lastActive,
         }))
         .sort((a, b) => (b.lessonCount * b.avgConfidence) - (a.lessonCount * a.avgConfidence))
-        .slice(0, limit);
+        .slice(0, safeLimit);
 
       const lines = [
         `## 👥 Who Knows About \`${topic}\`?`,
@@ -2155,7 +2160,11 @@ export async function handleBrainTool(
         file_paths = [],
       } = args as { instance_id: string; file_paths: string[] };
 
-      if (!file_paths.length) return '⚠️ Pass at least one file path.';
+      // Defensive: accept only a non-empty array of non-empty strings.
+      const cleanPaths = (Array.isArray(file_paths) ? file_paths : [])
+        .filter((p): p is string => typeof p === 'string' && p.trim().length > 0)
+        .map(p => p.trim());
+      if (!cleanPaths.length) return '⚠️ Pass at least one file path. Example: `brain_file_map(file_paths=["src/auth/jwt.ts"])`.';
 
       const redis = await getConnection(instance_id);
       const lines: string[] = [
@@ -2165,7 +2174,7 @@ export async function handleBrainTool(
         ``,
       ];
 
-      for (const fp of file_paths.slice(0, 10)) {
+      for (const fp of cleanPaths.slice(0, 10)) {
         lines.push(`### \`${fp}\``);
 
         // ── Experts via CKG file nodes ─────────────────────────────────────
