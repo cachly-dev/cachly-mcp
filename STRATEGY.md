@@ -126,18 +126,27 @@ Ohne das ist alles andere wertlos.
 ### Phase 2 — Beweisbar bessere Recall-Qualität (der Moat-Beweis) · *3–9 Monate*
 Das ist der Punkt, an dem wir *verdienen*, gegen First-Party anzutreten.
 
-- **[100x Intelligenz]** Echtes hybrides Retrieval: semantische Embeddings +
-  Reranking + CKG-Traversierung, nicht Keyword-Match. Messbar gegen das
-  eingebaute Memory.
-- **[Beweis]** **Cachly-Bench**: ein offener Benchmark, der zeigt, dass ein Agent
-  *mit* Cachly weniger Wiederholungsfehler macht / schneller zur Lösung kommt als
-  mit Claude-Memory allein. Das ist unsere wichtigste Marketing- *und* Produkt-
-  Investition. Ohne Zahl keine Story.
-- **[Intelligenz]** Contradiction-Resolution, die *wirklich* funktioniert: wenn
-  zwei Lessons sich widersprechen, automatisch via MADC/Voting auflösen und das
-  Ergebnis persistent machen (heute teilweise berechnet, aber nicht gespeichert).
-- **[Wertsichtbarkeit]** "Brain saved you here"-Signal: wenn ein Recall einen
-  bekannten Fehler verhindert, sichtbar machen (im Tool-Output + Dashboard-Metrik).
+> **Status (begonnen):** Erste Bausteine sind live — `npm run bench`
+> (siehe [BENCH.md](./BENCH.md)) misst den Recall-Lift und ist CI-verteidigt.
+> Aktuelle Zahl: **Precision@1 +11.1 %, MRR +6.6 %, nDCG@5 +5.0 %** gegenüber
+> reinem BM25. Quality-Reranking (`src/rerank.ts`) ist in `smart_recall` verdrahtet,
+> Contradiction-Resolution wird jetzt persistiert. Nächster Schritt: größerer,
+> extern gelabelter Korpus + Head-to-head gegen ein echtes Flat-File-Memory.
+
+- **[✅ erledigt]** **Quality-aware Reranking**: proven success-Lessons ranken über
+  text-ähnlichen Fehlversuchen (`src/rerank.ts`, in `smart_recall` aktiv).
+- **[✅ erledigt]** **Cachly-Bench**: reproduzierbarer Benchmark mit IR-Metriken
+  (Precision@k, Recall@k, MRR, nDCG), als CI-Regressionswächter. Ohne Zahl keine
+  Story — jetzt gibt es eine Zahl, die jede Recall-Änderung verteidigen muss.
+- **[✅ erledigt]** **Contradiction-Resolution persistent**: Widersprüche werden in
+  `cachly:contradictions:{topic}` als auditierbarer Verlauf gespeichert (TTL'd).
+- **[offen — 100x Intelligenz]** Echtes hybrides Retrieval: semantische Embeddings
+  + Reranking + CKG-Traversierung als *eine* gerankte Liste, gegen das eingebaute
+  Memory gemessen.
+- **[offen — Beweis]** Größerer, extern gelabelter Korpus + Head-to-head gegen ein
+  echtes Flat-File-Memory auf realen Agent-Traces (siehe BENCH.md "Limitations").
+- **[offen — Wertsichtbarkeit]** "Brain saved you here"-Signal im Tool-Output +
+  Dashboard-Metrik (Zeitersparnis wird bereits getrackt: `cachly:stats:time_saved_mins`).
 
 ### Phase 3 — Team-Wissensgraph als uneinholbarer Moat · *9–18 Monate*
 Hier ist Anthropic strukturell raus.

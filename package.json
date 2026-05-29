@@ -16,6 +16,7 @@
     "start": "node dist/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
+    "bench": "tsx src/bench/cachly-bench.ts",
     "test:e2e": "bash scripts/e2e-run.sh",
     "test:e2e:api": "bash scripts/e2e-run.sh api",
     "test:e2e:cli": "bash scripts/e2e-run.sh cli",

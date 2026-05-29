@@ -8,6 +8,7 @@ import type { CKGEdge, CKGNode } from '../ckg.js';
 import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
          ZERO_RESULTS_LOG, zeroResultsTotal, indexVocab as _indexVocab } from '../search.js';
 import type { KeywordMatch } from '../search.js';
+import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider, embedProviderHint, EMBED_PROVIDER } from '../embeddings.js';
 import { detectNamespace } from '../namespace.js';
 
@@ -140,6 +141,18 @@ export async function handleBrainTool(
               const cId = ckgSlug(topic);
               const resId = ckgSlug(`resolution:${topic}`);
               await ckgUpdateEdge(redis, cId, 'contradicts', resId, false);
+            } catch { /* non-critical */ }
+            // Persist a queryable resolution record — so contradiction history survives
+            // (CKG edges alone aren't easily auditable). Bounded + TTL'd like other history.
+            try {
+              const resolutionKey = `cachly:contradictions:${topic}`;
+              const direction = prev.outcome === 'success' && outcome === 'failure'
+                ? 'kept-success' : 'overwrote-failure';
+              await redis.rpush(resolutionKey, JSON.stringify({
+                ts, prev_outcome: prev.outcome, new_outcome: outcome, direction,
+              }));
+              await redis.ltrim(resolutionKey, -50, -1);
+              await redis.expire(resolutionKey, 180 * 86400);
             } catch { /* non-critical */ }
             contradictionWarning.push(`🗳️ Run \`madc_deliberate(topic="${topic}")\` to resolve via expert agent voting.`);
           }
@@ -500,12 +513,16 @@ export async function handleBrainTool(
       const redis = await getConnection(instance_id);
 
       // ── Layer 1: Keyword search across ALL brain data (always works, no embedding) ──
-      const kwMatches = await keywordSearch(
+      const rawMatches = await keywordSearch(
         redis,
         ['cachly:ctx:*', 'cachly:lesson:best:*', 'cachly:idx:*'],
         query,
         10,
       );
+
+      // ── Layer 1.5: Quality-aware rerank — proven success lessons outrank
+      // text-similar failed attempts (the moat; see src/rerank.ts + Cachly-Bench). ──
+      const kwMatches = rerankByQuality(rawMatches);
 
       // Increment recall_count on matched lessons (fire-and-forget — same as recall_best_solution).
       // This ensures the dashboard metric, Proven Laws, and trust badges reflect real smart_recall usage.
