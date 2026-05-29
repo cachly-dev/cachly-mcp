@@ -7,6 +7,28 @@
 
 ---
 
+## [0.10.66] – 2026-05-29
+
+### Packaging hygiene — ship only the server, no mocks, no foreign code
+
+- **The published npm package was leaking everything.** With no `files` field and
+  no `.npmignore`, `npm pack` shipped the entire repo: compiled test mocks
+  (`MockRedis`), the benchmark, all TypeScript source, dev scripts, and even an
+  **unrelated app** (`apps/travel-chaos-organizer`, incl. its Python backend tests).
+  336 files / 4.0 MB.
+- **Fixed two ways (belt + suspenders):**
+  1. `tsconfig.json` now excludes `__tests__`, `*.test.ts`, `src/bench`, and `apps`
+     from the build — so `dist/` no longer contains test mocks or the bench at all.
+  2. `package.json` gained a `files` whitelist: only `dist/src`, `dist/packages`
+     (the runtime telegram-notify dependency), `scripts/postinstall.js`, and
+     `server.json` are published.
+- **Result: 71 files / 1.5 MB** (was 336 / 4.0 MB). Verified the built binary still
+  starts and the postinstall + telegram-notify paths are intact.
+- _Clarification: `MockRedis` / `MiniRedis` were never in the runtime code path —
+  they only ever substituted Redis inside tests and the benchmark. The bug was that
+  the build + packaging shipped those test artifacts to npm. Production always
+  connects to a real Valkey/Dragonfly via `new Redis(...)`._
+
 ## [0.10.65] – 2026-05-29
 
 ### Flat-file head-to-head in the benchmark (the proof gets honest)

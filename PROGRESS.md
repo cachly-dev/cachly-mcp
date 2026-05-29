@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.65 · 101 MCP-Tools · 425 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.66 · 101 MCP-Tools · 425 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,7 +12,7 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.65` (npm `latest`) |
+| Version | `0.10.66` (npm `latest`) |
 | MCP-Tools | **101** |
 | Tests | **425** passing, 8 Suites |
 | Lint | **0 errors, 0 warnings** |
@@ -67,6 +67,7 @@
 | Scan-Timeout + Cap (`scanKeys`) überall | ✅ 0.10.63 — kein Hang bei großem Keyspace |
 | Git-Rename-Pfad-Normalisierung | ✅ 0.10.63 (`normalizeGitPath`) |
 | `withTimeout`-Utility (graceful degradation) | ✅ 0.10.63 |
+| **npm-Paket-Hygiene** | ✅ 0.10.66 — `files`-Whitelist + tsconfig-Exclude; keine Test-Mocks/Bench/fremde App mehr im Tarball (336→71 Dateien) |
 
 ### Die drei Metriken — instrumentiert (0.10.64)
 

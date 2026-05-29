@@ -12,7 +12,7 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.65';
+const MCP_VERSION = '0.10.66';
 const WHATS_NEW: Record<string, string[]> = {
   '0.10.64': [
     `📈 **The three decisive metrics, now measurable**`,
