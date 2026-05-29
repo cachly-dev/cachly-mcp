@@ -334,7 +334,7 @@ describe('handleRoadmapTool', () => {
       // Add and complete one item
       const addResult = await handleRoadmapTool('roadmap_add', { instance_id: INSTANCE, title: 'Finished task', priority: 'low' }, getConnection, apiFetch);
       const idMatch = addResult!.match(/`(rm_[a-z0-9_]+)`/);
-      const id = idMatch?.[1]!;
+      const id = idMatch![1];
       await handleRoadmapTool('roadmap_update', { instance_id: INSTANCE, id, status: 'done' }, getConnection, apiFetch);
 
       const result = await handleRoadmapTool('roadmap_list', { instance_id: INSTANCE, status: 'done' }, getConnection, apiFetch);

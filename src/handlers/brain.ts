@@ -12,9 +12,9 @@ import { computeEmbedding, hasEmbedProvider, embedProviderHint, EMBED_PROVIDER }
 import { detectNamespace } from '../namespace.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.46';
+const MCP_VERSION = '0.10.49';
 const WHATS_NEW: Record<string, string[]> = {
-  '0.10.46': [
+  '0.10.49': [
     `🆕 **What's new in v${MCP_VERSION}:**`,
     `  ✅ \`brain_from_git\` — auto-seed your Brain from git history in seconds`,
     `  ✅ \`brain_predict_failures\` — predict CI/build failures before they happen`,
@@ -22,6 +22,7 @@ const WHATS_NEW: Record<string, string[]> = {
     `  ✅ VS Code extension — Brain status bar, ambient learning, CodeLens hints`,
     `  ✅ Team Brain — share lessons across your whole engineering team`,
     `  ✅ 89 MCP tools — roadmap, A/B tests, cache, index, predict, syndicate`,
+    `  🔧 Stability — auto-expiring memory keys, longer provisioning wait, robust recall`,
     `  💡 Run \`brain_from_git\` to seed your Brain from existing commits instantly`,
   ],
 };
@@ -817,7 +818,7 @@ export async function handleBrainTool(
               lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
               lines.push('🤝 **Your team\'s AI brain has been briefing you.**');
               lines.push('');
-              lines.push(`Your teammates have already solved problems you\'re about to hit:`);
+              lines.push(`Your teammates have already solved problems you're about to hit:`);
               lines.push('');
               for (const [teamAuthor, tls] of byAuthor) {
                 lines.push(`  👤 **${teamAuthor}** fixed ${tls.length} thing${tls.length > 1 ? 's' : ''}:`);

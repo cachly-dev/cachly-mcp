@@ -377,7 +377,7 @@ export async function handleFedbrainTool(
         lines.push(`      status:'\${{ job.status }}',prev_status:'unknown',job:'\${{ github.job }}',`);
         lines.push(`      context:'github-actions run \${{ github.run_number }}'}});`);
         lines.push(`    r.request({hostname:'api.cachly.dev',path:'/api/v1/cls/ingest',method:'POST',`);
-        lines.push(`      headers:{'Content-Type':'application/json','Authorization':'Bearer \$CACHLY_JWT',`);
+        lines.push(`      headers:{'Content-Type':'application/json','Authorization':'Bearer $CACHLY_JWT',`);
         lines.push(`        'Content-Length':d.length}},()=>{}).end(d);`);
         lines.push(`    " 2>/dev/null || true`);
         lines.push(`  env:`);
@@ -1015,11 +1015,16 @@ export async function handleFedbrainTool(
         // Only store if no existing lesson for this topic (avoid overwriting higher-confidence lessons)
         const existing = await redis.get(`cachly:lesson:best:${topic}`);
         if (!existing) {
-          await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(lessonObj));
+          // Auto-inferred git lessons get a 90-day TTL — they self-refresh on the next
+          // brain_from_git run, and shouldn't pin memory forever if the repo goes stale.
+          await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(lessonObj), 'EX', 90 * 86400);
           await redis.rpush(`cachly:lessons:${topic}`, JSON.stringify(lessonObj));
+          await redis.ltrim(`cachly:lessons:${topic}`, -100, -1);
+          await redis.expire(`cachly:lessons:${topic}`, 90 * 86400);
         }
         await redis.rpush('cachly:lessons:brain_from_git:all', JSON.stringify({ topic, sha: commit.sha.slice(0, 8), subject: commit.subject.slice(0, 60) }));
         await redis.ltrim('cachly:lessons:brain_from_git:all', -500, -1);
+        await redis.expire('cachly:lessons:brain_from_git:all', 90 * 86400);
 
         // Update CKG
         const conceptId = ckgSlug(topic);

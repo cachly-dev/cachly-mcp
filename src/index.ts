@@ -77,6 +77,12 @@ let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
 const CURRENT_VERSION = '0.10.49';
 
+// Max time to wait for a freshly-provisioned instance to become "running" before
+// giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
+// old hard-coded 25s caused spurious "instance_not_reachable" on first run.
+// Override via CACHLY_PROVISION_TIMEOUT_MS.
+const PROVISION_TIMEOUT_MS = Number(process.env.CACHLY_PROVISION_TIMEOUT_MS ?? 90_000);
+
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
 // When neither is set, we auto-fetch the first running instance once per process.
@@ -353,12 +359,12 @@ async function getConnection(instance_id: string): Promise<Redis> {
 
   if (pool.has(instance_id)) return pool.get(instance_id)!;
 
-  // Fetch instance, waiting up to 25 s if it is still provisioning.
+  // Fetch instance, waiting up to PROVISION_TIMEOUT_MS if it is still provisioning.
   // This covers the zero-friction path: device-flow auth → auto-provision → first tool call
   // all happen in quick succession and the instance isn't running yet.
   let inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
   if (inst.status === 'provisioning') {
-    const deadline = Date.now() + 25_000;
+    const deadline = Date.now() + PROVISION_TIMEOUT_MS;
     while (inst.status === 'provisioning' && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 3000));
       inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);

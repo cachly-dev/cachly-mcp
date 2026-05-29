@@ -384,7 +384,7 @@ function hindiLightStem(word: string): string {
  *  настройки → настройк  (genitive plural)
  */
 function russianLightStem(word: string): string {
-  let w = word;
+  const w = word;
   // Longest first to avoid partial stripping
   // Verb infinitives / gerunds
   if (w.endsWith('ывание') && w.length > 7) return w.slice(0, -6);
@@ -427,7 +427,7 @@ function russianLightStem(word: string): string {
  *  yüklemek → yükle  (-mek/-mak infinitive)
  */
 function turkishLightStem(word: string): string {
-  let w = word;
+  const w = word;
   // Suffixes longest-first
   if (w.endsWith('lardaki') && w.length > 7) return w.slice(0, -7);
   if (w.endsWith('lerdeki') && w.length > 7) return w.slice(0, -7);
@@ -475,7 +475,7 @@ function turkishLightStem(word: string): string {
  *  সমস্যাটি → সমস্যা  (-টি singular marker)
  */
 function bengaliLightStem(word: string): string {
-  let w = word;
+  const w = word;
   // Plural / collective markers (longest first)
   if (w.endsWith('\u0997\u09c1\u09b2\u09cb') && w.length > 5) return w.slice(0, -4); // গুলো (-gulo plural)
   if (w.endsWith('\u0997\u09c1\u09b2\u09bf') && w.length > 5) return w.slice(0, -4); // গুলি (-guli plural)
