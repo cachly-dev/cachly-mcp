@@ -15,7 +15,8 @@ import { EventEmitter } from 'node:events';
 
 // ── Modules under test ────────────────────────────────────────────────────────
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
-         ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration } from '../ckg.js';
+         ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration,
+         ckgUpsertServiceNode } from '../ckg.js';
 import type { PersonNode, FileNode } from '../ckg.js';
 import { EMBED_PROVIDER, hasEmbedProvider, embedProviderHint, embedConfig, setEmbedJwt } from '../embeddings.js';
 import { keywordSearch } from '../search.js';
@@ -1608,5 +1609,81 @@ describe('Phase 3: file-context personalization in smart_recall', () => {
       context_files: 'not-an-array' as unknown as string[],
     }, getConn, noopApiFetch);
     expect(out).not.toContain('📁 context match');
+  });
+});
+
+describe('Phase 3: service/system nodes + brain_service_map', () => {
+  let redis: MockRedis;
+  const iid = 'i1';
+  const getConn = async () => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('ckgUpsertServiceNode creates a node and upgrades kind to system', async () => {
+    const r = redis as unknown as Redis;
+    const id = await ckgUpsertServiceNode(r, 'prometheus', 'monitoring', 'service');
+    expect(id).toBe('service:prometheus');
+    await ckgUpsertServiceNode(r, 'prometheus', 'monitoring', 'system');
+    const raw = await redis.get('cachly:ckg:node:service:prometheus');
+    const node = JSON.parse(raw!);
+    expect(node.kind).toBe('system');
+    expect(node.count).toBe(2);
+  });
+
+  it('learn_from_attempts(service=...) wires operates + runs_in edges', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'infra:prom-oom', outcome: 'failure',
+      what_worked: 'bump memory limit to 2Gi', author: 'alice',
+      service: 'prometheus', service_kind: 'system',
+      file_paths: ['monitoring/prometheus.yaml'],
+    }, getConn, noopApiFetch);
+
+    const operates = await redis.get('cachly:ckg:edge:person:alice:operates:service:prometheus');
+    expect(operates).not.toBeNull();
+    const runsIn = await redis.get(`cachly:ckg:edge:file:${ckgSlug('monitoring/prometheus.yaml')}:runs_in:service:prometheus`);
+    expect(runsIn).not.toBeNull();
+  });
+
+  it('brain_service_map surfaces operators, failures and fixes', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'infra:prom-oom', outcome: 'failure',
+      what_worked: 'pod OOMKilled under WAL replay', author: 'alice',
+      service: 'prometheus', service_kind: 'system',
+      file_paths: ['monitoring/prometheus.yaml'],
+    }, getConn, noopApiFetch);
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'infra:prom-fix', outcome: 'success',
+      what_worked: 'raised memory limit and shortened retention', author: 'bob',
+      service: 'prometheus', service_kind: 'system',
+    }, getConn, noopApiFetch);
+
+    const out = await handleBrainTool('brain_service_map', { instance_id: iid, service: 'prometheus' }, getConn, noopApiFetch);
+    expect(out).toContain('Service Map');
+    expect(out).toContain('Operators');
+    expect(out).toContain('Known failures');
+    expect(out).toContain('Proven fixes');
+    expect(out).toContain('infra:prom-oom');
+    expect(out).toContain('infra:prom-fix');
+    // System kind → 🖥️ marker
+    expect(out).toContain('🖥️');
+  });
+
+  it('brain_service_map guards empty service', async () => {
+    const out = await handleBrainTool('brain_service_map', { instance_id: iid, service: '' }, getConn, noopApiFetch);
+    expect(out).toContain('requires a non-empty');
+  });
+
+  it('brain_service_map reports nothing-known for an unknown service', async () => {
+    const out = await handleBrainTool('brain_service_map', { instance_id: iid, service: 'ghost-service' }, getConn, noopApiFetch);
+    expect(out).toContain('Nothing known about this service yet');
+  });
+
+  it('private service lessons do not leak into the map', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'infra:secret', outcome: 'success',
+      what_worked: 'rotate the secret', service: 'vault', visibility: 'private',
+    }, getConn, noopApiFetch);
+    const out = await handleBrainTool('brain_service_map', { instance_id: iid, service: 'vault' }, getConn, noopApiFetch);
+    expect(out).not.toContain('infra:secret');
   });
 });

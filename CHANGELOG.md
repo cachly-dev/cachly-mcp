@@ -7,6 +7,20 @@
 
 ---
 
+## [0.10.70] – 2026-05-29
+
+### Service/System nodes in the knowledge graph (Phase 3) — 102 tools
+
+- **The graph now models running systems, not just concepts/people/files.** Tag a lesson
+  with `service="prometheus"` (and `service_kind="system"` for infra) and cachly builds a
+  Service node, wiring `person→operates`, `file→runs_in`, and `concept→affects` edges.
+- **New tool `brain_service_map(service)`** — incident triage in one call: who operates the
+  service, every known failure, every proven fix, and which files run in it. When a service
+  misbehaves (e.g. a restarting Prometheus pod), instantly surface *"alice owns this; it
+  OOMKilled under WAL replay before — bob fixed it by raising the memory limit."*
+- Private lessons never leak into the map; bounded scans keep it safe on large keyspaces.
+- +6 tests → 439 total. 0 lint warnings; clean tsc build.
+
 ## [0.10.69] – 2026-05-29
 
 ### Personalized context-aware recall (Phase 3) — 6th ranking signal

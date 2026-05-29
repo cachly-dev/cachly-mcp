@@ -3,17 +3,25 @@ import type { Redis } from 'ioredis';
 import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
          CONFIDENCE_WARN_VALUE, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_DAYS } from '../confidence.js';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
-         ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration } from '../ckg.js';
+         ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration,
+         ckgUpsertServiceNode } from '../ckg.js';
 import { safeJsonParse, scanKeys } from '../utils.js';
-import type { CKGEdge, CKGNode, PersonNode } from '../ckg.js';
+import type { CKGEdge, CKGNode, PersonNode, ServiceNode } from '../ckg.js';
 import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
          indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.69';
+const MCP_VERSION = '0.10.70';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.70': [
+    `🛰️ **Service/System nodes in the graph (Phase 3)** — the brain now models running systems`,
+    `  🆕 \`brain_service_map(service="prometheus")\` — who owns it + every failure/fix known`,
+    `  🏷️ Tag lessons with \`service="..."\` (\`service_kind="system"\` for infra) — person→operates, file→runs_in edges`,
+    `  🚨 Incident triage: a restarting pod → instant "who knows this and what's broken before"`,
+    `  📊 102 MCP tools`,
+  ],
   '0.10.69': [
     `📁 **Personalized context-aware recall (Phase 3)** — pass \`context_files\` to \`smart_recall\``,
     `  🎯 Lessons learned on your current files bubble up — even when the query doesn't name the file`,
@@ -112,7 +120,7 @@ export const BRAIN_TOOL_NAMES = new Set([
   'learn_from_attempts', 'recall_best_solution', 'smart_recall',
   'session_start', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
   'brain_who_knows', 'brain_file_map', 'team_expertise_map',
-  'skill_gaps', 'brain_coverage', 'brain_metrics',
+  'skill_gaps', 'brain_coverage', 'brain_metrics', 'brain_service_map',
 ]);
 
 export async function handleBrainTool(
@@ -137,6 +145,8 @@ export async function handleBrainTool(
         depends_on = [],
         author = '',
         visibility = 'team',
+        service = '',
+        service_kind = 'service',
       } = args as {
         instance_id: string;
         topic: string;
@@ -151,6 +161,8 @@ export async function handleBrainTool(
         depends_on?: string[];
         author?: string;
         visibility?: 'public' | 'team' | 'private';
+        service?: string;
+        service_kind?: 'service' | 'system';
       };
 
       const redis = await getConnection(instance_id);
@@ -280,6 +292,7 @@ export async function handleBrainTool(
         tags,
         depends_on,
         ...(author ? { author } : {}),
+        ...(service ? { service } : {}),
         visibility,
         recall_count: recallCount,
         ts,
@@ -445,6 +458,30 @@ export async function handleBrainTool(
             await ckgUpdateEdge(redis, personId, 'touched', fileId, true);
             // Phase 3: link this author to everyone else who touched the same file.
             await ckgRecordCollaboration(redis, fileId, personId);
+          }
+        } catch { /* non-critical */ }
+      }
+
+      // ── Phase 3: Service/System nodes ─────────────────────────────────────────
+      // When a lesson names the service/system it concerns (e.g. "prometheus",
+      // "cachly-web"), wire it into the graph: person→operates→service,
+      // concept→affects→service, file→runs_in→service. This is what lets
+      // brain_service_map answer "who owns X and what's gone wrong with X before".
+      if (service && typeof service === 'string' && service.trim()) {
+        try {
+          const domain = topic.split(':')[0] ?? 'unknown';
+          const kind = service_kind === 'system' ? 'system' : 'service';
+          const serviceId = await ckgUpsertServiceNode(redis, service.trim(), domain, kind);
+          const conceptId = ckgSlug(topic);
+          // concept → affects → service (outcome decides edge confidence)
+          await ckgUpdateEdge(redis, conceptId, 'affects', serviceId, outcome === 'success', outcome === 'partial');
+          if (author) {
+            const personId = `person:${ckgSlug(author)}`;
+            await ckgUpdateEdge(redis, personId, 'operates', serviceId, true);
+          }
+          for (const fp of file_paths.slice(0, 8)) {
+            const fileId = `file:${ckgSlug(fp)}`;
+            await ckgUpdateEdge(redis, fileId, 'runs_in', serviceId, true);
           }
         } catch { /* non-critical */ }
       }
@@ -2688,6 +2725,129 @@ export async function handleBrainTool(
           : `_These numbers compound: every learned lesson and every teammate raises all three._`,
       ].filter(Boolean);
 
+      return lines.join('\n');
+    }
+
+    // ── brain_service_map ───────────────────────────────────────────────────────
+    // Phase 3: "Who owns this service, and what's gone wrong with it before?"
+    // Bridges a running system (e.g. a restarting prometheus pod) to the people who
+    // operate it, the files that run in it, and the lessons learned operating it.
+    case 'brain_service_map': {
+      const {
+        instance_id,
+        service,
+      } = args as { instance_id: string; service: string };
+
+      if (!service || typeof service !== 'string' || !service.trim()) {
+        return '⚠️ `brain_service_map` requires a non-empty `service`. Example: `brain_service_map(service="prometheus")`.';
+      }
+      const redis = await getConnection(instance_id);
+      const serviceId = `service:${ckgSlug(service.trim())}`;
+
+      const nodeRaw = await redis.get(`cachly:ckg:node:${serviceId}`).catch(() => null);
+      const node = nodeRaw ? safeJsonParse<ServiceNode | null>(nodeRaw, null) : null;
+
+      // Inbound edges: person→operates, concept→affects, file→runs_in
+      const inbound = await redis.smembers(`cachly:ckg:idx:to:${serviceId}`).catch(() => [] as string[]);
+      const operators: Array<{ handle: string; trials: number }> = [];
+      const files: Array<{ path: string; trials: number }> = [];
+      const concepts: Array<{ id: string; confidence: number }> = [];
+      for (const ek of inbound) {
+        const er = await redis.get(ek).catch(() => null);
+        if (!er) continue;
+        const edge = safeJsonParse<CKGEdge | null>(er, null);
+        if (!edge) continue;
+        if (edge.edgeType === 'operates') {
+          const pr = await redis.get(`cachly:ckg:node:${edge.from}`).catch(() => null);
+          const pn = pr ? safeJsonParse<PersonNode | null>(pr, null) : null;
+          if (pn?.handle) operators.push({ handle: pn.handle, trials: edge.trials });
+        } else if (edge.edgeType === 'runs_in') {
+          const fr = await redis.get(`cachly:ckg:node:${edge.from}`).catch(() => null);
+          const fn = fr ? safeJsonParse<{ path?: string } | null>(fr, null) : null;
+          if (fn?.path) files.push({ path: fn.path, trials: edge.trials });
+        } else if (edge.edgeType === 'affects') {
+          concepts.push({ id: edge.from, confidence: edge.confidence });
+        }
+      }
+      operators.sort((a, b) => b.trials - a.trials);
+      files.sort((a, b) => b.trials - a.trials);
+      concepts.sort((a, b) => b.confidence - a.confidence);
+
+      // Lessons tagged to this service (scan + filter; bounded).
+      type SvcLesson = { topic: string; outcome?: string; severity?: string; author?: string; what_worked?: string; visibility?: string };
+      const lessons: SvcLesson[] = [];
+      const lessonKeys = await scanKeys(redis, 'cachly:lesson:best:*', { max: 1500 });
+      const svcLower = service.trim().toLowerCase();
+      for (const k of lessonKeys.slice(0, 400)) {
+        const raw = await redis.get(k).catch(() => null);
+        if (!raw) continue;
+        const ld = safeJsonParse<SvcLesson & { service?: string }>(raw, {} as SvcLesson);
+        if (ld.visibility === 'private') continue;
+        if ((ld.service ?? '').toLowerCase() !== svcLower) continue;
+        lessons.push({ ...ld, topic: k.replace('cachly:lesson:best:', '') });
+      }
+
+      if (!node && lessons.length === 0 && operators.length === 0) {
+        return [
+          `## 🛰️ Service Map — \`${service}\``,
+          ``,
+          `Nothing known about this service yet.`,
+          ``,
+          `Tag lessons with the service they concern so the brain can build this map:`,
+          `\`learn_from_attempts(topic="...", service="${service}", author="you", file_paths=[...])\``,
+        ].join('\n');
+      }
+
+      const kindLabel = node?.kind === 'system' ? '🖥️ system' : '🛰️ service';
+      const lines: string[] = [
+        `## ${node?.kind === 'system' ? '🖥️' : '🛰️'} Service Map — \`${service}\``,
+        ``,
+        node ? `_${kindLabel} · ${node.count} lesson${node.count !== 1 ? 's' : ''} referenced · domain: ${node.domain}_` : `_No graph node yet — built from tagged lessons below._`,
+        ``,
+      ];
+
+      // Operators (who owns it)
+      if (operators.length > 0) {
+        const owners = operators.slice(0, 5).map((o, i) => {
+          const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+          return `${medal} **${o.handle}** (${o.trials}×)`;
+        }).join(' · ');
+        lines.push(`**Operators:** ${owners}`, ``);
+      } else {
+        lines.push(`**Operators:** _None attributed — add \`author\` when learning about this service_`, ``);
+      }
+
+      // Recent failures first — the triage gold for an incident
+      const failures = lessons.filter(l => l.outcome === 'failure');
+      const successes = lessons.filter(l => l.outcome !== 'failure');
+      if (failures.length > 0) {
+        lines.push(`**⚠️ Known failures (${failures.length}):**`);
+        for (const l of failures.slice(0, 6)) {
+          const sev = l.severity === 'critical' ? ' 🔴' : l.severity === 'major' ? ' 🟡' : '';
+          const by = l.author ? ` · 👤 ${l.author}` : '';
+          lines.push(`  - ❌ \`${l.topic}\`${sev}${by} — ${(l.what_worked ?? '').slice(0, 100)}`);
+        }
+        lines.push(``);
+      }
+      if (successes.length > 0) {
+        lines.push(`**✅ Proven fixes (${successes.length}):**`);
+        for (const l of successes.slice(0, 6)) {
+          const emoji = l.outcome === 'partial' ? '⚠️' : '✅';
+          const by = l.author ? ` · 👤 ${l.author}` : '';
+          lines.push(`  - ${emoji} \`${l.topic}\`${by} — ${(l.what_worked ?? '').slice(0, 100)}`);
+        }
+        lines.push(``);
+      }
+
+      // Files that run in this service
+      if (files.length > 0) {
+        lines.push(`**Files in this service:** ${files.slice(0, 8).map(f => `\`${f.path}\``).join(', ')}`, ``);
+      }
+
+      lines.push(
+        `---`,
+        `_Tag lessons with \`service="${service}"\` to keep this map current. For infra, pass \`service_kind="system"\`._`,
+      );
       return lines.join('\n');
     }
 

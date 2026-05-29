@@ -31,6 +31,20 @@ export type FileNode = {
   ts: string;
 };
 
+// Phase 3: Service/System nodes — the deployable units a team operates
+// (e.g. "cachly-web", "prometheus", "auth-service"). Auto-built from
+// learn_from_attempts(service=...). Lets the brain answer "who owns X, and what
+// has gone wrong with X before?" — the bridge from a lesson to a running system.
+export type ServiceNode = {
+  id: string;            // "service:{slug}"
+  name: string;          // original service name as provided
+  kind: 'service' | 'system'; // 'system' for infra (prometheus, k8s), 'service' for app units
+  domain: string;        // primary problem domain seen
+  type: 'service';
+  count: number;         // number of lessons referencing this service
+  last_active: string;   // ISO timestamp of most recent contribution
+};
+
 const STOPWORDS_CKG = new Set(['that','this','with','from','when','then','also','have','been','will','were','they','them','than','more','some','into','over','only','just','where','while','which','there','their','would','could','should','after','before','about']);
 
 export function ckgSlug(text: string): string {
@@ -82,6 +96,24 @@ export async function ckgUpsertFileNode(redis: Redis, filePath: string): Promise
     : { id, path: filePath, domain: dir, type: 'file', count: 0, ts: new Date().toISOString() };
   node.count = (node.count || 0) + 1;
   node.ts = new Date().toISOString();
+  await redis.set(key, JSON.stringify(node));
+  return id;
+}
+
+/** Upsert a Service/System node; returns the node id ("service:{slug}"). */
+export async function ckgUpsertServiceNode(redis: Redis, name: string, domain: string, kind: 'service' | 'system' = 'service'): Promise<string> {
+  const id = `service:${ckgSlug(name)}`;
+  const key = `cachly:ckg:node:${id}`;
+  const raw = await redis.get(key);
+  const node: ServiceNode = raw
+    ? JSON.parse(raw)
+    : { id, name, kind, domain, type: 'service', count: 0, last_active: new Date().toISOString() };
+  node.count = (node.count || 0) + 1;
+  node.last_active = new Date().toISOString();
+  if (!node.domain) node.domain = domain;
+  // A node may start life as a 'service' and later be classified as 'system' (or vice
+  // versa) by an explicit caller — honour the latest non-default classification.
+  if (kind === 'system') node.kind = 'system';
   await redis.set(key, JSON.stringify(node));
   return id;
 }

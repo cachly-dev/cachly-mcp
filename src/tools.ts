@@ -582,6 +582,15 @@ const TOOLS = [
           enum: ['team', 'private', 'public'],
           description: 'Who can see this lesson. "team" (default) = all team members. "private" = only accessible via exact recall_best_solution, never surfaced in smart_recall or team_recall. "public" = same as team (public syndication planned).',
         },
+        service: {
+          type: 'string',
+          description: 'The service or system this lesson concerns (e.g. "prometheus", "cachly-web", "auth-service"). Builds a Service node in the knowledge graph linking the people who operate it and the files that run in it. Powers brain_service_map for instant incident triage.',
+        },
+        service_kind: {
+          type: 'string',
+          enum: ['service', 'system'],
+          description: 'Whether `service` is an application service ("service", default) or infrastructure ("system", e.g. prometheus, kubernetes, redis). Shown as 🛰️/🖥️ in brain_service_map.',
+        },
       },
       required: ['instance_id', 'topic', 'outcome', 'what_worked'],
     },
@@ -913,6 +922,24 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the cache instance' },
       },
       required: ['instance_id'],
+    },
+  },
+  {
+    name: 'brain_service_map',
+    description:
+      'Map everything the Brain knows about a running service or system: who operates it, ' +
+      'which files run in it, every known failure, and every proven fix. ' +
+      'Built from lessons tagged with `service="..."` in learn_from_attempts. ' +
+      'Ideal for incident triage — when a service is misbehaving (e.g. a restarting pod), ' +
+      'instantly surface who knows it and what has gone wrong with it before. ' +
+      'Example: brain_service_map(service="prometheus") → operators, known OOM failures, and the fixes that worked.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        service: { type: 'string', description: 'Name of the service/system to map (e.g. "prometheus", "cachly-web", "auth-service"). Matches the `service` tag on stored lessons.' },
+      },
+      required: ['instance_id', 'service'],
     },
   },
   {

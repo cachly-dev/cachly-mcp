@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.69 · 101 MCP-Tools · 433 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.70 · 102 MCP-Tools · 439 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.69` (npm `latest`) |
-| MCP-Tools | **101** |
-| Tests | **433** passing, 8 Suites |
+| Version | `0.10.70` (npm `latest`) |
+| MCP-Tools | **102** |
+| Tests | **439** passing, 8 Suites |
 | Lint | **0 errors, 0 warnings** |
 | Build | sauber (`tsc`, Entry `dist/src/index.js`) |
 | Bench | Precision@1 **+22.2 %**, MRR **+10.9 %**, nDCG@5 **+8.1 %** vs. BM25 |
@@ -96,7 +96,9 @@
 
 - 🔲 **Rollen-Modell** (admin / reviewer / contributor / viewer)
 - 🔲 **Sichtbarkeits-Scopes auf Team-Ebene** (heute nur lesson-level `private`)
-- 🔲 Service-/System-Nodes im Graph (heute: Konzept, Person, File)
+- ✅ **Service-/System-Nodes im Graph (0.10.70)** — `learn_from_attempts(service="...", service_kind="system")`
+  baut Service-Nodes; `person→operates`, `file→runs_in`, `concept→affects`-Kanten. Neues Tool
+  `brain_service_map(service)` für Incident-Triage: wer betreibt X + alle bekannten Failures/Fixes (102. Tool).
 - ✅ **Kollaborations-Graph (Person↔Person)** (0.10.68) — `collaborates`-Kanten aus
   geteilten Dateien; `brain_who_knows` zeigt häufige Kollaborateure des Top-Experten
   (`ckgRecordCollaboration`, gebaut in `learn_from_attempts` + `brain_from_git`)
