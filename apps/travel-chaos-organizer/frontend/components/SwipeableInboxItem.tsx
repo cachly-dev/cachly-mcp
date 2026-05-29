@@ -77,7 +77,7 @@ export default function SwipeableInboxItem({ item, onAssign, onReject }: Props) 
             {(parsed?.provider as string) ?? (item.source ?? "Unbekannte Quelle")}
             {parsed?.booking_ref ? `  ·  #${parsed.booking_ref}` : ""}
           </Text>
-          {parsed?.raw_summary && (
+          {!!parsed?.raw_summary && (
             <Text style={s.summary} numberOfLines={2}>{parsed.raw_summary as string}</Text>
           )}
         </View>

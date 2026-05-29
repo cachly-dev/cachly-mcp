@@ -31,7 +31,6 @@ export default function AppLayout() {
       headerStyle: { backgroundColor: "#1a1a2e" },
       headerTintColor: "#fff",
       headerTitleStyle: { fontWeight: "700" },
-      headerBottom: () => <Header />,
       tabBarStyle: { backgroundColor: "#1a1a2e", borderTopColor: "#2a2a4e", paddingTop: 6 },
       tabBarActiveTintColor: "#4f46e5",
       tabBarInactiveTintColor: "#6666aa",

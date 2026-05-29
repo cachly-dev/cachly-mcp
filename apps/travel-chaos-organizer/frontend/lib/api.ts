@@ -46,7 +46,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     }
     // Network error (no status) — queue for offline retry
     if (!(err instanceof ApiError) && init.method && ["POST","PATCH","DELETE"].includes(init.method)) {
-      enqueueRequest(init.method as "POST" | "PATCH" | "DELETE", path, init.body as string | undefined);
+      const bodyObj = init.body ? (() => { try { return JSON.parse(init.body as string) as object; } catch { return undefined; } })() : undefined;
+      enqueueRequest(init.method as "POST" | "PATCH" | "DELETE", path, bodyObj);
     }
     throw err;
   } finally {

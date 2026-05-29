@@ -63,21 +63,21 @@ export default function TimelineItemDetail({ item, onClose }: Props) {
         <View style={s.section}>
           {item.event_at && <DetailRow label={eventLabels(item.type).start} value={fmtDate(item.event_at)} />}
           {item.event_end_at && <DetailRow label={eventLabels(item.type).end} value={fmtDate(item.event_end_at)} />}
-          {parsed?.origin && parsed?.destination && (
-            <DetailRow label="Route" value={`${parsed.origin} → ${parsed.destination}`} />
+          {!!parsed?.origin && !!parsed?.destination && (
+            <DetailRow label="Route" value={`${parsed.origin as string} → ${parsed.destination as string}`} />
           )}
           {item.booking_ref && <DetailRow label="Buchungsnr." value={item.booking_ref} mono />}
-          {parsed?.confirmation_number && (
+          {!!parsed?.confirmation_number && (
             <DetailRow label="Bestätigungsnr." value={parsed.confirmation_number as string} mono />
           )}
-          {parsed?.price && <DetailRow label="Preis" value={parsed.price as string} />}
-          {parsed?.passengers && Array.isArray(parsed.passengers) && parsed.passengers.length > 0 && (
+          {!!parsed?.price && <DetailRow label="Preis" value={parsed.price as string} />}
+          {!!parsed?.passengers && Array.isArray(parsed.passengers) && parsed.passengers.length > 0 && (
             <DetailRow label="Passagiere" value={(parsed.passengers as string[]).join(", ")} />
           )}
         </View>
 
         {/* Summary */}
-        {parsed?.raw_summary && (
+        {!!parsed?.raw_summary && (
           <View style={s.summaryBox}>
             <Text style={s.summaryLabel}>Zusammenfassung</Text>
             <Text style={s.summaryText}>{parsed.raw_summary as string}</Text>

@@ -39,7 +39,7 @@ export default function BottomSheet({ visible, onClose, children, heightFraction
     }
   }, [visible]);
 
-  if (!visible && translateY.__getValue() === SCREEN_HEIGHT) return null;
+  if (!visible && (translateY as any).__getValue() === SCREEN_HEIGHT) return null;
 
   return (
     <View style={StyleSheet.absoluteFill} pointerEvents={visible ? "auto" : "none"}>

@@ -8,11 +8,14 @@ export function initSentry(): void {
   if (!dsn) return;
 
   // Lazy import to avoid bundling Sentry when not configured
-  import("@sentry/react-native").then(({ init, ReactNativeTracing }) => {
-    init({
+  import("@sentry/react-native").then((Sentry) => {
+    const integrations = typeof (Sentry as any).reactNativeTracingIntegration === "function"
+      ? [(Sentry as any).reactNativeTracingIntegration()]
+      : [];
+    Sentry.init({
       dsn,
       tracesSampleRate: 0.1,
-      integrations: [new ReactNativeTracing()],
+      integrations,
       environment: __DEV__ ? "development" : "production",
     });
   }).catch(() => undefined);

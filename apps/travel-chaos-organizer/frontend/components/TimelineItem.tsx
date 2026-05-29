@@ -42,14 +42,14 @@ export default function TimelineItem({ item }: Props) {
         </View>
 
         <View style={s.details}>
-          {parsed?.origin && parsed?.destination && (
+          {!!parsed?.origin && !!parsed?.destination && (
             <Text style={s.route}>{parsed.origin as string} → {parsed.destination as string}</Text>
           )}
           {item.provider && <Text style={s.chip}>{item.provider}</Text>}
           {item.booking_ref && (
             <QRCodeViewer bookingRef={item.booking_ref} title={item.title} />
           )}
-          {parsed?.price && <Text style={s.chip}>{parsed.price as string}</Text>}
+          {!!parsed?.price && <Text style={s.chip}>{parsed.price as string}</Text>}
         </View>
       </View>
     </View>
