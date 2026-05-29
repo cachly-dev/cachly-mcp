@@ -618,6 +618,11 @@ const TOOLS = [
         query: { type: 'string', description: 'Natural language query to find relevant cached context' },
         threshold: { type: 'number', description: 'Similarity threshold 0-1 (default: 0.78)' },
         author: { type: 'string', description: 'Handle of the person doing the recall (optional). Enables team-knowledge-reuse tracking: when you recall a lesson written by a teammate, cachly counts it as cross-author reuse — the value only a shared brain delivers.' },
+        context_files: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'File paths you are currently working on (e.g. ["src/auth/service.ts", "src/api/routes.ts"]). When provided, lessons that were learned in the context of these files are boosted in ranking — surfacing file-specific knowledge even when the query does not mention the file name. Pair with author for fully personalized recall.',
+        },
       },
       required: ['instance_id', 'query'],
     },

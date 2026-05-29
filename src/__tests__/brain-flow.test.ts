@@ -1536,3 +1536,77 @@ describe('Phase 3: collaboration graph (person↔person)', () => {
     expect(out).toContain('frequently works with');
   });
 });
+
+describe('Phase 3: file-context personalization in smart_recall', () => {
+  let redis: MockRedis;
+  const iid = 'i1';
+  const getConn = async () => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('boosts lessons whose file_paths overlap with context_files', async () => {
+    // Store two lessons: one tagged to the context file, one generic
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'auth:jwt-secret', outcome: 'success',
+      what_worked: 'rotate the JWT secret key via env', author: 'alice',
+      file_paths: ['src/auth/service.ts'],
+    }, getConn, noopApiFetch);
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'auth:session-timeout', outcome: 'success',
+      what_worked: 'increase session timeout to 24h', author: 'bob',
+      file_paths: ['src/api/routes.ts'],
+    }, getConn, noopApiFetch);
+
+    const out = await handleBrainTool('smart_recall', {
+      instance_id: iid,
+      query: 'auth key secret',
+      context_files: ['src/auth/service.ts'],
+    }, getConn, noopApiFetch);
+    // The context-matched lesson should show the badge
+    expect(out).toContain('📁 context match');
+  });
+
+  it('shows the Personalized banner with the count of boosted lessons', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:deploy-env', outcome: 'success',
+      what_worked: 'add NODE_ENV to Dockerfile', author: 'carol',
+      file_paths: ['Dockerfile'],
+    }, getConn, noopApiFetch);
+
+    const out = await handleBrainTool('smart_recall', {
+      instance_id: iid,
+      query: 'docker environment variable',
+      context_files: ['Dockerfile'],
+    }, getConn, noopApiFetch);
+    expect(out).toContain('Personalized');
+    expect(out).toContain('Dockerfile');
+  });
+
+  it('does not show the badge when context_files is empty', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:empty-context', outcome: 'success',
+      what_worked: 'some fix', file_paths: ['src/x.ts'],
+    }, getConn, noopApiFetch);
+
+    const out = await handleBrainTool('smart_recall', {
+      instance_id: iid,
+      query: 'fix empty context',
+    }, getConn, noopApiFetch);
+    expect(out).not.toContain('📁 context match');
+    expect(out).not.toContain('Personalized');
+  });
+
+  it('is tolerant of non-array context_files (ignores gracefully)', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:tolerant', outcome: 'success',
+      what_worked: 'nothing breaks', file_paths: ['a.ts'],
+    }, getConn, noopApiFetch);
+
+    const out = await handleBrainTool('smart_recall', {
+      instance_id: iid,
+      query: 'nothing breaks',
+      context_files: 'not-an-array' as unknown as string[],
+    }, getConn, noopApiFetch);
+    expect(out).not.toContain('📁 context match');
+  });
+});

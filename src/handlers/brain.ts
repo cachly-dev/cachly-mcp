@@ -12,8 +12,14 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.68';
+const MCP_VERSION = '0.10.69';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.69': [
+    `📁 **Personalized context-aware recall (Phase 3)** — pass \`context_files\` to \`smart_recall\``,
+    `  🎯 Lessons learned on your current files bubble up — even when the query doesn't name the file`,
+    `  🏷️ \`📁 context match\` badge on every file-boosted result so you know WHY it ranked up`,
+    `  ✅ Works alongside keyword, semantic, CKG, and governance signals — a 6th ranking dimension`,
+  ],
   '0.10.68': [
     `🤝 **Collaboration graph (Phase 3)** — person↔person edges from shared files`,
     `  👥 \`brain_who_knows\` now shows who the top expert frequently works with`,
@@ -617,7 +623,11 @@ export async function handleBrainTool(
         query,
         threshold = 0.78,
         author: requester = '',
-      } = args as { instance_id: string; query: string; threshold?: number; author?: string };
+        context_files: rawContextFiles = [],
+      } = args as { instance_id: string; query: string; threshold?: number; author?: string; context_files?: unknown[] };
+      const contextFiles: string[] = Array.isArray(rawContextFiles)
+        ? rawContextFiles.filter((f): f is string => typeof f === 'string')
+        : [];
 
       const redis = await getConnection(instance_id);
 
@@ -714,6 +724,7 @@ export async function handleBrainTool(
         key: string; content: string; hybridScore: number;
         bm25Score?: number; semScore?: number; ckgScore?: number; matchedWords?: string[];
         matchType: 'keyword' | 'semantic' | 'ckg' | 'hybrid'; subQuery?: string;
+        contextBoost?: boolean;
       };
 
       const bm25Scores = kwMatches.map(m => m.score);
@@ -791,6 +802,26 @@ export async function handleBrainTool(
         }
       } catch { /* non-critical — keyword + semantic always available */ }
 
+      // ── Layer 4: File-context personalization ────────────────────────────────
+      // When the caller provides the files they are currently working on, lessons
+      // that were learned in the context of those files get a score boost. This
+      // surfaces file-specific institutional knowledge even when the query words
+      // don't mention the file name — the structural advantage of a graph brain.
+      if (contextFiles.length > 0) {
+        const ctxSet = new Set(contextFiles.map(f => f.replace(/\\/g, '/')));
+        for (const r of hybridMap.values()) {
+          if (!r.key.startsWith('cachly:lesson:best:')) continue;
+          const ld = safeJsonParse<{ file_paths?: unknown }>(r.content, {});
+          const fps = Array.isArray(ld.file_paths)
+            ? (ld.file_paths as unknown[]).filter((f): f is string => typeof f === 'string').map(f => f.replace(/\\/g, '/'))
+            : [];
+          if (fps.some(f => ctxSet.has(f))) {
+            r.hybridScore *= 1.15;
+            r.contextBoost = true;
+          }
+        }
+      }
+
       // Filter private lessons — they are only accessible via exact recall_best_solution
       const hybridResults = [...hybridMap.values()]
         .filter(r => {
@@ -811,6 +842,12 @@ export async function handleBrainTool(
       }
       if (crossAuthorThisCall > 0) {
         lines.push(`> 👥 **Team knowledge reuse** — ${crossAuthorThisCall} of these lesson${crossAuthorThisCall !== 1 ? 's were' : ' was'} written by a teammate. This is the value only a shared brain delivers.\n`);
+      }
+
+      // File-context personalization banner
+      const ctxBoosted = hybridResults.filter(r => r.contextBoost).length;
+      if (ctxBoosted > 0) {
+        lines.push(`> 📁 **Personalized** — ${ctxBoosted} lesson${ctxBoosted !== 1 ? 's' : ''} boosted because ${ctxBoosted !== 1 ? 'they match' : 'it matches'} your current file context (${contextFiles.slice(0, 3).join(', ')}${contextFiles.length > 3 ? ', …' : ''})\n`);
       }
 
       // Show sub-query info if multi-topic was detected
@@ -869,13 +906,14 @@ export async function handleBrainTool(
               const ld = safeJsonParse<{ author?: string }>(r.content, {});
               if (ld.author) authorBadge = ` · 👤 ${ld.author}`;
             }
+            const contextBadge = r.contextBoost ? ` · 📁 context match` : '';
             const scorePart = r.matchType === 'hybrid'
               ? `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🔀 hybrid`
               : r.matchType === 'semantic'
               ? `sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🎯 semantic`
               : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
             const preview = r.content.slice(0, 400).replace(/\n/g, ' ');
-            lines.push(`**${label}**${authorBadge} _(${scorePart})_`);
+            lines.push(`**${label}**${authorBadge}${contextBadge} _(${scorePart})_`);
             lines.push(`> ${preview}${r.content.length > 400 ? '…' : ''}\n`);
           }
         }

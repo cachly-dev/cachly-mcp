@@ -7,6 +7,21 @@
 
 ---
 
+## [0.10.69] – 2026-05-29
+
+### Personalized context-aware recall (Phase 3) — 6th ranking signal
+
+- **`smart_recall` now accepts `context_files?: string[]`** — the files you are currently
+  editing. Any lesson whose `file_paths` overlap with this list gets a **+15 % score
+  boost** and a `📁 context match` badge in the output. File-specific institutional
+  knowledge surfaces even when the query doesn't name the file.
+- **Personalization banner** at the top of results: *"📁 Personalized — 2 lessons boosted
+  because they match your current file context (src/auth/service.ts)"* — transparent about
+  why a result ranked up.
+- Works alongside all five existing ranking signals (outcome, confidence, proven-ness,
+  severity, governance) as a post-merge score multiplier — no changes to BM25 or semantic
+  layers. +4 tests → 433 total.
+
 ## [0.10.68] – 2026-05-29
 
 ### Collaboration graph (Phase 3) — person↔person edges
