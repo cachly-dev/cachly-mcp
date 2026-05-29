@@ -12,8 +12,14 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.60';
+const MCP_VERSION = '0.10.61';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.61': [
+    `🎯 **Phase 3C: 100 MCP tools milestone — zero-setup knowledge graph**`,
+    `  🔄 \`brain_from_git\` now auto-builds Person+File nodes from git history (zero setup!)`,
+    `  🔍 \`skill_gaps()\` — find domains with unresolved failures, missing attribution`,
+    `  📊 \`brain_coverage()\` — scored 0-100 health report: lessons · attribution · file coverage`,
+  ],
   '0.10.60': [
     `🆕 **Phase 3B: File map + team overview + visibility**`,
     `  📁 \`brain_file_map(file_paths=[...])\` — experts + lessons per file before you touch it`,
@@ -88,6 +94,7 @@ export const BRAIN_TOOL_NAMES = new Set([
   'learn_from_attempts', 'recall_best_solution', 'smart_recall',
   'session_start', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
   'brain_who_knows', 'brain_file_map', 'team_expertise_map',
+  'skill_gaps', 'brain_coverage',
 ]);
 
 export async function handleBrainTool(
@@ -2333,6 +2340,208 @@ export async function handleBrainTool(
         `_Use \`brain_who_knows(topic="...")\` to find the expert for a specific problem._`,
       );
       return lines.join('\n');
+    }
+
+    // ── skill_gaps ────────────────────────────────────────────────────────────
+    // Phase 3C: Show knowledge blind spots — domains/files with no success lessons,
+    // no attribution, or only failures.
+    case 'skill_gaps': {
+      const {
+        instance_id,
+        min_failures = 1,
+      } = args as { instance_id: string; min_failures?: number };
+
+      const redis = await getConnection(instance_id);
+
+      // Scan all best lessons
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 500 });
+      await new Promise<void>((res, rej) => {
+        lStream.on('data', (b: string[]) => lessonKeys.push(...b));
+        lStream.on('end', res); lStream.on('error', rej);
+      });
+
+      type DomainStats = { successes: number; failures: number; attributed: number; topics: string[] };
+      const domainMap = new Map<string, DomainStats>();
+      let totalAttributed = 0;
+      let totalPrivate = 0;
+
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        const l = safeJsonParse<{
+          topic?: string; outcome?: string; author?: string; visibility?: string;
+        }>(raw, {});
+        const domain = (l.topic ?? '').split(':')[0] ?? 'unknown';
+        const s = domainMap.get(domain) ?? { successes: 0, failures: 0, attributed: 0, topics: [] };
+        if (l.outcome === 'success' || l.outcome === 'partial') s.successes++;
+        else s.failures++;
+        if (l.author) { s.attributed++; totalAttributed++; }
+        if (l.visibility === 'private') totalPrivate++;
+        s.topics.push(l.topic ?? '');
+        domainMap.set(domain, s);
+      }
+
+      // Identify gaps
+      type Gap = { domain: string; type: string; severity: string; detail: string };
+      const gaps: Gap[] = [];
+
+      for (const [domain, s] of domainMap) {
+        if (s.failures >= min_failures && s.successes === 0) {
+          gaps.push({
+            domain, type: 'unresolved failures',
+            severity: s.failures >= 3 ? '🔴 critical' : '🟡 warn',
+            detail: `${s.failures} failure${s.failures !== 1 ? 's' : ''}, 0 solutions — use \`learn_from_attempts\` to store what fixed it`,
+          });
+        }
+        if (s.successes + s.failures >= 3 && s.attributed === 0) {
+          gaps.push({
+            domain, type: 'no attribution',
+            severity: '🔵 info',
+            detail: `${s.successes + s.failures} lessons with no \`author\` field — attribution lost, \`brain_who_knows\` can't help here`,
+          });
+        }
+      }
+
+      // Check for domains with person nodes but no lessons (contributors without lessons)
+      const personKeys: string[] = [];
+      const pStream = redis.scanStream({ match: 'cachly:ckg:node:person:*', count: 200 });
+      await new Promise<void>((res, rej) => {
+        pStream.on('data', (b: string[]) => personKeys.push(...b));
+        pStream.on('end', res); pStream.on('error', rej);
+      });
+
+      const lines = [
+        `## 🔍 Skill Gaps — Knowledge Blind Spots`,
+        ``,
+        `**${lessonKeys.length}** lessons scanned · **${totalAttributed}** attributed · **${gaps.length}** gap${gaps.length !== 1 ? 's' : ''} found`,
+        totalPrivate > 0 ? `_(${totalPrivate} private lessons excluded from gap analysis)_` : '',
+        ``,
+      ].filter(Boolean);
+
+      if (gaps.length === 0) {
+        lines.push(`✅ No significant knowledge gaps detected. All domains with failures have at least one success lesson.`);
+      } else {
+        const bySev = [
+          ...gaps.filter(g => g.severity.includes('critical')),
+          ...gaps.filter(g => g.severity.includes('warn')),
+          ...gaps.filter(g => g.severity.includes('info')),
+        ];
+        for (const g of bySev.slice(0, 15)) {
+          lines.push(`${g.severity} **\`${g.domain}\`** — ${g.type}`);
+          lines.push(`  ${g.detail}`);
+          lines.push(``);
+        }
+        if (gaps.length > 15) lines.push(`_…and ${gaps.length - 15} more gaps. Fix critical ones first._`);
+      }
+
+      lines.push(
+        `---`,
+        `_Fix gaps with \`learn_from_attempts(topic="${gaps[0]?.domain ?? 'your:topic'}", outcome="success", what_worked="...")\`_`,
+        `_Add \`author="name"\` to every call to enable \`brain_who_knows\` + \`team_expertise_map\`._`,
+      );
+
+      return lines.join('\n');
+    }
+
+    // ── brain_coverage ────────────────────────────────────────────────────────
+    // Phase 3C: Knowledge-coverage health score for the repository.
+    case 'brain_coverage': {
+      const {
+        instance_id,
+        repo_path = '.',
+      } = args as { instance_id: string; repo_path?: string };
+
+      const redis = await getConnection(instance_id);
+
+      // Count lessons
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 500 });
+      await new Promise<void>((res, rej) => {
+        lStream.on('data', (b: string[]) => lessonKeys.push(...b));
+        lStream.on('end', res); lStream.on('error', rej);
+      });
+
+      // Count person nodes
+      const personKeys: string[] = [];
+      const pStream = redis.scanStream({ match: 'cachly:ckg:node:person:*', count: 200 });
+      await new Promise<void>((res, rej) => {
+        pStream.on('data', (b: string[]) => personKeys.push(...b));
+        pStream.on('end', res); pStream.on('error', rej);
+      });
+
+      // Count file nodes in CKG
+      const fileKeys: string[] = [];
+      const fStream = redis.scanStream({ match: 'cachly:ckg:node:file:*', count: 500 });
+      await new Promise<void>((res, rej) => {
+        fStream.on('data', (b: string[]) => fileKeys.push(...b));
+        fStream.on('end', res); fStream.on('error', rej);
+      });
+
+      // Get git file count for comparison (optional — non-critical if not a git repo)
+      let gitFileCount = 0;
+      let _gitFileCountLabel = 'n/a';
+      try {
+        const { execSync } = await import('node:child_process');
+        const { resolve } = await import('node:path');
+        const repoDir = resolve(repo_path);
+        const output = execSync('git ls-files', { cwd: repoDir, encoding: 'utf-8', stdio: 'pipe' });
+        gitFileCount = output.trim().split('\n').filter(Boolean).length;
+        _gitFileCountLabel = String(gitFileCount);
+      } catch { /* not a git repo — skip */ }
+
+      // Lesson quality breakdown
+      let successCount = 0; let failureCount = 0; let attributedCount = 0;
+      const domainSet = new Set<string>();
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        const l = safeJsonParse<{ outcome?: string; author?: string; topic?: string }>(raw, {});
+        if (l.outcome === 'success' || l.outcome === 'partial') successCount++;
+        else failureCount++;
+        if (l.author) attributedCount++;
+        domainSet.add((l.topic ?? '').split(':')[0] ?? 'unknown');
+      }
+
+      const fileCoverage = gitFileCount > 0
+        ? `${Math.round((fileKeys.length / gitFileCount) * 100)}% (${fileKeys.length}/${gitFileCount} files)`
+        : `${fileKeys.length} files tracked`;
+
+      const attributionPct = lessonKeys.length > 0
+        ? Math.round((attributedCount / lessonKeys.length) * 100)
+        : 0;
+
+      const overallScore = Math.round(
+        (Math.min(1, lessonKeys.length / 50) * 25) +          // lesson volume (25 pts)
+        (Math.min(1, successCount / Math.max(1, lessonKeys.length)) * 25) + // success ratio (25 pts)
+        (Math.min(1, attributionPct / 100) * 25) +            // attribution completeness (25 pts)
+        (Math.min(1, personKeys.length / 5) * 25)             // team engagement (25 pts)
+      );
+
+      const scoreEmoji = overallScore >= 80 ? '🟢' : overallScore >= 50 ? '🟡' : '🔴';
+
+      return [
+        `## 📊 Brain Coverage Report`,
+        ``,
+        `${scoreEmoji} **Overall score: ${overallScore}/100**`,
+        ``,
+        `| Metric | Value |`,
+        `|--------|-------|`,
+        `| Total lessons | **${lessonKeys.length}** (${successCount} success · ${failureCount} failure) |`,
+        `| Problem domains | **${domainSet.size}** |`,
+        `| Attribution | **${attributedCount}/${lessonKeys.length}** (${attributionPct}%) |`,
+        `| Contributors | **${personKeys.length}** tracked in knowledge graph |`,
+        `| File coverage | **${fileCoverage}** |`,
+        ``,
+        `**Score breakdown (each 0–25):**`,
+        `- Lesson volume: **${Math.round(Math.min(1, lessonKeys.length / 50) * 25)}/25** _(target: 50+ lessons)_`,
+        `- Success ratio: **${Math.round(Math.min(1, successCount / Math.max(1, lessonKeys.length)) * 25)}/25** _(target: all lessons resolved)_`,
+        `- Attribution: **${Math.round(Math.min(1, attributionPct / 100) * 25)}/25** _(target: 100% attributed)_`,
+        `- Team engagement: **${Math.round(Math.min(1, personKeys.length / 5) * 25)}/25** _(target: 5+ contributors)_`,
+        ``,
+        `---`,
+        `_Boost score: run \`brain_from_git\` · add \`author\` to \`learn_from_attempts\` · fix gaps with \`skill_gaps\`_`,
+      ].join('\n');
     }
 
     // ── sync_file_changes ─────────────────────────────────────────────────────

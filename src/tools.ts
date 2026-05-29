@@ -860,6 +860,40 @@ const TOOLS = [
     },
   },
   {
+    name: 'skill_gaps',
+    description:
+      'Show knowledge blind spots in your Brain — domains with unresolved failures, ' +
+      'lessons with missing attribution, and areas where brain_who_knows cannot help. ' +
+      'Run periodically to find where to focus knowledge capture effort. ' +
+      'Returns a prioritized list: 🔴 critical (failures with no solutions) → 🟡 warn → 🔵 info. ' +
+      'Pairs with brain_coverage for a full knowledge-health picture.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        min_failures: { type: 'number', description: 'Min failure count to flag a domain as a gap (default: 1)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'brain_coverage',
+    description:
+      'Knowledge-coverage health score for your codebase — scored 0-100. ' +
+      'Reports: total lessons, success ratio, attribution completeness, team engagement, and file coverage vs git ls-files. ' +
+      'Run after brain_from_git or periodically to track knowledge-capture progress. ' +
+      'Use skill_gaps to find what to fix. ' +
+      'Example: brain_coverage() → "🟢 Overall score: 78/100 · 42 lessons · 6 contributors · 31% files covered".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        repo_path:   { type: 'string', description: 'Path to the git repository (default: current directory)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
     name: 'sync_file_changes',
     description:
       'Associate recent file changes with brain knowledge. ' +

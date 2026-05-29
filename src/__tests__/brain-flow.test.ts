@@ -1273,3 +1273,82 @@ describe('Phase 3B: team_expertise_map', () => {
     expect(out).toContain('Team Expertise Map');
   });
 });
+
+describe('Phase 3C: skill_gaps', () => {
+  let redis: MockRedis;
+  const iid = 'i1';
+  const getConn = async () => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('returns clean message when no gaps exist', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:auth', outcome: 'success',
+      what_worked: 'rotate the token', author: 'alice',
+    }, getConn, noopApiFetch);
+    const out = await handleBrainTool('skill_gaps', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('No significant knowledge gaps');
+  });
+
+  it('flags domain with failures and no success lessons', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'deploy:prod', outcome: 'failure',
+      what_failed: 'oom kill', what_worked: 'tried increasing limits',
+    }, getConn, noopApiFetch);
+    const out = await handleBrainTool('skill_gaps', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('deploy');
+    expect(out).toContain('unresolved failures');
+  });
+
+  it('flags domain with no attribution when lessons exist but no author', async () => {
+    for (let i = 0; i < 4; i++) {
+      await handleBrainTool('learn_from_attempts', {
+        instance_id: iid, topic: `infra:node${i}`, outcome: 'success',
+        what_worked: `solution ${i}`,
+        // no author
+      }, getConn, noopApiFetch);
+    }
+    const out = await handleBrainTool('skill_gaps', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('infra');
+    expect(out).toContain('no attribution');
+  });
+});
+
+describe('Phase 3C: brain_coverage', () => {
+  let redis: MockRedis;
+  const iid = 'i1';
+  const getConn = async () => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('returns a coverage report with score', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:bug', outcome: 'success',
+      what_worked: 'fixed it', author: 'alice',
+    }, getConn, noopApiFetch);
+    const out = await handleBrainTool('brain_coverage', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('Brain Coverage Report');
+    expect(out).toContain('Overall score:');
+    expect(out).toContain('/100');
+  });
+
+  it('shows 0/100 score when no lessons exist', async () => {
+    const out = await handleBrainTool('brain_coverage', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('0/100');
+  });
+
+  it('score increases with more lessons and attribution', async () => {
+    const outBefore = await handleBrainTool('brain_coverage', { instance_id: iid }, getConn, noopApiFetch);
+    const scoreBefore = parseInt((outBefore!.match(/Overall score: (\d+)/) ?? ['', '0'])[1]!);
+
+    for (let i = 0; i < 5; i++) {
+      await handleBrainTool('learn_from_attempts', {
+        instance_id: iid, topic: `fix:issue${i}`, outcome: 'success',
+        what_worked: `solution ${i}`, author: `dev${i % 3}`,
+      }, getConn, noopApiFetch);
+    }
+    const outAfter = await handleBrainTool('brain_coverage', { instance_id: iid }, getConn, noopApiFetch);
+    const scoreAfter = parseInt((outAfter!.match(/Overall score: (\d+)/) ?? ['', '0'])[1]!);
+    expect(scoreAfter).toBeGreaterThan(scoreBefore);
+  });
+});

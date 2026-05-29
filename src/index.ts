@@ -73,7 +73,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.60';
+const CURRENT_VERSION = '0.10.61';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -572,7 +572,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         '',
         'After sign-in: call **any tool again** — your Brain activates instantly.',
         '',
-        '✨ Free forever · No credit card · 98 MCP tools · GDPR · EU servers',
+        '✨ Free forever · No credit card · 100 MCP tools · GDPR · EU servers',
       ].join('\n');
     }
 
@@ -1816,7 +1816,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
-  console.log('  \x1b[90mFree forever · GDPR · German servers · 98 MCP tools\x1b[0m');
+  console.log('  \x1b[90mFree forever · GDPR · German servers · 100 MCP tools\x1b[0m');
   console.log('');
   process.exit(0);
 }

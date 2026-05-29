@@ -7,6 +7,29 @@
 
 ---
 
+## [0.10.61] – 2026-05-29
+
+### Phase 3C: 100 MCP tools milestone — zero-setup knowledge graph
+
+- **`brain_from_git` enhanced.** Now auto-builds Person nodes + File nodes from git
+  history. Every commit that brain_from_git ingests now upserts the author as a
+  PersonNode and each changed file as a FileNode, with `authored` and `touched` CKG
+  edges. Run once and your entire org-wide knowledge graph is populated retroactively
+  — no `author` fields needed in individual `learn_from_attempts` calls.
+  The git log format is updated to `--name-only` so file attribution happens without
+  extra git subprocess calls per commit.
+- **`skill_gaps()`** — new tool. Scans all lessons and surfaces knowledge blind spots:
+  - 🔴 **critical**: domains with ≥1 failure and 0 success lessons
+  - 🟡 **warn**: fewer failures than threshold but still unresolved  
+  - 🔵 **info**: domains with ≥3 lessons but no attribution (brain_who_knows can't help)
+  Private lessons are excluded from gap analysis.
+- **`brain_coverage()`** — new tool. Knowledge-coverage health score 0–100 based on
+  4 equally-weighted factors: lesson volume, success ratio, attribution completeness,
+  and team engagement. Also computes file coverage ratio vs `git ls-files` when run
+  inside a git repo. Use `skill_gaps` to find what to improve.
+- **+6 tests** → 400 total.
+- **100 MCP tools** (was 98). 🎯
+
 ## [0.10.60] – 2026-05-29
 
 ### Phase 3B: File knowledge map + team expertise overview + visibility scopes

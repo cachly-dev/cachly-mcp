@@ -1,6 +1,7 @@
 import { createHmac } from 'node:crypto';
 import type { Redis } from 'ioredis';
-import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge } from '../ckg.js';
+import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
+         ckgUpsertPersonNode, ckgUpsertFileNode } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse } from '../utils.js';
 
@@ -920,12 +921,11 @@ export async function handleFedbrainTool(
         isIncremental = Boolean(lastSha);
       }
 
-      // Build git log command
-      // In incremental mode, only fetch commits after the last processed SHA
+      // Build git log command — use --name-only to get changed files per commit
       const sinceFlag = since ? `--since="${since}"` : '';
       const afterFlag = isIncremental ? `${lastSha}..HEAD` : '';
       const revRange = afterFlag || branch;
-      const logCmd = `git log ${revRange} ${sinceFlag} --pretty=format:"%H|||%s|||%ad|||%an" --date=short --no-merges -n ${maxCommits}`;
+      const logCmd = `git log ${revRange} ${sinceFlag} --pretty=format:"COMMIT|||%H|||%s|||%ad|||%an" --date=short --no-merges --name-only -n ${maxCommits}`;
 
       let logOutput = '';
       try {
@@ -934,10 +934,21 @@ export async function handleFedbrainTool(
         return `❌ git log failed: ${(e as Error).message}. Check \`repo_path\` and \`branch\`.`;
       }
 
-      const commits = logOutput.trim().split('\n').filter(Boolean).map(line => {
-        const [sha, subject, date, author] = line.split('|||');
-        return { sha: (sha ?? '').trim(), subject: (subject ?? '').trim(), date: (date ?? '').trim(), author: (author ?? '').trim() };
-      });
+      // Parse multi-line output: each commit block = header line + blank line + file lines
+      type CommitEntry = { sha: string; subject: string; date: string; author: string; files: string[] };
+      const commits: CommitEntry[] = [];
+      let current: CommitEntry | null = null;
+      for (const raw of logOutput.split('\n')) {
+        const line = raw.trim();
+        if (line.startsWith('COMMIT|||')) {
+          if (current) commits.push(current);
+          const [, sha, subject, date, author] = line.split('|||');
+          current = { sha: (sha ?? '').trim(), subject: (subject ?? '').trim(), date: (date ?? '').trim(), author: (author ?? '').trim(), files: [] };
+        } else if (line && current) {
+          current.files.push(line);
+        }
+      }
+      if (current) commits.push(current);
 
       if (commits.length === 0) {
         if (isIncremental) {
@@ -994,13 +1005,17 @@ export async function handleFedbrainTool(
         const topic = `${category}:${domain}`;
         categoryCount.set(category, (categoryCount.get(category) ?? 0) + 1);
 
+        const commitFiles = commit.files.filter(f => f.length > 0).slice(0, 12);
         const lessonObj = {
           topic, outcome, severity,
           what_worked: commit.subject.slice(0, 200),
           what_failed: '',
           context: `git:${commit.sha.slice(0, 8)} by ${commit.author} on ${commit.date}`,
-          file_paths: [], commands: [`git show ${commit.sha.slice(0, 8)}`],
+          author: commit.author || undefined,
+          file_paths: commitFiles,
+          commands: [`git show ${commit.sha.slice(0, 8)}`],
           tags: ['brain_from_git', category, 'git-history'],
+          visibility: 'team',
           depends_on: [], recall_count: 0, ts, verified_at: ts,
           confidence: 0.55, // lower confidence for auto-inferred lessons
           audit_trail: [{ ts, action: 'brain_from_git', sha: commit.sha.slice(0, 8) }],
@@ -1021,9 +1036,22 @@ export async function handleFedbrainTool(
         await redis.ltrim('cachly:lessons:brain_from_git:all', -500, -1);
         await redis.expire('cachly:lessons:brain_from_git:all', 90 * 86400);
 
-        // Update CKG
+        // Update CKG — concept node + person node + file nodes
         const conceptId = ckgSlug(topic);
         await ckgUpsertNode(redis, conceptId, category, 'git-derived');
+
+        // Phase 3A: auto-build person + file nodes from git history
+        if (commit.author) {
+          try {
+            const personId = await ckgUpsertPersonNode(redis, commit.author, category);
+            await ckgUpdateEdge(redis, personId, 'authored', conceptId, outcome === 'success', outcome === 'partial');
+            for (const fp of commitFiles.slice(0, 8)) {
+              const fileId = await ckgUpsertFileNode(redis, fp);
+              await ckgUpdateEdge(redis, personId, 'touched', fileId, true);
+            }
+          } catch { /* non-critical */ }
+        }
+
         ingested++;
       }
 
