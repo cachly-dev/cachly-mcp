@@ -1,11 +1,10 @@
-import { createHash } from 'node:crypto';
 import { randomUUID } from 'node:crypto';
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { readdir, stat, readFile } from 'node:fs/promises';
 import { join, relative, extname } from 'node:path';
 import type { Redis } from 'ioredis';
 import type { Instance } from './brain.js';
-import { computeEmbedding, hasEmbedProvider, embedProviderHint, EMBED_PROVIDER } from '../embeddings.js';
+import { computeEmbedding, hasEmbedProvider, embedProviderHint } from '../embeddings.js';
 import { detectNamespace } from '../namespace.js';
 import { simpleHash } from '../confidence.js';
 

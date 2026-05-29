@@ -32,8 +32,6 @@ export const TCO_TOOL_NAMES = new Set([
   'tco_telegram_send',
 ]);
 
-type TcoFetch = (path: string, jwt: string, init?: RequestInit) => Promise<unknown>;
-
 async function tcoFetch(path: string, jwt: string, init: RequestInit = {}): Promise<unknown> {
   if (!TCO_URL) {
     throw new Error(

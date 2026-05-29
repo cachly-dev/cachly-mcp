@@ -833,7 +833,7 @@ describe('CROSS_LINGUAL_MAP — coverage', () => {
   it('bi-directional entries exist (reverse lookups)', () => {
     // For each forward entry, the reverse should also exist
     let reverseCount = 0;
-    for (const [key, values] of CROSS_LINGUAL_MAP.entries()) {
+    for (const [, values] of CROSS_LINGUAL_MAP.entries()) {
       for (const v of values) {
         if (CROSS_LINGUAL_MAP.has(v)) {
           reverseCount++;

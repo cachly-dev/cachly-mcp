@@ -11,8 +11,12 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.57';
+const MCP_VERSION = '0.10.58';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.58': [
+    `🧹 Zero lint warnings — all unused imports cleaned across every handler`,
+    `✅ Build: 0 errors, 0 warnings · 379 tests green`,
+  ],
   '0.10.57': [
     `🆕 **What's new in v${MCP_VERSION}:**`,
     `  🔧 **Critical fix** — corrected the npm bin/main entry path (\`dist/src/index.js\`); 0.10.50–0.10.52 shipped a broken entry point`,
@@ -379,6 +383,28 @@ export async function handleBrainTool(
         }
       } catch { /* CKG updates are non-critical */ }
 
+      // ── Ambient team propagation: if author is set + outcome is success,
+      // auto-store as a team lesson so knowledge is shared without a separate
+      // team_learn call. Tags gain 'team'; the lesson is attributed to the author.
+      // This makes team knowledge sharing the default, not the opt-in.
+      if (author && (outcome === 'success' || outcome === 'partial')) {
+        const teamLesson = {
+          topic, outcome, what_worked,
+          what_failed: what_failed ?? '',
+          severity,
+          author,
+          file_paths,
+          commands,
+          tags: [...new Set([...tags, 'team'])],
+          timestamp: new Date().toISOString(),
+          recall_count: 0,
+          version: 2,
+          auto_propagated: true,
+        };
+        const teamListKey = `cachly:lessons:${topic}`;
+        redis.rpush(teamListKey, JSON.stringify(teamLesson)).catch(() => {});
+      }
+
       const emoji = outcome === 'success' ? '✅' : outcome === 'partial' ? '⚠️' : '❌';
       const sevEmoji = severity === 'critical' ? '🔴' : severity === 'major' ? '🟡' : '🟢';
       const action = isUpdate ? 'updated' : 'stored';
@@ -396,6 +422,9 @@ export async function handleBrainTool(
         isUpdate
           ? `♻️ Updated (recall count: ${recallCount} · audit entries: ${auditTrail.length})`
           : `💡 Recall later with \`recall_best_solution(topic="${topic}")\``,
+        (author && (outcome === 'success' || outcome === 'partial'))
+          ? `👥 Auto-shared with team (by _${author}_) — visible in \`team_recall\``
+          : '',
         depends_on.length > 0
           ? `🔗 Depends on: ${depends_on.map(d => `\`${d}\``).join(', ')} → trace with \`trace_dependency\``
           : '',

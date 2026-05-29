@@ -1,9 +1,6 @@
 import type { Redis } from 'ioredis';
-import { calculateConfidence, confidenceBadge, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_VALUE,
-         CONFIDENCE_WARN_DAYS } from '../confidence.js';
-import { ckgSlug, ckgUpdateEdge } from '../ckg.js';
+import { ckgSlug } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
-import { keywordSearch } from '../search.js';
 import { safeJsonParse } from '../utils.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
@@ -17,7 +14,7 @@ export async function handleAdvancedTool(
   name: string,
   args: Record<string, unknown>,
   getConnection: GetConnection,
-  apiFetch: ApiFetch,
+  _apiFetch: ApiFetch,
 ): Promise<string | null> {
   switch (name) {
     case 'memory_consolidate': {
@@ -51,7 +48,6 @@ export async function handleAdvancedTool(
       }
 
       // Detect duplicates: same topic prefix (e.g. deploy:api vs deploy:api-v2)
-      const duplicates: string[][] = [];
       const topicGroups = new Map<string, string[]>();
       for (const [k, l] of lessons) {
         const prefix = l.topic.split(':')[0];

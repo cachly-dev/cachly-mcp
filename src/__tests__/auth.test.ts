@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { jwtExpiryMs, checkJwt, handleApiError } from '../auth.js';
 
 function makeJwt(payload: Record<string, unknown>): string {

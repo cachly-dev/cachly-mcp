@@ -1,6 +1,5 @@
 import type { Redis } from 'ioredis';
-import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
-import { simpleHash } from '../confidence.js';
+import { computeEmbedding } from '../embeddings.js';
 import type { Instance } from './brain.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;

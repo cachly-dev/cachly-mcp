@@ -193,7 +193,7 @@ const SEGMENT_RE = /([\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00
 const RTL_RE = /[\u0590-\u05ff\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb1d-\ufb4f\ufb50-\ufdff\ufe70-\ufeff]/;
 // Distinguish Arabic from Hebrew within RTL segments
 const HEBREW_CHAR_RE = /[\u0590-\u05ff\ufb1d-\ufb4f]/;
-const ARABIC_CHAR_RE  = /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]/;
+const _ARABIC_CHAR_RE  = /[\u0600-\u06ff\u0750-\u077f\u08a0-\u08ff\ufb50-\ufdff\ufe70-\ufeff]/;
 // Persian/Farsi: exclusive chars not in Arabic (U+067E=پ, U+0686=چ, U+0698=ژ, U+06AF=گ, U+06CC=ی)
 const FARSI_CHAR_RE   = /[\u067e\u0686\u0698\u06af\u06cc]/;
 // Devanagari (Hindi, Sanskrit, Marathi …) — U+0900–U+097F + extended
@@ -206,7 +206,7 @@ const TURKISH_CHAR_RE = /[\u011f\u015f\u0131\u0130\u00e7]/; // ğ ş ı İ ç
 const BENGALI_RE      = /[\u0980-\u09ff]/;
 // Vietnamese uses Latin + Latin Extended Additional (U+1EA0–U+1EF9) for tone marks
 // e.g. ắ ặ ầ ổ ợ ụ ừ — detected by chars exclusive to Vietnamese diacritics
-const VIETNAMESE_CHAR_RE = /[\u1ea0-\u1ef9]/;
+const _VIETNAMESE_CHAR_RE = /[\u1ea0-\u1ef9]/;
 
 // ── Katakana → Romaji conversion table (Hepburn system) ──────────────────────
 // Digraphs must be listed before single chars so they match first.

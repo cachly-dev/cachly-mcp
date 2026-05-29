@@ -12,7 +12,7 @@ export async function handleRoadmapTool(
   name: string,
   args: Record<string, unknown>,
   getConnection: GetConnection,
-  apiFetch: ApiFetch,
+  _apiFetch: ApiFetch,
 ): Promise<string | null> {
   switch (name) {
     case 'roadmap_add': {

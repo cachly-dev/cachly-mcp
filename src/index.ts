@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 import { jwtExpiryMs, checkJwt, handleApiError } from './auth.js';
-import { handleTcoTool, TCO_TOOL_NAMES } from './handlers/tco.js';
+import { handleTcoTool } from './handlers/tco.js';
 import { notify } from './notifier.js';
 import { readFile } from 'node:fs/promises';
-import { execSync } from 'node:child_process';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // True only when this file is the entry point (not imported by tests or other modules).
@@ -74,8 +72,8 @@ import { Redis } from 'ioredis';
 
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
-const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.49';
+const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
+const CURRENT_VERSION = '0.10.58';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -304,42 +302,17 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
     return 'pending';
   } catch { return 'pending'; }
 }
-// ── Confidence utils (imported from confidence.ts) ──────────────────────────
-import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
-         CONFIDENCE_WARN_VALUE, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_DAYS,
-         CONFIDENCE_STALE_DAYS,
-         simpleHash } from './confidence.js';
-
-
 // ── Embeddings (imported from embeddings.ts) ────────────────────────────────
-import { embedConfig, setEmbedJwt, EMBED_PROVIDER, computeEmbedding,
-         hasEmbedProvider, embedProviderHint } from './embeddings.js';
+import { setEmbedJwt } from './embeddings.js';
 
 // ── Search Engine (imported from search.ts) ─────────────────────────────────
 import { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp, STOPWORDS,
          katakanaToRomaji, arabicLightStem, expandCrossLingual, CROSS_LINGUAL_MAP,
-         keywordSearch, ZERO_RESULTS_LOG, zeroResultsTotal, indexVocab as _indexVocab } from './search.js';
-import type { KeywordMatch } from './search.js';
+         ZERO_RESULTS_LOG, zeroResultsTotal } from './search.js';
 
 // ── Exported for testing (re-export from search.ts) ─────────────────────────
 export { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp, STOPWORDS,
          katakanaToRomaji, arabicLightStem, expandCrossLingual, CROSS_LINGUAL_MAP };
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-// Instance is imported from handlers/brain.ts
-
-interface CreateResponse {
-  instance_id: string;
-  checkout_url?: string;
-  status: string;
-}
-
-interface SemanticSearchResponse {
-  found: boolean;
-  id?: string;
-  similarity?: number;
-  prompt?: string;
-}
 
 // ── Connection pool ───────────────────────────────────────────────────────────
 
@@ -487,11 +460,6 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   return res.json() as Promise<T>;
 }
 
-import { detectNamespace } from './namespace.js';
-
-// ── CKG (imported from ckg.ts) ─────────────────────────────────────────────
-import type { CKGEdge, CKGNode } from './ckg.js';
-import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge } from './ckg.js';
 import { handleBrainTool } from './handlers/brain.js';
 import { handleContextTool } from './handlers/context.js';
 import { handleInstanceTool } from './handlers/instances.js';
@@ -2021,7 +1989,7 @@ if (process.argv[2] === 'status') {
 if (process.argv[2] === 'health') {
   const { existsSync } = await import('node:fs');
   const { readFile } = await import('node:fs/promises');
-  const { resolve, join: pJoin } = await import('node:path');
+  const { resolve } = await import('node:path');
 
   const cwd = process.cwd();
   let passed = 0;
@@ -2325,7 +2293,7 @@ if (process.argv[2] === 'setup') {
       if (!keyBody.key) throw new Error('no key in response');
       token = keyBody.key; // swap JWT → cky_live_...
       console.log(' ✓\n');
-    } catch (e) {
+    } catch {
       console.log(' (skipped)\n');
       // Non-fatal: fall back to using the Keycloak JWT directly.
       // It will expire but setup still works for now.

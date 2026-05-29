@@ -1,13 +1,8 @@
 import { createHmac } from 'node:crypto';
-import { execSync } from 'node:child_process';
 import type { Redis } from 'ioredis';
-import { calculateConfidence, confidenceBadge, CONFIDENCE_WARN_VALUE, CONFIDENCE_STALE_VALUE,
-         CONFIDENCE_WARN_DAYS } from '../confidence.js';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
-import { keywordSearch, tokenize } from '../search.js';
 import { safeJsonParse } from '../utils.js';
-import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
 export let _lastBrainFromGitCounts: { fixes: number; features: number; refactors: number; total: number } | null = null;

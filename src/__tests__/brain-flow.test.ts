@@ -10,7 +10,7 @@
  * Run: npx vitest run src/__tests__/brain-flow.test.ts
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
 // ── Modules under test ────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@
  * Run: E2E_API_URL=https://api.dev.cachly.dev npx vitest run src/__tests__/e2e/api-health.test.ts
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { cfg } from './config.js';
 
 describe('API health (no auth required)', () => {

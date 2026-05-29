@@ -7,6 +7,8 @@ export default defineConfig({
     exclude: [
       '**/__tests__/e2e/**',
       '**/node_modules/**',
+      // Compiled dist/ files are identical to src/ — run tests only from source
+      '**/dist/**',
     ],
   },
 });

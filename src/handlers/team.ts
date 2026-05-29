@@ -1,9 +1,8 @@
-import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Redis } from 'ioredis';
-import { calculateConfidence, confidenceBadge, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_VALUE,
-         CONFIDENCE_WARN_DAYS, CONFIDENCE_STALE_DAYS, simpleHash } from '../confidence.js';
+import { calculateConfidence, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_VALUE,
+         CONFIDENCE_WARN_DAYS, CONFIDENCE_STALE_DAYS } from '../confidence.js';
 import type { Instance } from './brain.js';
 import { safeJsonParse } from '../utils.js';
 
@@ -147,7 +146,7 @@ export async function handleTeamTool(
 
       // Track distinct reviewers so endorsements can't be inflated by one person.
       const endorsersKey = `cachly:lesson:endorsers:${topic}`;
-      const added = await redis.sadd(endorsersKey, reviewer);
+      const isNewEndorser = (await redis.sadd(endorsersKey, reviewer)) === 1;
       await redis.expire(endorsersKey, 365 * 86400);
       const endorsements = await redis.scard(endorsersKey);
 
@@ -174,7 +173,8 @@ export async function handleTeamTool(
       await redis.expire(logKey, 365 * 86400);
 
       const badge = effectiveLevel === 'senior' ? '🛡️ senior-reviewed' : '✔️ peer-reviewed';
-      return `${badge} — \`${topic}\` confirmed by **${reviewer}** (${endorsements} distinct endorsement${endorsements === 1 ? '' : 's'}).\n📈 This lesson now ranks higher in \`smart_recall\` / \`team_recall\`.${note ? `\n📝 ${note.slice(0, 200)}` : ''}`;
+      const alreadyNote = isNewEndorser ? '' : ` (already endorsed by ${reviewer} — no change to rank)`;
+      return `${badge} — \`${topic}\` confirmed by **${reviewer}** (${endorsements} distinct endorsement${endorsements === 1 ? '' : 's'})${alreadyNote}.\n📈 This lesson now ranks higher in \`smart_recall\` / \`team_recall\`.${note ? `\n📝 ${note.slice(0, 200)}` : ''}`;
     }
 
     // ── team_recall ───────────────────────────────────────────────────────────

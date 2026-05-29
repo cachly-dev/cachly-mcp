@@ -1,9 +1,9 @@
 import { McpError, ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import type { Redis } from 'ioredis';
 import { calculateConfidence } from '../confidence.js';
-import { ckgSlug, ckgUpdateEdge } from '../ckg.js';
+import { ckgSlug } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
-import { keywordSearch, tokenize } from '../search.js';
+import { keywordSearch } from '../search.js';
 import { safeJsonParse } from '../utils.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
@@ -124,6 +124,9 @@ export async function handleSyndicateTool(
           id: string; topic: string; outcome: string;
           what_worked: string; confirm_count: number; created_at: string;
         }>;
+        top_contributors?: Array<{
+          trust_score: number; lessons_count: number; confirms_received: number;
+        }>;
       }>('/api/v1/syndication/stats');
 
       const confirmBar = (n: number) => {
@@ -163,9 +166,9 @@ export async function handleSyndicateTool(
       );
 
       // Top contributors (anonymous scores)
-      if ((res as any).top_contributors?.length) {
+      if (res.top_contributors?.length) {
         lines.push(``, `### 🏅 Top Contributors (anonymous)`);
-        for (const c of (res as any).top_contributors) {
+        for (const c of res.top_contributors) {
           lines.push(`- Trust **${c.trust_score}** · ${c.lessons_count} lesson${c.lessons_count === 1 ? '' : 's'} · ${c.confirms_received} confirms received`);
         }
       }
