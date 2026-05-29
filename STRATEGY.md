@@ -140,23 +140,33 @@ Das ist der Punkt, an dem wir *verdienen*, gegen First-Party anzutreten.
   Story — jetzt gibt es eine Zahl, die jede Recall-Änderung verteidigen muss.
 - **[✅ erledigt]** **Contradiction-Resolution persistent**: Widersprüche werden in
   `cachly:contradictions:{topic}` als auditierbarer Verlauf gespeichert (TTL'd).
-- **[offen — 100x Intelligenz]** Echtes hybrides Retrieval: semantische Embeddings
-  + Reranking + CKG-Traversierung als *eine* gerankte Liste, gegen das eingebaute
-  Memory gemessen.
+- **[✅ erledigt — 100x Intelligenz]** Hybrides Retrieval: BM25-Keyword + semantische
+  Embeddings werden in `smart_recall` zu *einer* gerankten Liste fusioniert
+  (`0.6×BM25-Qualität + 0.4×Semantik`), mit Match-Typ-Badges (🔍/🎯/🔀). CKG-
+  Traversierung als dritte Signalquelle ist der nächste Ausbau.
+- **[✅ erledigt — Wertsichtbarkeit]** "Brain saved you here"-Banner im
+  `smart_recall`-Output macht die Zeitersparnis pro proven Lesson inline sichtbar
+  (`cachly:stats:time_saved_mins` wird getrackt und jetzt auch angezeigt).
 - **[offen — Beweis]** Größerer, extern gelabelter Korpus + Head-to-head gegen ein
   echtes Flat-File-Memory auf realen Agent-Traces (siehe BENCH.md "Limitations").
-- **[offen — Wertsichtbarkeit]** "Brain saved you here"-Signal im Tool-Output +
-  Dashboard-Metrik (Zeitersparnis wird bereits getrackt: `cachly:stats:time_saved_mins`).
 
 ### Phase 3 — Team-Wissensgraph als uneinholbarer Moat · *9–18 Monate*
 Hier ist Anthropic strukturell raus.
+
+> **Status (begonnen):** Knowledge-Governance ist live — `team_confirm` lässt
+> einen Reviewer eine Lesson bestätigen (🛡️ senior / ✔️ peer). Die Bestätigung
+> fließt direkt in das Recall-Ranking (`src/rerank.ts`, 5. Faktor) ein: bestätigtes,
+> menschlich geprüftes Wissen ranked über unreviewtem Auto-Learning. `team_recall`
+> zeigt Reviewer-Badges und sortiert bestätigte Lessons zuerst. Distinct-Endorser
+> werden in einem Set getrackt (kein Self-Inflation), mit Audit-Log pro Topic.
 
 - **[100x Team]** Org-weiter Wissensgraph: Lessons, Personen, Dateien, Services als
   Knoten; Recall berücksichtigt *wer* was gelernt hat und *wo* es relevant ist.
 - **[Virality]** Jeder gelöste Fehler eines Entwicklers wird automatisch zur
   Org-Lesson — mit Attribution. `team_learn` als Default, nicht als Opt-in.
-- **[Governance]** Rollen, Sichtbarkeits-Scopes, Audit-Trails, "Wissens-Reviews"
-  (ein Senior bestätigt eine Lesson → höheres Vertrauen im Recall-Ranking).
+- **[✅ erledigt — Governance]** "Wissens-Reviews": ein Senior bestätigt eine Lesson
+  (`team_confirm`) → höheres Vertrauen im Recall-Ranking. Audit-Trail + distinct
+  Endorsements werden persistiert. Offen: Rollen-Modell und Sichtbarkeits-Scopes.
 - **[Enterprise]** Self-Hosted-Tier mit SOC-2/ISO, BYOK by default, Daten bleiben
   im Kunden-VPC. Das ist der Umsatz, den Anthropic-Memory nicht abgreifen kann.
 

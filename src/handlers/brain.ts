@@ -13,10 +13,16 @@ import { computeEmbedding, hasEmbedProvider, embedProviderHint, EMBED_PROVIDER }
 import { detectNamespace } from '../namespace.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.50';
+const MCP_VERSION = '0.10.51';
 const WHATS_NEW: Record<string, string[]> = {
-  '0.10.50': [
+  '0.10.51': [
     `🆕 **What's new in v${MCP_VERSION}:**`,
+    `  ✅ \`team_confirm\` — endorse a lesson in code/knowledge review; reviewed knowledge ranks higher (🛡️ senior / ✔️ peer)`,
+    `  ✅ Governance-aware recall — human-confirmed lessons outrank unreviewed auto-learned entries`,
+    `  ✅ \`team_recall\` — shows reviewer badges and sorts confirmed lessons first`,
+    `  💡 Run \`team_confirm(topic, reviewer, level="senior")\` to bless the canonical solution`,
+  ],
+  '0.10.50': [
     `  ✅ \`smart_recall\` — unified keyword + semantic hybrid list (one ranked result, not two sections)`,
     `  ✅ \`smart_recall\` — "Brain saved you here" banner surfaces time saved inline per proven lesson`,
     `  ✅ Quality reranking — proven successes outrank symptom-dense failures (+11% Precision@1)`,

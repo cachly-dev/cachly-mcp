@@ -11,7 +11,7 @@ type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 
 export const TEAM_TOOL_NAMES = new Set([
-  'sync_file_changes', 'team_learn', 'team_recall', 'team_synthesize', 'memory_crystalize',
+  'sync_file_changes', 'team_learn', 'team_confirm', 'team_recall', 'team_synthesize', 'memory_crystalize',
   'brain_doctor', 'recall_at', 'trace_dependency', 'global_learn', 'global_recall',
   'publish_lesson', 'import_public_brain', 'setup_ai_memory',
 ]);
@@ -124,6 +124,59 @@ export async function handleTeamTool(
       return `✅ Team lesson stored by **${author}**: \`${topic}\` (${outcome})\n💡 ${what_worked.slice(0, 120)}`;
     }
 
+    // ── team_confirm — knowledge governance (Phase 3) ─────────────────────────
+    // A human reviewer endorses a stored lesson. The endorsement raises the
+    // lesson's recall ranking (see src/rerank.ts), so trusted, reviewed knowledge
+    // surfaces above unreviewed auto-learned entries.
+    case 'team_confirm': {
+      const { instance_id, topic, reviewer, level = 'peer', note = '' } = args as {
+        instance_id: string; topic: string; reviewer: string;
+        level?: 'senior' | 'peer'; note?: string;
+      };
+      if (!instance_id) return '❌ instance_id required';
+      if (!topic || !reviewer) return '❌ Required: topic, reviewer';
+      const reviewLevel = level === 'senior' ? 'senior' : 'peer';
+
+      const redis = await getConnection(instance_id);
+      const key = `cachly:lesson:best:${topic}`;
+      const raw = await redis.get(key);
+      const lesson = safeJsonParse<Record<string, unknown> | null>(raw, null);
+      if (!lesson) {
+        return `📭 No best-solution lesson found for \`${topic}\`.\n\nA lesson must exist (store one with \`team_learn\` / \`learn_from_attempts\`) before it can be confirmed.`;
+      }
+
+      // Track distinct reviewers so endorsements can't be inflated by one person.
+      const endorsersKey = `cachly:lesson:endorsers:${topic}`;
+      const added = await redis.sadd(endorsersKey, reviewer);
+      await redis.expire(endorsersKey, 365 * 86400);
+      const endorsements = await redis.scard(endorsersKey);
+
+      // Senior beats peer; never downgrade an existing senior review to peer.
+      const prevLevel = (lesson.review_level as string) ?? '';
+      const effectiveLevel = prevLevel === 'senior' ? 'senior' : reviewLevel;
+
+      const updated = {
+        ...lesson,
+        reviewed_by: reviewer,
+        review_level: effectiveLevel,
+        endorsements,
+        reviewed_at: new Date().toISOString(),
+      };
+      await redis.set(key, JSON.stringify(updated));
+
+      // Append an immutable review record for the audit trail.
+      const reviewLog = {
+        reviewer, level: reviewLevel, note: note.slice(0, 280), ts: new Date().toISOString(),
+      };
+      const logKey = `cachly:lesson:reviews:${topic}`;
+      await redis.rpush(logKey, JSON.stringify(reviewLog));
+      await redis.ltrim(logKey, -50, -1);
+      await redis.expire(logKey, 365 * 86400);
+
+      const badge = effectiveLevel === 'senior' ? '🛡️ senior-reviewed' : '✔️ peer-reviewed';
+      return `${badge} — \`${topic}\` confirmed by **${reviewer}** (${endorsements} distinct endorsement${endorsements === 1 ? '' : 's'}).\n📈 This lesson now ranks higher in \`smart_recall\` / \`team_recall\`.${note ? `\n📝 ${note.slice(0, 200)}` : ''}`;
+    }
+
     // ── team_recall ───────────────────────────────────────────────────────────
     case 'team_recall': {
       const { instance_id, topic, author, limit = 10 } = args as {
@@ -146,6 +199,7 @@ export async function handleTeamTool(
         topic: string; outcome: string; what_worked: string;
         ts: string; severity?: string; recall_count?: number;
         author?: string; tags?: string[];
+        reviewed_by?: string; review_level?: string; endorsements?: number;
       };
       let lessons: TeamLesson[] = [];
       if (lessonKeys.length > 0) {
@@ -169,8 +223,10 @@ export async function handleTeamTool(
         lessons = lessons.filter(l => l.author?.toLowerCase().includes(a));
       }
 
-      // Sort by recall_count desc
-      lessons.sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0));
+      // Sort: reviewed lessons first (senior > peer), then by recall_count desc.
+      const reviewRank = (l: TeamLesson) => l.reviewed_by ? (l.review_level === 'senior' ? 2 : 1) : 0;
+      lessons.sort((a, b) =>
+        (reviewRank(b) - reviewRank(a)) || ((b.recall_count ?? 0) - (a.recall_count ?? 0)));
       lessons = lessons.slice(0, limit);
 
       if (lessons.length === 0) {
@@ -183,11 +239,17 @@ export async function handleTeamTool(
       for (const l of lessons) {
         const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
         const sev = l.severity === 'critical' ? '🔴 ' : l.severity === 'major' ? '🟡 ' : '';
+        const reviewBadge = l.reviewed_by
+          ? (l.review_level === 'senior' ? ' 🛡️' : ' ✔️')
+          : '';
         const authorStr = l.author ? ` · _by ${l.author}_` : '';
+        const reviewStr = l.reviewed_by
+          ? ` · reviewed by ${l.reviewed_by}${(l.endorsements ?? 0) > 1 ? ` +${(l.endorsements ?? 0) - 1}` : ''}`
+          : '';
         const recallStr = (l.recall_count ?? 0) > 0 ? ` · recalled ${l.recall_count}×` : '';
         const ago = Math.round((Date.now() - new Date(l.ts).getTime()) / 86400000);
         const agoStr = ago === 0 ? 'today' : ago === 1 ? 'yesterday' : `${ago}d ago`;
-        lines.push(`${emoji} ${sev}**\`${l.topic}\`**${authorStr}${recallStr} · ${agoStr}`);
+        lines.push(`${emoji} ${sev}**\`${l.topic}\`**${reviewBadge}${authorStr}${reviewStr}${recallStr} · ${agoStr}`);
         lines.push(`   ${l.what_worked.slice(0, 120)}`);
         lines.push('');
       }

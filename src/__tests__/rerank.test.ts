@@ -35,10 +35,29 @@ describe('qualityMultiplier', () => {
   });
 
   it('clamps within [0.5, 2.5]', () => {
-    const hi = qualityMultiplier({ outcome: 'success', confidence: 1, recall_count: 100000, severity: 'critical' });
+    const hi = qualityMultiplier({ outcome: 'success', confidence: 1, recall_count: 100000, severity: 'critical', review_level: 'senior', reviewed_by: 'x', endorsements: 99 });
     const lo = qualityMultiplier({ outcome: 'failure', confidence: 0, recall_count: 0, severity: 'minor' });
     expect(hi).toBeLessThanOrEqual(2.5);
     expect(lo).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('boosts a human-reviewed lesson above an unreviewed equal', () => {
+    const base = { outcome: 'success', confidence: 0.8, recall_count: 3 } as const;
+    const unreviewed = qualityMultiplier({ ...base });
+    const peer = qualityMultiplier({ ...base, reviewed_by: 'alice', review_level: 'peer', endorsements: 1 });
+    const senior = qualityMultiplier({ ...base, reviewed_by: 'bob', review_level: 'senior', endorsements: 1 });
+    expect(peer).toBeGreaterThan(unreviewed);
+    expect(senior).toBeGreaterThan(peer);
+  });
+
+  it('rewards additional distinct endorsements but saturates', () => {
+    const base = { outcome: 'success', confidence: 0.8, recall_count: 3, reviewed_by: 'a', review_level: 'peer' } as const;
+    const one = qualityMultiplier({ ...base, endorsements: 1 });
+    const three = qualityMultiplier({ ...base, endorsements: 3 });
+    const fifty = qualityMultiplier({ ...base, endorsements: 50 });
+    expect(three).toBeGreaterThan(one);
+    expect(fifty).toBeGreaterThan(three);
+    expect(fifty - three).toBeLessThan(three - one + 0.1);
   });
 });
 

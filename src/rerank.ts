@@ -9,8 +9,10 @@
  *
  * This module is Cachly's structural advantage made concrete: we re-rank text
  * matches by the *quality* of the underlying lesson — outcome, confidence,
- * proven-ness (recall_count) and severity — so the lesson most likely to help
- * surfaces first.
+ * proven-ness (recall_count), severity and human review (endorsements) — so the
+ * lesson most likely to help surfaces first. A flat-file memory has none of these
+ * signals; a senior-confirmed, ten-times-recalled success reads identically to a
+ * one-off failed attempt.
  *
  * It is intentionally pure (no I/O): the lesson JSON already travels inside each
  * KeywordMatch.content for `cachly:lesson:best:*` keys, so reranking needs no extra
@@ -29,6 +31,10 @@ export interface LessonQuality {
   severity?: string;       // 'critical' | 'major' | 'minor'
   ts?: string;             // ISO timestamp (for freshness, mild)
   verified_at?: string;
+  // ── Governance (Phase 3): human review raises trust above mere usage ──
+  reviewed_by?: string;    // handle of the reviewer who endorsed it (latest)
+  review_level?: string;   // 'senior' | 'peer' (weight differs)
+  endorsements?: number;   // distinct human endorsements
 }
 
 export interface RerankedMatch extends KeywordMatch {
@@ -53,6 +59,14 @@ const SEVERITY_WEIGHT: Record<string, number> = {
 };
 const SEVERITY_DEFAULT = 1.0;
 
+// Governance: a human-confirmed lesson is more trustworthy than one proven only
+// by automated recall. A senior review weighs more than a peer review; multiple
+// endorsements add a small, saturating bump on top.
+const REVIEW_LEVEL_WEIGHT: Record<string, number> = {
+  senior: 1.25,
+  peer: 1.1,
+};
+
 // Clamp so a strong text match is never fully buried by quality, and a weak text
 // match is never catapulted to the top purely on quality.
 const MIN_MULTIPLIER = 0.5;
@@ -65,7 +79,9 @@ const LESSON_KEY_PREFIX = 'cachly:lesson:best:';
  * Returns 1.0 (neutral) for documents that carry no quality signal (e.g. context).
  */
 export function qualityMultiplier(lesson: LessonQuality | null): number {
-  if (!lesson || (lesson.outcome === undefined && lesson.confidence === undefined && lesson.recall_count === undefined)) {
+  if (!lesson || (lesson.outcome === undefined && lesson.confidence === undefined
+      && lesson.recall_count === undefined && lesson.reviewed_by === undefined
+      && lesson.endorsements === undefined)) {
     return 1.0;
   }
 
@@ -84,7 +100,16 @@ export function qualityMultiplier(lesson: LessonQuality | null): number {
   // 4. Severity — when two lessons tie, surface the one guarding the worse failure.
   const severity = SEVERITY_WEIGHT[lesson.severity ?? ''] ?? SEVERITY_DEFAULT;
 
-  const m = outcome * confidenceFactor * provenBoost * severity;
+  // 5. Governance — a human-confirmed lesson outranks an unreviewed one.
+  //    Base weight from the review level, plus a small saturating bump for
+  //    additional endorsements (rc-style log curve, capped at +0.1).
+  const reviewBase = lesson.reviewed_by
+    ? (REVIEW_LEVEL_WEIGHT[lesson.review_level ?? 'peer'] ?? REVIEW_LEVEL_WEIGHT.peer)
+    : 1.0;
+  const extraEndorse = Math.max(0, (lesson.endorsements ?? 0) - 1);
+  const reviewBoost = reviewBase * (1 + Math.min(0.1, Math.log1p(extraEndorse) / 20));
+
+  const m = outcome * confidenceFactor * provenBoost * severity * reviewBoost;
   return Math.max(MIN_MULTIPLIER, Math.min(MAX_MULTIPLIER, m));
 }
 

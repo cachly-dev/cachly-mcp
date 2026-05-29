@@ -841,6 +841,25 @@ const TOOLS = [
     },
   },
   {
+    name: 'team_confirm',
+    description:
+      'Endorse (review-confirm) a team lesson so trusted, human-reviewed knowledge ranks above unreviewed auto-learned entries. ' +
+      'A senior review weighs more than a peer review; distinct endorsements add a small boost. ' +
+      'Confirmed lessons surface higher in smart_recall and team_recall and carry a 🛡️/✔️ badge. ' +
+      'Use this in code review or knowledge reviews to bless the canonical solution for a topic.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
+        topic:       { type: 'string', description: 'Topic slug of the lesson to confirm (e.g. "deploy:api")' },
+        reviewer:    { type: 'string', description: 'Your name or handle (the reviewer endorsing this lesson)' },
+        level:       { type: 'string', enum: ['senior', 'peer'], description: 'Review weight — "senior" ranks higher than "peer" (default: peer)' },
+        note:        { type: 'string', description: 'Optional review note (kept in the lesson audit trail)' },
+      },
+      required: ['instance_id', 'topic', 'reviewer'],
+    },
+  },
+  {
     name: 'team_recall',
     description:
       'Recall lessons from a shared team brain, showing who learned what. ' +
