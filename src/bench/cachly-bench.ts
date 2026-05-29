@@ -19,7 +19,7 @@
 import { EventEmitter } from 'node:events';
 import { keywordSearch, type KeywordMatch } from '../search.js';
 import { rerankByQuality } from '../rerank.js';
-import { BENCH_LESSONS, BENCH_QUERIES, type BenchLesson } from './fixtures.js';
+import { BENCH_LESSONS, BENCH_QUERIES, type BenchLesson, type BenchQuery } from './fixtures.js';
 
 const LESSON_PREFIX = 'cachly:lesson:best:';
 
@@ -167,14 +167,18 @@ function scoreRanking(ranked: string[], relevant: Set<string>): BenchMetrics {
   };
 }
 
-/** Run the benchmark over the fixture corpus. Pure-ish: no network, no real Redis. */
-export async function runBenchmark(): Promise<BenchResult> {
-  const redis = indexCorpus(BENCH_LESSONS);
+/**
+ * Run the three-ranker benchmark over any labeled corpus + query set. Pure-ish:
+ * no network, no real Redis. Shared by the built-in fixture bench and the external
+ * labeled-corpus bench (external-corpus.ts) so both prove lift the same way.
+ */
+export async function runBenchmarkOn(lessons: BenchLesson[], queries: BenchQuery[]): Promise<BenchResult> {
+  const redis = indexCorpus(lessons);
   const flatfileRows: BenchMetrics[] = [];
   const baselineRows: BenchMetrics[] = [];
   const cachlyRows: BenchMetrics[] = [];
 
-  for (const q of BENCH_QUERIES) {
+  for (const q of queries) {
     const relevant = new Set(q.relevant);
 
     // BM25 baseline + cachly share the same candidate set — isolates ranking quality.
@@ -183,7 +187,7 @@ export async function runBenchmark(): Promise<BenchResult> {
     const cachlyRanked = rerankByQuality(matches).map(matchTopic);
 
     // Flat-file memory sees the whole corpus but has no ranking engine.
-    const flatfileRanked = flatFileRank(BENCH_LESSONS, q.query);
+    const flatfileRanked = flatFileRank(lessons, q.query);
 
     flatfileRows.push(scoreRanking(flatfileRanked, relevant));
     baselineRows.push(scoreRanking(baselineRanked, relevant));
@@ -206,9 +210,14 @@ export async function runBenchmark(): Promise<BenchResult> {
     flatfile, baseline, cachly,
     lift: liftBetween(baseline),
     liftVsFlatfile: liftBetween(flatfile),
-    queryCount: BENCH_QUERIES.length,
-    corpusSize: BENCH_LESSONS.length,
+    queryCount: queries.length,
+    corpusSize: lessons.length,
   };
+}
+
+/** Run the benchmark over the built-in fixture corpus. */
+export async function runBenchmark(): Promise<BenchResult> {
+  return runBenchmarkOn(BENCH_LESSONS, BENCH_QUERIES);
 }
 
 // ── Reporting ──────────────────────────────────────────────────────────────────

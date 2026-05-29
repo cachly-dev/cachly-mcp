@@ -7,6 +7,27 @@
 
 ---
 
+## [0.10.73] – 2026-05-29
+
+### Team visibility scopes · idempotent one-command init · external bench — 107 tools
+
+**Team-level visibility scopes (groups)** — closes the last Phase-3 visibility gap (previously only lesson-level `private`):
+- `team_grant_scope(handle, group, action?, assigned_by)` — add/remove a member to a named sub-team (e.g. `security`, `backend`). Admin-gated after the role model is bootstrapped.
+- `team_scopes(handle?)` — list all groups + members, or one person's memberships.
+- `learn_from_attempts(group="...")` scopes a lesson to a group; `smart_recall` enforces it per requester — group-scoped lessons surface only for members of that group (admins see all). Orthogonal to `private` (author-only) and `public`.
+- Pure, tested helpers in `team.ts`: `getScopes`, `lessonVisibleToScope`.
+
+**Idempotent one-command `init`** — the onboarding entry ticket:
+- Now zero-arg capable: falls back to credentials saved by a prior `setup` (`~/.claude/mcp.json`), so you can `init` any project without copy-pasting tokens.
+- Idempotent: only writes config files when the content actually changes ("✓ Already configured · no change").
+- Reports elapsed time; re-runnable safely. `setup` remains the first-time device-flow wizard; `init` is the fast re-config command.
+
+**External labeled-corpus benchmark** — the credibility proof on data we didn't write:
+- Portable JSON corpus format (`bench/external/`), `loadExternalCorpus` + `parseExternalCorpus` (validated) + `runExternalBenchmark`, reusing the same three-ranker harness via the new `runBenchmarkOn(lessons, queries)`.
+- `npm run bench:external [./corpus.json] [--json]`. Bundled sample corpus shows **P@1 +20%, MRR +7.7% vs flat-file** on an independently-shaped set. Third parties can drop in their own labeled set to reproduce the lift claim.
+
+Tool count 105 → 107 synced everywhere. +25 tests (`external-bench.test.ts` + scope suites) → 499 total. 0 lint warnings; clean tsc build.
+
 ## [0.10.72] – 2026-05-29
 
 ### Role model — admin · reviewer · contributor · viewer (Phase 3) — 105 tools

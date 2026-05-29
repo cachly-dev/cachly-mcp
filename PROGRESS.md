@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.72 · 105 MCP-Tools · 474 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.73 · 107 MCP-Tools · 499 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.72` (npm `latest`) |
-| MCP-Tools | **105** |
-| Tests | **474** passing, 9 Suites |
+| Version | `0.10.73` (npm `latest`) |
+| MCP-Tools | **107** |
+| Tests | **499** passing, 10 Suites |
 | Lint | **0 errors, 0 warnings** |
 | Build | sauber (`tsc`, Entry `dist/src/index.js`) |
 | Bench | Precision@1 **+22.2 %**, MRR **+10.9 %**, nDCG@5 **+8.1 %** vs. BM25 |
@@ -89,13 +89,17 @@
   als ehrlicher Stellvertreter für "LLM liest Memory-Files". Cachly gewinnt auf den
   entscheidenden Metriken: **P@1 +10.0 %, MRR +4.4 % vs. flat-file** · CI-verteidigt.
 - ✅ BENCH.md "Limitations" offen + ehrlich (warum flat-file bei P@3/Recall@3 vorn liegt).
-- 🔲 **Extern gelabelter Korpus** statt selbstgebautem Bench-Set (Dritt-Labels)
+- ✅ **Extern gelabelter Korpus (0.10.73)** — portables JSON-Format (`bench/external/`),
+  `loadExternalCorpus` + `runExternalBenchmark`, `npm run bench:external`. Sample-Korpus zeigt
+  **P@1 +20 %, MRR +7.7 % vs. flat-file** auf unabhängig geformtem Set. Dritte können eigene Labels einspielen.
 - 🔲 Head-to-head auf **realen Agent-Traces** (nicht nur Fixture-Korpus)
 
 ### Team-Graph (Phase-3-Rest)
 
 - ✅ **Rollen-Modell (0.10.72)** — `team_assign_role` / `team_whoami` / `team_roster`; `team_confirm` ist role-aware (admin/reviewer → senior; contributor → peer; keine Selbstbeförderung); `setup`-CLI prompts für Governance-Bootstrap (idempotent). 3 neue Tools → 105 gesamt.
-- 🔲 **Sichtbarkeits-Scopes auf Team-Ebene** (heute nur lesson-level `private`)
+- ✅ **Sichtbarkeits-Scopes auf Team-Ebene (0.10.73)** — Gruppen/Sub-Teams via
+  `team_grant_scope` / `team_scopes`; `learn_from_attempts(group="...")` scopt eine Lektion;
+  `smart_recall` zeigt group-scoped Lektionen nur Mitgliedern + Admins (orthogonal zu `private`).
 - ✅ **Service-/System-Nodes im Graph (0.10.70)** — `learn_from_attempts(service="...", service_kind="system")`
   baut Service-Nodes; `person→operates`, `file→runs_in`, `concept→affects`-Kanten. Neues Tool
   `brain_service_map(service)` für Incident-Triage: wer betreibt X + alle bekannten Failures/Fixes (102. Tool).
@@ -106,7 +110,9 @@
 
 ### Onboarding / Null-Reibung (Phase-1-Eintrittskarte)
 
-- 🔲 `npx @cachly-dev/init` Ein-Befehl-Setup <60 s, idempotent
+- ✅ **Ein-Befehl-Setup idempotent (0.10.73)** — `init` ist jetzt zero-arg-fähig (liest gespeicherte
+  Creds aus `~/.claude/mcp.json`), schreibt nur was sich ändert, meldet Laufzeit (<60s).
+  `setup` bleibt der Device-Flow-Erstkontakt; `init` der schnelle idempotente Re-Config-Befehl.
 - ✅ Timeouts überall im Agent-Hotpath (0.10.67): `apiFetch` (15s), alle 6
   Embedding-Provider-fetches (8s), Semantic-Search + alle Vektor-fetches in
   `cache.ts`/`context.ts`/`brain.ts`/`tco.ts` (8s). Tool blockiert den Agent-Call

@@ -591,6 +591,10 @@ const TOOLS = [
           enum: ['service', 'system'],
           description: 'Whether `service` is an application service ("service", default) or infrastructure ("system", e.g. prometheus, kubernetes, redis). Shown as 🛰️/🖥️ in brain_service_map.',
         },
+        group: {
+          type: 'string',
+          description: 'Optional team scope — restricts this lesson to a named group/sub-team (e.g. "backend", "security"). Only members of that group (managed via team_grant_scope) and admins see it in smart_recall. Orthogonal to visibility: a team-wide lesson has no group; a private lesson is author-only regardless of group.',
+        },
       },
       required: ['instance_id', 'topic', 'outcome', 'what_worked'],
     },
@@ -1051,6 +1055,41 @@ const TOOLS = [
       type: 'object',
       properties: {
         instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'team_grant_scope',
+    description:
+      'Add or remove a team member to/from a named group (sub-team) on a shared brain. ' +
+      'Group-scoped lessons (stored with group="...") only surface in smart_recall for members of that group (and admins). ' +
+      'This is team-level visibility, orthogonal to lesson-level private. ' +
+      'Admin-gated after the role model is bootstrapped. ' +
+      'Example: team_grant_scope(handle="alice", group="security", assigned_by="bob") — bob must be admin.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
+        handle:      { type: 'string', description: 'Handle of the team member to add/remove' },
+        group:       { type: 'string', description: 'Group/sub-team name (e.g. "backend", "security", "platform")' },
+        action:      { type: 'string', enum: ['add', 'remove'], description: 'add (default) or remove the member from the group' },
+        assigned_by: { type: 'string', description: 'Handle of the admin performing the change (required after governance bootstrap)' },
+      },
+      required: ['instance_id', 'handle', 'group'],
+    },
+  },
+  {
+    name: 'team_scopes',
+    description:
+      'List team groups and their members, or the groups a specific person belongs to. ' +
+      'Pass handle to see one person\'s scopes; omit it to see all groups on the instance. ' +
+      'Use to audit who can see group-scoped lessons.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
+        handle:      { type: 'string', description: 'Optional — show only this person\'s group memberships' },
       },
       required: ['instance_id'],
     },

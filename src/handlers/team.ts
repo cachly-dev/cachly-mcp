@@ -14,6 +14,7 @@ export const TEAM_TOOL_NAMES = new Set([
   'brain_doctor', 'recall_at', 'trace_dependency', 'global_learn', 'global_recall',
   'publish_lesson', 'import_public_brain', 'setup_ai_memory',
   'team_assign_role', 'team_whoami', 'team_roster',
+  'team_grant_scope', 'team_scopes',
 ]);
 
 // ── Role model helpers ────────────────────────────────────────────────────────
@@ -53,6 +54,43 @@ export function hasPermission(actorRole: TeamRole | null, required: TeamRole): b
 /** The review level a role warrants in team_confirm. */
 export function roleToReviewLevel(role: TeamRole | null): 'senior' | 'peer' {
   return role === 'admin' || role === 'reviewer' ? 'senior' : 'peer';
+}
+
+// ── Team-level visibility scopes (groups) ─────────────────────────────────────
+// A named sub-team (e.g. "backend", "security"). Lessons can be scoped to a group
+// via `group` on learn_from_attempts; they then only surface in recall for members
+// of that group (admins see everything). Orthogonal to lesson-level `private`.
+//   cachly:team:groups:{instance}            → set of group names
+//   cachly:team:group:{instance}:{group}     → set of member handles
+
+export const GROUPS_INDEX_KEY = (instanceId: string) => `cachly:team:groups:${instanceId}`;
+export const GROUP_KEY = (instanceId: string, group: string) =>
+  `cachly:team:group:${instanceId}:${group.toLowerCase()}`;
+
+/** Return the set of group names `handle` belongs to (lower-cased). */
+export async function getScopes(redis: import('ioredis').Redis, instanceId: string, handle: string): Promise<Set<string>> {
+  const groups = await redis.smembers(GROUPS_INDEX_KEY(instanceId)).catch(() => [] as string[]);
+  const out = new Set<string>();
+  for (const g of groups) {
+    const isMember = await redis.sismember(GROUP_KEY(instanceId, g), handle.toLowerCase()).catch(() => 0);
+    if (isMember) out.add(g.toLowerCase());
+  }
+  return out;
+}
+
+/**
+ * Can a requester (with `requesterScopes`, possibly admin) see a lesson scoped to
+ * `lessonGroup`? Team-wide lessons (no group) are always visible; group-scoped
+ * lessons require membership. Admins see everything. Pure + testable.
+ */
+export function lessonVisibleToScope(
+  lessonGroup: string | undefined | null,
+  requesterScopes: Set<string>,
+  isAdmin: boolean,
+): boolean {
+  if (!lessonGroup) return true;
+  if (isAdmin) return true;
+  return requesterScopes.has(lessonGroup.toLowerCase());
 }
 
 export async function handleTeamTool(
@@ -1412,6 +1450,82 @@ Result: Your AI **never solves the same problem twice** and always picks up exac
         ``,
         `_Manage with \`team_assign_role\`. Any admin can add or change roles._`,
       );
+      return lines.join('\n');
+    }
+
+    // ── team_grant_scope ──────────────────────────────────────────────────────
+    // Add (or remove) a member to a named group/sub-team. Group-scoped lessons
+    // only surface in recall for members of that group. Admin-gated after the
+    // role model is bootstrapped (consistent with team_assign_role).
+    case 'team_grant_scope': {
+      const { instance_id, handle, group, action = 'add', assigned_by = '' } = args as {
+        instance_id: string; handle: string; group: string;
+        action?: 'add' | 'remove'; assigned_by?: string;
+      };
+      if (!instance_id || !handle || !group) return '❌ Required: instance_id, handle, group';
+      const grp = String(group).toLowerCase().trim();
+      if (!grp) return '❌ `group` must be a non-empty name (e.g. "backend", "security")';
+
+      const redis = await getConnection(instance_id);
+
+      // Admin gate (skipped during bootstrap, i.e. when no admin exists yet).
+      const allRoles = await redis.hgetall(ROLES_KEY(instance_id)).catch(() => ({} as Record<string, string>));
+      const hasAdmin = Object.values(allRoles).includes('admin');
+      if (hasAdmin) {
+        const actorRole = assigned_by ? await getRole(redis, instance_id, assigned_by) : null;
+        if (!hasPermission(actorRole, 'admin')) {
+          return `❌ **Permission denied** — only an \`admin\` can manage group scopes. Ask an admin to set \`assigned_by\`.`;
+        }
+      }
+
+      if (action === 'remove') {
+        await redis.srem(GROUP_KEY(instance_id, grp), handle.toLowerCase());
+        return `🔓 **${handle}** removed from group \`${grp}\`.`;
+      }
+
+      await redis.sadd(GROUPS_INDEX_KEY(instance_id), grp);
+      await redis.sadd(GROUP_KEY(instance_id, grp), handle.toLowerCase());
+      await redis.expire(GROUPS_INDEX_KEY(instance_id), 365 * 2 * 86400);
+      await redis.expire(GROUP_KEY(instance_id, grp), 365 * 2 * 86400);
+      return [
+        `🔐 **Scope granted** — **${handle}** is now in group \`${grp}\`.`,
+        ``,
+        `Lessons stored with \`group="${grp}"\` will surface in recall for ${handle} (and other \`${grp}\` members + admins) only.`,
+        ``,
+        `Store a scoped lesson: \`learn_from_attempts(topic="...", group="${grp}", ...)\``,
+      ].join('\n');
+    }
+
+    // ── team_scopes ───────────────────────────────────────────────────────────
+    // List all groups + members, or the groups a specific handle belongs to.
+    case 'team_scopes': {
+      const { instance_id, handle } = args as { instance_id: string; handle?: string };
+      if (!instance_id) return '❌ Required: instance_id';
+      const redis = await getConnection(instance_id);
+
+      if (handle) {
+        const scopes = await getScopes(redis, instance_id, handle);
+        if (scopes.size === 0) {
+          return `👁️ **${handle}** is in no groups — sees only team-wide + public lessons.`;
+        }
+        return `🔐 **${handle}** belongs to: ${[...scopes].map(g => `\`${g}\``).join(', ')}`;
+      }
+
+      const groups = await redis.smembers(GROUPS_INDEX_KEY(instance_id)).catch(() => [] as string[]);
+      if (groups.length === 0) {
+        return [
+          `## 🔐 Team Scopes`,
+          ``,
+          `No groups defined yet. Create one by adding a member:`,
+          `\`team_grant_scope(instance_id="${instance_id}", handle="alice", group="backend")\``,
+        ].join('\n');
+      }
+      const lines = [`## 🔐 Team Scopes (${groups.length} group${groups.length !== 1 ? 's' : ''})`, ``];
+      for (const g of groups.sort()) {
+        const members = await redis.smembers(GROUP_KEY(instance_id, g)).catch(() => [] as string[]);
+        lines.push(`- **\`${g}\`** (${members.length}): ${members.length ? members.map(m => `**${m}**`).join(', ') : '_empty_'}`);
+      }
+      lines.push(``, `_Scope a lesson to a group with \`learn_from_attempts(group="...")\`. Members + admins see it; others don't._`);
       return lines.join('\n');
     }
 

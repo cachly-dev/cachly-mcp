@@ -7,15 +7,23 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertServiceNode } from '../ckg.js';
 import { safeJsonParse, scanKeys } from '../utils.js';
 import type { CKGEdge, CKGNode, PersonNode, ServiceNode } from '../ckg.js';
-import { getRole, ROLE_BADGE } from './team.js';
+import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope } from './team.js';
 import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
          indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.72';
+const MCP_VERSION = '0.10.73';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.73': [
+    `🔐 **Team visibility scopes + one-command init + external bench**`,
+    `  🆕 \`team_grant_scope\` / \`team_scopes\` — scope lessons to a sub-team (group="security"); only members + admins recall them`,
+    `  🏷️ \`learn_from_attempts(group="...")\` — orthogonal to private; smart_recall enforces it per requester`,
+    `  ⚡ \`init\` is now zero-arg + idempotent (reuses saved creds, only writes what changed, <60s)`,
+    `  📦 \`npm run bench:external\` — prove recall-lift on a third-party-labeled corpus (portable JSON format)`,
+    `  📊 107 MCP tools`,
+  ],
   '0.10.72': [
     `👑 **Role model — admin · reviewer · contributor · viewer (Phase 3)**`,
     `  🆕 \`team_assign_role\` — establish governance; first call bootstraps, admins manage the rest`,
@@ -162,6 +170,7 @@ export async function handleBrainTool(
         visibility = 'team',
         service = '',
         service_kind = 'service',
+        group = '',
       } = args as {
         instance_id: string;
         topic: string;
@@ -178,6 +187,7 @@ export async function handleBrainTool(
         visibility?: 'public' | 'team' | 'private';
         service?: string;
         service_kind?: 'service' | 'system';
+        group?: string;
       };
 
       const redis = await getConnection(instance_id);
@@ -308,6 +318,7 @@ export async function handleBrainTool(
         depends_on,
         ...(author ? { author } : {}),
         ...(service ? { service } : {}),
+        ...(group ? { group: String(group).toLowerCase().trim() } : {}),
         visibility,
         recall_count: recallCount,
         ts,
@@ -683,6 +694,16 @@ export async function handleBrainTool(
 
       const redis = await getConnection(instance_id);
 
+      // Team-level visibility scopes: resolve the requester's group memberships +
+      // admin status once, so group-scoped lessons only surface for members/admins.
+      let requesterScopes = new Set<string>();
+      let requesterIsAdmin = false;
+      if (requester) {
+        requesterScopes = await getScopes(redis, instance_id, requester).catch(() => new Set<string>());
+        const reqRole = await getRole(redis, instance_id, requester).catch(() => null);
+        requesterIsAdmin = reqRole === 'admin';
+      }
+
       // ── Layer 1: Keyword search across ALL brain data (always works, no embedding) ──
       const rawMatches = await keywordSearch(
         redis,
@@ -874,12 +895,15 @@ export async function handleBrainTool(
         }
       }
 
-      // Filter private lessons — they are only accessible via exact recall_best_solution
+      // Filter private lessons (recall_best_solution only) + enforce team scopes:
+      // group-scoped lessons surface only for members of that group (admins see all).
       const hybridResults = [...hybridMap.values()]
         .filter(r => {
           if (!r.key.startsWith('cachly:lesson:best:')) return true;
-          const ld = safeJsonParse<{ visibility?: string }>(r.content, {});
-          return ld.visibility !== 'private';
+          const ld = safeJsonParse<{ visibility?: string; group?: string }>(r.content, {});
+          if (ld.visibility === 'private') return false;
+          if (!lessonVisibleToScope(ld.group, requesterScopes, requesterIsAdmin)) return false;
+          return true;
         })
         .sort((a, b) => b.hybridScore - a.hybridScore);
 

@@ -8,6 +8,7 @@ import type { Redis } from 'ioredis';
 import {
   hasPermission, roleToReviewLevel, getRole,
   ROLE_BADGE, ROLES_KEY,
+  getScopes, lessonVisibleToScope,
   type TeamRole,
 } from '../handlers/team.js';
 import { handleTeamTool } from '../handlers/team.js';
@@ -47,6 +48,8 @@ class MockRedis {
   }
   async scard(k: string) { return this.sets.get(k)?.size ?? 0; }
   async smembers(k: string) { return [...(this.sets.get(k) ?? [])]; }
+  async sismember(k: string, m: string) { return this.sets.get(k)?.has(m) ? 1 : 0; }
+  async srem(k: string, m: string) { const s = this.sets.get(k); if (s?.has(m)) { s.delete(m); return 1; } return 0; }
   scanStream() {
     const e = { handlers: {} as Record<string, ((...a: unknown[]) => void)> };
     setTimeout(() => { e.handlers['data']?.([]); e.handlers['end']?.(); }, 0);
@@ -258,5 +261,109 @@ describe('team_confirm role-aware review level', () => {
       { instance_id: iid, topic: 'fix:auth', reviewer: 'alice' }, getConn, noopApiFetch);
     expect(out).toContain('reviewer');
     expect(out).toContain(ROLE_BADGE['reviewer']);
+  });
+});
+
+// ── Team-level visibility scopes (groups) ─────────────────────────────────────
+describe('lessonVisibleToScope', () => {
+  it('team-wide lessons (no group) are always visible', () => {
+    expect(lessonVisibleToScope(undefined, new Set(), false)).toBe(true);
+    expect(lessonVisibleToScope('', new Set(), false)).toBe(true);
+    expect(lessonVisibleToScope(null, new Set(), false)).toBe(true);
+  });
+  it('group-scoped lessons require membership', () => {
+    expect(lessonVisibleToScope('security', new Set(['security']), false)).toBe(true);
+    expect(lessonVisibleToScope('security', new Set(['backend']), false)).toBe(false);
+    expect(lessonVisibleToScope('security', new Set(), false)).toBe(false);
+  });
+  it('admins see every group', () => {
+    expect(lessonVisibleToScope('security', new Set(), true)).toBe(true);
+  });
+  it('is case-insensitive on the group name', () => {
+    expect(lessonVisibleToScope('Security', new Set(['security']), false)).toBe(true);
+  });
+});
+
+describe('getScopes', () => {
+  let redis: MockRedis;
+  const getConn = async () => redis as unknown as Redis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('returns empty set for a person in no groups', async () => {
+    const s = await getScopes(redis as unknown as Redis, iid, 'nobody');
+    expect(s.size).toBe(0);
+  });
+
+  it('returns the groups a member belongs to', async () => {
+    await handleTeamTool('team_grant_scope', { instance_id: iid, handle: 'alice', group: 'backend' }, getConn, noopApiFetch);
+    await handleTeamTool('team_grant_scope', { instance_id: iid, handle: 'alice', group: 'security' }, getConn, noopApiFetch);
+    const s = await getScopes(redis as unknown as Redis, iid, 'alice');
+    expect(s.has('backend')).toBe(true);
+    expect(s.has('security')).toBe(true);
+    expect(s.size).toBe(2);
+  });
+});
+
+describe('team_grant_scope', () => {
+  let redis: MockRedis;
+  const getConn = async () => redis as unknown as Redis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('adds a member to a group (bootstrap, no admin yet)', async () => {
+    const out = await handleTeamTool('team_grant_scope',
+      { instance_id: iid, handle: 'alice', group: 'backend' }, getConn, noopApiFetch);
+    expect(out).toContain('Scope granted');
+    expect(out).toContain('backend');
+  });
+
+  it('blocks non-admins from managing scopes after bootstrap', async () => {
+    await handleTeamTool('team_assign_role', { instance_id: iid, handle: 'admin1', role: 'admin' }, getConn, noopApiFetch);
+    const out = await handleTeamTool('team_grant_scope',
+      { instance_id: iid, handle: 'bob', group: 'backend', assigned_by: 'bob' }, getConn, noopApiFetch);
+    expect(out).toContain('Permission denied');
+  });
+
+  it('lets an admin grant scopes after bootstrap', async () => {
+    await handleTeamTool('team_assign_role', { instance_id: iid, handle: 'admin1', role: 'admin' }, getConn, noopApiFetch);
+    const out = await handleTeamTool('team_grant_scope',
+      { instance_id: iid, handle: 'bob', group: 'backend', assigned_by: 'admin1' }, getConn, noopApiFetch);
+    expect(out).toContain('Scope granted');
+  });
+
+  it('removes a member with action=remove', async () => {
+    await handleTeamTool('team_grant_scope', { instance_id: iid, handle: 'alice', group: 'backend' }, getConn, noopApiFetch);
+    const out = await handleTeamTool('team_grant_scope',
+      { instance_id: iid, handle: 'alice', group: 'backend', action: 'remove' }, getConn, noopApiFetch);
+    expect(out).toContain('removed');
+    const s = await getScopes(redis as unknown as Redis, iid, 'alice');
+    expect(s.has('backend')).toBe(false);
+  });
+});
+
+describe('team_scopes', () => {
+  let redis: MockRedis;
+  const getConn = async () => redis as unknown as Redis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('reports empty state when no groups defined', async () => {
+    const out = await handleTeamTool('team_scopes', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('No groups defined');
+  });
+
+  it('lists all groups and members', async () => {
+    await handleTeamTool('team_grant_scope', { instance_id: iid, handle: 'alice', group: 'backend' }, getConn, noopApiFetch);
+    await handleTeamTool('team_grant_scope', { instance_id: iid, handle: 'bob', group: 'backend' }, getConn, noopApiFetch);
+    const out = await handleTeamTool('team_scopes', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('backend');
+    expect(out).toContain('alice');
+    expect(out).toContain('bob');
+  });
+
+  it('shows a single person\'s scopes when handle is passed', async () => {
+    await handleTeamTool('team_grant_scope', { instance_id: iid, handle: 'alice', group: 'security' }, getConn, noopApiFetch);
+    const out = await handleTeamTool('team_scopes', { instance_id: iid, handle: 'alice' }, getConn, noopApiFetch);
+    expect(out).toContain('security');
+    const out2 = await handleTeamTool('team_scopes', { instance_id: iid, handle: 'nobody' }, getConn, noopApiFetch);
+    expect(out2).toContain('no groups');
   });
 });

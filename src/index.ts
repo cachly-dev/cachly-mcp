@@ -2,7 +2,6 @@
 import { jwtExpiryMs, checkJwt, handleApiError, diagnoseAuth, planAuthHeal } from './auth.js';
 import { handleTcoTool } from './handlers/tco.js';
 import { notify } from './notifier.js';
-import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 // True only when this file is the entry point (not imported by tests or other modules).
@@ -73,7 +72,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.72';
+const CURRENT_VERSION = '0.10.73';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -682,7 +681,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         '',
         'After sign-in: call **any tool again** — your Brain activates instantly.',
         '',
-        '✨ Free forever · No credit card · 105 MCP tools · GDPR · EU servers',
+        '✨ Free forever · No credit card · 107 MCP tools · GDPR · EU servers',
       ].join('\n');
     }
 
@@ -1942,7 +1941,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
-  console.log('  \x1b[90mFree forever · GDPR · German servers · 105 MCP tools\x1b[0m');
+  console.log('  \x1b[90mFree forever · GDPR · German servers · 107 MCP tools\x1b[0m');
   console.log('');
   process.exit(0);
 }
@@ -1951,20 +1950,43 @@ if (!process.argv[2] && process.stdout.isTTY) {
 // Usage: npx @cachly-dev/mcp-server init --instance-id <id> --api-key <key> [--editor claude|cursor|windsurf|copilot|continue] [--project-dir /path]
 
 if (process.argv[2] === 'init') {
-  const { writeFile, mkdir } = await import('node:fs/promises');
+  const initStart = Date.now();
+  const { writeFile, mkdir, readFile } = await import('node:fs/promises');
   const { resolve, dirname } = await import('node:path');
 
   const argv = process.argv.slice(3);
   const flag = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
 
-  const instanceId = flag('instance-id') ?? process.env.CACHLY_BRAIN_INSTANCE_ID;
-  const apiKey     = flag('api-key')     ?? process.env.CACHLY_JWT;
+  let instanceId = flag('instance-id') ?? process.env.CACHLY_BRAIN_INSTANCE_ID;
+  let apiKey     = flag('api-key')     ?? process.env.CACHLY_JWT;
   const editor     = (flag('editor') ?? 'claude').toLowerCase();
   const projectDir = resolve(flag('project-dir') ?? '.');
 
+  // Zero-arg path: fall back to credentials saved by a previous `setup`
+  // (~/.claude/mcp.json). Makes `init` a fast, idempotent re-configuration command
+  // you can run in any project without copy-pasting tokens.
+  if (!instanceId || !apiKey) {
+    try {
+      const { existsSync } = await import('node:fs');
+      const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+      const savedPath = home ? resolve(home, '.claude', 'mcp.json') : '';
+      if (savedPath && existsSync(savedPath)) {
+        const saved = JSON.parse(await readFile(savedPath, 'utf-8')) as {
+          mcpServers?: Record<string, { env?: Record<string, string> }>;
+        };
+        const env = saved.mcpServers?.['cachly']?.env ?? {};
+        apiKey ??= env['CACHLY_JWT'];
+        instanceId ??= env['CACHLY_BRAIN_INSTANCE_ID'];
+        if (apiKey && instanceId) {
+          console.log('✓  Reusing credentials from ~/.claude/mcp.json (saved by a prior setup)');
+        }
+      }
+    } catch { /* fall through to the usage error below */ }
+  }
+
   if (!instanceId || !apiKey) {
     console.error('\nUsage: npx @cachly-dev/mcp-server@latest init --instance-id <uuid> --api-key <cky_live_...> [--editor claude|cursor|windsurf|copilot|continue] [--project-dir /path]\n');
-    console.error('Or run interactively (no flags needed): npx @cachly-dev/mcp-server@latest setup\n');
+    console.error('First time? Run the zero-config wizard (signs you in, auto-provisions): npx @cachly-dev/mcp-server@latest setup\n');
     console.error('Get your credentials from: https://cachly.dev/setup-ai\n');
     process.exit(1);
   }
@@ -1973,9 +1995,16 @@ if (process.argv[2] === 'init') {
   const configPath = resolve(projectDir, configFile);
   await mkdir(dirname(configPath), { recursive: true });
   const { existsSync: exInit } = await import('node:fs');
+  const configExisted = exInit(configPath);
+  const prevConfig = configExisted ? await readFile(configPath, 'utf-8').catch(() => '') : '';
   const merged = await mergeMcpConfig(configPath, apiKey, instanceId, editor, { readFile, existsSync: exInit });
-  await writeFile(configPath, merged, 'utf-8');
-  console.log(`\n✅ ${exInit(configPath) ? 'Updated' : 'Written'}: ${configFile}`);
+  // Idempotent: only write when the content actually changes.
+  if (merged !== prevConfig) {
+    await writeFile(configPath, merged, 'utf-8');
+    console.log(`\n✅ ${configExisted ? 'Updated' : 'Written'}: ${configFile}`);
+  } else {
+    console.log(`\n✓  Already configured: ${configFile} (no change)`);
+  }
 
   // Always write CLAUDE.md (idempotent — safe to run multiple times)
   const result = await writeClaudeMd(projectDir, instanceId);
@@ -2017,8 +2046,10 @@ if (process.argv[2] === 'init') {
     }
   } catch { /* non-critical — git hook is a best-effort feature */ }
 
-  console.log(`\n🧠 Cachly AI Brain configured for ${editor === 'claude' ? 'Claude Code' : editor}!`);
+  const initSecs = ((Date.now() - initStart) / 1000).toFixed(1);
+  console.log(`\n🧠 Cachly AI Brain configured for ${editor === 'claude' ? 'Claude Code' : editor}! (${initSecs}s)`);
   console.log(`   Restart your editor — the \`cachly\` MCP tools will appear.`);
+  console.log(`   Re-run \`init\` anytime — it's idempotent (only writes what changed).`);
   console.log(`\n   📛 Add a live badge to your README:`);
   console.log(`      npx @cachly-dev/mcp-server@latest badge\n`);
   process.exit(0);

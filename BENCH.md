@@ -111,3 +111,27 @@ so, cachly wins the metrics an agent actually depends on.
 The point of this file is not to claim victory. It is to make the moat
 *measurable* and *defended by CI*, so every future change to recall must move this
 number in the right direction — or it doesn't ship.
+
+## External labeled corpus (`npm run bench:external`)
+
+To address the "labels are ours" limitation, the same three-ranker harness now runs
+against a **portable, externally-supplied corpus** — a single JSON file with
+`lessons` (with optional quality metadata) and labeled `queries`. Drop in any
+third-party-labeled set and reproduce the lift claim on data you control:
+
+```bash
+npm run bench:external                       # bundled sample corpus
+npm run bench:external -- ./your-corpus.json # your own labeled set
+npm run bench:external -- ./your-corpus.json --json
+```
+
+The bundled sample (`src/bench/external/sample-corpus.json`, 10 lessons, 8 queries,
+independently shaped) reports **Precision@1 +20.0%, MRR +7.7% vs flat-file** — the
+same direction and magnitude as the built-in fixture bench, on a different corpus.
+The loader validates structure (unique topics, every `relevant` topic exists) and is
+covered by `external-bench.test.ts`.
+
+> Note: a generic IR corpus with **no** quality metadata will show cachly ≈ BM25 —
+> the quality rerank can only help when the corpus carries outcome / proven-ness /
+> review signals. That is itself an honest, documented result: cachly's lift comes
+> specifically from engineering-lesson corpora where those signals exist.
