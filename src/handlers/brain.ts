@@ -4,7 +4,7 @@ import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
          CONFIDENCE_WARN_VALUE, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_DAYS } from '../confidence.js';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode } from '../ckg.js';
-import { safeJsonParse } from '../utils.js';
+import { safeJsonParse, scanKeys } from '../utils.js';
 import type { CKGEdge, CKGNode, PersonNode } from '../ckg.js';
 import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
          indexVocab as _indexVocab } from '../search.js';
@@ -12,7 +12,7 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.62';
+const MCP_VERSION = '0.10.63';
 const WHATS_NEW: Record<string, string[]> = {
   '0.10.61': [
     `🎯 **Phase 3C: 100 MCP tools milestone — zero-setup knowledge graph**`,
@@ -2230,13 +2230,8 @@ export async function handleBrainTool(
         }
         // Also: exact file_paths match via lesson scan
         if (relatedLessons.length < 2) {
-          const scanKeys: string[] = [];
-          const stream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
-          await new Promise<void>((res, rej) => {
-            stream.on('data', (b: string[]) => scanKeys.push(...b));
-            stream.on('end', res); stream.on('error', rej);
-          });
-          for (const k of scanKeys.slice(0, 300)) {
+          const allLessonKeys = await scanKeys(redis, 'cachly:lesson:best:*', { max: 1500 });
+          for (const k of allLessonKeys.slice(0, 300)) {
             const raw = await redis.get(k);
             if (!raw) continue;
             const ld = safeJsonParse<{
@@ -2280,13 +2275,8 @@ export async function handleBrainTool(
 
       const redis = await getConnection(instance_id);
 
-      // Scan all person nodes
-      const personKeys: string[] = [];
-      const pStream = redis.scanStream({ match: 'cachly:ckg:node:person:*', count: 200 });
-      await new Promise<void>((res, rej) => {
-        pStream.on('data', (b: string[]) => personKeys.push(...b));
-        pStream.on('end', res); pStream.on('error', rej);
-      });
+      // Scan all person nodes (capped + timed out so a huge keyspace can't hang the agent)
+      const personKeys = await scanKeys(redis, 'cachly:ckg:node:person:*', { max: 2000 });
 
       if (personKeys.length === 0) {
         return [
@@ -2362,13 +2352,8 @@ export async function handleBrainTool(
 
       const redis = await getConnection(instance_id);
 
-      // Scan all best lessons
-      const lessonKeys: string[] = [];
-      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 500 });
-      await new Promise<void>((res, rej) => {
-        lStream.on('data', (b: string[]) => lessonKeys.push(...b));
-        lStream.on('end', res); lStream.on('error', rej);
-      });
+      // Scan all best lessons (capped + timed out)
+      const lessonKeys = await scanKeys(redis, 'cachly:lesson:best:*', { max: 3000 });
 
       type DomainStats = { successes: number; failures: number; attributed: number; topics: string[] };
       const domainMap = new Map<string, DomainStats>();
@@ -2411,14 +2396,6 @@ export async function handleBrainTool(
           });
         }
       }
-
-      // Check for domains with person nodes but no lessons (contributors without lessons)
-      const personKeys: string[] = [];
-      const pStream = redis.scanStream({ match: 'cachly:ckg:node:person:*', count: 200 });
-      await new Promise<void>((res, rej) => {
-        pStream.on('data', (b: string[]) => personKeys.push(...b));
-        pStream.on('end', res); pStream.on('error', rej);
-      });
 
       const lines = [
         `## 🔍 Skill Gaps — Knowledge Blind Spots`,
@@ -2463,29 +2440,12 @@ export async function handleBrainTool(
 
       const redis = await getConnection(instance_id);
 
-      // Count lessons
-      const lessonKeys: string[] = [];
-      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 500 });
-      await new Promise<void>((res, rej) => {
-        lStream.on('data', (b: string[]) => lessonKeys.push(...b));
-        lStream.on('end', res); lStream.on('error', rej);
-      });
-
-      // Count person nodes
-      const personKeys: string[] = [];
-      const pStream = redis.scanStream({ match: 'cachly:ckg:node:person:*', count: 200 });
-      await new Promise<void>((res, rej) => {
-        pStream.on('data', (b: string[]) => personKeys.push(...b));
-        pStream.on('end', res); pStream.on('error', rej);
-      });
-
-      // Count file nodes in CKG
-      const fileKeys: string[] = [];
-      const fStream = redis.scanStream({ match: 'cachly:ckg:node:file:*', count: 500 });
-      await new Promise<void>((res, rej) => {
-        fStream.on('data', (b: string[]) => fileKeys.push(...b));
-        fStream.on('end', res); fStream.on('error', rej);
-      });
+      // Count lessons, person + file nodes (each capped + timed out, gathered in parallel)
+      const [lessonKeys, personKeys, fileKeys] = await Promise.all([
+        scanKeys(redis, 'cachly:lesson:best:*', { max: 5000 }),
+        scanKeys(redis, 'cachly:ckg:node:person:*', { max: 2000 }),
+        scanKeys(redis, 'cachly:ckg:node:file:*', { max: 5000 }),
+      ]);
 
       // Get git file count for comparison (optional — non-critical if not a git repo)
       let gitFileCount = 0;

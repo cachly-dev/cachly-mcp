@@ -3,7 +3,7 @@ import type { Redis } from 'ioredis';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
-import { safeJsonParse } from '../utils.js';
+import { safeJsonParse, normalizeGitPath } from '../utils.js';
 
 // Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
 export let _lastBrainFromGitCounts: { fixes: number; features: number; refactors: number; total: number } | null = null;
@@ -945,7 +945,8 @@ export async function handleFedbrainTool(
           const [, sha, subject, date, author] = line.split('|||');
           current = { sha: (sha ?? '').trim(), subject: (subject ?? '').trim(), date: (date ?? '').trim(), author: (author ?? '').trim(), files: [] };
         } else if (line && current) {
-          current.files.push(line);
+          const norm = normalizeGitPath(line);
+          if (norm) current.files.push(norm);
         }
       }
       if (current) commits.push(current);
