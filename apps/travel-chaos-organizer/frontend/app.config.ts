@@ -40,7 +40,7 @@ const config: ExpoConfig = {
     [
       "expo-notifications",
       {
-        icon: "./assets/icon.svg",
+        icon: "./assets/icon.png",
         color: "#4f46e5",
         sounds: [],
       },
