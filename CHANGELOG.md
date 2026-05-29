@@ -7,6 +7,40 @@
 
 ---
 
+## [0.10.64] – 2026-05-29
+
+### The three decisive metrics, now measurable
+
+- **`brain_metrics(instance_id)`** — new tool (101st). Reports the three metrics
+  that decide whether the Brain delivers value:
+  1. **Time-to-first-recall** — `born_at` (first learn) → `first_recall_at` (first
+     proven recall), both `SET NX` so only the first event wins.
+  2. **Recall-lift** — published Cachly-Bench headline (+22.2 % P@1), CI-defended.
+  3. **Team-knowledge-reuse** — % of proven recalls that used a *teammate's* lesson.
+- **Cross-author reuse tracking.** `smart_recall` gains an optional `author`. When
+  you recall a lesson written by someone else, cachly increments
+  `cross_author_recalls`, records the distinct reuse pair, and surfaces a
+  "👥 Team knowledge reuse" banner inline — the value only a shared brain delivers.
+
+## [0.10.63] – 2026-05-29
+
+### Graceful-degradation stability
+
+- New utilities: `withTimeout`, `scanKeys` (capped + timed-out scan), `normalizeGitPath`.
+- `skill_gaps` / `brain_coverage` / `team_expertise_map` / `brain_file_map` now scan
+  via `scanKeys` — a huge keyspace can no longer hang the agent turn (3 s cap + key cap).
+- `brain_from_git` normalizes git rename paths (`src/{old => new}/f.ts`) so file nodes
+  don't fragment on renames. Removed a dead person-node scan in `skill_gaps`.
+- +13 utils tests.
+
+## [0.10.62] – 2026-05-29
+
+### Hardened Phase 3 tools
+
+- `brain_who_knows`: reject empty/undefined `topic` (was crashing in `ckgSlug`); clamp `limit` to [1,50].
+- `brain_file_map`: filter empty path strings, handle non-array input gracefully.
+- +5 stability tests.
+
 ## [0.10.61] – 2026-05-29
 
 ### Phase 3C: 100 MCP tools milestone — zero-setup knowledge graph
