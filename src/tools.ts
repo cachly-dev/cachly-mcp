@@ -575,7 +575,12 @@ const TOOLS = [
         },
         author: {
           type: 'string',
-          description: 'Name or handle of the person storing this lesson (e.g. "alice", "bob"). Used for Team Telepathy — teammates see each other\'s lessons in session_start.',
+          description: 'Name or handle of the person storing this lesson (e.g. "alice", "bob"). Used for Team Telepathy — teammates see each other\'s lessons in session_start. Also powers brain_who_knows and team_expertise_map.',
+        },
+        visibility: {
+          type: 'string',
+          enum: ['team', 'private', 'public'],
+          description: 'Who can see this lesson. "team" (default) = all team members. "private" = only accessible via exact recall_best_solution, never surfaced in smart_recall or team_recall. "public" = same as team (public syndication planned).',
         },
       },
       required: ['instance_id', 'topic', 'outcome', 'what_worked'],
@@ -815,6 +820,43 @@ const TOOLS = [
         limit:       { type: 'number', description: 'Max number of experts to return (default: 10)' },
       },
       required: ['instance_id', 'topic'],
+    },
+  },
+  {
+    name: 'brain_file_map',
+    description:
+      'Show what cachly knows about a list of files — experts + related lessons per file. ' +
+      'Call this before starting work on unfamiliar files, or in sync_file_changes to see what knowledge exists. ' +
+      'For each file path: shows who has previously touched it (from learn_from_attempts author+file_paths) ' +
+      'and which lessons reference it. ' +
+      'Example: brain_file_map(file_paths=["src/auth/jwt.ts"]) → "🥇 alice (3× · today) — related: fix:jwt-expiry".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        file_paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'File paths to look up (max 10)',
+        },
+      },
+      required: ['instance_id', 'file_paths'],
+    },
+  },
+  {
+    name: 'team_expertise_map',
+    description:
+      'Full team expertise overview — who knows what, at a glance. ' +
+      'Returns a ranked table of all contributors with their lesson count, top domains, and last-active date. ' +
+      'Use for onboarding (who to ask about X?), retrospectives, or to find knowledge gaps. ' +
+      'Built automatically from learn_from_attempts(author=...) calls — no setup needed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        top_n: { type: 'number', description: 'Max contributors to show (default: 20)' },
+      },
+      required: ['instance_id'],
     },
   },
   {

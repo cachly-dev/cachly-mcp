@@ -7,6 +7,26 @@
 
 ---
 
+## [0.10.60] – 2026-05-29
+
+### Phase 3B: File knowledge map + team expertise overview + visibility scopes
+
+- **`brain_file_map(file_paths=[...])`** — before touching a file, see who has
+  worked on it (from `learn_from_attempts` author+file_paths history) and which
+  lessons reference it. Experts shown with medal rankings 🥇🥈🥉 + touch count +
+  recency. Related lessons shown with outcome + severity + author badges.
+- **`team_expertise_map()`** — full team skills matrix as a markdown table:
+  contributor · lesson count · top domains · last active. Zero setup: auto-built
+  from `author` fields. Useful for onboarding and knowledge-gap detection.
+- **`visibility: "private" | "team" | "public"`** on `learn_from_attempts`:
+  `private` lessons are never surfaced in `smart_recall` or team views — only
+  accessible via exact `recall_best_solution(topic=...)`. Default remains `"team"`.
+- **Resilient `smart_recall`**: `apiFetch` for instance info now has a null guard
+  so semantic search degrades gracefully when API is unreachable.
+- **+8 tests** covering visibility storage, private filtering in smart_recall,
+  brain_file_map expert attribution, and team_expertise_map → 394 total.
+- **98 MCP tools** (was 96).
+
 ## [0.10.59] – 2026-05-29
 
 ### Phase 3A: Org-wide knowledge graph — "Who Knows What?"

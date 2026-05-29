@@ -12,14 +12,21 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.59';
+const MCP_VERSION = '0.10.60';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.60': [
+    `🆕 **Phase 3B: File map + team overview + visibility**`,
+    `  📁 \`brain_file_map(file_paths=[...])\` — experts + lessons per file before you touch it`,
+    `  🗺️ \`team_expertise_map()\` — full team skills matrix in one table`,
+    `  🔒 \`visibility: "private"\` on \`learn_from_attempts\` — private notes never leak to smart_recall`,
+    `  📊 98 MCP tools`,
+  ],
   '0.10.59': [
     `🆕 **Phase 3A: Org-wide knowledge graph**`,
     `  👥 \`brain_who_knows(topic="...")\` — find your team's experts on any topic instantly`,
     `  🕸️ Person + File nodes auto-built from \`learn_from_attempts(author="...", file_paths=[...])\``,
     `  👤 Author attribution now shown inline in \`smart_recall\` results`,
-    `  📊 96 MCP tools · 379 tests green`,
+    `  📊 96 MCP tools · 386 tests green`,
   ],
   '0.10.58': [
     `🧹 Zero lint warnings — all unused imports cleaned across every handler`,
@@ -80,7 +87,7 @@ type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 export const BRAIN_TOOL_NAMES = new Set([
   'learn_from_attempts', 'recall_best_solution', 'smart_recall',
   'session_start', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
-  'brain_who_knows',
+  'brain_who_knows', 'brain_file_map', 'team_expertise_map',
 ]);
 
 export async function handleBrainTool(
@@ -104,6 +111,7 @@ export async function handleBrainTool(
         tags = [],
         depends_on = [],
         author = '',
+        visibility = 'team',
       } = args as {
         instance_id: string;
         topic: string;
@@ -117,6 +125,7 @@ export async function handleBrainTool(
         tags?: string[];
         depends_on?: string[];
         author?: string;
+        visibility?: 'public' | 'team' | 'private';
       };
 
       const redis = await getConnection(instance_id);
@@ -246,6 +255,7 @@ export async function handleBrainTool(
         tags,
         depends_on,
         ...(author ? { author } : {}),
+        visibility,
         recall_count: recallCount,
         ts,
         verified_at: outcome === 'success' || outcome === 'partial' ? ts : undefined,
@@ -625,13 +635,13 @@ export async function handleBrainTool(
       }
 
       // ── Layer 2: Semantic search (parallel, optional) ────────────────────────
-      const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
+      const inst = await apiFetch<Instance | null>(`/api/v1/instances/${instance_id}`).catch(() => null);
       type SemHit = { key: string; similarity: number; content: string };
       const semHits: SemHit[] = [];
-      if (inst.vector_token && hasEmbedProvider()) {
+      if (inst?.vector_token && hasEmbedProvider()) {
         try {
           const embedding = await computeEmbedding(query);
-          const vectorUrl = `https://api.cachly.dev/v1/sem/${inst.vector_token}`;
+          const vectorUrl = `https://api.cachly.dev/v1/sem/${inst!.vector_token}`;
           const searchRes = await fetch(`${vectorUrl}/search`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -736,7 +746,14 @@ export async function handleBrainTool(
         }
       } catch { /* non-critical — keyword + semantic always available */ }
 
-      const hybridResults = [...hybridMap.values()].sort((a, b) => b.hybridScore - a.hybridScore);
+      // Filter private lessons — they are only accessible via exact recall_best_solution
+      const hybridResults = [...hybridMap.values()]
+        .filter(r => {
+          if (!r.key.startsWith('cachly:lesson:best:')) return true;
+          const ld = safeJsonParse<{ visibility?: string }>(r.content, {});
+          return ld.visibility !== 'private';
+        })
+        .sort((a, b) => b.hybridScore - a.hybridScore);
 
       // ── Build output ──────────────────────────────────────────────────────────
       const lines: string[] = [`🧠 **Smart Recall** for: _"${query}"_\n`];
@@ -2120,6 +2137,201 @@ export async function handleBrainTool(
         `_Attribution grows with every \`learn_from_attempts(author="...", ...)\` call._`,
       );
 
+      return lines.join('\n');
+    }
+
+    // ── brain_file_map ────────────────────────────────────────────────────────
+    // Phase 3B: "What do we know about these files?" — experts + lessons per file.
+    case 'brain_file_map': {
+      const {
+        instance_id,
+        file_paths = [],
+      } = args as { instance_id: string; file_paths: string[] };
+
+      if (!file_paths.length) return '⚠️ Pass at least one file path.';
+
+      const redis = await getConnection(instance_id);
+      const lines: string[] = [
+        `## 📁 File Knowledge Map`,
+        ``,
+        `_What cachly knows about the files you're about to touch:_`,
+        ``,
+      ];
+
+      for (const fp of file_paths.slice(0, 10)) {
+        lines.push(`### \`${fp}\``);
+
+        // ── Experts via CKG file nodes ─────────────────────────────────────
+        const fileId = `file:${ckgSlug(fp)}`;
+        const inbound = await redis.smembers(`cachly:ckg:idx:to:${fileId}`);
+        type ExpertEntry = { handle: string; touches: number; lastSeen: string };
+        const experts: ExpertEntry[] = [];
+        for (const ek of inbound) {
+          const er = await redis.get(ek);
+          if (!er) continue;
+          const edge = safeJsonParse<CKGEdge | null>(er, null);
+          if (!edge || edge.edgeType !== 'touched') continue;
+          const personRaw = await redis.get(`cachly:ckg:node:${edge.from}`);
+          if (!personRaw) continue;
+          const pn = safeJsonParse<PersonNode | null>(personRaw, null);
+          if (!pn || pn.type !== 'person') continue;
+          experts.push({ handle: pn.handle, touches: edge.trials, lastSeen: edge.last_updated });
+        }
+        experts.sort((a, b) => b.touches - a.touches);
+
+        if (experts.length > 0) {
+          const expLine = experts.slice(0, 5).map((e, i) => {
+            const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+            const days = Math.floor((Date.now() - new Date(e.lastSeen).getTime()) / 86400000);
+            const ago = days < 1 ? 'today' : days < 7 ? `${days}d ago` : `${Math.floor(days / 7)}w ago`;
+            return `${medal} **${e.handle}** (${e.touches}× · ${ago})`;
+          }).join(' · ');
+          lines.push(`**Experts:** ${expLine}`);
+        } else {
+          lines.push(`**Experts:** _None yet — add \`author\` to \`learn_from_attempts\` calls_`);
+        }
+
+        // ── Related lessons via BM25 on filename tokens ────────────────────
+        const tokens = fp.replace(/[^a-z0-9]/gi, ' ').split(/\s+/).filter(t => t.length >= 4);
+        const lessonQuery = tokens.slice(0, 3).join(' ');
+        const relatedLessons: string[] = [];
+        if (lessonQuery) {
+          try {
+            const hits = await keywordSearch(redis, ['cachly:lesson:best:*'], lessonQuery, 4);
+            for (const h of hits) {
+              const ld = safeJsonParse<{
+                topic?: string; outcome?: string; what_worked?: string;
+                severity?: string; author?: string; visibility?: string;
+              }>(h.content, {});
+              if (ld.visibility === 'private') continue;
+              const emoji = ld.outcome === 'success' ? '✅' : ld.outcome === 'partial' ? '⚠️' : '❌';
+              const sev = ld.severity === 'critical' ? ' 🔴' : ld.severity === 'major' ? ' 🟡' : '';
+              const by = ld.author ? ` · 👤 ${ld.author}` : '';
+              const topic = h.key.replace('cachly:lesson:best:', '');
+              relatedLessons.push(`  - ${emoji} \`${topic}\`${sev}${by} — ${(ld.what_worked ?? '').slice(0, 100)}`);
+            }
+          } catch { /* non-critical */ }
+        }
+        // Also: exact file_paths match via lesson scan
+        if (relatedLessons.length < 2) {
+          const scanKeys: string[] = [];
+          const stream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+          await new Promise<void>((res, rej) => {
+            stream.on('data', (b: string[]) => scanKeys.push(...b));
+            stream.on('end', res); stream.on('error', rej);
+          });
+          for (const k of scanKeys.slice(0, 300)) {
+            const raw = await redis.get(k);
+            if (!raw) continue;
+            const ld = safeJsonParse<{
+              topic?: string; outcome?: string; what_worked?: string;
+              severity?: string; author?: string; visibility?: string; file_paths?: string[];
+            }>(raw, {});
+            if (ld.visibility === 'private') continue;
+            if (!(ld.file_paths ?? []).includes(fp)) continue;
+            const topic = k.replace('cachly:lesson:best:', '');
+            if (relatedLessons.some(l => l.includes(`\`${topic}\``))) continue;
+            const emoji = ld.outcome === 'success' ? '✅' : ld.outcome === 'partial' ? '⚠️' : '❌';
+            const sev = ld.severity === 'critical' ? ' 🔴' : ld.severity === 'major' ? ' 🟡' : '';
+            const by = ld.author ? ` · 👤 ${ld.author}` : '';
+            relatedLessons.push(`  - ${emoji} \`${topic}\`${sev}${by} — ${(ld.what_worked ?? '').slice(0, 100)}`);
+          }
+        }
+
+        if (relatedLessons.length > 0) {
+          lines.push(`**Related lessons:**`);
+          lines.push(...relatedLessons.slice(0, 5));
+        } else {
+          lines.push(`**Related lessons:** _None yet_`);
+        }
+        lines.push(``);
+      }
+
+      lines.push(
+        `---`,
+        `_Attribution builds with \`learn_from_attempts(file_paths=[...], author="...")\`. Run this before committing to track what changed and why._`,
+      );
+      return lines.join('\n');
+    }
+
+    // ── team_expertise_map ────────────────────────────────────────────────────
+    // Phase 3B: Full team expertise overview — who knows what, at a glance.
+    case 'team_expertise_map': {
+      const {
+        instance_id,
+        top_n = 20,
+      } = args as { instance_id: string; top_n?: number };
+
+      const redis = await getConnection(instance_id);
+
+      // Scan all person nodes
+      const personKeys: string[] = [];
+      const pStream = redis.scanStream({ match: 'cachly:ckg:node:person:*', count: 200 });
+      await new Promise<void>((res, rej) => {
+        pStream.on('data', (b: string[]) => personKeys.push(...b));
+        pStream.on('end', res); pStream.on('error', rej);
+      });
+
+      if (personKeys.length === 0) {
+        return [
+          `## 🗺️ Team Expertise Map`,
+          ``,
+          `No contributors yet.`,
+          ``,
+          `Add \`author="handle"\` to any \`learn_from_attempts\` call to start building the map.`,
+        ].join('\n');
+      }
+
+      type PersonEntry = { handle: string; lessonCount: number; domains: Map<string, number>; lastActive: string };
+      const people: PersonEntry[] = [];
+
+      for (const pk of personKeys) {
+        const raw = await redis.get(pk);
+        if (!raw) continue;
+        const pn = safeJsonParse<PersonNode | null>(raw, null);
+        if (!pn || pn.type !== 'person') continue;
+
+        // Count authored lessons + collect domains from authored edges
+        const outEdgeKeys = await redis.smembers(`cachly:ckg:idx:from:${pn.id}`);
+        const domainCounts = new Map<string, number>();
+        let lessonCount = 0;
+        for (const ek of outEdgeKeys) {
+          const er = await redis.get(ek);
+          if (!er) continue;
+          const edge = safeJsonParse<CKGEdge | null>(er, null);
+          if (!edge || edge.edgeType !== 'authored') continue;
+          lessonCount++;
+          const domain = edge.to.split(':')[0] ?? 'unknown';
+          domainCounts.set(domain, (domainCounts.get(domain) ?? 0) + 1);
+        }
+        people.push({ handle: pn.handle, lessonCount, domains: domainCounts, lastActive: pn.last_active });
+      }
+
+      people.sort((a, b) => b.lessonCount - a.lessonCount);
+      const topPeople = people.slice(0, top_n);
+
+      const lines = [
+        `## 🗺️ Team Expertise Map`,
+        ``,
+        `**${topPeople.length}** contributor${topPeople.length !== 1 ? 's' : ''} tracked:`,
+        ``,
+        `| # | Handle | Lessons | Top domains | Last active |`,
+        `|---|--------|---------|-------------|-------------|`,
+      ];
+
+      for (const [i, p] of topPeople.entries()) {
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`;
+        const days = Math.floor((Date.now() - new Date(p.lastActive).getTime()) / 86400000);
+        const ago = days < 1 ? 'today' : days < 7 ? `${days}d ago` : days < 30 ? `${Math.floor(days / 7)}w ago` : `${Math.floor(days / 30)}mo ago`;
+        const domainStr = [...p.domains.entries()].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([d, c]) => `${d}(${c})`).join(', ') || '—';
+        lines.push(`| ${medal} | **${p.handle}** | ${p.lessonCount} | ${domainStr} | ${ago} |`);
+      }
+
+      lines.push(
+        ``,
+        `---`,
+        `_Use \`brain_who_knows(topic="...")\` to find the expert for a specific problem._`,
+      );
       return lines.join('\n');
     }
 

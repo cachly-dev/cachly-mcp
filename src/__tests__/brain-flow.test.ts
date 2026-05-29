@@ -1106,12 +1106,11 @@ describe('Phase 3A: brain_who_knows', () => {
   let redis: MockRedis;
   const iid = 'i1';
   const getConn = async () => redis as unknown as Redis;
-  const noopFetch = async <T>(_url: string): Promise<T> => { throw new Error('no fetch'); };
 
   beforeEach(() => { redis = new MockRedis(); });
 
   it('returns empty-state message when no lessons have author attribution', async () => {
-    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: 'deploy:k8s' }, getConn, noopFetch);
+    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: 'deploy:k8s' }, getConn, noopApiFetch);
     expect(out).toContain('No attributed lessons');
     expect(out).toContain('learn_from_attempts');
   });
@@ -1121,18 +1120,18 @@ describe('Phase 3A: brain_who_knows', () => {
     await handleBrainTool('learn_from_attempts', {
       instance_id: iid, topic: 'deploy:k8s', outcome: 'success',
       what_worked: 'kubectl apply with --dry-run first', author: 'alice',
-    }, getConn, noopFetch);
+    }, getConn, noopApiFetch);
     await handleBrainTool('learn_from_attempts', {
       instance_id: iid, topic: 'deploy:helm', outcome: 'success',
       what_worked: 'helm upgrade --atomic', author: 'alice',
-    }, getConn, noopFetch);
+    }, getConn, noopApiFetch);
     // Bob stored 1 lesson in same domain
     await handleBrainTool('learn_from_attempts', {
       instance_id: iid, topic: 'deploy:docker', outcome: 'success',
       what_worked: 'multi-stage build', author: 'bob',
-    }, getConn, noopFetch);
+    }, getConn, noopApiFetch);
 
-    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: 'deploy' }, getConn, noopFetch);
+    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: 'deploy' }, getConn, noopApiFetch);
     expect(out).toContain('alice');
     expect(out).toContain('bob');
     expect(out).toContain('🥇');
@@ -1144,18 +1143,133 @@ describe('Phase 3A: brain_who_knows', () => {
       await handleBrainTool('learn_from_attempts', {
         instance_id: iid, topic: `fix:bug${i}`, outcome: 'success',
         what_worked: `solution ${i}`, author: 'alice',
-      }, getConn, noopFetch);
+      }, getConn, noopApiFetch);
     }
     await handleBrainTool('learn_from_attempts', {
       instance_id: iid, topic: 'fix:other', outcome: 'success',
       what_worked: 'quick patch', author: 'bob',
-    }, getConn, noopFetch);
+    }, getConn, noopApiFetch);
 
-    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: 'fix' }, getConn, noopFetch);
+    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: 'fix' }, getConn, noopApiFetch);
     // alice should appear before bob
     const aliceIdx = out!.indexOf('alice');
     const bobIdx = out!.indexOf('bob');
     expect(aliceIdx).toBeGreaterThan(-1);
     expect(aliceIdx).toBeLessThan(bobIdx);
+  });
+});
+
+describe('Visibility scopes (learn_from_attempts)', () => {
+  let redis: MockRedis;
+  const iid = 'i1';
+  const getConn = async () => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('stores visibility=private on the lesson object', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'personal:note', outcome: 'success',
+      what_worked: 'local trick only I know', visibility: 'private',
+    }, getConn, noopApiFetch);
+    const raw = await redis.get('cachly:lesson:best:personal:note');
+    expect(raw).not.toBeNull();
+    const lesson = JSON.parse(raw!) as { visibility: string };
+    expect(lesson.visibility).toBe('private');
+  });
+
+  it('defaults to visibility=team when not specified', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'team:lesson', outcome: 'success',
+      what_worked: 'shared approach',
+    }, getConn, noopApiFetch);
+    const raw = await redis.get('cachly:lesson:best:team:lesson');
+    const lesson = JSON.parse(raw!) as { visibility: string };
+    expect(lesson.visibility).toBe('team');
+  });
+
+  it('private lessons are excluded from smart_recall results', async () => {
+    // Store a private lesson with distinctive keyword
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'secret:api-key', outcome: 'success',
+      what_worked: 'xyzzy-unique-private-token', visibility: 'private',
+    }, getConn, noopApiFetch);
+    // Store a public lesson for the same query
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'public:api-key', outcome: 'success',
+      what_worked: 'use env vars for xyzzy tokens', visibility: 'team',
+    }, getConn, noopApiFetch);
+
+    const out = await handleBrainTool('smart_recall', {
+      instance_id: iid, query: 'xyzzy api key',
+    }, getConn, noopApiFetch);
+    expect(out).toContain('public:api-key');
+    expect(out).not.toContain('secret:api-key');
+  });
+});
+
+describe('Phase 3B: brain_file_map', () => {
+  let redis: MockRedis;
+  const iid = 'i1';
+  const getConn = async () => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('returns a message for unknown files with no attribution', async () => {
+    const out = await handleBrainTool('brain_file_map', {
+      instance_id: iid, file_paths: ['src/unknown-file.ts'],
+    }, getConn, noopApiFetch);
+    expect(out).toContain('src/unknown-file.ts');
+    expect(out).toContain('None yet');
+  });
+
+  it('shows expert after learn_from_attempts with author + file_paths', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:payment-bug', outcome: 'success',
+      what_worked: 'null check before charge', author: 'carol',
+      file_paths: ['src/payments/stripe.ts'],
+    }, getConn, noopApiFetch);
+
+    const out = await handleBrainTool('brain_file_map', {
+      instance_id: iid, file_paths: ['src/payments/stripe.ts'],
+    }, getConn, noopApiFetch);
+    expect(out).toContain('src/payments/stripe.ts');
+    expect(out).toContain('carol');
+  });
+
+  it('returns error message for empty file_paths', async () => {
+    const out = await handleBrainTool('brain_file_map', {
+      instance_id: iid, file_paths: [],
+    }, getConn, noopApiFetch);
+    expect(out).toContain('at least one');
+  });
+});
+
+describe('Phase 3B: team_expertise_map', () => {
+  let redis: MockRedis;
+  const iid = 'i1';
+  const getConn = async () => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('returns empty-state message when no contributors exist', async () => {
+    const out = await handleBrainTool('team_expertise_map', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('No contributors');
+    expect(out).toContain('learn_from_attempts');
+  });
+
+  it('shows all contributors after learn_from_attempts with different authors', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'deploy:k8s', outcome: 'success',
+      what_worked: 'use rolling update', author: 'alice',
+    }, getConn, noopApiFetch);
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:auth', outcome: 'success',
+      what_worked: 'check token expiry', author: 'bob',
+    }, getConn, noopApiFetch);
+
+    const out = await handleBrainTool('team_expertise_map', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('alice');
+    expect(out).toContain('bob');
+    expect(out).toContain('Team Expertise Map');
   });
 });
