@@ -2,17 +2,25 @@ import { execSync } from 'node:child_process';
 import type { Redis } from 'ioredis';
 import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
          CONFIDENCE_WARN_VALUE, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_DAYS } from '../confidence.js';
-import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge } from '../ckg.js';
+import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
+         ckgUpsertPersonNode, ckgUpsertFileNode } from '../ckg.js';
 import { safeJsonParse } from '../utils.js';
-import type { CKGEdge, CKGNode } from '../ckg.js';
+import type { CKGEdge, CKGNode, PersonNode } from '../ckg.js';
 import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
          indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.58';
+const MCP_VERSION = '0.10.59';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.59': [
+    `🆕 **Phase 3A: Org-wide knowledge graph**`,
+    `  👥 \`brain_who_knows(topic="...")\` — find your team's experts on any topic instantly`,
+    `  🕸️ Person + File nodes auto-built from \`learn_from_attempts(author="...", file_paths=[...])\``,
+    `  👤 Author attribution now shown inline in \`smart_recall\` results`,
+    `  📊 96 MCP tools · 379 tests green`,
+  ],
   '0.10.58': [
     `🧹 Zero lint warnings — all unused imports cleaned across every handler`,
     `✅ Build: 0 errors, 0 warnings · 379 tests green`,
@@ -72,6 +80,7 @@ type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 export const BRAIN_TOOL_NAMES = new Set([
   'learn_from_attempts', 'recall_best_solution', 'smart_recall',
   'session_start', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
+  'brain_who_knows',
 ]);
 
 export async function handleBrainTool(
@@ -382,6 +391,22 @@ export async function handleBrainTool(
           }
         }
       } catch { /* CKG updates are non-critical */ }
+
+      // ── Phase 3A: People + File nodes in knowledge graph ──────────────────────
+      // Builds the "who knows what" map automatically from author + file_paths.
+      // Person → authored → Concept edges power brain_who_knows queries.
+      if (author) {
+        try {
+          const domain = topic.split(':')[0] ?? 'unknown';
+          const personId = await ckgUpsertPersonNode(redis, author, domain);
+          const conceptId = ckgSlug(topic);
+          await ckgUpdateEdge(redis, personId, 'authored', conceptId, outcome === 'success', outcome === 'partial');
+          for (const fp of file_paths.slice(0, 8)) {
+            const fileId = await ckgUpsertFileNode(redis, fp);
+            await ckgUpdateEdge(redis, personId, 'touched', fileId, true);
+          }
+        } catch { /* non-critical */ }
+      }
 
       // ── Ambient team propagation: if author is set + outcome is success,
       // auto-store as a team lesson so knowledge is shared without a separate
@@ -774,13 +799,18 @@ export async function handleBrainTool(
         } else {
           for (const r of hybridResults.slice(0, 8)) {
             const label = r.key.replace('cachly:ctx:', '📝 ').replace('cachly:lesson:best:', '💡 ').replace('cachly:idx:', '📂 ');
+            let authorBadge = '';
+            if (r.key.startsWith('cachly:lesson:best:')) {
+              const ld = safeJsonParse<{ author?: string }>(r.content, {});
+              if (ld.author) authorBadge = ` · 👤 ${ld.author}`;
+            }
             const scorePart = r.matchType === 'hybrid'
               ? `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🔀 hybrid`
               : r.matchType === 'semantic'
               ? `sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🎯 semantic`
               : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
             const preview = r.content.slice(0, 400).replace(/\n/g, ' ');
-            lines.push(`**${label}** _(${scorePart})_`);
+            lines.push(`**${label}**${authorBadge} _(${scorePart})_`);
             lines.push(`> ${preview}${r.content.length > 400 ? '…' : ''}\n`);
           }
         }
@@ -1970,6 +2000,126 @@ export async function handleBrainTool(
       ];
       if (stored.length > 0) lines.push('**Stored:**', ...stored.map(s => '  ' + s), '');
       if (skipped.length > 0) lines.push(`**Skipped** (better lesson already exists): ${skipped.map(t => `\`${t}\``).join(', ')}`);
+      return lines.join('\n');
+    }
+
+    // ── brain_who_knows ───────────────────────────────────────────────────────
+    // Phase 3A: Org-wide people intelligence. Returns ranked list of contributors
+    // whose authored edges in the CKG match the query topic.
+    case 'brain_who_knows': {
+      const {
+        instance_id,
+        topic,
+        limit = 10,
+      } = args as { instance_id: string; topic: string; limit?: number };
+
+      const redis = await getConnection(instance_id);
+
+      // Step 1: Find candidate concept node IDs matching the query
+      const querySlug = ckgSlug(topic);
+      const qTokens = tokenize(topic).filter((t: string) => t.length >= 3).slice(0, 5);
+
+      const candidateConceptIds = new Set<string>([querySlug]);
+      for (const token of qTokens.slice(0, 3)) {
+        const nodeStream = redis.scanStream({ match: `cachly:ckg:node:*${token}*`, count: 30 });
+        await new Promise<void>((res, rej) => {
+          nodeStream.on('data', (batch: string[]) => {
+            for (const k of batch.slice(0, 10)) {
+              const nodeId = k.replace('cachly:ckg:node:', '');
+              if (!nodeId.startsWith('person:') && !nodeId.startsWith('file:'))
+                candidateConceptIds.add(nodeId);
+            }
+          });
+          nodeStream.on('end', res);
+          nodeStream.on('error', rej);
+        });
+      }
+
+      // Step 2: Traverse authored edges (person → concept) to find experts
+      type PersonScore = {
+        handle: string; lessonCount: number; totalConfidence: number;
+        domains: Set<string>; lastActive: string;
+      };
+      const personScores = new Map<string, PersonScore>();
+
+      for (const conceptId of [...candidateConceptIds].slice(0, 25)) {
+        const inboundEdgeKeys = await redis.smembers(`cachly:ckg:idx:to:${conceptId}`);
+        for (const ek of inboundEdgeKeys) {
+          const er = await redis.get(ek);
+          if (!er) continue;
+          const edge = safeJsonParse<CKGEdge | null>(er, null);
+          if (!edge || edge.edgeType !== 'authored') continue;
+
+          const personNodeRaw = await redis.get(`cachly:ckg:node:${edge.from}`);
+          if (!personNodeRaw) continue;
+          const personNode = safeJsonParse<PersonNode | null>(personNodeRaw, null);
+          if (!personNode || personNode.type !== 'person') continue;
+
+          const existing = personScores.get(edge.from);
+          if (existing) {
+            existing.lessonCount++;
+            existing.totalConfidence += edge.confidence;
+            existing.domains.add(personNode.domain);
+            if (edge.last_updated > existing.lastActive) existing.lastActive = edge.last_updated;
+          } else {
+            personScores.set(edge.from, {
+              handle: personNode.handle,
+              lessonCount: 1,
+              totalConfidence: edge.confidence,
+              domains: new Set([personNode.domain]),
+              lastActive: personNode.last_active ?? edge.last_updated,
+            });
+          }
+        }
+      }
+
+      if (personScores.size === 0) {
+        return [
+          `## 👥 Who Knows About \`${topic}\`?`,
+          ``,
+          `No attributed lessons found yet.`,
+          ``,
+          `Knowledge attribution builds automatically — add \`author="name"\` to \`learn_from_attempts\` calls:`,
+          `\`learn_from_attempts(topic="${topic}", author="your-handle", ...)\``,
+        ].join('\n');
+      }
+
+      // Step 3: Sort by expertise score (lesson count × avg confidence)
+      const ranked = [...personScores.entries()]
+        .map(([, s]) => ({
+          handle: s.handle,
+          lessonCount: s.lessonCount,
+          avgConfidence: s.totalConfidence / s.lessonCount,
+          domains: [...s.domains].slice(0, 3).join(', '),
+          lastActive: s.lastActive,
+        }))
+        .sort((a, b) => (b.lessonCount * b.avgConfidence) - (a.lessonCount * a.avgConfidence))
+        .slice(0, limit);
+
+      const lines = [
+        `## 👥 Who Knows About \`${topic}\`?`,
+        ``,
+        `**${ranked.length}** contributor${ranked.length !== 1 ? 's' : ''} with relevant lessons:`,
+        ``,
+      ];
+
+      for (const [i, p] of ranked.entries()) {
+        const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
+        const conf = (p.avgConfidence * 100).toFixed(0);
+        const daysSince = Math.floor((Date.now() - new Date(p.lastActive).getTime()) / 86400000);
+        const recency = daysSince < 1 ? 'today' : daysSince < 7 ? `${daysSince}d ago` : daysSince < 30 ? `${Math.floor(daysSince / 7)}w ago` : `${Math.floor(daysSince / 30)}mo ago`;
+        lines.push(
+          `${medal} **${p.handle}** — ${p.lessonCount} lesson${p.lessonCount !== 1 ? 's' : ''} · ${conf}% confidence · last active ${recency}`,
+          `   _domains: ${p.domains}_`,
+          ``,
+        );
+      }
+
+      lines.push(
+        `---`,
+        `_Attribution grows with every \`learn_from_attempts(author="...", ...)\` call._`,
+      );
+
       return lines.join('\n');
     }
 

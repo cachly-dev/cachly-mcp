@@ -14,7 +14,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 
 // ── Modules under test ────────────────────────────────────────────────────────
-import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge } from '../ckg.js';
+import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
+         ckgUpsertPersonNode, ckgUpsertFileNode } from '../ckg.js';
+import type { PersonNode, FileNode } from '../ckg.js';
 import { EMBED_PROVIDER, hasEmbedProvider, embedProviderHint, embedConfig, setEmbedJwt } from '../embeddings.js';
 import { keywordSearch } from '../search.js';
 import { handleBrainTool } from '../handlers/brain.js';
@@ -81,6 +83,14 @@ class MockRedis {
     const next = cur + increment;
     this.store.set(key, String(next));
     return String(next);
+  }
+
+  async expire(_key: string, _ttl: number): Promise<number> { return 1; }
+
+  async del(...keys: string[]): Promise<number> {
+    let count = 0;
+    for (const k of keys) { if (this.store.delete(k)) count++; }
+    return count;
   }
 
   /** Simplified scanStream: returns all matching keys in a single 'data' event. */
@@ -1044,5 +1054,108 @@ describe('Predictive pre-warning without explicit focus (session_start)', () => 
     await seedLesson(redis, 'src:thing', { outcome: 'failure', what_failed: 'noise', tags: ['src'] });
     const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
     expect(out).not.toContain('PRE-WARNING');
+  });
+});
+
+describe('Phase 3A: Person + File nodes in CKG (ckg.ts)', () => {
+  let redis: MockRedis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('ckgUpsertPersonNode creates a person node with correct shape', async () => {
+    const id = await ckgUpsertPersonNode(redis as unknown as Redis, 'alice', 'fix');
+    expect(id).toBe('person:alice');
+    const raw = await redis.get('cachly:ckg:node:person:alice');
+    expect(raw).not.toBeNull();
+    const node = JSON.parse(raw!) as PersonNode;
+    expect(node.handle).toBe('alice');
+    expect(node.type).toBe('person');
+    expect(node.count).toBe(1);
+    expect(node.domain).toBe('fix');
+    expect(typeof node.last_active).toBe('string');
+  });
+
+  it('ckgUpsertPersonNode increments count on repeated calls', async () => {
+    await ckgUpsertPersonNode(redis as unknown as Redis, 'bob', 'deploy');
+    await ckgUpsertPersonNode(redis as unknown as Redis, 'bob', 'deploy');
+    const raw = await redis.get('cachly:ckg:node:person:bob');
+    const node = JSON.parse(raw!) as PersonNode;
+    expect(node.count).toBe(2);
+  });
+
+  it('ckgUpsertFileNode creates a file node with correct shape', async () => {
+    const id = await ckgUpsertFileNode(redis as unknown as Redis, 'src/auth/jwt.ts');
+    expect(id).toBe('file:src-auth-jwt-ts');
+    const raw = await redis.get('cachly:ckg:node:file:src-auth-jwt-ts');
+    expect(raw).not.toBeNull();
+    const node = JSON.parse(raw!) as FileNode;
+    expect(node.path).toBe('src/auth/jwt.ts');
+    expect(node.type).toBe('file');
+    expect(node.count).toBe(1);
+  });
+
+  it('ckgUpsertFileNode increments count on repeated calls', async () => {
+    await ckgUpsertFileNode(redis as unknown as Redis, 'src/api.ts');
+    await ckgUpsertFileNode(redis as unknown as Redis, 'src/api.ts');
+    const raw = await redis.get(`cachly:ckg:node:file:${ckgSlug('src/api.ts')}`);
+    const node = JSON.parse(raw!) as FileNode;
+    expect(node.count).toBe(2);
+  });
+});
+
+describe('Phase 3A: brain_who_knows', () => {
+  let redis: MockRedis;
+  const iid = 'i1';
+  const getConn = async () => redis as unknown as Redis;
+  const noopFetch = async <T>(_url: string): Promise<T> => { throw new Error('no fetch'); };
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('returns empty-state message when no lessons have author attribution', async () => {
+    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: 'deploy:k8s' }, getConn, noopFetch);
+    expect(out).toContain('No attributed lessons');
+    expect(out).toContain('learn_from_attempts');
+  });
+
+  it('returns ranked contributors after learn_from_attempts with author', async () => {
+    // Alice stored 2 successful deploy lessons
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'deploy:k8s', outcome: 'success',
+      what_worked: 'kubectl apply with --dry-run first', author: 'alice',
+    }, getConn, noopFetch);
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'deploy:helm', outcome: 'success',
+      what_worked: 'helm upgrade --atomic', author: 'alice',
+    }, getConn, noopFetch);
+    // Bob stored 1 lesson in same domain
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'deploy:docker', outcome: 'success',
+      what_worked: 'multi-stage build', author: 'bob',
+    }, getConn, noopFetch);
+
+    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: 'deploy' }, getConn, noopFetch);
+    expect(out).toContain('alice');
+    expect(out).toContain('bob');
+    expect(out).toContain('🥇');
+  });
+
+  it('shows the most experienced author first', async () => {
+    // alice: 3 lessons, bob: 1 lesson
+    for (let i = 0; i < 3; i++) {
+      await handleBrainTool('learn_from_attempts', {
+        instance_id: iid, topic: `fix:bug${i}`, outcome: 'success',
+        what_worked: `solution ${i}`, author: 'alice',
+      }, getConn, noopFetch);
+    }
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:other', outcome: 'success',
+      what_worked: 'quick patch', author: 'bob',
+    }, getConn, noopFetch);
+
+    const out = await handleBrainTool('brain_who_knows', { instance_id: iid, topic: 'fix' }, getConn, noopFetch);
+    // alice should appear before bob
+    const aliceIdx = out!.indexOf('alice');
+    const bobIdx = out!.indexOf('bob');
+    expect(aliceIdx).toBeGreaterThan(-1);
+    expect(aliceIdx).toBeLessThan(bobIdx);
   });
 });

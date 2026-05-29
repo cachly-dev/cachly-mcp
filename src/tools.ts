@@ -800,6 +800,24 @@ const TOOLS = [
     },
   },
   {
+    name: 'brain_who_knows',
+    description:
+      'Find who in your team has the most expertise on a given topic. ' +
+      'Queries the org-wide knowledge graph (built automatically from learn_from_attempts author fields) ' +
+      'and returns a ranked list of contributors whose lessons match the query, ordered by lesson count and confidence. ' +
+      'Use to find the right person to ask before starting a task, or to understand knowledge distribution. ' +
+      'Example: brain_who_knows(topic="kubernetes deployment") → "🥇 alice — 5 lessons, 94% confidence".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        topic:       { type: 'string', description: 'Topic or question to find experts for' },
+        limit:       { type: 'number', description: 'Max number of experts to return (default: 10)' },
+      },
+      required: ['instance_id', 'topic'],
+    },
+  },
+  {
     name: 'sync_file_changes',
     description:
       'Associate recent file changes with brain knowledge. ' +

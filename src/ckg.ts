@@ -1,15 +1,35 @@
 import { Redis } from 'ioredis';
 
 // ── Layer 1: Causal Knowledge Graph (CKG) helpers ────────────────────────────
-// Implements the CKG from the 10x Vision Document.
-// Nodes: cachly:ckg:node:{id}  → { id, domain, type, count, ts }
-// Edges: cachly:ckg:edge:{from}:{edgeType}:{to} → { from, to, edgeType, successes, trials, confidence, last_updated }
+// Nodes: cachly:ckg:node:{id}  → CKGNode | PersonNode | FileNode
+// Edges: cachly:ckg:edge:{from}:{edgeType}:{to} → CKGEdge
 
 export type CKGEdge = {
   from: string; to: string; edgeType: string;
   successes: number; trials: number; confidence: number; last_updated: string;
 };
+
 export type CKGNode = { id: string; domain: string; type: string; count: number; ts: string };
+
+// Phase 3A: People nodes — auto-built from learn_from_attempts(author=...)
+export type PersonNode = {
+  id: string;          // "person:{slug}"
+  handle: string;      // original author string as provided
+  domain: string;      // first/primary problem domain seen
+  type: 'person';
+  count: number;       // number of lessons authored
+  last_active: string; // ISO timestamp of most recent contribution
+};
+
+// Phase 3A: File nodes — auto-built from learn_from_attempts(file_paths=[...])
+export type FileNode = {
+  id: string;    // "file:{slug}"
+  path: string;  // original file path
+  domain: string;
+  type: 'file';
+  count: number; // number of times referenced in lessons
+  ts: string;
+};
 
 const STOPWORDS_CKG = new Set(['that','this','with','from','when','then','also','have','been','will','were','they','them','than','more','some','into','over','only','just','where','while','which','there','their','would','could','should','after','before','about']);
 
@@ -34,6 +54,36 @@ export async function ckgUpsertNode(redis: Redis, id: string, domain: string, ty
   node.count = (node.count || 0) + 1;
   node.ts = new Date().toISOString();
   await redis.set(key, JSON.stringify(node));
+}
+
+/** Upsert a Person node; returns the node id ("person:{slug}"). */
+export async function ckgUpsertPersonNode(redis: Redis, handle: string, domain: string): Promise<string> {
+  const id = `person:${ckgSlug(handle)}`;
+  const key = `cachly:ckg:node:${id}`;
+  const raw = await redis.get(key);
+  const node: PersonNode = raw
+    ? JSON.parse(raw)
+    : { id, handle, domain, type: 'person', count: 0, last_active: new Date().toISOString() };
+  node.count = (node.count || 0) + 1;
+  node.last_active = new Date().toISOString();
+  if (!node.domain) node.domain = domain;
+  await redis.set(key, JSON.stringify(node));
+  return id;
+}
+
+/** Upsert a File node; returns the node id ("file:{slug}"). */
+export async function ckgUpsertFileNode(redis: Redis, filePath: string): Promise<string> {
+  const dir = filePath.split('/')[0] ?? 'root';
+  const id = `file:${ckgSlug(filePath)}`;
+  const key = `cachly:ckg:node:${id}`;
+  const raw = await redis.get(key);
+  const node: FileNode = raw
+    ? JSON.parse(raw)
+    : { id, path: filePath, domain: dir, type: 'file', count: 0, ts: new Date().toISOString() };
+  node.count = (node.count || 0) + 1;
+  node.ts = new Date().toISOString();
+  await redis.set(key, JSON.stringify(node));
+  return id;
 }
 
 export async function ckgUpdateEdge(redis: Redis, from: string, edgeType: string, to: string, success: boolean, partial = false): Promise<void> {

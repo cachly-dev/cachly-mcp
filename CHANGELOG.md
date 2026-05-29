@@ -7,6 +7,34 @@
 
 ---
 
+## [0.10.59] – 2026-05-29
+
+### Phase 3A: Org-wide knowledge graph — "Who Knows What?"
+
+- **`brain_who_knows(topic="...")`** — new tool (96th). Queries the org-wide
+  knowledge graph to find your team's top experts on any topic. Returns a ranked
+  list with lesson count, confidence %, primary domains, and last-active recency.
+  Medal rankings: 🥇 🥈 🥉 for top 3.
+- **Person nodes auto-built.** Every `learn_from_attempts(author="name", ...)` call
+  now upserts a `PersonNode` in the CKG and creates an `authored` edge from the
+  person to the lesson concept. No extra setup needed.
+- **File nodes auto-built.** `file_paths` in `learn_from_attempts` upsert `FileNode`
+  entries + `touched` edges from the author → file. Enables future "who worked on X
+  file?" queries.
+- **Author attribution in `smart_recall`.** Results now show `👤 author-handle`
+  inline whenever the matched lesson carries an author field.
+- **`+7` tests** covering `ckgUpsertPersonNode`, `ckgUpsertFileNode`, and the full
+  `brain_who_knows` flow including ranking order correctness.
+- **96 MCP tools** (was 95).
+
+## [0.10.58] – 2026-05-29
+
+### Zero lint warnings
+
+- Systematic unused-import cleanup across all handler files and index.ts
+- ESLint exits clean: 0 errors, 0 warnings
+- `eslint.config.js`: added `varsIgnorePattern: '^_'`
+
 ## [0.10.57] – 2026-05-29
 
 ### Critical: fixed broken npm entry point + version hygiene
