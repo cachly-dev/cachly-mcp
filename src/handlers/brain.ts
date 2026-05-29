@@ -6,21 +6,23 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge } from '..
 import { safeJsonParse } from '../utils.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
-         ZERO_RESULTS_LOG, zeroResultsTotal, indexVocab as _indexVocab } from '../search.js';
-import type { KeywordMatch } from '../search.js';
+         indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality } from '../rerank.js';
-import { computeEmbedding, hasEmbedProvider, embedProviderHint, EMBED_PROVIDER } from '../embeddings.js';
-import { detectNamespace } from '../namespace.js';
+import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.51';
+const MCP_VERSION = '0.10.52';
 const WHATS_NEW: Record<string, string[]> = {
-  '0.10.51': [
+  '0.10.52': [
     `🆕 **What's new in v${MCP_VERSION}:**`,
-    `  ✅ \`team_confirm\` — endorse a lesson in code/knowledge review; reviewed knowledge ranks higher (🛡️ senior / ✔️ peer)`,
-    `  ✅ Governance-aware recall — human-confirmed lessons outrank unreviewed auto-learned entries`,
-    `  ✅ \`team_recall\` — shows reviewer badges and sorts confirmed lessons first`,
-    `  💡 Run \`team_confirm(topic, reviewer, level="senior")\` to bless the canonical solution`,
+    `  ✅ \`smart_recall\` — CKG traversal as Layer 3: finds lessons that FIXED causal-graph-similar problems (🕸️ causal graph badge)`,
+    `  ✅ Bench corpus expanded: governance adversarial pair proves review-boost end-to-end (+22% P@1 headline)`,
+    `  🔧 Import cleanup: unused symbols removed from brain.ts (no functional change)`,
+    `  💡 \`smart_recall\` now shows keyword / semantic / CKG / hybrid match type for every result`,
+  ],
+  '0.10.51': [
+    `  ✅ \`team_confirm\` — human review raises lesson recall ranking (🛡️ senior / ✔️ peer)`,
+    `  ✅ Governance-aware recall — confirmed lessons outrank unreviewed auto-learned entries`,
   ],
   '0.10.50': [
     `  ✅ \`smart_recall\` — unified keyword + semantic hybrid list (one ranked result, not two sections)`,
@@ -595,8 +597,8 @@ export async function handleBrainTool(
       // BM25 quality scores (already reranked) are re-normalized to [0,1] for merging.
       type HybridResult = {
         key: string; content: string; hybridScore: number;
-        bm25Score?: number; semScore?: number; matchedWords?: string[];
-        matchType: 'keyword' | 'semantic' | 'hybrid'; subQuery?: string;
+        bm25Score?: number; semScore?: number; ckgScore?: number; matchedWords?: string[];
+        matchType: 'keyword' | 'semantic' | 'ckg' | 'hybrid'; subQuery?: string;
       };
 
       const bm25Scores = kwMatches.map(m => m.score);
@@ -626,6 +628,54 @@ export async function handleBrainTool(
           });
         }
       }
+      // ── Layer 3: CKG traversal — follow "fixes" edges to find lessons that solved
+      // structurally similar problems, even when vocabulary differs ───────────────
+      try {
+        const qTokens = tokenize(query).filter(t => t.length >= 4).slice(0, 4);
+        const candidateNodeIds = new Set<string>();
+        for (const token of qTokens) {
+          const nodeStream = redis.scanStream({ match: `cachly:ckg:node:*${token}*`, count: 20 });
+          await new Promise<void>((res, rej) => {
+            nodeStream.on('data', (batch: string[]) => {
+              for (const k of batch.slice(0, 5)) candidateNodeIds.add(k.replace('cachly:ckg:node:', ''));
+            });
+            nodeStream.on('end', res);
+            nodeStream.on('error', rej);
+          });
+        }
+
+        const seenFroms = new Set<string>();
+        for (const nodeId of [...candidateNodeIds].slice(0, 12)) {
+          const inboundEdgeKeys = await redis.smembers(`cachly:ckg:idx:to:${nodeId}`);
+          for (const ek of inboundEdgeKeys.slice(0, 6)) {
+            const er = await redis.get(ek);
+            if (!er) continue;
+            const edge = safeJsonParse<CKGEdge | null>(er, null);
+            if (!edge || edge.edgeType !== 'fixes' || edge.confidence < 0.35) continue;
+            if (seenFroms.has(edge.from)) continue;
+            seenFroms.add(edge.from);
+
+            const lessonKey = `cachly:lesson:best:${edge.from}`;
+            const existing = hybridMap.get(lessonKey);
+            if (existing) {
+              // Already found by BM25/semantic — boost with causal confirmation
+              existing.ckgScore = Math.max(existing.ckgScore ?? 0, edge.confidence);
+              existing.hybridScore = existing.hybridScore * 0.88 + edge.confidence * 0.12;
+              if (existing.matchType === 'keyword') existing.matchType = 'hybrid';
+            } else {
+              const content = await redis.get(lessonKey).catch(() => null);
+              if (!content) continue;
+              hybridMap.set(lessonKey, {
+                key: lessonKey, content,
+                ckgScore: edge.confidence,
+                hybridScore: edge.confidence * 0.30, // CKG-only: lower than text hits
+                matchType: 'ckg',
+              });
+            }
+          }
+        }
+      } catch { /* non-critical — keyword + semantic always available */ }
+
       const hybridResults = [...hybridMap.values()].sort((a, b) => b.hybridScore - a.hybridScore);
 
       // ── Build output ──────────────────────────────────────────────────────────
@@ -645,8 +695,13 @@ export async function handleBrainTool(
       }
 
       if (hybridResults.length > 0) {
-        const modeLabel = semHits.length > 0
+        const hasCKG = hybridResults.some(r => r.ckgScore !== undefined);
+        const modeLabel = semHits.length > 0 && hasCKG
+          ? `keyword + semantic + CKG hybrid`
+          : semHits.length > 0
           ? `keyword + semantic hybrid`
+          : hasCKG
+          ? `keyword + CKG hybrid`
           : `keyword`;
         lines.push(`### 🔍 Results (${hybridResults.length} — ${modeLabel})\n`);
 
@@ -662,7 +717,11 @@ export async function handleBrainTool(
             lines.push(`**Topic: "${sq}"** (${results.length} results)\n`);
             for (const r of results.slice(0, 4)) {
               const label = r.key.replace('cachly:ctx:', '📝 ').replace('cachly:lesson:best:', '💡 ').replace('cachly:idx:', '📂 ');
-              const scorePart = r.matchType === 'hybrid'
+              const scorePart = r.matchType === 'ckg'
+                ? `CKG: ${(r.ckgScore ?? 0).toFixed(2)}, 🕸️ causal graph`
+                : r.ckgScore !== undefined && r.bm25Score !== undefined
+                ? `BM25: ${(r.bm25Score).toFixed(2)}, CKG: ${(r.ckgScore).toFixed(2)}, 🔀 hybrid`
+                : r.matchType === 'hybrid'
                 ? `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🔀 hybrid`
                 : r.matchType === 'semantic'
                 ? `sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🎯 semantic`

@@ -23,6 +23,9 @@ export interface BenchLesson {
   severity?: 'critical' | 'major' | 'minor';
   confidence?: number;
   recall_count?: number;
+  reviewed_by?: string;
+  review_level?: 'senior' | 'peer';
+  endorsements?: number;
   tags?: string[];
   ts?: string;
 }
@@ -171,6 +174,26 @@ export const BENCH_LESSONS: BenchLesson[] = [
     severity: 'minor', confidence: 0.6, recall_count: 1,
     tags: ['nextjs', 'frontend', 'hydration'], ts: daysAgo(25),
   },
+
+  // ── Governance adversarial pair: two similar-text success lessons ──────────
+  // Only the reviewed one should win; baseline cannot distinguish them by text.
+  {
+    topic: 'auth:csrf:double-submit-cookie',
+    outcome: 'success',
+    what_worked: 'CSRF protection was added via the double-submit cookie pattern: the server sets a random CSRF token cookie; the client echoes it as a request header. Requests with a mismatched or absent header are rejected.',
+    context: 'API mutations lacked CSRF protection; security audit required a fix.',
+    severity: 'critical', confidence: 0.91, recall_count: 2,
+    reviewed_by: 'senior-alice', review_level: 'senior', endorsements: 2,
+    tags: ['csrf', 'auth', 'security', 'cookie'], ts: daysAgo(12),
+  },
+  {
+    topic: 'auth:csrf:origin-header-check',
+    outcome: 'success',
+    what_worked: 'CSRF mitigation attempted by checking the Origin header on API requests, but this was bypassed in a penetration test because same-site requests from subdomains also sent the header.',
+    context: 'API mutations lacked CSRF protection; origin header check was insufficient.',
+    severity: 'major', confidence: 0.55, recall_count: 1,
+    tags: ['csrf', 'auth', 'security'], ts: daysAgo(14),
+  },
 ];
 
 export const BENCH_QUERIES: BenchQuery[] = [
@@ -222,5 +245,12 @@ export const BENCH_QUERIES: BenchQuery[] = [
   {
     query: 'postgres performance problem in production',
     relevant: ['db:postgres:connection-pool-exhausted', 'db:postgres:slow-query-missing-index'],
+  },
+  // Governance adversarial: two CSRF lessons have almost identical text, but only
+  // the senior-reviewed canonical one is a proven complete solution. Quality
+  // reranking must prefer the reviewed+endorsed lesson over the unreviewed partial.
+  {
+    query: 'CSRF protection missing on API mutations security',
+    relevant: ['auth:csrf:double-submit-cookie'],
   },
 ];
