@@ -12,15 +12,18 @@ import { computeEmbedding, hasEmbedProvider, embedProviderHint, EMBED_PROVIDER }
 import { detectNamespace } from '../namespace.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.0';
+const MCP_VERSION = '0.10.49';
 const WHATS_NEW: Record<string, string[]> = {
-  '0.10.0': [
+  '0.10.49': [
     `🆕 **What's new in v${MCP_VERSION}:**`,
-    `  ✅ Zero-friction setup — auto-provisions your Brain, no manual config needed`,
-    `  ✅ 10× faster briefings — batch Redis fetches replace per-key loops`,
-    `  ✅ Crash-proof data reads — corrupted cache entries no longer break tools`,
-    `  ✅ \`session_end\` warns when called without an active session`,
-    `  ✅ \`get_api_status\` now shows live Redis ping + all instance statuses`,
+    `  ✅ \`brain_from_git\` — auto-seed your Brain from git history in seconds`,
+    `  ✅ \`brain_predict_failures\` — predict CI/build failures before they happen`,
+    `  ✅ \`smart_recall\` — semantic + keyword hybrid recall, now in every CLAUDE.md`,
+    `  ✅ VS Code extension — Brain status bar, ambient learning, CodeLens hints`,
+    `  ✅ Team Brain — share lessons across your whole engineering team`,
+    `  ✅ 89 MCP tools — roadmap, A/B tests, cache, index, predict, syndicate`,
+    `  🔧 Stability — auto-expiring memory keys, longer provisioning wait, robust recall`,
+    `  💡 Run \`brain_from_git\` to seed your Brain from existing commits instantly`,
   ],
 };
 
@@ -183,7 +186,7 @@ export async function handleBrainTool(
         const existing = await redis.get(depKey);
         const depTopics: string[] = safeJsonParse<string[]>(existing, []);
         if (!depTopics.includes(topic)) depTopics.push(topic);
-        await redis.set(depKey, JSON.stringify(depTopics));
+        await redis.set(depKey, JSON.stringify(depTopics), 'EX', 90 * 86400);
       }
 
       const lessonObj = {
@@ -207,9 +210,11 @@ export async function handleBrainTool(
       };
       const lesson = JSON.stringify(lessonObj);
 
-      // Always append to the history list (audit log)
+      // Always append to the history list (audit log); keep last 100 entries, 90-day TTL
       const listKey = `cachly:lessons:${topic}`;
       await redis.rpush(listKey, lesson);
+      await redis.ltrim(listKey, -100, -1);
+      await redis.expire(listKey, 90 * 86400);
 
       // Update best key for success/partial; for failure only update if no success exists
       if (outcome === 'success' || outcome === 'partial') {
@@ -813,7 +818,7 @@ export async function handleBrainTool(
               lines.push('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
               lines.push('🤝 **Your team\'s AI brain has been briefing you.**');
               lines.push('');
-              lines.push(`Your teammates have already solved problems you\'re about to hit:`);
+              lines.push(`Your teammates have already solved problems you're about to hit:`);
               lines.push('');
               for (const [teamAuthor, tls] of byAuthor) {
                 lines.push(`  👤 **${teamAuthor}** fixed ${tls.length} thing${tls.length > 1 ? 's' : ''}:`);

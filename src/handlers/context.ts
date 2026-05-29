@@ -64,13 +64,18 @@ export async function handleContextTool(
           if (ttl && ttl > 0) {
             body['expires_at'] = new Date(Date.now() + ttl * 1000).toISOString();
           }
-          await fetch(`${vectorUrl}/entries`, {
+          const res = await fetch(`${vectorUrl}/entries`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
-          }).catch(() => undefined);
-        } catch {
-          // Embedding optional — continue silently
+            signal: AbortSignal.timeout(8000),
+          });
+          if (!res.ok) {
+            process.stderr.write(`[cachly] semantic index skipped (HTTP ${res.status}) — smart_recall on this context will be keyword-only\n`);
+          }
+        } catch (e) {
+          // Embedding is optional — keyword recall still works. Log so it's debuggable.
+          process.stderr.write(`[cachly] semantic index failed: ${e instanceof Error ? e.message : String(e)} — smart_recall on this context will be keyword-only\n`);
         }
       }
 

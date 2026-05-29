@@ -709,7 +709,7 @@ export async function handleTeamTool(
       // Strip potential PII patterns (emails, tokens, paths)
       const sanitized = lesson
         .replace(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/g, '[email]')
-        .replace(/\b(sk-|cky_live_|Bearer\s)[A-Za-z0-9_\-]{8,}/g, '[token]')
+        .replace(/\b(sk-|cky_live_|Bearer\s)[A-Za-z0-9_-]{8,}/g, '[token]')
         .replace(/\/Users\/[^\s/]+/g, '/Users/[user]')
         .replace(/\/home\/[^\s/]+/g, '/home/[user]');
 

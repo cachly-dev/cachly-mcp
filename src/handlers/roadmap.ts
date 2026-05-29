@@ -156,10 +156,13 @@ export async function handleRoadmapTool(
       }
       const PRIORITY_ORDER: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
       const PRIORITY_ICON: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
-      let items = Object.values(all)
-        .map(v => JSON.parse(v as string) as Record<string, unknown>)
+      const items = Object.values(all)
+        .flatMap(v => {
+          const item = safeJsonParse<Record<string, unknown> | null>(v as string, null);
+          return item ? [item] : [];
+        })
         .filter(i => i.status === 'in-progress' || i.status === 'planned')
-        .filter(i => !filterTag || (i.tags as string[]).includes(filterTag));
+        .filter(i => !filterTag || (Array.isArray(i.tags) ? i.tags : []).includes(filterTag));
       if (items.length === 0) return '🎉 **No open roadmap items!** All tasks are done (or use `roadmap_list` to check).';
       // in-progress first, then by priority
       items.sort((a, b) => {
@@ -169,7 +172,8 @@ export async function handleRoadmapTool(
       });
       const next = items[0];
       const remaining = items.length - 1;
-      const tags = (next.tags as string[]).length ? `\nTags:      ${(next.tags as string[]).join(', ')}` : '';
+      const nextTags = Array.isArray(next.tags) ? next.tags as string[] : [];
+      const tags = nextTags.length ? `\nTags:      ${nextTags.join(', ')}` : '';
       const milestone = next.milestone ? `\nMilestone: ${next.milestone}` : '';
       const notes = next.notes ? `\nNotes:     ${(next.notes as string).split('\n').pop()?.slice(0, 120)}` : '';
       return [

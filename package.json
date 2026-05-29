@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.10.46",
+  "version": "0.10.49",
   "mcpName": "io.github.cachly-dev/cachly-mcp",
   "description": "Your AI forgets everything between sessions. cachly fixes that permanently. Persistent memory + causal root-cause analysis for Claude Code, Cursor, Copilot & Windsurf. Learns from every bug fix, git commit, and CI run automatically. Arrives pre-briefed. Predicts failures before they happen. 80 MCP tools · Free tier forever · GDPR · EU servers.",
   "type": "module",
@@ -30,11 +30,12 @@
     "ioredis": "^5.10.1"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.4",
     "@types/node": "^22",
     "eslint": "^9",
-    "typescript-eslint": "^8",
     "tsx": "^4",
     "typescript": "^5",
+    "typescript-eslint": "^8",
     "vitest": "^3.2.4"
   },
   "engines": {

@@ -29,7 +29,6 @@ export type Tokens = {
 
 export async function login(): Promise<Tokens | null> {
   const redirectUri = AuthSession.makeRedirectUri({ scheme: "tco", path: "auth" });
-
   // Let expo-auth-session generate a cryptographically secure code verifier.
   // Manual generation with Math.random() + BASE64 produces non-URL-safe chars
   // (+, /, =) that are invalid in PKCE and cause Keycloak to reject the exchange.

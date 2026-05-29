@@ -75,7 +75,13 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.46';
+const CURRENT_VERSION = '0.10.49';
+
+// Max time to wait for a freshly-provisioned instance to become "running" before
+// giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
+// old hard-coded 25s caused spurious "instance_not_reachable" on first run.
+// Override via CACHLY_PROVISION_TIMEOUT_MS.
+const PROVISION_TIMEOUT_MS = Number(process.env.CACHLY_PROVISION_TIMEOUT_MS ?? 90_000);
 
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
@@ -182,6 +188,36 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
       setEmbedJwt(apiKey); // keep embeddings.ts in sync
       _deviceFlow = null;
       sendFunnelEvent('device_flow_completed');
+      // Persist the API key to ~/.claude/mcp.json so subsequent MCP server restarts
+      // keep the token. Without this, JWT is lost on restart and brain_recall_count
+      // is never incremented (telemetry has no api_key → no tenant resolution).
+      void (async () => {
+        try {
+          const { writeFile, mkdir, readFile } = await import('node:fs/promises');
+          const { existsSync } = await import('node:fs');
+          const { resolve, dirname } = await import('node:path');
+          const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+          if (!home) return;
+          const configPath = resolve(home, '.claude', 'mcp.json');
+          let cfg: { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> } = {};
+          if (existsSync(configPath)) {
+            try { cfg = JSON.parse(await readFile(configPath, 'utf-8')) as typeof cfg; } catch { /* corrupt — start fresh */ }
+          }
+          cfg.mcpServers ??= {};
+          const existing = cfg.mcpServers['cachly'];
+          if (existing) {
+            existing.env ??= {};
+            existing.env['CACHLY_JWT'] = apiKey;
+          } else {
+            cfg.mcpServers['cachly'] = {
+              command: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'],
+              env: { CACHLY_JWT: apiKey },
+            };
+          }
+          await mkdir(dirname(configPath), { recursive: true });
+          await writeFile(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+        } catch { /* non-critical — don't break the flow on filesystem errors */ }
+      })();
       // Auto-provision: find or create the user's brain instance.
       _defaultInstanceLastAttempt = 0;
       await resolveDefaultInstanceId();
@@ -238,6 +274,29 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
             }
           }
         } catch { /* non-fatal — getConnection will handle the wait if still provisioning */ }
+      }
+      // Persist instance_id to ~/.claude/mcp.json after it's known.
+      // Without this, every restart loses CACHLY_BRAIN_INSTANCE_ID → resolveDefaultInstanceId
+      // makes an extra API call on every startup (with 30s cooldown on failure).
+      if (_defaultInstanceId) {
+        void (async () => {
+          try {
+            const { writeFile, readFile } = await import('node:fs/promises');
+            const { existsSync } = await import('node:fs');
+            const { resolve } = await import('node:path');
+            const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+            if (!home) return;
+            const configPath = resolve(home, '.claude', 'mcp.json');
+            if (!existsSync(configPath)) return;
+            let cfg: { mcpServers?: Record<string, { env?: Record<string, string> }> } = {};
+            try { cfg = JSON.parse(await readFile(configPath, 'utf-8')) as typeof cfg; } catch { return; }
+            const entry = cfg.mcpServers?.['cachly'];
+            if (entry?.env) {
+              entry.env['CACHLY_BRAIN_INSTANCE_ID'] = _defaultInstanceId;
+              await writeFile(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+            }
+          } catch { /* non-critical */ }
+        })();
       }
       return 'done';
     }
@@ -300,12 +359,12 @@ async function getConnection(instance_id: string): Promise<Redis> {
 
   if (pool.has(instance_id)) return pool.get(instance_id)!;
 
-  // Fetch instance, waiting up to 25 s if it is still provisioning.
+  // Fetch instance, waiting up to PROVISION_TIMEOUT_MS if it is still provisioning.
   // This covers the zero-friction path: device-flow auth → auto-provision → first tool call
   // all happen in quick succession and the instance isn't running yet.
   let inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
   if (inst.status === 'provisioning') {
-    const deadline = Date.now() + 25_000;
+    const deadline = Date.now() + PROVISION_TIMEOUT_MS;
     while (inst.status === 'provisioning' && Date.now() < deadline) {
       await new Promise(r => setTimeout(r, 3000));
       inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
@@ -369,6 +428,7 @@ async function getConnection(instance_id: string): Promise<Redis> {
     host: inst.host,
     port: inst.port,
     password: password || undefined,
+    commandTimeout: 8000,
     ...(tlsEnabled ? { tls: {} } : {}),
     lazyConnect: true,
     enableReadyCheck: true,
@@ -609,14 +669,10 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
             sendFunnelEvent('brain_from_git', { ...telemetryExtra, ...(gitCounts ?? {}) });
             sendFunnelEvent('recall_best_solution', telemetryExtra);
             // Append bootstrap summary to the session_start briefing.
-            const bootstrapText = typeof gitBootstrap === 'object' && gitBootstrap !== null && 'content' in gitBootstrap
-              ? (gitBootstrap as { content: { text?: string }[] }).content.map((c) => c.text ?? '').join('\n')
-              : String(gitBootstrap);
-            if (typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult) {
-              (brainResult as { content: { type: string; text: string }[] }).content.push({
-                type: 'text',
-                text: '\n---\n' + bootstrapText,
-              });
+            // brainResult is always a string here (handleBrainTool returns string for session_start).
+            const bootstrapText = String(gitBootstrap);
+            if (bootstrapText) {
+              return String(brainResult) + '\n---\n' + bootstrapText;
             }
           }
         } catch { /* git bootstrap errors must never break session_start */ }
@@ -631,7 +687,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       const srText = typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult
         ? JSON.stringify(brainResult)
         : String(brainResult ?? '');
-      if (srText.length > 50 && !srText.includes('No lessons found') && !srText.includes('no lessons')) {
+      if (srText.length > 50 && !srText.includes('No lessons found') && !srText.includes('no lessons') && !srText.includes('No matches found')) {
         sendFunnelEvent('recall_best_solution', telemetryExtra);
       }
     }
@@ -2318,9 +2374,10 @@ if (process.argv[2] === 'setup') {
         // Newly created — poll until running or give up after 30 s.
         const newId = autoBody.instance_id;
         console.log(` ✓ created (${newId.slice(0, 8)}…)\n`);
+        // 45 attempts × 3s = 135s — generous for free-tier in slow regions.
         process.stdout.write('⏳ Waiting for instance to start');
-        for (let attempt = 0; attempt < 15; attempt++) {
-          await new Promise(r => setTimeout(r, 2000));
+        for (let attempt = 0; attempt < 45; attempt++) {
+          await new Promise(r => setTimeout(r, 3000));
           process.stdout.write('.');
           try {
             const checkRes = await fetch(`${API_URL}/api/v1/instances/${newId}`, { headers: { Authorization: `Bearer ${token}` } });

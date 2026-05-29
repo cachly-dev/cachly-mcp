@@ -99,13 +99,13 @@ class MockRedis {
   /** Minimal pipeline: batches GET calls, returns [err, value][] */
   pipeline() {
     const commands: Array<{ cmd: string; key: string }> = [];
-    const self = this;
+    const store = this.store;
     return {
       get(key: string) { commands.push({ cmd: 'get', key }); return this; },
       async exec(): Promise<Array<[null, string | null]>> {
         const out: Array<[null, string | null]> = [];
         for (const c of commands) {
-          out.push([null, self.store.get(c.key) ?? null]);
+          out.push([null, store.get(c.key) ?? null]);
         }
         return out;
       },
