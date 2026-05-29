@@ -13,7 +13,47 @@ export const TEAM_TOOL_NAMES = new Set([
   'sync_file_changes', 'team_learn', 'team_confirm', 'team_recall', 'team_synthesize', 'memory_crystalize',
   'brain_doctor', 'recall_at', 'trace_dependency', 'global_learn', 'global_recall',
   'publish_lesson', 'import_public_brain', 'setup_ai_memory',
+  'team_assign_role', 'team_whoami', 'team_roster',
 ]);
+
+// ── Role model helpers ────────────────────────────────────────────────────────
+// Roles: admin > reviewer > contributor > viewer
+// Stored in a Redis hash: cachly:team:roles:{instance_id}  →  handle → role
+
+export type TeamRole = 'admin' | 'reviewer' | 'contributor' | 'viewer';
+
+const ROLE_RANK: Record<TeamRole, number> = {
+  admin: 4, reviewer: 3, contributor: 2, viewer: 1,
+};
+
+export const ROLE_BADGE: Record<TeamRole, string> = {
+  admin: '👑', reviewer: '🛡️', contributor: '✏️', viewer: '👁️',
+};
+
+const ROLE_CAPABILITIES: Record<TeamRole, string> = {
+  admin:       'assign roles · delete lessons · all reviewer + contributor actions',
+  reviewer:    'senior-review lessons (🛡️) · all contributor actions',
+  contributor: 'store lessons · peer-review lessons (✔️) · recall',
+  viewer:      'recall only — cannot store or review lessons',
+};
+
+export const ROLES_KEY = (instanceId: string) => `cachly:team:roles:${instanceId}`;
+
+export async function getRole(redis: import('ioredis').Redis, instanceId: string, handle: string): Promise<TeamRole | null> {
+  const raw = await redis.hget(ROLES_KEY(instanceId), handle.toLowerCase()).catch(() => null);
+  return (raw as TeamRole | null);
+}
+
+/** True when `actorRole` is at least as powerful as `requiredRole`. */
+export function hasPermission(actorRole: TeamRole | null, required: TeamRole): boolean {
+  if (!actorRole) return false;
+  return (ROLE_RANK[actorRole] ?? 0) >= (ROLE_RANK[required] ?? 0);
+}
+
+/** The review level a role warrants in team_confirm. */
+export function roleToReviewLevel(role: TeamRole | null): 'senior' | 'peer' {
+  return role === 'admin' || role === 'reviewer' ? 'senior' : 'peer';
+}
 
 export async function handleTeamTool(
   name: string,
@@ -128,15 +168,29 @@ export async function handleTeamTool(
     // lesson's recall ranking (see src/rerank.ts), so trusted, reviewed knowledge
     // surfaces above unreviewed auto-learned entries.
     case 'team_confirm': {
-      const { instance_id, topic, reviewer, level = 'peer', note = '' } = args as {
+      const { instance_id, topic, reviewer, level, note = '' } = args as {
         instance_id: string; topic: string; reviewer: string;
         level?: 'senior' | 'peer'; note?: string;
       };
       if (!instance_id) return '❌ instance_id required';
       if (!topic || !reviewer) return '❌ Required: topic, reviewer';
-      const reviewLevel = level === 'senior' ? 'senior' : 'peer';
-
+      // Role-aware review level: if the reviewer has an assigned role, that determines
+      // weight (admin/reviewer → senior, contributor → peer). The caller can still
+      // pass `level` explicitly to override (e.g. a guest reviewer without a role).
+      // This prevents self-promotion — you can't claim senior by just passing level="senior".
       const redis = await getConnection(instance_id);
+      const assignedRole = await getRole(redis, instance_id, reviewer);
+      const autoLevel = roleToReviewLevel(assignedRole);
+      // If the caller explicitly asked for 'peer' on a senior-role reviewer,
+      // honour that (downgrade is allowed; upgrade is not — unless they have the role).
+      const reviewLevel: 'senior' | 'peer' =
+        level === 'peer' ? 'peer'
+        : level === 'senior' && hasPermission(assignedRole, 'reviewer') ? 'senior'
+        : autoLevel;
+      const roleNote = assignedRole
+        ? ` (role: ${ROLE_BADGE[assignedRole]} ${assignedRole})`
+        : ` (no role assigned — peer weight applied)`;
+
       const key = `cachly:lesson:best:${topic}`;
       const raw = await redis.get(key);
       const lesson = safeJsonParse<Record<string, unknown> | null>(raw, null);
@@ -174,7 +228,7 @@ export async function handleTeamTool(
 
       const badge = effectiveLevel === 'senior' ? '🛡️ senior-reviewed' : '✔️ peer-reviewed';
       const alreadyNote = isNewEndorser ? '' : ` (already endorsed by ${reviewer} — no change to rank)`;
-      return `${badge} — \`${topic}\` confirmed by **${reviewer}** (${endorsements} distinct endorsement${endorsements === 1 ? '' : 's'})${alreadyNote}.\n📈 This lesson now ranks higher in \`smart_recall\` / \`team_recall\`.${note ? `\n📝 ${note.slice(0, 200)}` : ''}`;
+      return `${badge} — \`${topic}\` confirmed by **${reviewer}**${roleNote} (${endorsements} distinct endorsement${endorsements === 1 ? '' : 's'})${alreadyNote}.\n📈 This lesson now ranks higher in \`smart_recall\` / \`team_recall\`.${note ? `\n📝 ${note.slice(0, 200)}` : ''}`;
     }
 
     // ── team_recall ───────────────────────────────────────────────────────────
@@ -1239,6 +1293,125 @@ Result: Your AI **never solves the same problem twice** and always picks up exac
         lines.push(...written);
       }
 
+      return lines.join('\n');
+    }
+
+    // ── team_assign_role ──────────────────────────────────────────────────────
+    // Assign a role (admin | reviewer | contributor | viewer) to a team member.
+    // Only an existing admin can upgrade another member to admin or reviewer.
+    // First call with role="admin" is bootstrapped (no auth required) so the
+    // team can establish governance from a fresh brain.
+    case 'team_assign_role': {
+      const { instance_id, handle, role, assigned_by = '' } = args as {
+        instance_id: string; handle: string;
+        role: TeamRole; assigned_by?: string;
+      };
+      if (!instance_id || !handle || !role) return '❌ Required: instance_id, handle, role';
+      const cleanRole = (['admin', 'reviewer', 'contributor', 'viewer'] as TeamRole[]).includes(role)
+        ? role : null;
+      if (!cleanRole) return `❌ Unknown role \`${role}\`. Valid: admin · reviewer · contributor · viewer`;
+
+      const redis = await getConnection(instance_id);
+
+      // Bootstrap: if there are no admins yet, the first assignment is free.
+      const allRoles = await redis.hgetall(ROLES_KEY(instance_id)).catch(() => ({} as Record<string, string>));
+      const hasAdmin = Object.values(allRoles).includes('admin');
+
+      if (hasAdmin) {
+        // After bootstrap, only an admin can assign roles.
+        const actorRole = assigned_by ? await getRole(redis, instance_id, assigned_by) : null;
+        if (!hasPermission(actorRole, 'admin')) {
+          return [
+            `❌ **Permission denied** — only an \`admin\` can assign roles.`,
+            ``,
+            `Ask an existing admin to run:`,
+            `\`team_assign_role(instance_id="${instance_id}", handle="${handle}", role="${role}", assigned_by="<their-handle>")\``,
+          ].join('\n');
+        }
+      }
+
+      await redis.hset(ROLES_KEY(instance_id), handle.toLowerCase(), cleanRole);
+      await redis.expire(ROLES_KEY(instance_id), 365 * 2 * 86400); // 2-year TTL
+
+      const isBootstrap = !hasAdmin;
+      const badge = ROLE_BADGE[cleanRole];
+      return [
+        `${badge} **Role assigned** — **${handle}** is now a \`${cleanRole}\``,
+        ``,
+        `**Capabilities:** ${ROLE_CAPABILITIES[cleanRole]}`,
+        ``,
+        isBootstrap ? `_First admin bootstrapped — governance is now active on this brain._` : `_Assigned by ${assigned_by || '(bootstrap)'}_`,
+        ``,
+        `Run \`team_roster\` to see all current roles.`,
+      ].join('\n');
+    }
+
+    // ── team_whoami ───────────────────────────────────────────────────────────
+    // Shows a team member's own role and what they can do.
+    case 'team_whoami': {
+      const { instance_id, handle } = args as { instance_id: string; handle: string };
+      if (!instance_id || !handle) return '❌ Required: instance_id, handle';
+      const redis = await getConnection(instance_id);
+      const role = await getRole(redis, instance_id, handle);
+
+      if (!role) {
+        const allRoles = await redis.hgetall(ROLES_KEY(instance_id)).catch(() => ({} as Record<string, string>));
+        const hasAdmin = Object.values(allRoles).includes('admin');
+        return [
+          `👁️ **${handle}** has no assigned role on this brain.`,
+          ``,
+          hasAdmin
+            ? `Ask an admin to run \`team_assign_role(handle="${handle}", role="contributor")\` to add you.`
+            : `This brain has no roles set up yet. Establish governance:\n\`team_assign_role(handle="${handle}", role="admin")\``,
+        ].join('\n');
+      }
+
+      const badge = ROLE_BADGE[role];
+      return [
+        `## ${badge} ${handle} — \`${role}\``,
+        ``,
+        `**You can:** ${ROLE_CAPABILITIES[role]}`,
+        ``,
+        `Run \`team_roster\` to see all team members and their roles.`,
+      ].join('\n');
+    }
+
+    // ── team_roster ───────────────────────────────────────────────────────────
+    // Full view of all assigned roles, with last-active info from person nodes.
+    case 'team_roster': {
+      const { instance_id } = args as { instance_id: string };
+      if (!instance_id) return '❌ Required: instance_id';
+      const redis = await getConnection(instance_id);
+
+      const allRoles = await redis.hgetall(ROLES_KEY(instance_id)).catch(() => ({} as Record<string, string>));
+      if (Object.keys(allRoles).length === 0) {
+        return [
+          `## 👥 Team Roster`,
+          ``,
+          `No roles assigned yet. Establish governance with:`,
+          `\`team_assign_role(instance_id="${instance_id}", handle="<your-handle>", role="admin")\``,
+        ].join('\n');
+      }
+
+      // Sort by role rank desc, then handle alpha
+      const members = Object.entries(allRoles)
+        .map(([h, r]) => ({ handle: h, role: r as TeamRole }))
+        .sort((a, b) => ((ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0)) || a.handle.localeCompare(b.handle));
+
+      const lines = [
+        `## 👥 Team Roster (${members.length} member${members.length !== 1 ? 's' : ''})`,
+        ``,
+        `| Role | Handle | Capabilities |`,
+        `|---|---|---|`,
+      ];
+      for (const m of members) {
+        const badge = ROLE_BADGE[m.role] ?? '?';
+        lines.push(`| ${badge} ${m.role} | **${m.handle}** | ${ROLE_CAPABILITIES[m.role].split(' · ').slice(0, 2).join(', ')} |`);
+      }
+      lines.push(
+        ``,
+        `_Manage with \`team_assign_role\`. Any admin can add or change roles._`,
+      );
       return lines.join('\n');
     }
 

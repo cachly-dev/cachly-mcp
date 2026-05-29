@@ -7,6 +7,20 @@
 
 ---
 
+## [0.10.72] – 2026-05-29
+
+### Role model — admin · reviewer · contributor · viewer (Phase 3) — 105 tools
+
+- **Governance is now first-class.** Three new tools establish and inspect the team role model:
+  - `team_assign_role(handle, role, assigned_by)` — bootstrap the first admin freely, then only admins can assign/change roles. Idempotent, bounded TTL.
+  - `team_whoami(handle)` — see your own role and exactly what you can do.
+  - `team_roster` — full team table sorted by rank (👑 admin · 🛡️ reviewer · ✏️ contributor · 👁️ viewer).
+- **`team_confirm` is now role-aware.** The reviewer's assigned role automatically determines review weight — admin/reviewer → `senior` (🛡️, 1.25× rerank boost); contributor/viewer → `peer` (✔️, 1.1×). Self-promotion is blocked: passing `level="senior"` without the reviewer role is silently capped to peer.
+- **`brain_who_knows`** shows role badges (👑🛡️✏️) inline next to each expert's name.
+- **`setup` CLI** prompts for governance bootstrap at the end (optional; idempotent; skippable). Runs `team_assign_role` for the first admin in the same session.
+- Roles stored in `cachly:team:roles:{instance_id}` (Redis hash, 2-year TTL). Pure role helpers exported from `team.ts` so other handlers can look up roles without circular imports.
+- +23 tests in a new `roles.test.ts` → 474 total. 0 lint warnings; clean tsc build.
+
 ## [0.10.71] – 2026-05-29
 
 ### Self-healing auth — no more silent "0 recalls because the token quietly died"

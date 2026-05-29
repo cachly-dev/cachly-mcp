@@ -7,14 +7,23 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertServiceNode } from '../ckg.js';
 import { safeJsonParse, scanKeys } from '../utils.js';
 import type { CKGEdge, CKGNode, PersonNode, ServiceNode } from '../ckg.js';
+import { getRole, ROLE_BADGE } from './team.js';
 import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
          indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.71';
+const MCP_VERSION = '0.10.72';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.72': [
+    `👑 **Role model — admin · reviewer · contributor · viewer (Phase 3)**`,
+    `  🆕 \`team_assign_role\` — establish governance; first call bootstraps, admins manage the rest`,
+    `  🆕 \`team_whoami\` — see your own role and capabilities`,
+    `  🆕 \`team_roster\` — full team role table (👑🛡️✏️👁️)`,
+    `  🛡️ \`team_confirm\` is now role-aware — admin/reviewer auto-get senior weight; contributor gets peer; no self-promotion`,
+    `  👑 Setup CLI now prompts for governance bootstrap (idempotent). 105 MCP tools`,
+  ],
   '0.10.71': [
     `🛡️ **Self-healing auth** — no more silent "0 recalls because the token quietly died"`,
     `  ♻️ Near-expiry tokens auto-refresh into a long-lived key while still valid (zero interaction)`,
@@ -2281,8 +2290,11 @@ export async function handleBrainTool(
         const conf = (p.avgConfidence * 100).toFixed(0);
         const daysSince = Math.floor((Date.now() - new Date(p.lastActive).getTime()) / 86400000);
         const recency = daysSince < 1 ? 'today' : daysSince < 7 ? `${daysSince}d ago` : daysSince < 30 ? `${Math.floor(daysSince / 7)}w ago` : `${Math.floor(daysSince / 30)}mo ago`;
+        // Show role badge if assigned (non-blocking — role lookup is best-effort)
+        const roleVal = await getRole(redis, instance_id, p.handle).catch(() => null);
+        const roleBadge = roleVal ? ` ${ROLE_BADGE[roleVal]}` : '';
         lines.push(
-          `${medal} **${p.handle}** — ${p.lessonCount} lesson${p.lessonCount !== 1 ? 's' : ''} · ${conf}% confidence · last active ${recency}`,
+          `${medal} **${p.handle}**${roleBadge} — ${p.lessonCount} lesson${p.lessonCount !== 1 ? 's' : ''} · ${conf}% confidence · last active ${recency}`,
           `   _domains: ${p.domains}_`,
           ``,
         );

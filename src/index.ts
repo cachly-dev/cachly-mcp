@@ -73,7 +73,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.71';
+const CURRENT_VERSION = '0.10.72';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -682,7 +682,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         '',
         'After sign-in: call **any tool again** — your Brain activates instantly.',
         '',
-        '✨ Free forever · No credit card · 102 MCP tools · GDPR · EU servers',
+        '✨ Free forever · No credit card · 105 MCP tools · GDPR · EU servers',
       ].join('\n');
     }
 
@@ -1942,7 +1942,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
-  console.log('  \x1b[90mFree forever · GDPR · German servers · 102 MCP tools\x1b[0m');
+  console.log('  \x1b[90mFree forever · GDPR · German servers · 105 MCP tools\x1b[0m');
   console.log('');
   process.exit(0);
 }
@@ -2678,6 +2678,31 @@ if (process.argv[2] === 'setup') {
   console.log(`   Dashboard: https://cachly.dev/instances/${instance.id}`);
   console.log(`\n   📛 Add a live badge to your README:`);
   console.log(`      npx @cachly-dev/mcp-server@latest badge\n`);
+
+  // ── Step 6c: Governance bootstrap — assign the first admin role ─────────────
+  // Optional nudge: ask once whether the user wants to establish the role model.
+  // team_assign_role handles idempotency (first call is free; later calls need admin).
+  if (!nonInteractive) {
+    try {
+      console.log('\n👑  Governance (optional — role model: admin · reviewer · contributor · viewer)');
+      console.log('────────────────────────────────────────');
+      const addAdmin = await ask('   Set yourself as the first admin? (y/N): ', 'N');
+      if (addAdmin.toLowerCase() === 'y') {
+        const adminHandle = await ask('   Your handle (e.g. "alice"): ');
+        if (adminHandle.trim()) {
+          const assignOut = await handleTool('team_assign_role', {
+            instance_id: instance.id, handle: adminHandle.trim(), role: 'admin',
+          }).catch(() => '');
+          if (assignOut) {
+            console.log(`   ✅  ${adminHandle.trim()} is now admin. Invite teammates:\n`);
+            console.log(`   team_assign_role(instance_id="${instance.id}", handle="<teammate>", role="contributor", assigned_by="${adminHandle.trim()}")\n`);
+          }
+        }
+      } else {
+        console.log('   Skipped — run team_assign_role at any time.\n');
+      }
+    } catch { /* non-critical */ }
+  }
 
   // ── Step 7: Email opt-in (non-blocking — at the very end) ────────────────
   if (!nonInteractive) {

@@ -1003,6 +1003,59 @@ const TOOLS = [
     },
   },
   {
+    name: 'team_assign_role',
+    description:
+      'Assign a role (admin | reviewer | contributor | viewer) to a team member on a shared brain instance. ' +
+      'Roles control what each person can do: admin can manage roles and delete lessons; reviewer can senior-review ' +
+      '(🛡️ badge, stronger recall boost); contributor can store lessons and peer-review (✔️ badge); viewer is read-only. ' +
+      'First call bootstraps governance (no auth required when no admins exist yet). ' +
+      'After that, only an admin can assign or change roles. ' +
+      'Example: team_assign_role(handle="alice", role="reviewer", assigned_by="bob") — bob must be an admin.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id:  { type: 'string', description: 'UUID of the shared team brain instance' },
+        handle:       { type: 'string', description: 'Handle or name of the team member to assign a role to' },
+        role: {
+          type: 'string',
+          enum: ['admin', 'reviewer', 'contributor', 'viewer'],
+          description: 'Role to assign. admin: manage roles + all actions. reviewer: senior-review (🛡️). contributor: store + peer-review. viewer: read-only.',
+        },
+        assigned_by:  { type: 'string', description: 'Handle of the admin performing the assignment (required after governance bootstrap)' },
+      },
+      required: ['instance_id', 'handle', 'role'],
+    },
+  },
+  {
+    name: 'team_whoami',
+    description:
+      'Show your own role and capabilities on a shared brain instance. ' +
+      'Tells you what you can do (store, review, manage roles) and who to contact if you need a higher role. ' +
+      'Run this after onboarding to confirm your role was set correctly.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
+        handle:      { type: 'string', description: 'Your handle or name' },
+      },
+      required: ['instance_id', 'handle'],
+    },
+  },
+  {
+    name: 'team_roster',
+    description:
+      'Show all team members and their assigned roles on a shared brain instance. ' +
+      'Returns a table of handles, roles (👑 admin · 🛡️ reviewer · ✏️ contributor · 👁️ viewer), and capabilities. ' +
+      'Use during onboarding to see who can do what, or to verify role assignments.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
     name: 'team_recall',
     description:
       'Recall lessons from a shared team brain, showing who learned what. ' +

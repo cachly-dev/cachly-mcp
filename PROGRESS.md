@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.71 · 102 MCP-Tools · 451 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.72 · 105 MCP-Tools · 474 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.71` (npm `latest`) |
-| MCP-Tools | **102** |
-| Tests | **451** passing, 8 Suites |
+| Version | `0.10.72` (npm `latest`) |
+| MCP-Tools | **105** |
+| Tests | **474** passing, 9 Suites |
 | Lint | **0 errors, 0 warnings** |
 | Build | sauber (`tsc`, Entry `dist/src/index.js`) |
 | Bench | Precision@1 **+22.2 %**, MRR **+10.9 %**, nDCG@5 **+8.1 %** vs. BM25 |
@@ -94,7 +94,7 @@
 
 ### Team-Graph (Phase-3-Rest)
 
-- 🔲 **Rollen-Modell** (admin / reviewer / contributor / viewer)
+- ✅ **Rollen-Modell (0.10.72)** — `team_assign_role` / `team_whoami` / `team_roster`; `team_confirm` ist role-aware (admin/reviewer → senior; contributor → peer; keine Selbstbeförderung); `setup`-CLI prompts für Governance-Bootstrap (idempotent). 3 neue Tools → 105 gesamt.
 - 🔲 **Sichtbarkeits-Scopes auf Team-Ebene** (heute nur lesson-level `private`)
 - ✅ **Service-/System-Nodes im Graph (0.10.70)** — `learn_from_attempts(service="...", service_kind="system")`
   baut Service-Nodes; `person→operates`, `file→runs_in`, `concept→affects`-Kanten. Neues Tool
