@@ -12,8 +12,14 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.63';
+const MCP_VERSION = '0.10.64';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.64': [
+    `📈 **The three decisive metrics, now measurable**`,
+    `  ⏱️ \`brain_metrics()\` — time-to-first-recall, recall-lift, team-knowledge-reuse in one view`,
+    `  👥 Cross-author reuse tracked: recall a teammate's lesson → counted + surfaced inline`,
+    `  🛡️ Stability: scans now capped + timed out (a huge keyspace can't hang the agent)`,
+  ],
   '0.10.61': [
     `🎯 **Phase 3C: 100 MCP tools milestone — zero-setup knowledge graph**`,
     `  🔄 \`brain_from_git\` now auto-builds Person+File nodes from git history (zero setup!)`,
@@ -94,7 +100,7 @@ export const BRAIN_TOOL_NAMES = new Set([
   'learn_from_attempts', 'recall_best_solution', 'smart_recall',
   'session_start', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
   'brain_who_knows', 'brain_file_map', 'team_expertise_map',
-  'skill_gaps', 'brain_coverage',
+  'skill_gaps', 'brain_coverage', 'brain_metrics',
 ]);
 
 export async function handleBrainTool(
@@ -271,6 +277,10 @@ export async function handleBrainTool(
         version: 3,
       };
       const lesson = JSON.stringify(lessonObj);
+
+      // Metric 1 (time-to-first-recall): mark the moment the Brain first gained
+      // knowledge. SET NX so only the very first learn wins. Fire-and-forget.
+      redis.set(`cachly:stats:born_at:${instance_id}`, ts, 'EX', 365 * 86400, 'NX').catch(() => {});
 
       // Always append to the history list (audit log); keep last 100 entries, 90-day TTL
       const listKey = `cachly:lessons:${topic}`;
@@ -598,7 +608,8 @@ export async function handleBrainTool(
         instance_id,
         query,
         threshold = 0.78,
-      } = args as { instance_id: string; query: string; threshold?: number };
+        author: requester = '',
+      } = args as { instance_id: string; query: string; threshold?: number; author?: string };
 
       const redis = await getConnection(instance_id);
 
@@ -618,16 +629,28 @@ export async function handleBrainTool(
       type RecalledLesson = { topic: string; severity: string; recall_count: number; savedMins: number };
       const savedHere: RecalledLesson[] = [];
       const lessonMatches = kwMatches.filter(m => m.key.startsWith('cachly:lesson:best:'));
+      let crossAuthorThisCall = 0;
       for (const m of lessonMatches.slice(0, 5)) {
         const existing = await redis.get(m.key).catch(() => null);
         if (existing) {
-          const lesson = safeJsonParse(existing, null as null | { recall_count?: number; outcome?: string; severity?: string; [k: string]: unknown });
+          const lesson = safeJsonParse(existing, null as null | { recall_count?: number; outcome?: string; severity?: string; author?: string; [k: string]: unknown });
           if (lesson) {
             const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, verified_at: new Date().toISOString() };
             redis.set(m.key, JSON.stringify(updated)).catch(() => {});
             const sev = lesson.severity as string;
             const savedMins = sev === 'critical' ? 240 : sev === 'major' ? 60 : 30;
             redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
+
+            // Metric 3 (team-knowledge-reuse): a recall of a lesson authored by
+            // someone OTHER than the requester is cross-author reuse — the value
+            // only cachly delivers. Track total proven recalls + cross-author ones.
+            redis.incr(`cachly:stats:recalls_total:${instance_id}`).catch(() => {});
+            if (lesson.author && requester && lesson.author !== requester) {
+              crossAuthorThisCall++;
+              redis.incr(`cachly:stats:cross_author_recalls:${instance_id}`).catch(() => {});
+              redis.sadd(`cachly:stats:reuse_pairs:${instance_id}`, `${requester}<-${lesson.author}`).catch(() => {});
+            }
+
             // Surface banner for proven successes (recall_count >= 1 means it's been validated)
             if (lesson.outcome === 'success' && (lesson.recall_count ?? 0) >= 1) {
               savedHere.push({
@@ -639,6 +662,12 @@ export async function handleBrainTool(
             }
           }
         }
+      }
+
+      // Metric 1 (time-to-first-recall): stamp the first time recall returned a
+      // proven lesson. SET NX so only the first successful recall wins.
+      if (savedHere.length > 0) {
+        redis.set(`cachly:stats:first_recall_at:${instance_id}`, new Date().toISOString(), 'EX', 365 * 86400, 'NX').catch(() => {});
       }
 
       // ── Layer 2: Semantic search (parallel, optional) ────────────────────────
@@ -770,6 +799,9 @@ export async function handleBrainTool(
       const topLesson = savedHere.sort((a, b) => (SORDER[a.severity] ?? 1) - (SORDER[b.severity] ?? 1))[0];
       if (topLesson) {
         lines.push(`> 💡 **Brain saved you ~${topLesson.savedMins}m here** — ${topLesson.severity} issue from \`${topLesson.topic}\` recalled ${topLesson.recall_count}× proven\n`);
+      }
+      if (crossAuthorThisCall > 0) {
+        lines.push(`> 👥 **Team knowledge reuse** — ${crossAuthorThisCall} of these lesson${crossAuthorThisCall !== 1 ? 's were' : ' was'} written by a teammate. This is the value only a shared brain delivers.\n`);
       }
 
       // Show sub-query info if multi-topic was detected
@@ -2511,6 +2543,75 @@ export async function handleBrainTool(
         `---`,
         `_Boost score: run \`brain_from_git\` · add \`author\` to \`learn_from_attempts\` · fix gaps with \`skill_gaps\`_`,
       ].join('\n');
+    }
+
+    // ── brain_metrics ─────────────────────────────────────────────────────────
+    // The three decisive metrics (PROGRESS.md §3 / VISION_10X.md §4):
+    //   1. Time-to-first-recall  — onboarding friction
+    //   2. Recall-lift           — the moat proof (vs. raw BM25)
+    //   3. Team-knowledge-reuse  — the value only a shared brain delivers
+    case 'brain_metrics': {
+      const { instance_id } = args as { instance_id: string };
+      const redis = await getConnection(instance_id);
+
+      const [bornAt, firstRecallAt, recallsTotalRaw, crossAuthorRaw, timeSavedRaw, reusePairs] =
+        await Promise.all([
+          redis.get(`cachly:stats:born_at:${instance_id}`).catch(() => null),
+          redis.get(`cachly:stats:first_recall_at:${instance_id}`).catch(() => null),
+          redis.get(`cachly:stats:recalls_total:${instance_id}`).catch(() => null),
+          redis.get(`cachly:stats:cross_author_recalls:${instance_id}`).catch(() => null),
+          redis.get(`cachly:stats:time_saved_mins:${instance_id}`).catch(() => null),
+          redis.smembers(`cachly:stats:reuse_pairs:${instance_id}`).catch(() => [] as string[]),
+        ]);
+
+      // ── Metric 1: Time-to-first-recall ──────────────────────────────────────
+      let ttfrLine: string;
+      if (bornAt && firstRecallAt) {
+        const ms = new Date(firstRecallAt).getTime() - new Date(bornAt).getTime();
+        const mins = Math.max(0, Math.round(ms / 60000));
+        const human = mins < 1 ? '<1 min' : mins < 60 ? `${mins} min` : `${(mins / 60).toFixed(1)} h`;
+        const target = ms <= 2 * 60000 ? '🟢 under 2 min target' : ms <= 60 * 60000 ? '🟡 over 2 min' : '🔴 over 1 h';
+        ttfrLine = `**${human}** from first lesson → first proven recall · ${target}`;
+      } else if (bornAt && !firstRecallAt) {
+        ttfrLine = `🟡 Brain has knowledge but no proven recall yet — try \`smart_recall\``;
+      } else {
+        ttfrLine = `⚪ Not enough data yet — store a lesson, then recall it`;
+      }
+
+      // ── Metric 2: Recall-lift (the moat proof) ──────────────────────────────
+      // Published headline from Cachly-Bench (CI-defended in rerank.test.ts).
+      const recallLiftLine = `**+22.2 % Precision@1**, **+10.9 % MRR**, **+8.1 % nDCG@5** vs. raw BM25`;
+
+      // ── Metric 3: Team-knowledge-reuse ──────────────────────────────────────
+      const recallsTotal = Number(recallsTotalRaw ?? 0);
+      const crossAuthor = Number(crossAuthorRaw ?? 0);
+      const reusePct = recallsTotal > 0 ? Math.round((crossAuthor / recallsTotal) * 100) : 0;
+      const reuseTarget = reusePct >= 30 ? '🟢 above 30 % target' : recallsTotal === 0 ? '⚪ no recalls yet' : '🟡 below 30 % target';
+      const timeSaved = Math.round(Number(timeSavedRaw ?? 0));
+      const timeSavedHuman = timeSaved < 60 ? `${timeSaved} min` : `${(timeSaved / 60).toFixed(1)} h`;
+
+      const lines = [
+        `## 📈 Brain Metrics — the three that decide everything`,
+        ``,
+        `### 1. Time-to-first-recall _(onboarding friction)_`,
+        ttfrLine,
+        ``,
+        `### 2. Recall-lift _(the moat proof)_`,
+        recallLiftLine,
+        `_Reproduce: \`npm run bench\` · CI-defended in \`rerank.test.ts\` · details in BENCH.md_`,
+        ``,
+        `### 3. Team-knowledge-reuse _(the value only a shared brain delivers)_`,
+        `**${reusePct}%** of proven recalls used a teammate's lesson (${crossAuthor}/${recallsTotal}) · ${reuseTarget}`,
+        reusePairs.length > 0 ? `**${reusePairs.length}** distinct reuse relationship${reusePairs.length !== 1 ? 's' : ''} across the team` : '',
+        ``,
+        `---`,
+        `⏱️ **${timeSavedHuman}** total saved not re-researching known fixes.`,
+        recallsTotal === 0
+          ? `_Tip: pass \`author="your-handle"\` to \`smart_recall\` so cross-author reuse can be tracked._`
+          : `_These numbers compound: every learned lesson and every teammate raises all three._`,
+      ].filter(Boolean);
+
+      return lines.join('\n');
     }
 
     // ── sync_file_changes ─────────────────────────────────────────────────────

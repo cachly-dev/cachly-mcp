@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.62 · 100 MCP-Tools · 405 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.64 · 101 MCP-Tools · 424 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.62` (npm `latest`) |
-| MCP-Tools | **100** |
-| Tests | **405** passing, 7 Suites |
+| Version | `0.10.64` (npm `latest`) |
+| MCP-Tools | **101** |
+| Tests | **424** passing, 8 Suites |
 | Lint | **0 errors, 0 warnings** |
 | Build | sauber (`tsc`, Entry `dist/src/index.js`) |
 | Bench | Precision@1 **+22.2 %**, MRR **+10.9 %**, nDCG@5 **+8.1 %** vs. BM25 |
@@ -64,6 +64,18 @@
 | Tool-Count-Konsistenz (80/89/95/96/98/100) | ✅ überall synchron |
 | Input-Guards für Phase-3-Tools | ✅ 0.10.62 (kein Crash bei leerem topic / non-array) |
 | `smart_recall` apiFetch null-guard | ✅ graceful degradation offline |
+| Scan-Timeout + Cap (`scanKeys`) überall | ✅ 0.10.63 — kein Hang bei großem Keyspace |
+| Git-Rename-Pfad-Normalisierung | ✅ 0.10.63 (`normalizeGitPath`) |
+| `withTimeout`-Utility (graceful degradation) | ✅ 0.10.63 |
+
+### Die drei Metriken — instrumentiert (0.10.64)
+
+| Metrik | Mechanismus | Status |
+|---|---|---|
+| **Time-to-first-recall** | `born_at` (erster Learn) → `first_recall_at` (erster proven Recall) | ✅ gemessen |
+| **Recall-Lift** | Cachly-Bench Headline, CI-verteidigt | ✅ +22.2 % P@1 |
+| **Team-Knowledge-Reuse** | Cross-Author-Recalls + distinct reuse-pairs | ✅ getrackt + inline sichtbar |
+| `brain_metrics()`-Tool | zeigt alle drei in einer Ansicht | ✅ 101. Tool |
 
 ---
 
@@ -98,12 +110,11 @@
 
 ### Bekannte kleine Schulden
 
-- 🔲 `brain_from_git`: Git-Rename-Pfade (`{old => new}/file.ts`) werden als ein
-  File-Node behandelt — kosmetisch, kein Crash. Normalisieren.
-- 🔲 README "MCP Tools (80 total)" Abschnitt-Heading war stale → in StoryBrand-
-  Rewrite ersetzt; sicherstellen dass keine weitere Zahl driftet.
-- 🔲 `team_expertise_map`: Domain-String-Berechnung war ursprünglich verschachtelt;
-  bereinigt, aber Tabellen-Rendering bei sehr vielen Domains testen.
+- ✅ `brain_from_git`: Git-Rename-Pfade normalisiert (`normalizeGitPath`, 0.10.63).
+- ✅ README Tool-Count-Drift behoben (jetzt 101, überall synchron).
+- ✅ Scan-basierte Tools gegen großen Keyspace gehärtet (`scanKeys`, 0.10.63).
+- 🔲 `team_expertise_map`: Tabellen-Rendering bei *sehr* vielen Domains noch
+  nicht mit großem Datensatz lasttestbar (MockRedis deckt Funktionalität ab).
 
 ---
 
@@ -111,9 +122,12 @@
 
 | Metrik | Ziel | Heute |
 |---|---|---|
-| **Time-to-first-recall** | <2 min | nicht gemessen 🔲 |
-| **Recall-Lift** (vs. BM25) | messbar >0, dann skalieren | +22.2 % P@1 ✅ (intern) |
-| **Team-Knowledge-Reuse** | Lesson von A wird von B recallt | trackbar, noch nicht dashboard'd 🔲 |
+| **Time-to-first-recall** | <2 min | ✅ gemessen via `brain_metrics` (born_at → first_recall_at) |
+| **Recall-Lift** (vs. BM25) | messbar >0, dann skalieren | ✅ +22.2 % P@1 (intern), in `brain_metrics` |
+| **Team-Knowledge-Reuse** | Lesson von A wird von B recallt | ✅ getrackt + inline + in `brain_metrics`; externes Dashboard 🔲 |
+
+> Alle drei sind jetzt in **einem Tool** sichtbar: `brain_metrics(instance_id)`.
+> Offen bleibt nur das *externe* Dashboard (server-side) und der *externe* Bench-Beweis (W1).
 
 ---
 

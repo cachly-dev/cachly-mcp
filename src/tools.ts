@@ -617,6 +617,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the cache instance' },
         query: { type: 'string', description: 'Natural language query to find relevant cached context' },
         threshold: { type: 'number', description: 'Similarity threshold 0-1 (default: 0.78)' },
+        author: { type: 'string', description: 'Handle of the person doing the recall (optional). Enables team-knowledge-reuse tracking: when you recall a lesson written by a teammate, cachly counts it as cross-author reuse — the value only a shared brain delivers.' },
       },
       required: ['instance_id', 'query'],
     },
@@ -889,6 +890,22 @@ const TOOLS = [
       properties: {
         instance_id: { type: 'string', description: 'UUID of the cache instance' },
         repo_path:   { type: 'string', description: 'Path to the git repository (default: current directory)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'brain_metrics',
+    description:
+      'Report the three decisive Brain metrics: (1) time-to-first-recall (onboarding friction), ' +
+      '(2) recall-lift vs. raw BM25 (the moat proof, from Cachly-Bench), and ' +
+      '(3) team-knowledge-reuse — what % of proven recalls used a teammate\'s lesson. ' +
+      'Use to track whether the Brain is delivering its core value. ' +
+      'Pass author="handle" to smart_recall so cross-author reuse can be measured.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
       },
       required: ['instance_id'],
     },

@@ -33,9 +33,17 @@ class MockRedis {
     return this.store.get(key) ?? null;
   }
 
-  async set(key: string, value: string): Promise<'OK'> {
+  async set(key: string, value: string, ...opts: unknown[]): Promise<'OK' | null> {
+    // Honor a trailing 'NX' flag so first-wins semantics (born_at, first_recall_at) work.
+    if (opts.includes('NX') && this.store.has(key)) return null;
     this.store.set(key, value);
     return 'OK';
+  }
+
+  async incr(key: string): Promise<number> {
+    const next = parseInt(this.store.get(key) ?? '0', 10) + 1;
+    this.store.set(key, String(next));
+    return next;
   }
 
   async rpush(key: string, ...values: string[]): Promise<number> {
@@ -1387,5 +1395,78 @@ describe('Phase 3 stability: input guards', () => {
   it('brain_file_map handles non-array file_paths gracefully', async () => {
     const out = await handleBrainTool('brain_file_map', { instance_id: iid, file_paths: 'not-an-array' as unknown as string[] }, getConn, noopApiFetch);
     expect(out).toContain('Pass at least one file path');
+  });
+});
+
+describe('Phase 3C: brain_metrics — the three decisive metrics', () => {
+  let redis: MockRedis;
+  const iid = 'i1';
+  const getConn = async () => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('reports "not enough data" before any learning', async () => {
+    const out = await handleBrainTool('brain_metrics', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('Brain Metrics');
+    expect(out).toContain('Not enough data');
+  });
+
+  it('always shows the published recall-lift moat number', async () => {
+    const out = await handleBrainTool('brain_metrics', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('+22.2 % Precision@1');
+  });
+
+  it('records born_at on first learn (first-wins NX semantics)', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:a', outcome: 'success', what_worked: 'x', author: 'alice',
+    }, getConn, noopApiFetch);
+    const born1 = await redis.get(`cachly:stats:born_at:${iid}`);
+    expect(born1).not.toBeNull();
+    // Second learn must NOT overwrite born_at
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:b', outcome: 'success', what_worked: 'y', author: 'bob',
+    }, getConn, noopApiFetch);
+    const born2 = await redis.get(`cachly:stats:born_at:${iid}`);
+    expect(born2).toBe(born1);
+  });
+
+  it('tracks cross-author reuse when one person recalls another\'s lesson', async () => {
+    // Alice stores a proven lesson, recalled once so it counts as "proven"
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:race', outcome: 'success',
+      what_worked: 'add mutex around xyzzy counter', author: 'alice',
+    }, getConn, noopApiFetch);
+    // Bob recalls it (twice → first recall marks proven, second counts reuse on a proven lesson)
+    await handleBrainTool('smart_recall', { instance_id: iid, query: 'xyzzy counter mutex', author: 'bob' }, getConn, noopApiFetch);
+    await handleBrainTool('smart_recall', { instance_id: iid, query: 'xyzzy counter mutex', author: 'bob' }, getConn, noopApiFetch);
+
+    const cross = await redis.get(`cachly:stats:cross_author_recalls:${iid}`);
+    expect(Number(cross)).toBeGreaterThanOrEqual(1);
+
+    const out = await handleBrainTool('brain_metrics', { instance_id: iid }, getConn, noopApiFetch);
+    expect(out).toContain('Team-knowledge-reuse');
+    expect(out).toContain('distinct reuse relationship');
+  });
+
+  it('does not count self-recall as cross-author reuse', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:solo', outcome: 'success',
+      what_worked: 'fixed the wibble myself', author: 'alice',
+    }, getConn, noopApiFetch);
+    await handleBrainTool('smart_recall', { instance_id: iid, query: 'wibble', author: 'alice' }, getConn, noopApiFetch);
+    await handleBrainTool('smart_recall', { instance_id: iid, query: 'wibble', author: 'alice' }, getConn, noopApiFetch);
+    const cross = await redis.get(`cachly:stats:cross_author_recalls:${iid}`);
+    expect(Number(cross ?? 0)).toBe(0);
+  });
+
+  it('surfaces the team-reuse banner inline in smart_recall', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: iid, topic: 'fix:plimsoll', outcome: 'success',
+      what_worked: 'adjust the plimsoll threshold', author: 'carol',
+    }, getConn, noopApiFetch);
+    // First recall by dave marks it proven; second recall shows the reuse banner
+    await handleBrainTool('smart_recall', { instance_id: iid, query: 'plimsoll threshold', author: 'dave' }, getConn, noopApiFetch);
+    const out = await handleBrainTool('smart_recall', { instance_id: iid, query: 'plimsoll threshold', author: 'dave' }, getConn, noopApiFetch);
+    expect(out).toContain('Team knowledge reuse');
   });
 });
