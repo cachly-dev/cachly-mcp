@@ -7,6 +7,25 @@
 
 ---
 
+## [0.10.71] – 2026-05-29
+
+### Self-healing auth — no more silent "0 recalls because the token quietly died"
+
+- **The silent-failure mode is closed.** Previously a token that expired (or was about
+  to) could leave the brain quietly returning nothing — the user only noticed when
+  recalls came back empty. Auth is now diagnosed up front on every API call.
+- **Automatic refresh:** a near-expiry token (within 10 min) is exchanged for a fresh
+  **long-lived API key while it's still valid** — zero user interaction, persisted to
+  `~/.claude/mcp.json` so restarts keep it.
+- **Retry-once on 401:** a server-rejected call self-heals and retries before surfacing
+  an error, so a recoverable credential never degrades into "0 recalls".
+- **Loud when it can't heal:** if the credential is truly dead/missing, `session_start`
+  prepends a `⚠️ Brain auth degraded` banner and `get_api_status` shows a
+  `🛡️ Self-healing` line with the exact one-step fix.
+- New pure, fully-tested core in `auth.ts`: `diagnoseAuth`, `planAuthHeal`,
+  `isLongLivedApiKey`. Also synced the long-drifted `CURRENT_VERSION` constant.
+- +12 tests → 451 total. 0 lint warnings; clean tsc build.
+
 ## [0.10.70] – 2026-05-29
 
 ### Service/System nodes in the knowledge graph (Phase 3) — 102 tools

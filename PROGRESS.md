@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.70 · 102 MCP-Tools · 439 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.71 · 102 MCP-Tools · 451 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.70` (npm `latest`) |
+| Version | `0.10.71` (npm `latest`) |
 | MCP-Tools | **102** |
-| Tests | **439** passing, 8 Suites |
+| Tests | **451** passing, 8 Suites |
 | Lint | **0 errors, 0 warnings** |
 | Build | sauber (`tsc`, Entry `dist/src/index.js`) |
 | Bench | Precision@1 **+22.2 %**, MRR **+10.9 %**, nDCG@5 **+8.1 %** vs. BM25 |
@@ -111,7 +111,10 @@
   Embedding-Provider-fetches (8s), Semantic-Search + alle Vektor-fetches in
   `cache.ts`/`context.ts`/`brain.ts`/`tco.ts` (8s). Tool blockiert den Agent-Call
   nie mehr durch hängende Netzwerk-Calls; Embedding degradiert zu keyword-only.
-- 🔲 Self-Healing-Auth (kein "0 Recalls weil RAM-only")
+- ✅ **Self-Healing-Auth (0.10.71)** — `diagnoseAuth` + `planAuthHeal` (rein, getestet); near-expiry-Token
+  werden automatisch in einen langlebigen API-Key getauscht (solange noch gültig); ein abgelehnter
+  401-Call self-healt einmal + retried; bei totem Credential sagen `session_start` + `get_api_status`
+  klar warum + wie zu fixen. Kein stilles "0 Recalls" mehr.
 - ✅ Time-to-first-recall **messen** (0.10.64); auf <2 min *drücken* bleibt Onboarding-Arbeit 🔲
 
 ### Enterprise / Reichweite (Phase-3/4)

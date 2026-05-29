@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { jwtExpiryMs, checkJwt, handleApiError } from './auth.js';
+import { jwtExpiryMs, checkJwt, handleApiError, diagnoseAuth, planAuthHeal } from './auth.js';
 import { handleTcoTool } from './handlers/tco.js';
 import { notify } from './notifier.js';
 import { readFile } from 'node:fs/promises';
@@ -73,7 +73,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.68';
+const CURRENT_VERSION = '0.10.71';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -112,6 +112,101 @@ async function resolveDefaultInstanceId(): Promise<string> {
     }
   } catch { /* transient error — will retry after cooldown */ }
   return '';
+}
+
+// ── Self-Healing Auth ─────────────────────────────────────────────────────────
+// Prevents the silent "0 recalls because the token quietly died" failure mode.
+// When the credential is near expiry we mint a fresh long-lived API key *while the
+// current one is still valid* (no user interaction). When it is already dead we
+// surface a single, actionable instruction instead of degrading silently.
+
+// Cooldown so a burst of tool calls can't trigger repeated mint attempts.
+let _authHealAttemptedAt = 0;
+const AUTH_HEAL_COOLDOWN_MS = 60_000;
+// Surfaced in session_start / get_api_status so the user is never left guessing.
+let _authDegradedNotice = '';
+
+/** Persist a (possibly refreshed) API key to ~/.claude/mcp.json so restarts keep it. */
+async function persistApiKeyToConfig(apiKey: string): Promise<void> {
+  try {
+    const { writeFile, mkdir, readFile } = await import('node:fs/promises');
+    const { existsSync } = await import('node:fs');
+    const { resolve, dirname } = await import('node:path');
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+    if (!home) return;
+    const configPath = resolve(home, '.claude', 'mcp.json');
+    let cfg: { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> } = {};
+    if (existsSync(configPath)) {
+      try { cfg = JSON.parse(await readFile(configPath, 'utf-8')) as typeof cfg; } catch { /* corrupt — start fresh */ }
+    }
+    cfg.mcpServers ??= {};
+    const existing = cfg.mcpServers['cachly'];
+    if (existing) {
+      existing.env ??= {};
+      existing.env['CACHLY_JWT'] = apiKey;
+    } else {
+      cfg.mcpServers['cachly'] = {
+        command: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'],
+        env: { CACHLY_JWT: apiKey },
+      };
+    }
+    await mkdir(dirname(configPath), { recursive: true });
+    await writeFile(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+  } catch { /* non-critical — never break a tool call on a filesystem error */ }
+}
+
+/**
+ * Exchange the current (still-valid) token for a fresh long-lived API key.
+ * Returns true on success. Used by self-healing when a token is near expiry.
+ */
+async function refreshApiKey(): Promise<boolean> {
+  try {
+    const keyRes = await fetch(`${API_URL}/api/v1/api-keys`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${JWT}` },
+      body: JSON.stringify({ name: 'cachly-mcp-selfheal', scope: 'read_write' }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!keyRes.ok) return false;
+    const body = await keyRes.json() as { key?: string };
+    if (!body.key) return false;
+    JWT = body.key;
+    setEmbedJwt(body.key);
+    void persistApiKeyToConfig(body.key);
+    sendFunnelEvent('auth_self_healed', { reason: 'near_expiry_refresh' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Run a self-healing pass on the current credential. Returns true if the
+ * credential is usable afterwards. Cheap to call (diagnosis is local); only does
+ * network work when a refresh is actually warranted, and not more than once per
+ * cooldown window.
+ */
+async function selfHealAuth(): Promise<boolean> {
+  const d = diagnoseAuth(JWT);
+  const action = planAuthHeal(d);
+
+  if (action === 'none') { _authDegradedNotice = ''; return true; }
+
+  if (action === 'refresh') {
+    const now = Date.now();
+    if (now - _authHealAttemptedAt >= AUTH_HEAL_COOLDOWN_MS) {
+      _authHealAttemptedAt = now;
+      const ok = await refreshApiKey();
+      if (ok) { _authDegradedNotice = ''; return true; }
+    }
+    // Refresh failed/cooled down but token is still technically usable.
+    _authDegradedNotice = d.message;
+    return d.usable;
+  }
+
+  // action === 'reauth' — credential is dead/missing; can't heal without the user.
+  _authDegradedNotice = d.message;
+  return false;
 }
 
 // ── Zero-Credential Device Flow (for Smithery & zero-config installs) ─────────
@@ -439,7 +534,14 @@ async function getConnection(instance_id: string): Promise<Redis> {
 
 // ── API helper ────────────────────────────────────────────────────────────────
 
-async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+async function apiFetch<T>(path: string, options: RequestInit = {}, _isRetry = false): Promise<T> {
+  // Self-healing pass: proactively refresh a near-expiry token into a long-lived
+  // key *before* it can fail. On the first call only (the heal is internally
+  // cooldown-guarded, so this is cheap on the hot path).
+  if (!_isRetry) {
+    const action = planAuthHeal(diagnoseAuth(JWT));
+    if (action !== 'none') await selfHealAuth();
+  }
   checkJwt(JWT);
   const timeoutMs = Number(process.env.CACHLY_API_TIMEOUT_MS ?? 15_000);
   const res = await fetch(`${API_URL}${path}`, {
@@ -452,6 +554,14 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     },
   });
   if (!res.ok) {
+    // A 401 means the token was rejected server-side (e.g. revoked or expired
+    // between diagnosis and the call). Try to self-heal once, then retry — so a
+    // recoverable credential never silently turns into "0 recalls".
+    if (res.status === 401 && !_isRetry) {
+      _authHealAttemptedAt = 0; // force the heal to run despite the cooldown
+      const healed = await selfHealAuth();
+      if (healed) return apiFetch<T>(path, options, true);
+    }
     const body = await res.json().catch(() => ({ error: res.statusText }));
     const detail = (body as { error?: string }).error ?? res.statusText;
     handleApiError(res.status, detail);
@@ -658,6 +768,11 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       if (srText.length > 50 && !srText.includes('No lessons found') && !srText.includes('no lessons') && !srText.includes('No matches found')) {
         sendFunnelEvent('recall_best_solution', telemetryExtra);
       }
+      // Self-healing: if the credential is degraded, the briefing may be thin or
+      // empty ("0 recalls"). Tell the user why, up front, instead of silently.
+      if (_authDegradedNotice && typeof brainResult === 'string') {
+        return `> ⚠️ **Brain auth degraded** — ${_authDegradedNotice.split('\n')[0]}\n\n${brainResult}`;
+      }
     }
     return brainResult;
   }
@@ -811,11 +926,22 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         instanceInfo = `\n\n🧠 **Brain Instances:** could not fetch — ${(e as Error).message}`;
       }
 
+      // Self-healing diagnosis: a status check is a natural moment to refresh a
+      // near-expiry token, and to tell the user plainly if the credential is dying.
+      await selfHealAuth();
+      const diag = diagnoseAuth(JWT);
+      const selfHealLine =
+        diag.state === 'long_lived' ? `🛡️ Self-healing: ✅ long-lived API key (won't expire silently)`
+        : diag.state === 'healthy' ? `🛡️ Self-healing: ✅ token valid${diag.expiresInMs ? ` (${Math.round(diag.expiresInMs / 3_600_000)}h left)` : ''}`
+        : diag.state === 'near_expiry' ? `🛡️ Self-healing: ♻️ token near expiry — auto-refresh attempted`
+        : `🛡️ Self-healing: ⚠️ ${diag.message.split('\n')[0]}`;
+
       return [
         `📡 **cachly API Status**`,
         ``,
         `  🌐 API:    ${API_URL}`,
         `  💓 Health: ${healthStatus}`,
+        `  ${selfHealLine}`,
         ``,
         `🔑 **Auth:**`,
         authInfo,

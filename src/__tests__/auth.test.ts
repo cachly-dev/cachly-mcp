@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
-import { jwtExpiryMs, checkJwt, handleApiError } from '../auth.js';
+import { jwtExpiryMs, checkJwt, handleApiError,
+         diagnoseAuth, planAuthHeal, isLongLivedApiKey, NEAR_EXPIRY_MS } from '../auth.js';
 
 function makeJwt(payload: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
@@ -75,7 +76,7 @@ describe('jwtExpiryMs', () => {
 describe('checkJwt', () => {
   it('throws InvalidRequest when jwt is empty', () => {
     expect(() => checkJwt('')).toThrowError(
-      expect.objectContaining({ code: ErrorCode.InvalidRequest, message: expect.stringContaining('CACHLY_JWT env var not set') }),
+      expect.objectContaining({ code: ErrorCode.InvalidRequest, message: expect.stringContaining('No CACHLY_JWT set') }),
     );
   });
 
@@ -143,5 +144,85 @@ describe('handleApiError', () => {
     expect(() => handleApiError(403, 'Forbidden')).toThrowError(
       expect.objectContaining({ message: expect.stringContaining('access to this resource') }),
     );
+  });
+});
+
+describe('isLongLivedApiKey', () => {
+  it('recognizes cky_ prefixed keys', () => {
+    expect(isLongLivedApiKey('cky_live_abc123')).toBe(true);
+    expect(isLongLivedApiKey('cky_test_xyz')).toBe(true);
+  });
+  it('rejects raw JWTs and empty strings', () => {
+    expect(isLongLivedApiKey('')).toBe(false);
+    expect(isLongLivedApiKey(makeJwt({ exp: nowSec() + 3600 }))).toBe(false);
+  });
+});
+
+describe('diagnoseAuth', () => {
+  it('reports no_jwt (unusable) for an empty token', () => {
+    const d = diagnoseAuth('');
+    expect(d.state).toBe('no_jwt');
+    expect(d.usable).toBe(false);
+    expect(d.message).toContain('No CACHLY_JWT');
+  });
+
+  it('reports long_lived (usable) for a cky_ key with no exp', () => {
+    const d = diagnoseAuth('cky_live_deadbeef');
+    expect(d.state).toBe('long_lived');
+    expect(d.usable).toBe(true);
+    expect(d.expiresInMs).toBeNull();
+  });
+
+  it('reports healthy for a JWT with no exp claim', () => {
+    const d = diagnoseAuth(makeJwt({ sub: 'u' }));
+    expect(d.state).toBe('healthy');
+    expect(d.usable).toBe(true);
+  });
+
+  it('reports expired (unusable) for a past exp', () => {
+    const exp = nowSec() - 60;
+    const d = diagnoseAuth(makeJwt({ exp }));
+    expect(d.state).toBe('expired');
+    expect(d.usable).toBe(false);
+    expect(d.expiresInMs).toBeLessThanOrEqual(0);
+    expect(d.message).toContain('expired at');
+  });
+
+  it('reports near_expiry (still usable) within the threshold', () => {
+    const exp = Math.floor((Date.now() + NEAR_EXPIRY_MS - 60_000) / 1000);
+    const d = diagnoseAuth(makeJwt({ exp }));
+    expect(d.state).toBe('near_expiry');
+    expect(d.usable).toBe(true);
+    expect(d.message).toContain('refresh');
+  });
+
+  it('reports healthy for a token well beyond the near-expiry threshold', () => {
+    const exp = nowSec() + 24 * 3600;
+    const d = diagnoseAuth(makeJwt({ exp }));
+    expect(d.state).toBe('healthy');
+    expect(d.usable).toBe(true);
+    expect(d.expiresInMs).toBeGreaterThan(NEAR_EXPIRY_MS);
+  });
+
+  it('is deterministic with an injected now', () => {
+    const now = 1_000_000_000_000;
+    const exp = Math.floor((now + 5 * 60_000) / 1000); // 5 min after the injected now
+    const d = diagnoseAuth(makeJwt({ exp }), now);
+    expect(d.state).toBe('near_expiry');
+  });
+});
+
+describe('planAuthHeal', () => {
+  it('plans reauth for missing or expired credentials', () => {
+    expect(planAuthHeal(diagnoseAuth(''))).toBe('reauth');
+    expect(planAuthHeal(diagnoseAuth(makeJwt({ exp: nowSec() - 10 })))).toBe('reauth');
+  });
+  it('plans refresh for a near-expiry token', () => {
+    const exp = Math.floor((Date.now() + NEAR_EXPIRY_MS - 60_000) / 1000);
+    expect(planAuthHeal(diagnoseAuth(makeJwt({ exp })))).toBe('refresh');
+  });
+  it('plans no action for healthy / long-lived credentials', () => {
+    expect(planAuthHeal(diagnoseAuth(makeJwt({ exp: nowSec() + 86400 })))).toBe('none');
+    expect(planAuthHeal(diagnoseAuth('cky_live_abc'))).toBe('none');
   });
 });

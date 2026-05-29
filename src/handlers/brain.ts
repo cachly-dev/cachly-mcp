@@ -13,8 +13,14 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.70';
+const MCP_VERSION = '0.10.71';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.71': [
+    `🛡️ **Self-healing auth** — no more silent "0 recalls because the token quietly died"`,
+    `  ♻️ Near-expiry tokens auto-refresh into a long-lived key while still valid (zero interaction)`,
+    `  🔁 A rejected (401) call self-heals once and retries before surfacing an error`,
+    `  📣 If the credential is truly dead, session_start + get_api_status say so plainly + how to fix`,
+  ],
   '0.10.70': [
     `🛰️ **Service/System nodes in the graph (Phase 3)** — the brain now models running systems`,
     `  🆕 \`brain_service_map(service="prometheus")\` — who owns it + every failure/fix known`,
