@@ -30,6 +30,11 @@ export function setEmbedJwt(jwt: string): void {
   embedConfig.jwt = jwt;
 }
 
+// Hard timeout for any embedding-provider HTTP call. Embedding is an OPTIONAL boost
+// for semantic recall — a slow/unreachable provider must never hang the agent turn.
+// Callers already treat embedding failures as non-fatal (keyword search still works).
+const EMBED_TIMEOUT_MS = Number(process.env.CACHLY_EMBED_TIMEOUT_MS ?? 8_000);
+
 // ── Provider auto-detection ───────────────────────────────────────────────────
 
 function detectEmbedProvider(): string {
@@ -87,6 +92,7 @@ export async function computeEmbedding(text: string): Promise<number[]> {
           'Authorization': `Bearer ${embedConfig.jwt}`,
         },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
       });
       if (!res.ok) {
         const errBody = await res.text();
@@ -104,6 +110,7 @@ export async function computeEmbedding(text: string): Promise<number[]> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: JSON.stringify({ model, input: [text] }),
+        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`Mistral embedding error: ${res.statusText}`);
       const json = (await res.json()) as { data: { embedding: number[] }[] };
@@ -119,6 +126,7 @@ export async function computeEmbedding(text: string): Promise<number[]> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: JSON.stringify({ model, texts: [text], input_type: 'search_query', embedding_types: ['float'] }),
+        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`Cohere embedding error: ${res.statusText}`);
       const json = (await res.json()) as { embeddings: { float: number[][] } };
@@ -132,6 +140,7 @@ export async function computeEmbedding(text: string): Promise<number[]> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, prompt: text }),
+        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`Ollama embedding error: ${res.statusText}`);
       const json = (await res.json()) as { embedding: number[] };
@@ -148,6 +157,7 @@ export async function computeEmbedding(text: string): Promise<number[]> {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ model: `models/${model}`, content: { parts: [{ text }] } }),
+          signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
         },
       );
       if (!res.ok) throw new Error(`Gemini embedding error: ${res.statusText}`);
@@ -169,6 +179,7 @@ export async function computeEmbedding(text: string): Promise<number[]> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: JSON.stringify({ model, input: text }),
+        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
       });
       if (!res.ok) throw new Error(`OpenAI embedding error: ${res.statusText}`);
       const json = (await res.json()) as { data: { embedding: number[] }[] };

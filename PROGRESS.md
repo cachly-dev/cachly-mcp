@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.66 · 101 MCP-Tools · 425 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.67 · 101 MCP-Tools · 425 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,7 +12,7 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.66` (npm `latest`) |
+| Version | `0.10.67` (npm `latest`) |
 | MCP-Tools | **101** |
 | Tests | **425** passing, 8 Suites |
 | Lint | **0 errors, 0 warnings** |
@@ -68,6 +68,7 @@
 | Git-Rename-Pfad-Normalisierung | ✅ 0.10.63 (`normalizeGitPath`) |
 | `withTimeout`-Utility (graceful degradation) | ✅ 0.10.63 |
 | **npm-Paket-Hygiene** | ✅ 0.10.66 — `files`-Whitelist + tsconfig-Exclude; keine Test-Mocks/Bench/fremde App mehr im Tarball (336→71 Dateien) |
+| **Netzwerk-Timeouts überall** | ✅ 0.10.67 — alle fetches im Agent-Hotpath haben `AbortSignal.timeout` (Embeddings 8s, Vektor 8s, apiFetch 15s) |
 
 ### Die drei Metriken — instrumentiert (0.10.64)
 
@@ -102,8 +103,10 @@
 ### Onboarding / Null-Reibung (Phase-1-Eintrittskarte)
 
 - 🔲 `npx @cachly-dev/init` Ein-Befehl-Setup <60 s, idempotent
-- 🟡 Circuit-Breaker / Timeouts: Scan-Tools abgesichert (`scanKeys`/`withTimeout`,
-  0.10.63); verbleibende Netzwerk-Calls (apiFetch) noch nicht überall timeout-gewrappt
+- ✅ Timeouts überall im Agent-Hotpath (0.10.67): `apiFetch` (15s), alle 6
+  Embedding-Provider-fetches (8s), Semantic-Search + alle Vektor-fetches in
+  `cache.ts`/`context.ts`/`brain.ts`/`tco.ts` (8s). Tool blockiert den Agent-Call
+  nie mehr durch hängende Netzwerk-Calls; Embedding degradiert zu keyword-only.
 - 🔲 Self-Healing-Auth (kein "0 Recalls weil RAM-only")
 - ✅ Time-to-first-recall **messen** (0.10.64); auf <2 min *drücken* bleibt Onboarding-Arbeit 🔲
 

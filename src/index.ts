@@ -73,7 +73,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.66';
+const CURRENT_VERSION = '0.10.67';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -724,7 +724,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       // Check health
       let healthStatus = 'unknown';
       try {
-        const healthRes = await fetch(`${API_URL}/health`);
+        const healthRes = await fetch(`${API_URL}/health`, { signal: AbortSignal.timeout(8000) });
         if (healthRes.ok) {
           const body = await healthRes.json() as { status?: string; db?: string };
           healthStatus = `${body.status ?? 'ok'} (db: ${body.db ?? '?'})`;

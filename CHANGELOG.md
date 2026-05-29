@@ -7,6 +7,20 @@
 
 ---
 
+## [0.10.67] – 2026-05-29
+
+### Network timeouts everywhere in the agent hot path
+
+- **Every `fetch` an agent can trigger now has a hard timeout.** Previously the 6
+  embedding-provider calls (OpenAI/Gemini/Mistral/Cohere/Ollama/cachly) and several
+  vector-store calls had **no** `AbortSignal` — a slow or unreachable provider could
+  hang the entire agent turn.
+- Added `AbortSignal.timeout`: embeddings 8 s (`CACHLY_EMBED_TIMEOUT_MS`), semantic
+  search + all `cache.ts`/`context.ts`/`brain.ts`/`tco.ts` vector calls 8 s,
+  `apiFetch` already had 15 s. The CLI `health` check is now bounded too.
+- A memory tool must **never** block the agent: embedding failures already degrade
+  to keyword-only recall; now they also fail *fast*.
+
 ## [0.10.66] – 2026-05-29
 
 ### Packaging hygiene — ship only the server, no mocks, no foreign code

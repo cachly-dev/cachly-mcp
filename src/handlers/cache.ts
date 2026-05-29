@@ -220,6 +220,7 @@ export async function handleCacheTool(
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(searchPayload),
+        signal: AbortSignal.timeout(8000),
       });
 
       if (!searchRes.ok) {
@@ -329,6 +330,7 @@ export async function handleCacheTool(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ embedding, namespace: ns, threshold: 0.98 }),
+            signal: AbortSignal.timeout(8000),
           }).catch(() => null);
           if (checkRes?.ok) {
             const results = (await checkRes.json()) as SemanticSearchResponse[];
@@ -361,6 +363,7 @@ export async function handleCacheTool(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
+            signal: AbortSignal.timeout(8000),
           }).catch(() => undefined);
         } else {
           // Legacy SCAN path – write emb key to Valkey
@@ -516,6 +519,7 @@ export async function handleCacheTool(
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ id, prompt, namespace: nsArg, embedding, expires_at: expiresAt }),
+              signal: AbortSignal.timeout(8000),
             });
             await redis.set(`${nsArg}:val:${id}`, relPath, 'EX', ttl);
             semanticIndexed++;

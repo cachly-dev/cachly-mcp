@@ -270,6 +270,7 @@ export async function handleTcoTool(
           if (res.status === 409 || txt.includes('already')) {
             const listRes = await fetch(`${CACHLY_API}/api/v1/instances`, {
               headers: { Authorization: `Bearer ${jwt}` },
+              signal: AbortSignal.timeout(8000),
             });
             if (listRes.ok) {
               const list = await listRes.json() as Array<Record<string, unknown>>;

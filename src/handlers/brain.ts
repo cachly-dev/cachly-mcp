@@ -12,7 +12,7 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.66';
+const MCP_VERSION = '0.10.67';
 const WHATS_NEW: Record<string, string[]> = {
   '0.10.64': [
     `📈 **The three decisive metrics, now measurable**`,
@@ -682,6 +682,7 @@ export async function handleBrainTool(
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ embedding, namespace: 'cachly:ctx', threshold, top_k: 5 }),
+            signal: AbortSignal.timeout(8000),
           });
           if (searchRes.ok) {
             const results = (await searchRes.json()) as SemanticSearchResponse[];
