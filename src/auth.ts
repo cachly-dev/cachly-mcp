@@ -122,6 +122,54 @@ export function checkJwt(jwt: string): void {
   }
 }
 
+// ── M2M / headless auth (OAuth2 client_credentials) ──────────────────────────
+// For machine-to-machine callers — CI runners, agent orchestrators, AI-to-AI
+// pipelines — there is no human to complete a device flow. When CACHLY_CLIENT_ID
+// and CACHLY_CLIENT_SECRET are present we run the standard OAuth2
+// client_credentials grant against Keycloak and use the resulting access token
+// exactly like a CACHLY_JWT. Fully non-interactive.
+
+export const DEFAULT_AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
+
+export interface ClientCredentials {
+  clientId: string;
+  clientSecret: string;
+  scope?: string;
+  /** Override the Keycloak realm token base (self-host). */
+  authBase?: string;
+}
+
+/** Read M2M client credentials from the environment, if both are present. */
+export function readClientCredentialsFromEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): ClientCredentials | null {
+  const clientId = env.CACHLY_CLIENT_ID;
+  const clientSecret = env.CACHLY_CLIENT_SECRET;
+  if (!clientId || !clientSecret) return null;
+  return {
+    clientId,
+    clientSecret,
+    scope: env.CACHLY_CLIENT_SCOPE || 'openid',
+    authBase: env.CACHLY_AUTH_URL || DEFAULT_AUTH_BASE,
+  };
+}
+
+/** Build the application/x-www-form-urlencoded body for a client_credentials grant. */
+export function buildClientCredentialsBody(c: ClientCredentials): string {
+  const params = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: c.clientId,
+    client_secret: c.clientSecret,
+  });
+  if (c.scope) params.set('scope', c.scope);
+  return params.toString();
+}
+
+/** Token endpoint URL for a given credentials/realm config. */
+export function clientCredentialsTokenUrl(c: ClientCredentials): string {
+  return `${c.authBase ?? DEFAULT_AUTH_BASE}/token`;
+}
+
 export function handleApiError(status: number, detail: string): never {
   if (status === 401) {
     throw new McpError(

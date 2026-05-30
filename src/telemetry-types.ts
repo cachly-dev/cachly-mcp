@@ -18,6 +18,8 @@ export type FunnelEventName =
   | 'device_flow_completed'
   | 'device_flow_failed'
   | 'auth_self_healed'
+  | 'm2m_auth_completed'
+  | 'm2m_auth_failed'
   | 'setup_started'
   | 'setup_auth_started'
   | 'setup_auth_completed'

@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import { ErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { jwtExpiryMs, checkJwt, handleApiError,
-         diagnoseAuth, planAuthHeal, isLongLivedApiKey, NEAR_EXPIRY_MS } from '../auth.js';
+         diagnoseAuth, planAuthHeal, isLongLivedApiKey, NEAR_EXPIRY_MS,
+         readClientCredentialsFromEnv, buildClientCredentialsBody,
+         clientCredentialsTokenUrl, DEFAULT_AUTH_BASE } from '../auth.js';
 
 function makeJwt(payload: Record<string, unknown>): string {
   const header = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url');
@@ -224,5 +226,46 @@ describe('planAuthHeal', () => {
   it('plans no action for healthy / long-lived credentials', () => {
     expect(planAuthHeal(diagnoseAuth(makeJwt({ exp: nowSec() + 86400 })))).toBe('none');
     expect(planAuthHeal(diagnoseAuth('cky_live_abc'))).toBe('none');
+  });
+});
+
+describe('M2M client_credentials auth', () => {
+  it('returns null when either credential is missing', () => {
+    expect(readClientCredentialsFromEnv({})).toBeNull();
+    expect(readClientCredentialsFromEnv({ CACHLY_CLIENT_ID: 'x' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(readClientCredentialsFromEnv({ CACHLY_CLIENT_SECRET: 'y' } as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  it('reads both credentials with sensible defaults', () => {
+    const c = readClientCredentialsFromEnv({ CACHLY_CLIENT_ID: 'svc', CACHLY_CLIENT_SECRET: 'shh' } as NodeJS.ProcessEnv);
+    expect(c).toEqual({ clientId: 'svc', clientSecret: 'shh', scope: 'openid', authBase: DEFAULT_AUTH_BASE });
+  });
+
+  it('honors scope and self-host auth base overrides', () => {
+    const c = readClientCredentialsFromEnv({
+      CACHLY_CLIENT_ID: 'svc', CACHLY_CLIENT_SECRET: 'shh',
+      CACHLY_CLIENT_SCOPE: 'openid profile', CACHLY_AUTH_URL: 'https://kc.local/realms/r/protocol/openid-connect',
+    } as NodeJS.ProcessEnv);
+    expect(c?.scope).toBe('openid profile');
+    expect(c?.authBase).toBe('https://kc.local/realms/r/protocol/openid-connect');
+  });
+
+  it('builds a valid client_credentials form body', () => {
+    const body = buildClientCredentialsBody({ clientId: 'svc', clientSecret: 's/h h', scope: 'openid' });
+    const p = new URLSearchParams(body);
+    expect(p.get('grant_type')).toBe('client_credentials');
+    expect(p.get('client_id')).toBe('svc');
+    expect(p.get('client_secret')).toBe('s/h h'); // properly url-encoded round-trip
+    expect(p.get('scope')).toBe('openid');
+  });
+
+  it('omits scope from the body when not provided', () => {
+    const body = buildClientCredentialsBody({ clientId: 'svc', clientSecret: 'shh' });
+    expect(new URLSearchParams(body).has('scope')).toBe(false);
+  });
+
+  it('derives the token endpoint from the realm base', () => {
+    expect(clientCredentialsTokenUrl({ clientId: 'a', clientSecret: 'b' })).toBe(`${DEFAULT_AUTH_BASE}/token`);
+    expect(clientCredentialsTokenUrl({ clientId: 'a', clientSecret: 'b', authBase: 'https://kc.local/x' })).toBe('https://kc.local/x/token');
   });
 });

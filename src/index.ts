@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { jwtExpiryMs, checkJwt, handleApiError, diagnoseAuth, planAuthHeal } from './auth.js';
+import { jwtExpiryMs, checkJwt, handleApiError, diagnoseAuth, planAuthHeal,
+         readClientCredentialsFromEnv, buildClientCredentialsBody, clientCredentialsTokenUrl } from './auth.js';
 import type { FunnelEventName, DashboardMetrics } from './telemetry-types.js';
 import { handleTcoTool } from './handlers/tco.js';
 import { notify } from './notifier.js';
@@ -75,7 +76,7 @@ import { Redis } from 'ioredis';
 let API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.83';
+const CURRENT_VERSION = '0.10.84';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -2051,6 +2052,38 @@ if (process.argv[2] === 'publish') {
   process.exit(0);
 }
 
+// ── CLI: cachly tool-specs / openapi ───────────────────────────────────────────
+// Emit the 114-tool surface in any agent framework's dialect, derived from the
+// single TOOLS source of truth. Lets OpenAI Assistants, the Anthropic Messages
+// API, LangChain, CrewAI and AutoGen wrap cachly without hand-written glue.
+//   npx @cachly-dev/mcp-server tool-specs --format=openai   > cachly.openai.json
+//   npx @cachly-dev/mcp-server openapi                      > cachly.openapi.json
+if (process.argv[2] === 'tool-specs' || process.argv[2] === 'openapi') {
+  const { renderToolSpecs } = await import('./toolspecs.js');
+  // Accept both "--format openai" and "--format=openai".
+  let format = 'openapi';
+  if (process.argv[2] !== 'openapi') {
+    const eqArg = process.argv.find(a => a.startsWith('--format='));
+    if (eqArg) {
+      format = eqArg.slice('--format='.length);
+    } else {
+      const fmtFlag = process.argv.indexOf('--format');
+      if (fmtFlag !== -1) format = process.argv[fmtFlag + 1] ?? 'openapi';
+    }
+  }
+  const valid = ['openapi', 'openai', 'anthropic', 'langchain'];
+  if (!valid.includes(format)) {
+    process.stderr.write(`\n❌ Unknown format "${format}". Use one of: ${valid.join(', ')}\n\n`);
+    process.exit(1);
+  }
+  // Exit only after stdout has fully flushed — on a pipe, write() is async and an
+  // immediate process.exit() truncates large payloads (~64KB) mid-flush.
+  process.stdout.write(
+    renderToolSpecs(TOOLS as unknown as Parameters<typeof renderToolSpecs>[0], format as 'openapi' | 'openai' | 'anthropic' | 'langchain', CURRENT_VERSION) + '\n',
+    () => process.exit(0),
+  );
+}
+
 // ── CLI: cachly badge ─────────────────────────────────────────────────────────
 // Outputs the Markdown + HTML snippet for embedding a live Brain lesson-count
 // badge in any README or website. Badge SVG served by cachly API (public, no auth).
@@ -3176,6 +3209,39 @@ if (process.argv[2] === 'learn-git') {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
+// M2M / headless auth: if no JWT but client credentials are present, run the
+// OAuth2 client_credentials grant before any credential-missing handling. This
+// makes cachly fully non-interactive for CI runners, agent orchestrators and
+// AI-to-AI pipelines — no device flow, no human, no browser.
+if (!JWT) {
+  const creds = readClientCredentialsFromEnv();
+  if (creds) {
+    try {
+      const res = await fetch(clientCredentialsTokenUrl(creds), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: buildClientCredentialsBody(creds),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) {
+        const tok = await res.json() as { access_token?: string };
+        if (tok.access_token) {
+          JWT = tok.access_token;
+          setEmbedJwt(tok.access_token);
+          sendFunnelEvent('m2m_auth_completed', { grant: 'client_credentials', client_id: creds.clientId });
+          process.stderr.write('🤖 cachly: authenticated via client_credentials (M2M, headless).\n');
+        }
+      } else {
+        process.stderr.write(`⚠️  cachly: client_credentials auth failed (${res.status}). Check CACHLY_CLIENT_ID / CACHLY_CLIENT_SECRET.\n`);
+        sendFunnelEvent('m2m_auth_failed', { status: res.status });
+      }
+    } catch (err) {
+      process.stderr.write(`⚠️  cachly: client_credentials auth error: ${(err as Error).message}\n`);
+      sendFunnelEvent('m2m_auth_failed', { reason: 'network' });
+    }
+  }
+}
+
 // Credential-missing handling at startup. The critical distinction is HOW we were
 // launched, because writing anything to stdout in stdio-MCP mode corrupts the
 // JSON-RPC stream and exiting kills the zero-credential device-flow onboarding.
@@ -3183,7 +3249,7 @@ if (process.argv[2] === 'learn-git') {
 //   • Editor as an MCP stdio server (non-TTY)  → ONE stderr hint, then KEEP RUNNING
 //     so tools/list works and the first tool call starts the browser sign-in.
 // Skip entirely for CLI subcommands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'setup', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade'];
+const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'setup', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'tool-specs', 'openapi'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
   const runningInTerminal = !process.argv[2] && process.stdout.isTTY === true && _isMain;
   if (runningInTerminal) {

@@ -14,8 +14,15 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.83';
+const MCP_VERSION = '0.10.84';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.84': [
+    `🤖 **M2M & agent-ecosystem reach — cachly for every caller, human or machine**`,
+    `  🔑 OAuth2 \`client_credentials\` grant — set CACHLY_CLIENT_ID + CACHLY_CLIENT_SECRET for fully headless auth (CI, agents, AI-to-AI)`,
+    `  🗂️ \`npx ... tool-specs --format=openai|anthropic|langchain\` — export all 114 tools in any framework's dialect`,
+    `  🌐 \`npx ... openapi\` — OpenAPI 3.1 doc (1 POST path per tool) for Assistants / codegen / Postman`,
+    `  🧪 14 new tests: client_credentials helpers, all four spec dialects, OpenAPI required-body inference`,
+  ],
   '0.10.83': [
     `🧠 **Brain Viz — 3D graph export**`,
     `  🌐 \`brain_graph(instance_id)\` — exports the Causal Knowledge Graph as a render-ready {nodes, links} payload`,
