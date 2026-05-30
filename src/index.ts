@@ -76,7 +76,7 @@ import { Redis } from 'ioredis';
 let API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.84';
+const CURRENT_VERSION = '0.10.85';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -2139,8 +2139,9 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  cachly gives it a permanent brain — pre-briefed every session.');
   console.log('');
   console.log('  \x1b[1mCommands:\x1b[0m');
-  console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest demo\x1b[0m     ← Start here (no account)');
-  console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest setup\x1b[0m    ← Wire up your AI editors');
+  console.log('  \x1b[1m\x1b[32m  npx @cachly-dev/mcp-server@latest autopilot\x1b[0m ← \x1b[1mOne command, fully ready\x1b[0m');
+  console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest demo\x1b[0m     ← Try it first (no account)');
+  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest setup\x1b[0m    ← Interactive setup (pick editors)');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest health\x1b[0m   ← Check everything works');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest digest\x1b[0m   ← Weekly Brain summary');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest share\x1b[0m    ← Share your Brain stats');
@@ -2150,7 +2151,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
-  console.log('  \x1b[90mFree forever · GDPR · German servers · 107 MCP tools\x1b[0m');
+  console.log('  \x1b[90mFree forever · GDPR · German servers · 114 MCP tools\x1b[0m');
   console.log('');
   process.exit(0);
 }
@@ -2568,7 +2569,11 @@ if (process.argv[2] === 'health') {
 // ── CLI: cachly setup (interactive — no flags required) ───────────────────────
 // Usage: npx @cachly-dev/mcp-server setup
 
-if (process.argv[2] === 'setup') {
+// `autopilot` is the one-command entrypoint: it runs the exact same wizard as
+// `setup` but fully automatic (no prompts) — auth → instance → all editor
+// configs → CLAUDE.md → git/starter bootstrap → health, in a single shot.
+const _isAutopilotCli = process.argv[2] === 'autopilot';
+if (process.argv[2] === 'setup' || _isAutopilotCli) {
   const { writeFile, mkdir, readFile } = await import('node:fs/promises');
   const { existsSync } = await import('node:fs');
   const { resolve, dirname } = await import('node:path');
@@ -2589,8 +2594,11 @@ if (process.argv[2] === 'setup') {
   // a readline question against a non-TTY stdin never resolves and hangs the
   // wizard forever. Treat that exactly like --yes so we never block.
   const stdinIsInteractive = process.stdin.isTTY === true;
-  const nonInteractive = process.argv.includes('--yes') || process.argv.includes('-y') || !stdinIsInteractive;
-  if (!stdinIsInteractive && !process.argv.includes('--yes') && !process.argv.includes('-y')) {
+  // `autopilot` is always fully automatic — it IS the one-step onboarding.
+  const nonInteractive = _isAutopilotCli || process.argv.includes('--yes') || process.argv.includes('-y') || !stdinIsInteractive;
+  if (_isAutopilotCli) {
+    console.log('🤖 Autopilot — one-command setup (auth → instance → configs → Brain), zero prompts.\n');
+  } else if (!stdinIsInteractive && !process.argv.includes('--yes') && !process.argv.includes('-y')) {
     console.log('ℹ️  Non-interactive terminal detected — running in automatic mode (no prompts).\n');
   }
 
@@ -2941,19 +2949,37 @@ if (process.argv[2] === 'setup') {
   // ── Step 5b: Bootstrap Brain from git history ─────────────────────────────
   // Pre-populates the Brain with real lessons so the first session_start shows
   // actual project knowledge instead of an empty brain.
+  JWT = token; // set global JWT so handleTool can authenticate
+  let gitLessonCount = 0;
   if (existsSync(resolve(cwd, '.git'))) {
     process.stdout.write('⏳ Bootstrapping Brain from git history (~10s)...');
     try {
-      JWT = token; // set global JWT so handleTool can authenticate
       const gitResult = await handleTool('brain_from_git', {
         instance_id: instance.id,
         repo_path: cwd,
         limit: 100,
       });
       const match = gitResult.match(/(\d+) lesson/);
+      gitLessonCount = match ? parseInt(match[1], 10) : 0;
       console.log(` ✓  ${match ? match[1] + ' lessons' : 'done'} extracted from git history`);
     } catch (e) {
       console.log(` (skipped: ${(e as Error).message.slice(0, 80)})`);
+    }
+  }
+
+  // ── Step 5c: Seed the starter corpus when git yielded nothing ─────────────
+  // Closes the empty-brain gap: a fresh repo (no .git, shallow clone, or no
+  // fix-shaped commits) would otherwise leave the Brain empty and the very first
+  // smart_recall returning nothing. Seeding 16 curated universal lessons makes
+  // the single setup command produce an immediately-useful Brain — true 1-step
+  // onboarding. Idempotent; never overwrites real lessons.
+  if (gitLessonCount === 0) {
+    process.stdout.write('🌱 Seeding 16 universal engineering lessons (first recall works instantly)...');
+    try {
+      await handleTool('brain_seed_starter', { instance_id: instance.id });
+      console.log(' ✓');
+    } catch (e) {
+      console.log(` (skipped: ${(e as Error).message.slice(0, 60)})`);
     }
   }
 
@@ -3249,7 +3275,7 @@ if (!JWT) {
 //   • Editor as an MCP stdio server (non-TTY)  → ONE stderr hint, then KEEP RUNNING
 //     so tools/list works and the first tool call starts the browser sign-in.
 // Skip entirely for CLI subcommands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'setup', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'tool-specs', 'openapi'];
+const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'tool-specs', 'openapi'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
   const runningInTerminal = !process.argv[2] && process.stdout.isTTY === true && _isMain;
   if (runningInTerminal) {

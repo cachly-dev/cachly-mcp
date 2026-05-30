@@ -14,8 +14,14 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.84';
+const MCP_VERSION = '0.10.85';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.85': [
+    `🚀 **One-command onboarding — \`npx @cachly-dev/mcp-server@latest autopilot\`**`,
+    `  ⚡ Single command does it all: auth → instance → every editor config → CLAUDE.md → Brain bootstrap → health`,
+    `  🌱 Seeds the 16-lesson starter corpus when git history is empty — your first smart_recall hits instantly`,
+    `  🤖 Fully automatic (zero prompts); \`setup\` remains for interactive, pick-your-editors onboarding`,
+  ],
   '0.10.84': [
     `🤖 **M2M & agent-ecosystem reach — cachly for every caller, human or machine**`,
     `  🔑 OAuth2 \`client_credentials\` grant — set CACHLY_CLIENT_ID + CACHLY_CLIENT_SECRET for fully headless auth (CI, agents, AI-to-AI)`,
