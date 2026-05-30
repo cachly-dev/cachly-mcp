@@ -2377,8 +2377,15 @@ if (process.argv[2] === 'setup') {
 
   sendFunnelEvent('setup_started');
 
-  // --yes / -y → non-interactive mode (skips all prompts, picks defaults)
-  const nonInteractive = process.argv.includes('--yes') || process.argv.includes('-y');
+  // --yes / -y → non-interactive mode (skips all prompts, picks defaults).
+  // Also auto-detect a non-interactive stdin (VSCode tasks, CI, piped input):
+  // a readline question against a non-TTY stdin never resolves and hangs the
+  // wizard forever. Treat that exactly like --yes so we never block.
+  const stdinIsInteractive = process.stdin.isTTY === true;
+  const nonInteractive = process.argv.includes('--yes') || process.argv.includes('-y') || !stdinIsInteractive;
+  if (!stdinIsInteractive && !process.argv.includes('--yes') && !process.argv.includes('-y')) {
+    console.log('ℹ️  Non-interactive terminal detected — running in automatic mode (no prompts).\n');
+  }
 
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q: string, defaultVal = ''): Promise<string> => {
@@ -2525,6 +2532,16 @@ if (process.argv[2] === 'setup') {
         const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
         execSync(`${openCmd} "${signupUrl}"`, { stdio: 'ignore' });
       } catch { /* can't open browser — instructions shown above */ }
+      // In a non-interactive terminal (VSCode task, CI) we cannot read a pasted
+      // key — exit with clear, actionable instructions instead of hanging.
+      if (nonInteractive) {
+        sendFunnelEvent('device_flow_failed', { reason: 'non_interactive_no_key' });
+        console.error('\n   ⚠️  This terminal is non-interactive, so the key cannot be pasted here.');
+        console.error('   Get your key at the URL above, then set it and re-run setup:\n');
+        console.error('     \x1b[1mCACHLY_JWT=cky_live_xxx npx @cachly-dev/mcp-server@latest setup\x1b[0m\n');
+        console.error('   Or add it to your editor\'s MCP config under env.CACHLY_JWT.\n');
+        rl.close(); process.exit(1);
+      }
       token = await ask('   Paste API key (cky_live_...): ');
       if (!token) { console.error('\nAPI key is required. Aborting.\n'); rl.close(); process.exit(1); }
       sendFunnelEvent('setup_auth_completed');

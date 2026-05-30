@@ -24,6 +24,11 @@ telling them where to get one — causing 100% abandonment.
 - Added `sendFunnelEvent('device_flow_failed', { reason })` with the failure reason (`timeout`, `device_flow_unavailable`, auth error code) for observability.
 - Same proxy-first fix applied to `startDeviceFlow()` / `pollDeviceFlow()` (runtime MCP device flow triggered by first tool call without JWT).
 
+**Non-interactive `setup` no longer hangs (VSCode plugin / CI fix):** running `npx … setup` from a VSCode task or integrated non-TTY terminal previously hung forever at the first `readline` prompt (a question against a non-TTY stdin never resolves).
+- `setup` now auto-detects a non-interactive stdin (`process.stdin.isTTY !== true`) and runs in automatic mode (same as `--yes`), printing "Non-interactive terminal detected".
+- The web-fallback paste step exits with clear, actionable instructions (`CACHLY_JWT=cky_live_xxx npx … setup`) instead of blocking on a paste that can never arrive. Exits non-zero so the editor surfaces the failure.
+- Device-flow polling needs no stdin, so the automatic browser sign-in path works unchanged in non-TTY contexts.
+
 Build: clean `tsc`. Tests: 499 passing. Lint: 0 warnings.
 
 ## [0.10.73] – 2026-05-29
