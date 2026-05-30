@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { jwtExpiryMs, checkJwt, handleApiError, diagnoseAuth, planAuthHeal } from './auth.js';
+import type { FunnelEventName, DashboardMetrics } from './telemetry-types.js';
 import { handleTcoTool } from './handlers/tco.js';
 import { notify } from './notifier.js';
 import { fileURLToPath } from 'node:url';
@@ -74,7 +75,7 @@ import { Redis } from 'ioredis';
 let API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.81';
+const CURRENT_VERSION = '0.10.82';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -640,14 +641,34 @@ function detectEditor(): string {
     : 'unknown';
 }
 
-function sendFunnelEvent(event: string, extra?: Record<string, unknown>): void {
+/** Derive an anonymous, non-reversible fingerprint from the JWT sub claim. */
+function _jwtUserFingerprint(jwt: string): string | undefined {
+  try {
+    const parts = jwt.split('.');
+    if (parts.length !== 3) return undefined;
+    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as { sub?: string };
+    if (!payload.sub) return undefined;
+    // First 16 hex chars of a deterministic hash — no PII, not reversible.
+    let h = 0x811c9dc5;
+    for (let i = 0; i < payload.sub.length; i++) {
+      h ^= payload.sub.charCodeAt(i);
+      h = (h * 0x01000193) >>> 0;
+    }
+    return h.toString(16).padStart(8, '0') + payload.sub.length.toString(16).padStart(4, '0');
+  } catch { return undefined; }
+}
+
+function sendFunnelEvent(event: FunnelEventName, extra?: Record<string, unknown>, metrics?: DashboardMetrics): void {
   if (process.env.CACHLY_NO_TELEMETRY === '1') return;
+  const fingerprint = JWT ? _jwtUserFingerprint(JWT) : undefined;
   void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       event, version: CURRENT_VERSION, editor: detectEditor(),
       ...(JWT ? { jwt: JWT } : {}),
+      ...(fingerprint ? { user_fingerprint: fingerprint } : {}),
+      ...(metrics ? { metrics } : {}),
       ...extra,
     }),
     signal: AbortSignal.timeout(3000),
@@ -764,7 +785,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     } else if (name === 'learn_from_attempts') {
       sendFunnelEvent('learn_from_attempts', telemetryExtra);
     } else if (name === 'session_start') {
-      sendFunnelEvent('session_start', telemetryExtra);
+      sendFunnelEvent('session_start', telemetryExtra, { born_at: undefined, recalls_total: undefined, starter_seeded: false });
       const resultText = typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult
         ? JSON.stringify(brainResult)
         : String(brainResult ?? '');
@@ -795,7 +816,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
               try {
                 const seed = await handleShareTool('brain_seed_starter', { instance_id: instanceId }, getConnection, apiFetch);
                 if (seed) {
-                  sendFunnelEvent('brain_seed_starter', { ...telemetryExtra, auto: true });
+                  sendFunnelEvent('brain_seed_starter', { ...telemetryExtra, auto: true },
+                    { seeded_count: 16, auto: true });
                   starterText = '\n---\n' + String(seed);
                 }
               } catch { /* seeding errors must never break session_start */ }
@@ -813,14 +835,15 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     } else if (name === 'session_end') {
       sendFunnelEvent('session_end', telemetryExtra);
     } else if (name === 'smart_recall') {
-      sendFunnelEvent('smart_recall', telemetryExtra);
-      // smart_recall is the primary recall tool in CLAUDE.md — it retrieves brain lessons
-      // just like recall_best_solution. Count it toward BrainRecallCount so the dashboard
-      // nudge clears and the first-recall email fires for users following CLAUDE.md.
       const srText = typeof brainResult === 'object' && brainResult !== null && 'content' in brainResult
         ? JSON.stringify(brainResult)
         : String(brainResult ?? '');
-      if (srText.length > 50 && !srText.includes('No lessons found') && !srText.includes('no lessons') && !srText.includes('No matches found')) {
+      const srHit = srText.length > 50 && !srText.includes('No lessons found') && !srText.includes('no lessons') && !srText.includes('No matches found');
+      sendFunnelEvent('smart_recall', telemetryExtra, { hit: srHit, topic: String(args.query ?? '').slice(0, 80) });
+      // smart_recall is the primary recall tool in CLAUDE.md — it retrieves brain lessons
+      // just like recall_best_solution. Count it toward BrainRecallCount so the dashboard
+      // nudge clears and the first-recall email fires for users following CLAUDE.md.
+      if (srHit) {
         sendFunnelEvent('recall_best_solution', telemetryExtra);
       }
       // Self-healing: if the credential is degraded, the briefing may be thin or
@@ -880,7 +903,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
     if (name === 'brain_from_git') {
       const gitCounts = _lastBrainFromGitCounts;
-      sendFunnelEvent('brain_from_git', { ...telemetryExtra, ...(gitCounts ?? {}) });
+      sendFunnelEvent('brain_from_git', { ...telemetryExtra, ...(gitCounts ?? {}) },
+        gitCounts ? { fixes: gitCounts.fixes, features: gitCounts.features, refactors: gitCounts.refactors, total: gitCounts.total } : undefined);
     } else if (name === 'brain_predict_failures') {
       sendFunnelEvent('brain_predict_failures', telemetryExtra);
     }

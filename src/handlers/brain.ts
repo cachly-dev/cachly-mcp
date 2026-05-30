@@ -14,8 +14,15 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.81';
+const MCP_VERSION = '0.10.82';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.82': [
+    `📡 **Telemetry API contracts — dashboard ingest pipeline prepared**`,
+    `  🗂️ \`src/telemetry-types.ts\` — canonical event types + resolved event format (TelemetryEventRaw / TelemetryEventResolved)`,
+    `  🔐 \`user_fingerprint\` — non-reversible JWT sub hash, PII-free user clustering for dashboard`,
+    `  📊 \`metrics\` block on key events: smart_recall (hit/topic), brain_from_git (fixes/features/total), brain_seed_starter (seeded_count)`,
+    `  🚦 Internal API contract documented: GET /internal/telemetry/stream → TelemetryEventResolved[]`,
+  ],
   '0.10.81': [
     `⏱️ **Onboarding-Bench — time-to-first-recall, now measured**`,
     `  📐 \`npm run bench:onboarding\` — cold (empty) vs seeded (starter) first-query hit rate via the real search engine`,
