@@ -14,8 +14,17 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.78';
+const MCP_VERSION = '0.10.79';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.79': [
+    `🌐 **Brain Marketplace — full shareable Brain lifecycle**`,
+    `  📋 \`brain_share_list(instance_id)\` — see all your public shares with lesson counts + share IDs`,
+    `  🗑️ \`brain_unshare(share_id)\` — revoke a share; link goes dead immediately`,
+    `  🔍 \`brain_discover(query, topic)\` — search public Brains in the cachly marketplace`,
+    `  📤 \`publish\` CLI — fancy card + share URL; \`--public\` for discoverable; \`--title\` custom name`,
+    `  🧪 stress tests: team_expertise_map with 50 contributors, chain import/unshare, discover fallback`,
+    `  📊 112 MCP tools`,
+  ],
   '0.10.78': [
     `🌐 **Phase 3: Shareable / Public Brains**`,
     `  📤 \`brain_share(instance_id="...")\` — export a Brain snapshot as a shareable link (public or unlisted)`,

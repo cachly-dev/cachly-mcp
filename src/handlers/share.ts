@@ -5,7 +5,7 @@ type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 
 export const SHARE_TOOL_NAMES = new Set([
-  'brain_share', 'brain_import',
+  'brain_share', 'brain_import', 'brain_share_list', 'brain_unshare', 'brain_discover',
 ]);
 
 interface StoredLesson {
@@ -327,6 +327,190 @@ export async function handleShareTool(
       }
 
       return lines.join('\n');
+    }
+
+    // ── brain_share_list ───────────────────────────────────────────────────────
+    case 'brain_share_list': {
+      const { instance_id } = args as { instance_id: string };
+      if (!instance_id) return '⚠️ `brain_share_list` requires `instance_id`.';
+
+      const redis = await getConnection(instance_id);
+
+      // Load from local provenance log
+      let localShares: Array<{ share_id: string; title: string; visibility: string; lesson_count: number; created_at: string }> = [];
+      try {
+        const raw = await redis.lrange('cachly:brain:shares', 0, -1);
+        localShares = raw.map(r => {
+          try { return JSON.parse(r); } catch { return null; }
+        }).filter(Boolean);
+      } catch { /* non-critical */ }
+
+      // Also try API for authoritative list
+      let apiShares: typeof localShares = [];
+      try {
+        const result = await apiFetch<{ shares?: typeof localShares }>('/api/v1/brains/share');
+        apiShares = result.shares ?? [];
+      } catch { /* API may not be live yet */ }
+
+      // Merge: API is authoritative; local fills gaps
+      const merged = apiShares.length > 0 ? apiShares : localShares;
+
+      if (merged.length === 0) {
+        return [
+          `📤 **brain_share_list** — no shares yet`,
+          ``,
+          `You haven't shared any Brain snapshots from this instance.`,
+          ``,
+          `Create one with: \`brain_share(instance_id="${instance_id}", title="My Patterns")\``,
+        ].join('\n');
+      }
+
+      const lines = [
+        `📤 **Your Brain Shares** (${merged.length})`,
+        ``,
+        `| # | Title | Lessons | Visibility | Created |`,
+        `|---|-------|---------|------------|---------|`,
+      ];
+      for (const [i, s] of merged.entries()) {
+        const d = new Date(s.created_at);
+        const created = isNaN(d.getTime()) ? s.created_at : d.toISOString().slice(0, 10);
+        const vis = s.visibility === 'public' ? '🌐 public' : '🔗 unlisted';
+        lines.push(`| ${i + 1} | ${s.title ?? '—'} | ${s.lesson_count ?? '?'} | ${vis} | ${created} |`);
+      }
+      const newest = merged[merged.length - 1];
+      lines.push(
+        ``,
+        `**Import command:** \`brain_import(instance_id="<their-id>", share_id="${newest?.share_id ?? '...'}")\``,
+        `**Revoke:** \`brain_unshare(instance_id="${instance_id}", share_id="<id>")\``,
+      );
+      return lines.join('\n');
+    }
+
+    // ── brain_unshare ──────────────────────────────────────────────────────────
+    case 'brain_unshare': {
+      const { instance_id, share_id } = args as { instance_id: string; share_id: string };
+      if (!instance_id) return '⚠️ `brain_unshare` requires `instance_id`.';
+      if (!share_id) return '⚠️ `brain_unshare` requires `share_id`.';
+
+      // Call API to delete
+      try {
+        await apiFetch(`/api/v1/brains/share/${share_id}`, { method: 'DELETE' });
+      } catch (e) {
+        const msg = (e as Error).message ?? '';
+        if (msg.includes('404') || msg.includes('not found')) {
+          return `❌ Share \`${share_id}\` not found — it may have already been removed.`;
+        }
+        // If API is down, just remove from local log and warn
+        if (msg.includes('ECONNREFUSED') || msg.includes('fetch failed')) {
+          const redis = await getConnection(instance_id);
+          try {
+            const raw = await redis.lrange('cachly:brain:shares', 0, -1);
+            const kept = raw.filter(r => { try { return JSON.parse(r).share_id !== share_id; } catch { return true; } });
+            await redis.del('cachly:brain:shares');
+            for (const entry of kept) await redis.rpush('cachly:brain:shares', entry);
+          } catch { /* non-critical */ }
+          return [
+            `⚠️ **brain_unshare** — removed from local log`,
+            ``,
+            `API unreachable — removed \`${share_id}\` from your local share registry.`,
+            `The public link may still be accessible until the API confirms deletion.`,
+          ].join('\n');
+        }
+        return `❌ brain_unshare failed: ${msg}`;
+      }
+
+      // Remove from local log
+      const redis = await getConnection(instance_id);
+      try {
+        const raw = await redis.lrange('cachly:brain:shares', 0, -1);
+        const kept = raw.filter(r => { try { return JSON.parse(r).share_id !== share_id; } catch { return true; } });
+        await redis.del('cachly:brain:shares');
+        for (const entry of kept) await redis.rpush('cachly:brain:shares', entry);
+      } catch { /* non-critical */ }
+
+      return [
+        `🗑️ **brain_unshare** — share revoked`,
+        ``,
+        `Share \`${share_id}\` has been deleted. The public link is no longer accessible.`,
+        ``,
+        `_Anyone who already imported this Brain keeps their local copy._`,
+      ].join('\n');
+    }
+
+    // ── brain_discover ─────────────────────────────────────────────────────────
+    case 'brain_discover': {
+      const {
+        query = '',
+        topic = '',
+        limit = 10,
+      } = args as { query?: string; topic?: string; limit?: number };
+
+      // Search public Brain marketplace
+      let results: Array<{
+        share_id: string;
+        title: string;
+        description?: string;
+        lesson_count: number;
+        topics?: string[];
+        author?: string;
+        created_at: string;
+        imports?: number;
+      }> = [];
+
+      try {
+        const params = new URLSearchParams();
+        if (query) params.set('q', query);
+        if (topic) params.set('topic', topic);
+        params.set('limit', String(limit));
+        results = await apiFetch<typeof results>(`/api/v1/brains/discover?${params.toString()}`);
+      } catch (e) {
+        const msg = (e as Error).message ?? '';
+        if (msg.includes('404') || msg.includes('ECONNREFUSED') || msg.includes('fetch failed')) {
+          return [
+            `🔍 **brain_discover** — marketplace not yet live`,
+            ``,
+            `The public Brain marketplace is coming soon.`,
+            ``,
+            `**In the meantime:**`,
+            `  • Share your Brain: \`brain_share(instance_id="...", visibility="public")\``,
+            `  • Import by ID:    \`brain_import(instance_id="...", share_id="<id>")\``,
+            `  • Community index: https://cachly.dev/brains`,
+          ].join('\n');
+        }
+        return `❌ brain_discover failed: ${msg}`;
+      }
+
+      if (results.length === 0) {
+        const hint = query ? `matching "${query}"` : topic ? `in topic "${topic}"` : '';
+        return [
+          `🔍 **brain_discover** — no public Brains found ${hint}`.trim(),
+          ``,
+          `Be the first! \`brain_share(instance_id="...", visibility="public")\``,
+        ].join('\n');
+      }
+
+      const lines = [
+        `🔍 **brain_discover**${query ? ` — "${query}"` : ''}${topic ? ` · topic: ${topic}` : ''} (${results.length} result${results.length !== 1 ? 's' : ''})`,
+        ``,
+      ];
+
+      for (const [i, r] of results.entries()) {
+        const d = new Date(r.created_at);
+        const created = isNaN(d.getTime()) ? '' : ` · ${d.toISOString().slice(0, 10)}`;
+        const importCount = r.imports != null ? ` · ${r.imports} imports` : '';
+        const topicStr = r.topics?.length ? ` · topics: ${r.topics.slice(0, 4).join(', ')}` : '';
+        const by = r.author ? ` by **${r.author}**` : '';
+        lines.push(
+          `**${i + 1}. ${r.title}**${by}`,
+          `   📚 ${r.lesson_count} lessons${topicStr}${importCount}${created}`,
+          r.description ? `   _${r.description.slice(0, 120)}_` : '',
+          `   \`brain_import(instance_id="...", share_id="${r.share_id}")\``,
+          ``,
+        );
+      }
+
+      lines.push(`_Browse more at https://cachly.dev/brains_`);
+      return lines.filter(l => l !== '   ').join('\n');
     }
 
     default:

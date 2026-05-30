@@ -2176,6 +2176,7 @@ const TOOLS = [
   },
 
   // ── Phase 3: Shareable / Public Brains ──────────────────────────────────────
+  // brain_share, brain_import, brain_share_list, brain_unshare, brain_discover
 
   {
     name: 'brain_share',
@@ -2219,6 +2220,57 @@ const TOOLS = [
         dry_run:        { type: 'boolean', description: 'Preview what would be imported without writing to the Brain.' },
       },
       required: ['instance_id', 'share_id'],
+    },
+  },
+
+  {
+    name: 'brain_share_list',
+    description:
+      'List all Brain snapshots you have previously shared with brain_share. ' +
+      'Shows share ID, title, lesson count, visibility, and creation date for each share. ' +
+      'Checks the local provenance log and the cachly API. ' +
+      'Example: brain_share_list(instance_id="...")',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the Brain instance that created the shares.' },
+      },
+      required: ['instance_id'],
+    },
+  },
+
+  {
+    name: 'brain_unshare',
+    description:
+      'Revoke and permanently delete a public Brain share by its share ID. ' +
+      'After calling this, the share URL becomes invalid and no one can import it. ' +
+      'Note: users who already imported the Brain keep their local copy. ' +
+      'Example: brain_unshare(instance_id="...", share_id="abc123")',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the Brain instance that owns the share.' },
+        share_id:    { type: 'string', description: 'Share ID to revoke (from brain_share or brain_share_list).' },
+      },
+      required: ['instance_id', 'share_id'],
+    },
+  },
+
+  {
+    name: 'brain_discover',
+    description:
+      'Search and browse publicly shared Brain snapshots in the cachly marketplace. ' +
+      'Find ready-made knowledge bases on specific topics (TypeScript, Docker, auth, CI/CD, etc.) ' +
+      'created and shared by the community. Returns a ranked list with lesson counts, topics, and import commands. ' +
+      'Example: brain_discover(query="kubernetes deployment") · brain_discover(topic="auth")',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Full-text search query across Brain titles and descriptions.' },
+        topic: { type: 'string', description: 'Filter by topic prefix (e.g. "auth", "docker", "nextjs").' },
+        limit: { type: 'number', description: 'Max number of results to return (default 10, max 50).' },
+      },
+      required: [],
     },
   },
 ] as const;

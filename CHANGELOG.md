@@ -7,6 +7,32 @@
 
 ---
 
+## [0.10.79] – 2026-05-30
+
+### Brain Marketplace — full shareable Brain lifecycle + stress tests
+
+**Three more MCP tools completing the share/import lifecycle:**
+
+- `brain_share_list(instance_id)` — lists all Brain snapshots you've shared, with share IDs, lesson counts, visibility, and creation date. Checks the cachly API first; falls back to the local provenance log.
+- `brain_unshare(instance_id, share_id)` — revokes and permanently deletes a public share. Link goes dead immediately. Gracefully removes from local log when API is unreachable.
+- `brain_discover(query?, topic?, limit?)` — searches the cachly Brain marketplace for publicly shared Brain snapshots. Returns ranked results with lesson counts, topics, import counts, and a one-line `brain_import` command. Shows a "marketplace coming soon" message with alternative paths when the API isn't live yet.
+
+**`publish` CLI command:**
+- `npx @cachly-dev/mcp-server@latest publish [--public] [--title "My Patterns"]` — creates a public Brain snapshot and prints a formatted card with the share URL + import command. `--public` makes it discoverable in the marketplace; default is unlisted (link-only).
+
+**112 MCP tools** (up from 109).
+
+**24 new tests** covering:
+- `brain_share_list`: empty state, API results, local-log fallback, missing args
+- `brain_unshare`: success, 404, ECONNREFUSED local-log-only removal, missing args
+- `brain_discover`: results display, topic filter, empty state, marketplace-not-live fallback
+- Full lifecycle integration: share → list → unshare in a single test
+- `team_expertise_map` stress test: 50 contributors, top_n cap, sort order, empty/single contributor, 0-lesson contributor, default cap
+- `brain_who_knows` regression: multi-contributor ranking, inbound edge traversal
+- `brain_coverage` regression: high score with attribution, low score with only failures
+
+Build: clean `tsc`. Tests: 544 passing (all 12 suites). Lint: 0 warnings.
+
 ## [0.10.78] – 2026-05-30
 
 ### Phase 3: Shareable / Public Brains

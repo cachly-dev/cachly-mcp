@@ -44,6 +44,18 @@ class MockRedis {
     return 'OK';
   }
 
+  async lrange(key: string, start: number, stop: number): Promise<string[]> {
+    const l = this.lists.get(key) ?? [];
+    const end = stop < 0 ? l.length + stop + 1 : stop + 1;
+    return l.slice(start < 0 ? l.length + start : start, end);
+  }
+
+  async del(...keys: string[]): Promise<number> {
+    let n = 0;
+    for (const k of keys) { if (this.lists.delete(k) || this.store.delete(k)) n++; }
+    return n;
+  }
+
   async expire(_key: string, _ttl: number): Promise<number> { return 1; }
 
   scanStream(opts: { match: string; count?: number }): EventEmitter {
@@ -312,6 +324,187 @@ describe('buildServerEnv regression', () => {
     if (apiUrl && apiUrl !== DEFAULT_URL) env.CACHLY_API_URL = apiUrl;
 
     expect(env.CACHLY_API_URL).toBeUndefined();
+  });
+});
+
+// ── brain_share_list ──────────────────────────────────────────────────────────
+
+describe('brain_share_list', () => {
+  let redis: MockRedis;
+  const getConn = async (_id: string) => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('returns empty-state message when no shares exist', async () => {
+    const apiFetch = async <T>() => ({ shares: [] } as T);
+    const result = await handleShareTool('brain_share_list', { instance_id: 'inst-1' }, getConn, apiFetch);
+    expect(result).toContain('no shares yet');
+    expect(result).toContain('brain_share');
+  });
+
+  it('shows shares from API response', async () => {
+    const apiFetch = async <T>() => ({
+      shares: [
+        { share_id: 'abc', title: 'Auth Patterns', lesson_count: 15, visibility: 'public', created_at: '2026-05-01T00:00:00Z' },
+        { share_id: 'xyz', title: 'Docker Tips', lesson_count: 8, visibility: 'unlisted', created_at: '2026-05-10T00:00:00Z' },
+      ],
+    } as T);
+    const result = await handleShareTool('brain_share_list', { instance_id: 'inst-1' }, getConn, apiFetch);
+    expect(result).toContain('Auth Patterns');
+    expect(result).toContain('Docker Tips');
+    expect(result).toContain('🌐 public');
+    expect(result).toContain('🔗 unlisted');
+    expect(result).toContain('brain_import');
+    expect(result).toContain('brain_unshare');
+  });
+
+  it('falls back to local provenance log when API returns empty', async () => {
+    // Seed local provenance log
+    await redis.rpush('cachly:brain:shares', JSON.stringify({
+      share_id: 'local-1', title: 'Local Share', lesson_count: 5,
+      visibility: 'unlisted', created_at: '2026-05-15T00:00:00Z',
+    }));
+    const apiFetch = async <T>() => ({ shares: [] } as T);
+    const result = await handleShareTool('brain_share_list', { instance_id: 'inst-1' }, getConn, apiFetch);
+    expect(result).toContain('Local Share');
+  });
+
+  it('requires instance_id', async () => {
+    const result = await handleShareTool('brain_share_list', {}, getConn, async () => ({}));
+    expect(result).toContain('requires `instance_id`');
+  });
+});
+
+// ── brain_unshare ─────────────────────────────────────────────────────────────
+
+describe('brain_unshare', () => {
+  let redis: MockRedis;
+  const getConn = async (_id: string) => redis as unknown as Redis;
+
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('returns success message on successful API delete', async () => {
+    const apiFetch = async <T>(_path: string, opts?: RequestInit) => {
+      if ((opts as RequestInit & { method?: string })?.method === 'DELETE') return {} as T;
+      return {} as T;
+    };
+    const result = await handleShareTool('brain_unshare', {
+      instance_id: 'inst-1', share_id: 'abc123',
+    }, getConn, apiFetch);
+    expect(result).toContain('revoked');
+    expect(result).toContain('abc123');
+  });
+
+  it('returns not-found message on 404', async () => {
+    const apiFetch = async () => { throw new Error('404 not found'); };
+    const result = await handleShareTool('brain_unshare', {
+      instance_id: 'inst-1', share_id: 'gone',
+    }, getConn, apiFetch);
+    expect(result).toContain('not found');
+  });
+
+  it('gracefully removes from local log when API is unreachable', async () => {
+    // Seed local log with 2 entries
+    await redis.rpush('cachly:brain:shares',
+      JSON.stringify({ share_id: 'keep-me', title: 'Keep', lesson_count: 1, visibility: 'unlisted', created_at: '2026-01-01' }),
+      JSON.stringify({ share_id: 'remove-me', title: 'Remove', lesson_count: 2, visibility: 'unlisted', created_at: '2026-01-02' }),
+    );
+
+    const apiFetch = async () => { throw new Error('ECONNREFUSED'); };
+    const result = await handleShareTool('brain_unshare', {
+      instance_id: 'inst-1', share_id: 'remove-me',
+    }, getConn, apiFetch);
+
+    expect(result).toContain('removed from local log');
+  });
+
+  it('requires instance_id and share_id', async () => {
+    const r1 = await handleShareTool('brain_unshare', { share_id: 'x' }, getConn, async () => ({}));
+    expect(r1).toContain('requires `instance_id`');
+    const r2 = await handleShareTool('brain_unshare', { instance_id: 'inst-1' }, getConn, async () => ({}));
+    expect(r2).toContain('requires `share_id`');
+  });
+});
+
+// ── brain_discover ────────────────────────────────────────────────────────────
+
+describe('brain_discover', () => {
+  const redis = new MockRedis();
+  const getConn = async (_id: string) => redis as unknown as Redis;
+
+  const publicBrains = [
+    { share_id: 's1', title: 'TypeScript Patterns', lesson_count: 30, topics: ['ts', 'esm'], imports: 120, created_at: '2026-04-01T00:00:00Z', author: 'alice' },
+    { share_id: 's2', title: 'Docker Best Practices', lesson_count: 15, topics: ['docker', 'ci'], imports: 45, created_at: '2026-04-10T00:00:00Z', author: 'bob' },
+  ];
+
+  it('shows discovered public Brains', async () => {
+    const apiFetch = async <T>() => publicBrains as T;
+    const result = await handleShareTool('brain_discover', { query: 'typescript' }, getConn, apiFetch);
+    expect(result).toContain('TypeScript Patterns');
+    expect(result).toContain('alice');
+    expect(result).toContain('brain_import');
+    expect(result).toContain('s1');
+  });
+
+  it('filters by topic in result display', async () => {
+    const apiFetch = async <T>() => publicBrains.filter(b => b.topics.includes('docker')) as T;
+    const result = await handleShareTool('brain_discover', { topic: 'docker' }, getConn, apiFetch);
+    expect(result).toContain('Docker Best Practices');
+    expect(result).not.toContain('TypeScript Patterns');
+  });
+
+  it('shows empty-state with share suggestion when no results', async () => {
+    const apiFetch = async <T>() => [] as T;
+    const result = await handleShareTool('brain_discover', { query: 'niche-topic-xyz' }, getConn, apiFetch);
+    expect(result).toContain('no public Brains found');
+    expect(result).toContain('brain_share');
+  });
+
+  it('shows marketplace-not-live message on 404 / ECONNREFUSED', async () => {
+    const apiFetch = async () => { throw new Error('404 not found'); };
+    const result = await handleShareTool('brain_discover', {}, getConn, apiFetch);
+    expect(result).toContain('coming soon');
+    expect(result).toContain('brain_share');
+  });
+});
+
+// ── Share lifecycle integration test ─────────────────────────────────────────
+
+describe('share lifecycle (share → list → unshare)', () => {
+  it('full lifecycle: share creates entry, list shows it, unshare removes it', async () => {
+    const redis = new MockRedis();
+    const getConn = async () => redis as unknown as Redis;
+
+    // Seed a lesson
+    redis['store'].set('cachly:lesson:best:auth:jwt', makeLesson('auth:jwt'));
+
+    // 1. Share
+    let capturedShareId = '';
+    const apiFetch = async <T>(path: string, opts?: RequestInit) => {
+      if (path === '/api/v1/brains/share' && (opts as RequestInit & {method?:string})?.method === 'POST') {
+        capturedShareId = 'lifecycle-id';
+        return { share_id: 'lifecycle-id' } as T;
+      }
+      if (path === '/api/v1/brains/share') {
+        return { shares: [{ share_id: capturedShareId, title: 'Test', lesson_count: 1, visibility: 'unlisted', created_at: '2026-01-01' }] } as T;
+      }
+      if (path.includes('/api/v1/brains/share/') && (opts as RequestInit & {method?:string})?.method === 'DELETE') {
+        capturedShareId = '';
+        return {} as T;
+      }
+      return {} as T;
+    };
+
+    const shareResult = await handleShareTool('brain_share', { instance_id: 'inst-1', title: 'Test' }, getConn, apiFetch);
+    expect(shareResult).toContain('lifecycle-id');
+
+    // 2. List
+    const listResult = await handleShareTool('brain_share_list', { instance_id: 'inst-1' }, getConn, apiFetch);
+    expect(listResult).toContain('lifecycle-id');
+
+    // 3. Unshare
+    const unshareResult = await handleShareTool('brain_unshare', { instance_id: 'inst-1', share_id: 'lifecycle-id' }, getConn, apiFetch);
+    expect(unshareResult).toContain('revoked');
   });
 });
 

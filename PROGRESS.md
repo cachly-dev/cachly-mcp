@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.78 · 109 MCP-Tools · 520 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.79 · 112 MCP-Tools · 544 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.78` (npm `latest`) |
-| MCP-Tools | **109** |
-| Tests | **520** passing, 11 Suites |
+| Version | `0.10.79` (npm `latest`) |
+| MCP-Tools | **112** |
+| Tests | **544** passing, 12 Suites |
 | Lint | **0 errors, 0 warnings** |
 | Build | sauber (`tsc`, Entry `dist/src/index.js`) |
 | Bench | Precision@1 **+22.2 %**, MRR **+10.9 %**, nDCG@5 **+8.1 %** vs. BM25 |
@@ -55,6 +55,10 @@
 | `brain_coverage()` | `src/handlers/brain.ts` | 0.10.61 | ✅ 0–100 Health-Score |
 | **`brain_share`** — Brain-Snapshot als öffentlichen Link teilen | `src/handlers/share.ts` | 0.10.78 | ✅ topic_filter, dry_run, public/unlisted |
 | **`brain_import`** — Fremdes Brain importieren (1-Liner) | `src/handlers/share.ts` | 0.10.78 | ✅ topic_prefix, overwrite, min_confidence, dry_run |
+| **`brain_share_list`** — eigene Shares auflisten | `src/handlers/share.ts` | 0.10.79 | ✅ API + lokaler Provenance-Fallback |
+| **`brain_unshare`** — Share widerrufen (Link sofort tot) | `src/handlers/share.ts` | 0.10.79 | ✅ graceful offline-Fallback |
+| **`brain_discover`** — Brain-Marketplace durchsuchen | `src/handlers/share.ts` | 0.10.79 | ✅ query, topic, limit; "coming soon"-Fallback |
+| **`publish` CLI** — Share-Karte + URL ausgeben | `src/index.ts` | 0.10.79 | ✅ `--public`, `--title` |
 
 ### Stabilität & Hygiene
 
@@ -128,7 +132,7 @@
 ### Enterprise / Reichweite (Phase-3/4)
 
 - ✅ **Self-Hosting + BYOK first-class (0.10.77)** — `setup --api-url` / `init --api-url` zeigen auf privates Backend; `CACHLY_API_URL` nur bei Abweichung vom Default in Config geschrieben (vorher hartkodiert → self-hoster still überschrieben). BYOK-Embeddings (6 Provider) in `health` sichtbar; `cky_`-Keys korrekt akzeptiert. 🔲 SOC-2/ISO bleibt offen (Compliance, kein Code).
-- 🔲 Öffentliche/teilbare Brains (Domänen-Wissensbasen als Marktplatz)
+- ✅ **Öffentliche/teilbare Brains (0.10.78/79)** — `brain_share`, `brain_import`, `brain_share_list`, `brain_unshare`, `brain_discover`, `publish`-CLI. Lifecycle vollständig + Tests.
 - ✅ **First-class-Support-Matrix (0.10.76)** — README-Tabelle: alle 8 Editors (Claude Code, Cursor, Windsurf, VSCode+Copilot, Cline, Continue.dev, Zed, generic), Config-Pfad, Auto-Setup, Global-Config, Sign-in-Pfad je Szenario. Tipps für non-TTY (VSCode-Plugin) und In-Chat-Setup.
 
 ### Friktionsfreiheit / Stabilität (0.10.77)
@@ -140,8 +144,7 @@
 - ✅ `brain_from_git`: Git-Rename-Pfade normalisiert (`normalizeGitPath`, 0.10.63).
 - ✅ README Tool-Count-Drift behoben (jetzt 101, überall synchron).
 - ✅ Scan-basierte Tools gegen großen Keyspace gehärtet (`scanKeys`, 0.10.63).
-- 🔲 `team_expertise_map`: Tabellen-Rendering bei *sehr* vielen Domains noch
-  nicht mit großem Datensatz lasttestbar (MockRedis deckt Funktionalität ab).
+- ✅ `team_expertise_map`: Stress-Test mit 50 Kontributoren (0.10.79) — top_n-Cap, Sortierung, Null-Lektionen, Single-Contributor, Default-Cap alle grün.
 
 ---
 

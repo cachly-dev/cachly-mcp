@@ -74,7 +74,7 @@ import { Redis } from 'ioredis';
 let API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.78';
+const CURRENT_VERSION = '0.10.79';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -1934,6 +1934,80 @@ if (process.argv[2] === 'share') {
   process.exit(0);
 }
 
+// ── CLI: cachly publish ───────────────────────────────────────────────────────
+// Creates a publicly importable Brain snapshot and prints the share URL + card.
+// Usage: npx @cachly-dev/mcp-server@latest publish [--public] [--title "My Patterns"]
+
+if (process.argv[2] === 'publish') {
+  const apiKey    = process.env.CACHLY_JWT ?? '';
+  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+
+  if (!apiKey || !instanceId) {
+    console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest setup\n');
+    process.exit(1);
+  }
+
+  const titleIdx = process.argv.indexOf('--title');
+  const publishTitle = titleIdx !== -1 ? (process.argv[titleIdx + 1] ?? 'My Brain Snapshot') : 'My Brain Snapshot';
+  const isPublic = process.argv.includes('--public');
+
+  process.stdout.write('\n🧠 Publishing Brain snapshot...\n');
+
+  try {
+    // Fetch stats for the card
+    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain/stats`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(8000),
+    });
+
+    let lessons = 0, recalls = 0;
+    if (statsRes.ok) {
+      const stats = await statsRes.json() as { lesson_count?: number; total_recall_count?: number };
+      lessons = stats.lesson_count ?? 0;
+      recalls = stats.total_recall_count ?? 0;
+    }
+
+    // Create the public share via API
+    const shareRes = await fetch(`${API_URL}/api/v1/brains/share`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: publishTitle, visibility: isPublic ? 'public' : 'unlisted', instance_id: instanceId }),
+      signal: AbortSignal.timeout(15000),
+    });
+
+    if (!shareRes.ok) throw new Error(`HTTP ${shareRes.status}`);
+    const share = await shareRes.json() as { share_id?: string };
+    const shareId = share.share_id ?? 'unavailable';
+    const shareUrl = `https://cachly.dev/brain/share/${shareId}`;
+
+    console.log('');
+    console.log('┌─────────────────────────────────────────────────────────────┐');
+    console.log('│  📤 Brain Published  ·  powered by \x1b[35mcachly.dev\x1b[0m                │');
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log(`│  Title     : \x1b[33m${publishTitle.slice(0, 44).padEnd(44)}\x1b[0m│`);
+    console.log(`│  Lessons   : \x1b[32m${String(lessons).padEnd(10)}\x1b[0m  Recalls: \x1b[36m${String(recalls).padEnd(26)}\x1b[0m│`);
+    console.log(`│  Visibility: \x1b[${isPublic ? '32' : '33'}m${(isPublic ? 'public (discoverable)' : 'unlisted (link only)').padEnd(44)}\x1b[0m│`);
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log(`│  \x1b[1mShare URL:\x1b[0m \x1b[36m${shareUrl.padEnd(51)}\x1b[0m│`);
+    console.log('├─────────────────────────────────────────────────────────────┤');
+    console.log('│  \x1b[2mAnyone can import with:\x1b[0m                                     │');
+    console.log(`│  \x1b[90m  brain_import(instance_id="...", share_id="${shareId.slice(0, 17)}")\x1b[0m│`);
+    console.log('└─────────────────────────────────────────────────────────────┘');
+    console.log('');
+    console.log(`  \x1b[1m📋 Share this with your team:\x1b[0m`);
+    console.log(`  ${shareUrl}`);
+    console.log('');
+    console.log(`  \x1b[2mTo list all your shares:\x1b[0m  brain_share_list(instance_id="${instanceId.slice(0, 24)}...")`);
+    console.log(`  \x1b[2mTo revoke this share:\x1b[0m     brain_unshare(share_id="${shareId.slice(0, 24)}...")`);
+    console.log('');
+  } catch (e) {
+    console.log(`\n❌ Could not publish Brain: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
 // ── CLI: cachly badge ─────────────────────────────────────────────────────────
 // Outputs the Markdown + HTML snippet for embedding a live Brain lesson-count
 // badge in any README or website. Badge SVG served by cachly API (public, no auth).
@@ -3066,7 +3140,7 @@ if (process.argv[2] === 'learn-git') {
 //   • Editor as an MCP stdio server (non-TTY)  → ONE stderr hint, then KEEP RUNNING
 //     so tools/list works and the first tool call starts the browser sign-in.
 // Skip entirely for CLI subcommands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade'];
+const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'setup', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
   const runningInTerminal = !process.argv[2] && process.stdout.isTTY === true && _isMain;
   if (runningInTerminal) {
