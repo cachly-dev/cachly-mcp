@@ -7,6 +7,25 @@
 
 ---
 
+## [0.10.74] – 2026-05-30
+
+### Fix: activation funnel — robust device-flow auth with web fallback
+
+**Root cause:** The `setup` CLI was calling the Keycloak device-flow endpoint directly
+(`auth.cachly.dev/…/auth/device`), which returns 403 for all external clients. The
+silent fallback asked users to "paste an API token" — without opening a browser or
+telling them where to get one — causing 100% abandonment.
+
+**What changed:**
+- `setup` now tries the **API proxy** (`/api/v1/auth/device/code` + `/api/v1/auth/device/token`) first, then Keycloak as fallback — the same path that `join-team` already used successfully.
+- All device-flow fetch calls now have `AbortSignal.timeout(8000)` (previously missing in setup and poll loop).
+- When both paths are unavailable the fallback **opens the browser** automatically, shows a step-by-step guide ("Settings → API Keys → Create"), and only then asks for a paste.
+- Added `sendFunnelEvent('device_flow_completed')` to the setup flow (was only fired from the runtime device-flow, creating a metric gap).
+- Added `sendFunnelEvent('device_flow_failed', { reason })` with the failure reason (`timeout`, `device_flow_unavailable`, auth error code) for observability.
+- Same proxy-first fix applied to `startDeviceFlow()` / `pollDeviceFlow()` (runtime MCP device flow triggered by first tool call without JWT).
+
+Build: clean `tsc`. Tests: 499 passing. Lint: 0 warnings.
+
 ## [0.10.73] – 2026-05-29
 
 ### Team visibility scopes · idempotent one-command init · external bench — 107 tools

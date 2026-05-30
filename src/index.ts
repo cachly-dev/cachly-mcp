@@ -72,7 +72,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.73';
+const CURRENT_VERSION = '0.10.74';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -224,13 +224,36 @@ interface DeviceFlowState {
 let _deviceFlow: DeviceFlowState | null = null;
 
 async function startDeviceFlow(): Promise<DeviceFlowState | null> {
-  const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
-  const CLIENT_ID = 'cachly-cli';
+  // Try the API proxy first (more reliable than direct Keycloak endpoint)
   try {
+    const res = await fetch(`${API_URL}/api/v1/auth/device/code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: 'cachly-mcp-cli' }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) {
+      const data = await res.json() as {
+        device_code: string; user_code: string;
+        verification_uri: string; interval: number;
+      };
+      return {
+        deviceCode: data.device_code,
+        userCode: data.user_code,
+        verifyUrl: data.verification_uri,
+        pollInterval: (data.interval ?? 5) * 1000,
+        deadline: Date.now() + 10 * 60 * 1000,
+        polling: false,
+      };
+    }
+  } catch { /* fall through to Keycloak */ }
+  // Fallback: direct Keycloak endpoint
+  try {
+    const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
     const res = await fetch(`${AUTH_BASE}/auth/device`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `client_id=${CLIENT_ID}&scope=openid`,
+      body: `client_id=cachly-cli&scope=openid`,
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return null;
@@ -243,7 +266,7 @@ async function startDeviceFlow(): Promise<DeviceFlowState | null> {
       userCode: data.user_code,
       verifyUrl: data.verification_uri_complete,
       pollInterval: (data.interval ?? 5) * 1000,
-      deadline: Date.now() + 10 * 60 * 1000, // 10 min
+      deadline: Date.now() + 10 * 60 * 1000,
       polling: false,
     };
   } catch { return null; }
@@ -251,16 +274,31 @@ async function startDeviceFlow(): Promise<DeviceFlowState | null> {
 
 async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expired' | 'done'> {
   if (Date.now() > flow.deadline) return 'expired';
-  const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
-  const CLIENT_ID = 'cachly-cli';
-  try {
+  // Try API proxy first, then direct Keycloak as fallback
+  const tryProxy = async () => {
+    const res = await fetch(`${API_URL}/api/v1/auth/device/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ device_code: flow.deviceCode, client_id: 'cachly-mcp-cli' }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ access_token?: string; error?: string }>;
+  };
+  const tryKeycloak = async () => {
+    const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
     const res = await fetch(`${AUTH_BASE}/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `client_id=${CLIENT_ID}&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${flow.deviceCode}`,
+      body: `client_id=cachly-cli&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${flow.deviceCode}`,
       signal: AbortSignal.timeout(8000),
     });
-    const data = await res.json() as { access_token?: string; error?: string };
+    return res.json() as Promise<{ access_token?: string; error?: string }>;
+  };
+  try {
+    let data = await tryProxy().catch(() => null);
+    if (!data) data = await tryKeycloak().catch(() => null);
+    if (!data) return 'pending';
     if (data.access_token) {
       // Exchange Keycloak JWT → long-lived API key
       let apiKey = data.access_token;
@@ -2356,80 +2394,140 @@ if (process.argv[2] === 'setup') {
   if (token) {
     console.log('✓  Using token from CACHLY_JWT env var\n');
   } else {
-    const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
-    const CLIENT_ID = 'cachly-cli';
-
     console.log('Step 1: Sign in to cachly (free, no credit card)\n');
     sendFunnelEvent('setup_auth_started');
 
-    // Start device flow
+    // Start device flow — try API proxy first, fall back to direct Keycloak
     let deviceCode = '', userCode = '', verifyUri = '', pollInterval = 5000;
+    let deviceFlowOk = false;
+
+    // Attempt 1: API proxy (recommended path)
     try {
-      const deviceRes = await fetch(`${AUTH_BASE}/auth/device`, {
+      const deviceRes = await fetch(`${API_URL}/api/v1/auth/device/code`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `client_id=${CLIENT_ID}&scope=openid`,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: 'cachly-mcp-cli' }),
+        signal: AbortSignal.timeout(8000),
       });
-      if (!deviceRes.ok) throw new Error(`Device flow error: HTTP ${deviceRes.status}`);
-      const data = await deviceRes.json() as {
-        device_code: string; user_code: string;
-        verification_uri_complete: string; interval: number;
-      };
-      deviceCode    = data.device_code;
-      userCode      = data.user_code;
-      verifyUri     = data.verification_uri_complete;
-      pollInterval  = (data.interval ?? 5) * 1000;
-    } catch (e) {
-      console.error(`\nFailed to start device flow: ${(e as Error).message}`);
-      console.error('Falling back: sign in at https://cachly.dev/setup-ai and paste your API token.\n');
-      token = await ask('   Paste API token (cky_live_...): ');
-      if (!token) { console.error('\nToken is required. Aborting.\n'); rl.close(); process.exit(1); }
-      sendFunnelEvent('setup_auth_completed');
-      console.log('');
-      deviceCode = ''; // mark as fallback so we skip polling
+      if (deviceRes.ok) {
+        const data = await deviceRes.json() as {
+          device_code: string; user_code: string;
+          verification_uri: string; interval: number;
+        };
+        deviceCode   = data.device_code;
+        userCode     = data.user_code;
+        verifyUri    = data.verification_uri;
+        pollInterval = (data.interval ?? 5) * 1000;
+        deviceFlowOk = true;
+      }
+    } catch { /* fall through */ }
+
+    // Attempt 2: Direct Keycloak device flow
+    if (!deviceFlowOk) {
+      try {
+        const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
+        const deviceRes = await fetch(`${AUTH_BASE}/auth/device`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: `client_id=cachly-cli&scope=openid`,
+          signal: AbortSignal.timeout(8000),
+        });
+        if (deviceRes.ok) {
+          const data = await deviceRes.json() as {
+            device_code: string; user_code: string;
+            verification_uri_complete: string; interval: number;
+          };
+          deviceCode   = data.device_code;
+          userCode     = data.user_code;
+          verifyUri    = data.verification_uri_complete;
+          pollInterval = (data.interval ?? 5) * 1000;
+          deviceFlowOk = true;
+        }
+      } catch { /* fall through */ }
     }
 
-    if (deviceCode!) {
-      // Open browser
-      console.log(`   Code: \x1b[1;33m${userCode!}\x1b[0m`);
-      console.log(`   URL:  ${verifyUri!}\n`);
+    if (deviceFlowOk && deviceCode) {
+      // Open browser and show code
+      console.log(`   Code: \x1b[1;33m${userCode}\x1b[0m`);
+      console.log(`   URL:  ${verifyUri}\n`);
       try {
         const { execSync } = await import('node:child_process');
         const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-        execSync(`${openCmd} "${verifyUri!}"`, { stdio: 'ignore' });
+        execSync(`${openCmd} "${verifyUri}"`, { stdio: 'ignore' });
         console.log('   ✓  Browser opened — confirm the code above to continue...\n');
       } catch {
         console.log('   👉  Open the URL above in your browser and enter the code.\n');
       }
 
-      // Poll for token
+      // Poll for token with proper timeouts
       process.stdout.write('   Waiting for authorization');
-      const deadline = Date.now() + 10 * 60 * 1000; // 10 min
+      const deadline = Date.now() + 10 * 60 * 1000;
       while (Date.now() < deadline) {
-        await new Promise(r => setTimeout(r, pollInterval!));
+        await new Promise(r => setTimeout(r, pollInterval));
         process.stdout.write('.');
         try {
-          const tokenRes = await fetch(`${AUTH_BASE}/token`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: `client_id=${CLIENT_ID}&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${deviceCode!}`,
-          });
-          const tokenData = await tokenRes.json() as { access_token?: string; error?: string };
-          if (tokenData.access_token) {
+          // Poll via API proxy first, then Keycloak
+          type TokenResp = { access_token?: string; error?: string };
+          let tokenData: TokenResp | null = null;
+          try {
+            const proxyRes = await fetch(`${API_URL}/api/v1/auth/device/token`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ device_code: deviceCode, client_id: 'cachly-mcp-cli' }),
+              signal: AbortSignal.timeout(8000),
+            });
+            if (proxyRes.ok) tokenData = await proxyRes.json() as TokenResp;
+          } catch { /* try Keycloak */ }
+          if (!tokenData) {
+            const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
+            try {
+              const kcRes = await fetch(`${AUTH_BASE}/token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: `client_id=cachly-cli&grant_type=urn:ietf:params:oauth:grant-type:device_code&device_code=${deviceCode}`,
+                signal: AbortSignal.timeout(8000),
+              });
+              tokenData = await kcRes.json() as TokenResp;
+            } catch { /* network hiccup */ }
+          }
+          if (tokenData?.access_token) {
             token = tokenData.access_token;
             console.log(' \x1b[32m✓ Authorized!\x1b[0m\n');
             sendFunnelEvent('setup_auth_completed');
+            sendFunnelEvent('device_flow_completed');
             break;
           }
-          // authorization_pending = keep polling; slow_down = increase interval
-          if (tokenData.error === 'slow_down') pollInterval = Math.min(pollInterval! + 2000, 15000);
-          else if (tokenData.error && tokenData.error !== 'authorization_pending') {
+          if (tokenData?.error === 'slow_down') pollInterval = Math.min(pollInterval + 2000, 15000);
+          else if (tokenData?.error && tokenData.error !== 'authorization_pending') {
+            sendFunnelEvent('device_flow_failed', { reason: tokenData.error });
             console.error(`\nAuth error: ${tokenData.error}. Aborting.\n`);
             rl.close(); process.exit(1);
           }
         } catch { /* network hiccup — keep polling */ }
       }
-      if (!token) { console.error('\nTimed out waiting for authorization. Aborting.\n'); rl.close(); process.exit(1); }
+      if (!token) {
+        sendFunnelEvent('device_flow_failed', { reason: 'timeout' });
+        console.error('\nTimed out waiting for authorization. Aborting.\n');
+        rl.close(); process.exit(1);
+      }
+      console.log('');
+    } else {
+      // Device flow unavailable — web fallback with automatic browser open
+      sendFunnelEvent('device_flow_failed', { reason: 'device_flow_unavailable' });
+      const signupUrl = 'https://cachly.dev/setup-ai';
+      console.log('   ⚠️  Could not start automatic sign-in. Opening browser for web sign-in...\n');
+      console.log(`   URL: \x1b[36m${signupUrl}\x1b[0m`);
+      console.log('   1. Sign up / log in at the URL above');
+      console.log('   2. Go to Settings → API Keys → Create new key');
+      console.log('   3. Copy the key (starts with cky_live_...)\n');
+      try {
+        const { execSync } = await import('node:child_process');
+        const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
+        execSync(`${openCmd} "${signupUrl}"`, { stdio: 'ignore' });
+      } catch { /* can't open browser — instructions shown above */ }
+      token = await ask('   Paste API key (cky_live_...): ');
+      if (!token) { console.error('\nAPI key is required. Aborting.\n'); rl.close(); process.exit(1); }
+      sendFunnelEvent('setup_auth_completed');
       console.log('');
     }
   }
