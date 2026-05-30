@@ -74,7 +74,7 @@ import { Redis } from 'ioredis';
 let API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.79';
+const CURRENT_VERSION = '0.10.80';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -786,11 +786,26 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
             const gitCounts = _lastBrainFromGitCounts;
             sendFunnelEvent('brain_from_git', { ...telemetryExtra, ...(gitCounts ?? {}) });
             sendFunnelEvent('recall_best_solution', telemetryExtra);
+
+            // If git history yielded nothing usable (fresh/shallow/no-fix repo),
+            // seed the curated starter corpus so the very first smart_recall hits.
+            // This is the key lever on time-to-first-recall for new/empty repos.
+            let starterText = '';
+            if ((_lastBrainFromGitCounts?.total ?? 0) === 0) {
+              try {
+                const seed = await handleShareTool('brain_seed_starter', { instance_id: instanceId }, getConnection, apiFetch);
+                if (seed) {
+                  sendFunnelEvent('brain_seed_starter', { ...telemetryExtra, auto: true });
+                  starterText = '\n---\n' + String(seed);
+                }
+              } catch { /* seeding errors must never break session_start */ }
+            }
+
             // Append bootstrap summary to the session_start briefing.
             // brainResult is always a string here (handleBrainTool returns string for session_start).
             const bootstrapText = String(gitBootstrap);
-            if (bootstrapText) {
-              return String(brainResult) + '\n---\n' + bootstrapText;
+            if (bootstrapText || starterText) {
+              return String(brainResult) + '\n---\n' + bootstrapText + starterText;
             }
           }
         } catch { /* git bootstrap errors must never break session_start */ }

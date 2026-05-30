@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.79 · 112 MCP-Tools · 544 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.80 · 113 MCP-Tools · 562 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.79` (npm `latest`) |
-| MCP-Tools | **112** |
-| Tests | **544** passing, 12 Suites |
+| Version | `0.10.80` (npm `latest`) |
+| MCP-Tools | **113** |
+| Tests | **562** passing, 13 Suites |
 | Lint | **0 errors, 0 warnings** |
 | Build | sauber (`tsc`, Entry `dist/src/index.js`) |
 | Bench | Precision@1 **+22.2 %**, MRR **+10.9 %**, nDCG@5 **+8.1 %** vs. BM25 |
@@ -127,7 +127,11 @@
   werden automatisch in einen langlebigen API-Key getauscht (solange noch gültig); ein abgelehnter
   401-Call self-healt einmal + retried; bei totem Credential sagen `session_start` + `get_api_status`
   klar warum + wie zu fixen. Kein stilles "0 Recalls" mehr.
-- ✅ Time-to-first-recall **messen** (0.10.64); auf <2 min *drücken* bleibt Onboarding-Arbeit 🔲
+- ✅ Time-to-first-recall **messen** (0.10.64) **+ aktiv drücken (0.10.80)** — Starter-Corpus
+  (`brain_seed_starter`, 16 universelle Lektionen) macht den allerersten `smart_recall` zum Treffer
+  statt Leerlauf; auto-seeded beim ersten `session_start`, wenn die Git-Historie 0 Lektionen liefert.
+  Stempelt `born_at` beim Seed → Metrik startet sofort. Reale Suchmaschine findet die richtige
+  Starter-Lektion für natürliche Queries (getestet). Feintuning auf <2 min messbar offen 🔲.
 
 ### Enterprise / Reichweite (Phase-3/4)
 

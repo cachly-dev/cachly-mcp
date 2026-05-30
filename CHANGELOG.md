@@ -7,6 +7,26 @@
 
 ---
 
+## [0.10.80] – 2026-05-30
+
+### Starter corpus — first recall in seconds, attacking time-to-first-recall
+
+**The onboarding gap:** a brand-new Brain (fresh repo, shallow clone, no fix-commits in git history) returned nothing on the user's very first `smart_recall` — so time-to-first-recall never started ticking and the "aha" moment was delayed by a whole session.
+
+**New: curated starter corpus** (`src/starter-corpus.ts`) — 16 universal, high-value, stack-agnostic engineering lessons with proven fixes: Docker layer cache, git force-push safety, flaky-test timing, ESM/CJS interop, JWT clock skew, Postgres migration locks, Redis eviction policy, K8s OOM limits, CORS preflight, dotenv precedence, unhandled rejections, SQL N+1, HTTP retry idempotency, cache stampede, secrets-in-logs, TLS cert expiry. No secrets, no PII, no project-specific paths.
+
+**New tool: `brain_seed_starter(instance_id, topic_filter?, force?, dry_run?)`**
+- Seeds the corpus so the very first query hits. Tagged `source:"starter"`, **never overrides your own lessons**, idempotent (won't double-seed without `force`), stamps `born_at` so the metric starts counting.
+- `topic_filter` matches by topic OR tag; `dry_run` previews; `force` re-seeds + overwrites.
+
+**Auto-seeding on first session:** when `session_start` auto-bootstraps from git history and that yields **zero** lessons (new/empty repo), the starter corpus is seeded automatically — the user's first real query returns a useful answer instead of an empty brain. The empty-brain welcome also surfaces the `brain_seed_starter` command explicitly.
+
+**113 MCP tools** (up from 112).
+
+**18 new tests** (`src/__tests__/starter-seed.test.ts`): corpus integrity (unique topics, required fields, no-PII scan), seeding to best+history keys, `source:"starter"` tagging, `born_at` stamping, idempotency, `force` re-seed, user-lesson protection, `topic_filter` by topic + tag, no-match path, `dry_run`, and — critically — **the real keyword search engine surfacing the right seeded lesson** for natural queries ("docker build slow", "pod OOMKilled", "jwt token rejected").
+
+Build: clean `tsc`. Tests: 562 passing (all 13 suites). Lint: 0 warnings.
+
 ## [0.10.79] – 2026-05-30
 
 ### Brain Marketplace — full shareable Brain lifecycle + stress tests

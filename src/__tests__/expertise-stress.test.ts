@@ -202,8 +202,7 @@ describe('team_expertise_map stress (50 contributors)', () => {
     redis['store'].set(`cachly:ckg:node:person:ghost`, JSON.stringify(node));
 
     const result = await callBrain('team_expertise_map', { instance_id: 'inst-1' }, redis);
-    // ghost has 0 lessons — should still appear (just with 0 count)
-    expect(result).not.toThrowError;
+    // ghost has 0 lessons — handler must not crash, just renders the report.
     expect(result).toContain('Team Expertise Map');
   });
 

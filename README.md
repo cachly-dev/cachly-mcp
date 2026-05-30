@@ -239,6 +239,7 @@ npx @cachly-dev/mcp-server@latest setup     # Wire up all your AI editors (1–5
 npx @cachly-dev/mcp-server@latest health    # Check token, API, editors, git hook
 npx @cachly-dev/mcp-server@latest digest    # Weekly Brain summary — shareable
 npx @cachly-dev/mcp-server@latest share     # Generate a shareable stats card + tweet
+npx @cachly-dev/mcp-server@latest publish   # Publish your Brain as an importable link (--public)
 npx @cachly-dev/mcp-server@latest badge     # Get a live README badge for your Brain
 npx @cachly-dev/mcp-server@latest invite    # Invite a teammate to share your Brain
 npx @cachly-dev/mcp-server@latest index .   # Index a project's code into the Brain (CI-friendly)
@@ -251,7 +252,7 @@ npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git
 
 ---
 
-## MCP Tools (100 total)
+## MCP Tools (113 total)
 
 ### 🧠 Session & Memory (most used)
 
@@ -288,6 +289,16 @@ npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git
 | **`brain_from_git`** | Bootstrap people + files + lessons from git history — incremental |
 | `memory_consolidate` | Detect contradictions, merge duplicates, expire stale lessons |
 | `ckg_inspect` | Inspect the causal graph around any concept |
+
+### 🌐 Shareable & Public Brains
+
+| Tool | What it does |
+|------|-------------|
+| **`brain_seed_starter`** | Seed 16 universal lessons so your **first** `smart_recall` hits — auto-runs on a fresh repo |
+| **`brain_share`** | Export a Brain snapshot as a shareable link (public or unlisted) |
+| **`brain_import`** | Import any shared Brain into yours — `topic_prefix`, `min_confidence`, `dry_run` |
+| `brain_share_list` / `brain_unshare` | List your shares · revoke a share (link goes dead) |
+| **`brain_discover`** | Search the Brain marketplace for ready-made knowledge bases |
 
 ### 🌍 Knowledge Commons · ⚙️ Infrastructure · 📋 Roadmap
 

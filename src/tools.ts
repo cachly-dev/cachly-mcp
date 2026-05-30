@@ -2273,6 +2273,27 @@ const TOOLS = [
       required: [],
     },
   },
+
+  {
+    name: 'brain_seed_starter',
+    description:
+      'Seed a fresh Brain with a curated set of universal, high-value engineering lessons ' +
+      '(Docker layer cache, JWT clock skew, Postgres migration locks, K8s OOM limits, N+1 queries, ' +
+      'cache stampede, CORS preflight, and more). Makes the very first smart_recall return a useful hit ' +
+      'instead of nothing — ideal right after setup or in a fresh repo with no git history to learn from. ' +
+      'Starter lessons are tagged source:"starter", never override your own lessons, and are idempotent (won\'t double-seed). ' +
+      'Example: brain_seed_starter(instance_id="...") · brain_seed_starter(instance_id="...", topic_filter=["docker","redis"])',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the Brain instance to seed.' },
+        topic_filter: { type: 'array', items: { type: 'string' }, description: 'Only seed lessons whose topic or tags match one of these strings (e.g. ["docker", "auth"]). Omit to seed all.' },
+        force: { type: 'boolean', description: 'Re-seed even if already seeded; also overwrites same-topic lessons. Default false.' },
+        dry_run: { type: 'boolean', description: 'Preview which starter lessons would be seeded without writing.' },
+      },
+      required: ['instance_id'],
+    },
+  },
 ] as const;
 
 

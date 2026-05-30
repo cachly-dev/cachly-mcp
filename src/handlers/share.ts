@@ -1,11 +1,13 @@
 import type { Redis } from 'ioredis';
 import { safeJsonParse } from '../utils.js';
+import { STARTER_CORPUS, STARTER_CORPUS_SIZE } from '../starter-corpus.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 
 export const SHARE_TOOL_NAMES = new Set([
   'brain_share', 'brain_import', 'brain_share_list', 'brain_unshare', 'brain_discover',
+  'brain_seed_starter',
 ]);
 
 interface StoredLesson {
@@ -513,7 +515,127 @@ export async function handleShareTool(
       return lines.filter(l => l !== '   ').join('\n');
     }
 
+    // ── brain_seed_starter ─────────────────────────────────────────────────────
+    // Seeds a fresh Brain with curated, universal engineering lessons so the very
+    // first query returns a hit — drives time-to-first-recall under 2 minutes.
+    case 'brain_seed_starter': {
+      const {
+        instance_id,
+        topic_filter,
+        dry_run = false,
+        force = false,
+      } = args as {
+        instance_id: string;
+        topic_filter?: string[];
+        dry_run?: boolean;
+        force?: boolean;
+      };
+
+      if (!instance_id) return '⚠️ `brain_seed_starter` requires `instance_id`.';
+
+      const redis = await getConnection(instance_id);
+
+      // Idempotency guard: don't double-seed unless force=true.
+      const seededMarker = await redis.get(`cachly:brain:starter_seeded:${instance_id}`);
+      if (seededMarker && !force && !dry_run) {
+        return [
+          `🌱 **brain_seed_starter** — already seeded`,
+          ``,
+          `This Brain was seeded with the starter corpus on ${seededMarker}.`,
+          ``,
+          `Pass \`force=true\` to re-seed (existing starter lessons will be refreshed).`,
+        ].join('\n');
+      }
+
+      const topicFilter = Array.isArray(topic_filter) && topic_filter.length > 0 ? topic_filter : undefined;
+      const selected = topicFilter
+        ? STARTER_CORPUS.filter(l => topicFilter.some(f => l.topic.includes(f) || l.tags.some(t => t.includes(f))))
+        : STARTER_CORPUS;
+
+      if (selected.length === 0) {
+        return [
+          `🌱 **brain_seed_starter** — no matching starter lessons`,
+          ``,
+          `No starter lessons match filter: ${topicFilter?.join(', ')}.`,
+          `Available topics: ${STARTER_CORPUS.map(l => `\`${l.topic}\``).join(', ')}`,
+        ].join('\n');
+      }
+
+      if (dry_run) {
+        const sample = selected.slice(0, 8).map(l => `  ✅ \`${l.topic}\` — ${l.what_worked.slice(0, 70)}…`);
+        return [
+          `🌱 **brain_seed_starter (DRY RUN)** — would seed ${selected.length} lesson${selected.length !== 1 ? 's' : ''}`,
+          ``,
+          ...sample,
+          selected.length > 8 ? `  _...and ${selected.length - 8} more_` : '',
+          ``,
+          `_Remove \`dry_run=true\` to seed these into the Brain._`,
+        ].filter(l => l !== '').join('\n');
+      }
+
+      const now = new Date().toISOString();
+      let seeded = 0;
+      let skipped = 0;
+      for (const lesson of selected) {
+        const bestKey = `cachly:lesson:best:${lesson.topic}`;
+
+        // Never clobber a user's own lesson on the same topic (unless force).
+        if (!force) {
+          const existing = await redis.get(bestKey);
+          if (existing) {
+            const parsed = safeJsonParse<{ source?: string } | null>(existing, null);
+            // Only skip if it's a real user lesson (not a prior starter seed).
+            if (parsed && parsed.source !== 'starter') { skipped++; continue; }
+          }
+        }
+
+        const lessonToStore = JSON.stringify({
+          topic: lesson.topic,
+          outcome: lesson.outcome,
+          what_worked: lesson.what_worked,
+          what_failed: lesson.what_failed,
+          ctx: lesson.ctx,
+          tags: lesson.tags,
+          confidence: lesson.confidence,
+          recall_count: 0,
+          source: 'starter',
+          ts: now,
+          verified_at: now,
+          version: 3,
+        });
+
+        await redis.set(bestKey, lessonToStore);
+        const listKey = `cachly:lessons:${lesson.topic}`;
+        await redis.rpush(listKey, lessonToStore);
+        await redis.ltrim(listKey, -100, -1);
+        await redis.expire(listKey, 90 * 86400);
+        seeded++;
+      }
+
+      // Stamp born_at so time-to-first-recall starts counting from the seed moment.
+      await redis.set(`cachly:stats:born_at:${instance_id}`, now, 'EX', 365 * 86400, 'NX').catch(() => {});
+      // Mark seeded for idempotency.
+      await redis.set(`cachly:brain:starter_seeded:${instance_id}`, now, 'EX', 365 * 86400);
+
+      return [
+        `🌱 **brain_seed_starter** — Brain seeded`,
+        ``,
+        `**${seeded}** universal engineering lesson${seeded !== 1 ? 's' : ''} added${skipped > 0 ? ` (${skipped} skipped — your own lessons take priority)` : ''}.`,
+        ``,
+        `Your Brain now answers common questions out of the box:`,
+        `  • \`smart_recall(query="docker build slow")\``,
+        `  • \`smart_recall(query="pod OOMKilled")\``,
+        `  • \`smart_recall(query="jwt token rejected")\``,
+        ``,
+        `_Starter lessons are tagged \`source: "starter"\` and never override your own._`,
+        `_They're replaced as you learn project-specific lessons on the same topics._`,
+      ].join('\n');
+    }
+
     default:
       return null;
   }
 }
+
+/** Exposed for the empty-brain welcome nudge in session_start. */
+export { STARTER_CORPUS_SIZE };

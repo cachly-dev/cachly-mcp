@@ -14,8 +14,17 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.79';
+const MCP_VERSION = '0.10.80';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.80': [
+    `🌱 **Starter corpus — first recall in seconds, not sessions**`,
+    `  📚 \`brain_seed_starter(instance_id)\` — seed 16 curated universal lessons (Docker cache, JWT skew, K8s OOM, N+1, cache stampede…)`,
+    `  🚀 Auto-seeds on first session when git history is empty/shallow — your first \`smart_recall\` returns a real hit`,
+    `  🛡️ Tagged \`source:"starter"\`, idempotent, never overrides your own lessons`,
+    `  ⏱️ Directly attacks time-to-first-recall (<2 min goal); stamps \`born_at\` on seed`,
+    `  🧪 18 new tests: seeding, idempotency, topic_filter, force, user-lesson protection`,
+    `  📊 113 MCP tools`,
+  ],
   '0.10.79': [
     `🌐 **Brain Marketplace — full shareable Brain lifecycle**`,
     `  📋 \`brain_share_list(instance_id)\` — see all your public shares with lesson counts + share IDs`,
@@ -1214,6 +1223,11 @@ export async function handleBrainTool(
         lines.push('**Your brain grows automatically:**');
         lines.push('  • End each session → `session_end(summary="What I did")` — auto-learns from git commits');
         lines.push('  • After fixing bugs → `learn_from_attempts(topic="...", outcome="success", what_worked="...")`');
+        lines.push('');
+        lines.push('🌱 **Want answers right now?** Seed 16 universal engineering lessons so your first');
+        lines.push('   `smart_recall` returns a hit instead of nothing:');
+        lines.push(`   \`brain_seed_starter(instance_id="${instance_id}")\``);
+        lines.push('   _(Docker cache, JWT skew, K8s OOM, N+1 queries, cache stampede… — never overrides your own lessons.)_');
         lines.push('');
         lines.push('💡 Run `brain_doctor` for a health-check and personalised tips.');
         lines.push('');
