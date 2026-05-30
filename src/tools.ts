@@ -2174,6 +2174,53 @@ const TOOLS = [
       required: ['message'],
     },
   },
+
+  // ── Phase 3: Shareable / Public Brains ──────────────────────────────────────
+
+  {
+    name: 'brain_share',
+    description:
+      'Export a Brain snapshot and create a publicly shareable link that anyone can import. ' +
+      'Optionally filter by topic prefix (e.g. only "auth:" or "deploy:" lessons). ' +
+      'Visibility can be "public" (discoverable) or "unlisted" (link-only). ' +
+      'Returns a share URL and the import command to give to teammates or the community. ' +
+      'Example: brain_share(instance_id="...", title="My Auth Patterns", topic_filter=["auth"])',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id:  { type: 'string', description: 'UUID of the Brain instance to export from.' },
+        title:        { type: 'string', description: 'Human-readable title for the shared Brain snapshot. Default: "My Brain Snapshot".' },
+        description:  { type: 'string', description: 'Short description of what knowledge this Brain contains.' },
+        topic_filter: { type: 'array', items: { type: 'string' }, description: 'Only export lessons whose topic contains one of these strings. Omit to export all lessons.' },
+        visibility:   { type: 'string', enum: ['public', 'unlisted'], description: '"public" = discoverable in the Brain marketplace. "unlisted" = only accessible by direct link. Default: unlisted.' },
+        max_lessons:  { type: 'number', description: 'Maximum number of lessons to include (default 100, max 500).' },
+        dry_run:      { type: 'boolean', description: 'If true, preview what would be shared without creating the public link.' },
+      },
+      required: ['instance_id'],
+    },
+  },
+
+  {
+    name: 'brain_import',
+    description:
+      'Import lessons from a publicly shared Brain snapshot into your own Brain instance. ' +
+      'Accepts a share ID (UUID) or the full share URL from brain_share. ' +
+      'Optionally prefix all imported topics to avoid naming collisions (e.g. topic_prefix="team"). ' +
+      'Existing lessons are NOT overwritten by default — pass overwrite=true to replace them. ' +
+      'Example: brain_import(instance_id="...", share_id="abc123", topic_prefix="imported")',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id:    { type: 'string', description: 'UUID of the Brain instance to import lessons into.' },
+        share_id:       { type: 'string', description: 'Share ID (UUID) or full share URL from brain_share.' },
+        topic_prefix:   { type: 'string', description: 'Optional prefix to prepend to all imported topic names (e.g. "team" → "team:auth:jwt-expiry"). Prevents collisions with your own lessons.' },
+        min_confidence: { type: 'number', description: 'Skip lessons below this confidence threshold (0.0–1.0). Default: 0 (import all).' },
+        overwrite:      { type: 'boolean', description: 'Replace existing lessons with the same topic. Default false.' },
+        dry_run:        { type: 'boolean', description: 'Preview what would be imported without writing to the Brain.' },
+      },
+      required: ['instance_id', 'share_id'],
+    },
+  },
 ] as const;
 
 

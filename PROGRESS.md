@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.77 · 107 MCP-Tools · 499 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.78 · 109 MCP-Tools · 520 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.77` (npm `latest`) |
-| MCP-Tools | **107** |
-| Tests | **499** passing, 10 Suites |
+| Version | `0.10.78` (npm `latest`) |
+| MCP-Tools | **109** |
+| Tests | **520** passing, 11 Suites |
 | Lint | **0 errors, 0 warnings** |
 | Build | sauber (`tsc`, Entry `dist/src/index.js`) |
 | Bench | Precision@1 **+22.2 %**, MRR **+10.9 %**, nDCG@5 **+8.1 %** vs. BM25 |
@@ -53,6 +53,8 @@
 | `brain_from_git` → Person+File-Nodes | `src/handlers/fedbrain.ts` | 0.10.61 | ✅ Zero-Setup Graph retroaktiv |
 | `skill_gaps()` | `src/handlers/brain.ts` | 0.10.61 | ✅ 🔴/🟡/🔵 Blind-Spot-Report |
 | `brain_coverage()` | `src/handlers/brain.ts` | 0.10.61 | ✅ 0–100 Health-Score |
+| **`brain_share`** — Brain-Snapshot als öffentlichen Link teilen | `src/handlers/share.ts` | 0.10.78 | ✅ topic_filter, dry_run, public/unlisted |
+| **`brain_import`** — Fremdes Brain importieren (1-Liner) | `src/handlers/share.ts` | 0.10.78 | ✅ topic_prefix, overwrite, min_confidence, dry_run |
 
 ### Stabilität & Hygiene
 

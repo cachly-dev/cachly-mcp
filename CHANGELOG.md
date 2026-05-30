@@ -7,6 +7,25 @@
 
 ---
 
+## [0.10.78] – 2026-05-30
+
+### Phase 3: Shareable / Public Brains
+
+**Two new MCP tools — share and import Brain snapshots:**
+
+- `brain_share(instance_id, title?, topic_filter?, visibility?, max_lessons?, dry_run?)` — exports a Brain snapshot as a publicly shareable link. Visibility: `public` (discoverable) or `unlisted` (link-only). Optional topic filter narrows what gets exported. `dry_run=true` previews without creating the link. Falls back to portable JSON when the public share API is not yet live.
+- `brain_import(instance_id, share_id, topic_prefix?, min_confidence?, overwrite?, dry_run?)` — imports lessons from any public Brain share into your own instance. Accepts full share URLs or bare IDs. Optional `topic_prefix` prevents naming collisions. `overwrite=false` by default (skips existing lessons). `dry_run=true` shows preview without writing.
+
+**109 MCP tools** (up from 107).
+
+**21 new tests** covering:
+- `brain_share`: empty Brain, dry_run, topic_filter, API success + URL return, API 404 fallback to portable JSON, missing args
+- `brain_import`: dry_run, full import, topic_prefix, skip-existing, overwrite, min_confidence filter, URL share ID parsing, 404 error, missing args
+- Regression: `buildServerEnv` self-host URL logic (omit when default, include when custom, omit when empty)
+- Regression: `safeJsonParse` never throws; imported lesson has `imported_from` provenance field
+
+Build: clean `tsc`. Tests: 520 passing (all 11 suites). Lint: 0 warnings.
+
 ## [0.10.77] – 2026-05-30
 
 ### Frictionless onboarding fix + first-class self-hosting / BYOK

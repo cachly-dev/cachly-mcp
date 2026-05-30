@@ -14,8 +14,17 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.77';
+const MCP_VERSION = '0.10.78';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.78': [
+    `🌐 **Phase 3: Shareable / Public Brains**`,
+    `  📤 \`brain_share(instance_id="...")\` — export a Brain snapshot as a shareable link (public or unlisted)`,
+    `  📥 \`brain_import(instance_id="...", share_id="...")\` — import any public Brain into yours (1-line)`,
+    `  🔍 Optional topic_filter, min_confidence, topic_prefix — precise control over what gets shared/imported`,
+    `  🔒 dry_run mode on both tools — preview before committing`,
+    `  🧪 Regression suite added: share handler, buildServerEnv, stdout cleanness`,
+    `  📊 109 MCP tools`,
+  ],
   '0.10.77': [
     `🩹 **Frictionless onboarding + first-class self-hosting/BYOK**`,
     `  🚀 Editor-launched server now serves all tools even before sign-in — zero-credential device flow finally triggers on first tool call`,
