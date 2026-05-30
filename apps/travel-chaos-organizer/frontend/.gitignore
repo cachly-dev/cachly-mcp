@@ -1,8 +1,0 @@
-.env
-.env.local
-.env.production
-.env.staging
-node_modules/
-.expo/
-dist/
-web-build/

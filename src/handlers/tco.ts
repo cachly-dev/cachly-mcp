@@ -62,7 +62,7 @@ function noConfig(): string {
   return (
     '⚙️  **TCO not configured.**\n\n' +
     'Set `TCO_API_URL=http://<host>:8000` in your environment and restart cachly-mcp.\n' +
-    'See `apps/travel-chaos-organizer/README.md` for setup instructions.'
+    'See https://github.com/cachly-dev/travel-chaos-organizer for setup instructions.'
   );
 }
 
