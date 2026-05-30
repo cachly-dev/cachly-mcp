@@ -2294,6 +2294,27 @@ const TOOLS = [
       required: ['instance_id'],
     },
   },
+  {
+    name: 'brain_graph',
+    description:
+      'Export the Causal Knowledge Graph as a 3D-render-ready node/link payload (schema cachly.brain_graph/v1) — ' +
+      'the data layer behind the brain viz: the visual, explorable 3D map of every concept, person, file and service ' +
+      'the brain knows, and how they causally relate. Node kinds (concept/person/file/service) carry stable color groups ' +
+      'and a size (val) scaled by reference count; links carry edgeType (fixes/causes/co-occurs/authored/collaborates) and ' +
+      'confidence (value). Consumed verbatim by react-force-graph-3d / three.js frontends. ' +
+      'Example: brain_graph(instance_id="...") · brain_graph(instance_id="...", domain="auth", min_confidence=0.5, format="summary")',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the Brain instance to export.' },
+        max_nodes: { type: 'number', description: 'Cap on nodes returned (default 400, max 2000). Edges to dropped nodes are pruned.' },
+        domain: { type: 'string', description: 'Only include nodes whose domain or id contains this string (e.g. "auth", "docker"). Omit for the whole graph.' },
+        min_confidence: { type: 'number', description: 'Drop edges below this confidence 0..1 (default 0 = keep all).' },
+        format: { type: 'string', enum: ['json', 'summary'], description: '"json" (default) emits the full renderable payload; "summary" emits a human-readable overview.' },
+      },
+      required: ['instance_id'],
+    },
+  },
 ] as const;
 
 

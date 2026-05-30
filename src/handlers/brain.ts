@@ -14,8 +14,17 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.82';
+const MCP_VERSION = '0.10.83';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.83': [
+    `🧠 **Brain Viz — 3D graph export**`,
+    `  🌐 \`brain_graph(instance_id)\` — exports the Causal Knowledge Graph as a render-ready {nodes, links} payload`,
+    `  🎨 Schema \`cachly.brain_graph/v1\`: node kinds (concept/person/file/service) with color groups + size, edges with confidence`,
+    `  🖥️ Consumed verbatim by the 3D frontend (react-force-graph-3d / three.js) — the visual brain map`,
+    `  🔎 Filters: \`domain\`, \`min_confidence\`, \`max_nodes\` (with truncation flag), \`format="summary"\``,
+    `  🧪 10 tests: kind detection, dangling-edge pruning, confidence/domain filters, schema contract`,
+    `  📊 114 MCP tools`,
+  ],
   '0.10.82': [
     `📡 **Telemetry API contracts — dashboard ingest pipeline prepared**`,
     `  🗂️ \`src/telemetry-types.ts\` — canonical event types + resolved event format (TelemetryEventRaw / TelemetryEventResolved)`,

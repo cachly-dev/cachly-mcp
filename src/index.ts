@@ -75,7 +75,7 @@ import { Redis } from 'ioredis';
 let API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.82';
+const CURRENT_VERSION = '0.10.83';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -620,6 +620,7 @@ import { handleAdvancedTool } from './handlers/advanced.js';
 import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
 import { handleShareTool } from './handlers/share.js';
+import { handleVizTool } from './handlers/viz.js';
 import type { Instance } from './handlers/brain.js';
 
 // ── Tools (imported from tools.ts) ─────────────────────────────────────────
@@ -895,6 +896,9 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
 
   const shareResult = await handleShareTool(name, args, getConnection, apiFetch);
   if (shareResult !== null) return shareResult;
+
+  const vizResult = await handleVizTool(name, args, getConnection, apiFetch);
+  if (vizResult !== null) return vizResult;
 
   const fedbrainResult = await handleFedbrainTool(name, args, getConnection, apiFetch);
   if (fedbrainResult !== null) {
