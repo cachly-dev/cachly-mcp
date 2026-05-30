@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.74 · 107 MCP-Tools · 499 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.75 · 107 MCP-Tools · 499 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,7 +12,7 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.74` (npm `latest`) |
+| Version | `0.10.75` (npm `latest`) |
 | MCP-Tools | **107** |
 | Tests | **499** passing, 10 Suites |
 | Lint | **0 errors, 0 warnings** |

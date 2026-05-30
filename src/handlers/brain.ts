@@ -14,8 +14,15 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.73';
+const MCP_VERSION = '0.10.75';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.75': [
+    `🩹 **Setup hardened — works from the VSCode plugin & any non-TTY terminal**`,
+    `  🔌 \`setup\` no longer hangs on a non-interactive stdin (VSCode tasks, CI) — auto-detects + runs in automatic mode`,
+    `  🔐 Device-flow now uses the API proxy first (the old direct-Keycloak call returned 403) — sign-in actually completes`,
+    `  🌐 When auto sign-in is unavailable, the browser opens with a step-by-step API-key guide instead of a silent paste prompt`,
+    `  📊 Funnel fix: \`device_flow_completed\` / \`device_flow_failed(reason)\` now emitted from setup too`,
+  ],
   '0.10.73': [
     `🔐 **Team visibility scopes + one-command init + external bench**`,
     `  🆕 \`team_grant_scope\` / \`team_scopes\` — scope lessons to a sub-team (group="security"); only members + admins recall them`,
