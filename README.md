@@ -331,6 +331,40 @@ sessions + WIP registry — typically one tool call.
 
 ---
 
+## Editor support matrix
+
+`npx @cachly-dev/mcp-server@latest setup` auto-detects and configures all of the
+following. Manual snippets are in the **Manual Setup** section below.
+
+| Editor / Client | Auto-setup | Config file written | Global config | Notes |
+|---|---|---|---|---|
+| **Claude Code** | ✅ | `~/.claude/mcp.json` + `.mcp.json` | ✅ global always | Runtime device-flow sign-in on first tool call |
+| **Cursor** | ✅ detected via `.cursor/` | `.cursor/mcp.json` | — | Project-level; restart Cursor after setup |
+| **Windsurf** | ✅ detected via `.windsurf/` | `.windsurf/mcp.json` | — | Project-level; restart Windsurf after setup |
+| **VS Code + Copilot** | ✅ detected via `.vscode/` | `.vscode/mcp.json` | — | Requires VS Code MCP extension or Copilot chat |
+| **Cline** | ✅ detected via VS Code | `.vscode/mcp.json` | — | Shares config with Copilot; restart VS Code |
+| **Continue.dev** | ✅ detected via `.continue/` | `.continue/config.json` | — | Uses `modelContextProtocolServers` key |
+| **Zed** | ✅ detected via `.zed/` | `.zed/settings.json` | — | Uses `context_servers` key |
+| **Windsurf (global)** | `setup --editor windsurf` | `~/.windsurf/mcp.json` | ✅ | Pass `--editor` to target global config |
+| **Any other MCP client** | `init --editor claude` | `.mcp.json` | — | Standard `mcpServers` stdio format |
+
+**Which sign-in path each editor uses:**
+
+| Scenario | Path |
+|---|---|
+| `setup` from a real terminal (TTY) | OAuth device-flow → browser click → API key saved automatically |
+| `setup` from VSCode task / CI (non-TTY) | Auto-detects non-interactive, opens browser with step-by-step guide, prints `CACHLY_JWT=... setup` instruction |
+| First tool call from Claude Code (no JWT yet) | Inline device-flow: MCP returns URL + code, browser opens automatically, next call proceeds |
+| `CACHLY_JWT=cky_live_xxx npx ... setup` | Skips auth step entirely, uses provided key |
+
+> **Tip — fastest per-project setup from inside Claude Code:**
+> ```
+> Set up cachly for this project: npx @cachly-dev/mcp-server@latest setup
+> ```
+> Claude runs it and restarts automatically.
+
+---
+
 ## Manual Setup
 
 <details>

@@ -120,14 +120,29 @@ against a **portable, externally-supplied corpus** — a single JSON file with
 third-party-labeled set and reproduce the lift claim on data you control:
 
 ```bash
-npm run bench:external                       # bundled sample corpus
-npm run bench:external -- ./your-corpus.json # your own labeled set
+npm run bench:external                            # bundled sample corpus
+npm run bench:external -- ./your-corpus.json      # your own labeled set
 npm run bench:external -- ./your-corpus.json --json
 ```
 
-The bundled sample (`src/bench/external/sample-corpus.json`, 10 lessons, 8 queries,
-independently shaped) reports **Precision@1 +20.0%, MRR +7.7% vs flat-file** — the
-same direction and magnitude as the built-in fixture bench, on a different corpus.
+Two bundled corpora now ship, both independently shaped from the fixture bench:
+
+| Corpus | Lessons | Queries | P@1 vs flat | MRR vs flat |
+|---|---|---|---|---|
+| `sample-corpus.json` (general infra) | 10 | 8 | +20.0% | +7.7% |
+| `agent-traces-corpus.json` (agent sessions) | 22 | 15 | **+66.7%** | **+9.5%** |
+
+The agent-traces corpus is modelled after patterns observed in real AI-agent debugging
+sessions: TypeScript/ESM resolution, Docker layer caching, DB migration locks, GitHub
+Actions pnpm caching, Redis eviction policy, Node.js event-emitter leaks, JWT
+clock-skew, and Vitest fake-timer issues. Each category contains an adversarial
+**symptom-dense failure distractor** competing with the solution-focused proven
+success — the hardest realistic recall case for any ranker.
+
+```bash
+npm run bench:external -- src/bench/external/agent-traces-corpus.json
+```
+
 The loader validates structure (unique topics, every `relevant` topic exists) and is
 covered by `external-bench.test.ts`.
 

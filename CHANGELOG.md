@@ -7,6 +7,24 @@
 
 ---
 
+## [0.10.76] – 2026-05-30
+
+### Agent-trace benchmark · editor support matrix · setup timer
+
+**Real agent-trace benchmark corpus** — closes the last open bench item:
+- `src/bench/external/agent-traces-corpus.json` — 22 lessons, 15 queries, modelled after realistic AI-agent debugging patterns: TypeScript/ESM resolution, Docker layer caching, Postgres migration locks, GitHub Actions pnpm caching, Redis eviction policy, Node.js event-emitter leaks, JWT clock-skew, Vitest fake-timer async issues.
+- Each category contains an adversarial **symptom-dense failure distractor** competing with the solution-focused proven fix — the hardest real-world recall case. BM25 picks the distractor; quality reranking picks the fix.
+- Result: **Precision@1 +66.7%, MRR +9.5% vs flat-file** — the strongest corpus yet. Both corpora now documented in BENCH.md with comparison table.
+- `npm run bench:external -- src/bench/external/agent-traces-corpus.json`
+
+**First-class editor support matrix** in README:
+- Full table: 8 clients (Claude Code, Cursor, Windsurf, VS Code + Copilot, Cline, Continue.dev, Zed, generic), config path, auto-detect, global vs. project config, notes.
+- Second table: which sign-in path applies per scenario (real TTY, VSCode task/non-TTY, runtime device-flow, env-var passthrough).
+
+**Setup: elapsed-time banner** — `setup` now records when it started and prints a "Brain is ready — completed in Xs" box at successful exit. Also emits `elapsed_s` in the `setup_completed` telemetry event for server-side time-to-first-recall tracking.
+
+Build: clean `tsc`. Tests: 499 passing. Lint: 0 warnings.
+
 ## [0.10.75] – 2026-05-30
 
 ### Fix: non-interactive `setup` no longer hangs (VSCode plugin / CI)

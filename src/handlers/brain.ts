@@ -14,8 +14,15 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.75';
+const MCP_VERSION = '0.10.76';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.76': [
+    `📊 **Agent-trace benchmark + editor matrix + setup timer**`,
+    `  📂 New \`agent-traces-corpus.json\` — 22 lessons, 15 queries, realistic AI-agent debug patterns`,
+    `  🏆 Benchmark result: **P@1 +66.7%, MRR +9.5% vs flat-file** (adversarial failure-distractors per category)`,
+    `  📋 README: first-class editor support matrix (Claude Code, Cursor, Windsurf, VSCode, Cline, Continue.dev, Zed)`,
+    `  ⏱️  setup now shows elapsed time + "Brain is ready" banner at the end`,
+  ],
   '0.10.75': [
     `🩹 **Setup hardened — works from the VSCode plugin & any non-TTY terminal**`,
     `  🔌 \`setup\` no longer hangs on a non-interactive stdin (VSCode tasks, CI) — auto-detects + runs in automatic mode`,

@@ -1,0 +1,349 @@
+{
+  "name": "agent-traces-v1 (synthetic realistic agent-session patterns)",
+  "_note": "Corpus shaped after patterns seen in real AI-agent debugging sessions: TypeScript/ESM errors, Docker build degradation, DB migration locks, CI caching, Redis eviction, async/event-emitter leaks, JWT clock skew, and test-timer issues. Adversarial design: for each category a symptom-dense FAILED attempt competes with the solution-focused proven success — exactly the recall failure mode that matters for an agent acting on the top result. Two governance pairs test review-level tiebreak with near-identical vocabulary.",
+  "lessons": [
+    {
+      "topic": "ts:moduleresolution-nodenext",
+      "outcome": "success",
+      "what_worked": "Changed moduleResolution to NodeNext in tsconfig.json and added explicit .js extensions to every relative import (e.g. import from './utils.js'). All 'Cannot find module' runtime errors and type-check failures disappeared immediately.",
+      "what_failed": "Simply enabling esModuleInterop or changing target to ESNext did not help; the resolver still could not locate the modules at runtime.",
+      "severity": "major",
+      "confidence": 0.93,
+      "recall_count": 9,
+      "review_level": "senior",
+      "reviewed_by": "arch-lead",
+      "endorsements": 3,
+      "tags": ["typescript", "esm", "imports", "moduleresolution"],
+      "ts": "2025-03-10T10:00:00.000Z"
+    },
+    {
+      "topic": "ts:moduleresolution-paths-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Added paths aliases in tsconfig to resolve the Cannot find module errors. TypeScript stopped complaining but runtime still threw 'Cannot find module' because tsconfig paths only affect type checking, not the actual Node.js module resolver. The module resolution error persisted at runtime, the imports still failed, the module was still not found.",
+      "severity": "major",
+      "confidence": 0.2,
+      "recall_count": 0,
+      "tags": ["typescript", "paths", "imports", "moduleresolution"],
+      "ts": "2025-03-11T10:00:00.000Z"
+    },
+    {
+      "topic": "next:hydration-mismatch-useeffect",
+      "outcome": "success",
+      "what_worked": "Wrapped any date/timestamp rendering inside a useEffect that sets a mounted flag; rendered a skeleton on the server and the real date only on the client. Next.js hydration mismatch warning disappeared completely.",
+      "what_failed": "Adding suppressHydrationWarning hid the warning but did not fix the actual server/client mismatch causing flicker.",
+      "severity": "major",
+      "confidence": 0.9,
+      "recall_count": 6,
+      "review_level": "peer",
+      "reviewed_by": "frontend-lead",
+      "endorsements": 2,
+      "tags": ["nextjs", "react", "hydration", "ssr"],
+      "ts": "2025-02-18T10:00:00.000Z"
+    },
+    {
+      "topic": "next:hydration-mismatch-key-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Tried adding unique keys to list items to fix the hydration mismatch warning. The Next.js hydration mismatch warning still appeared; mismatch persisted on every page load. Added suppressHydrationWarning to the element but the hydration error and client/server mismatch remained visible in the console.",
+      "severity": "major",
+      "confidence": 0.25,
+      "recall_count": 0,
+      "tags": ["nextjs", "react", "hydration", "keys"],
+      "ts": "2025-02-19T10:00:00.000Z"
+    },
+    {
+      "topic": "docker:layer-cache-copy-order",
+      "outcome": "success",
+      "what_worked": "Reordered Dockerfile to COPY package.json package-lock.json ./ first, then RUN npm ci, then COPY . . Docker layer caching now reuses the installed node_modules layer on every code-only change. Build time dropped from 4 minutes to 25 seconds.",
+      "what_failed": "COPYing the entire repo first invalidated the npm install layer on every change regardless of whether dependencies changed.",
+      "severity": "major",
+      "confidence": 0.95,
+      "recall_count": 11,
+      "review_level": "senior",
+      "reviewed_by": "platform-eng",
+      "endorsements": 4,
+      "tags": ["docker", "cache", "build", "dockerfile"],
+      "ts": "2025-01-15T10:00:00.000Z"
+    },
+    {
+      "topic": "docker:layer-cache-no-cache-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Ran docker build --no-cache to fix slow builds caused by stale cache. The build was still slow and every layer rebuilt from scratch. Docker build still slow, docker build taking too long, every layer rebuilds even when dependencies have not changed. The cache was busted every time because the COPY . . instruction appeared before npm install.",
+      "severity": "major",
+      "confidence": 0.15,
+      "recall_count": 0,
+      "tags": ["docker", "cache", "build", "slow"],
+      "ts": "2025-01-16T10:00:00.000Z"
+    },
+    {
+      "topic": "pg:migration-lock-timeout",
+      "outcome": "success",
+      "what_worked": "Set lock_timeout = '5s' in the migration transaction and wrapped the ALTER TABLE in a retry loop. Long-running migrations no longer block all queries for minutes; they fail fast and retry with exponential backoff during low-traffic windows.",
+      "what_failed": "Canceling the blocking query manually was not fast enough — the application's connection pool exhausted before the lock was released.",
+      "severity": "critical",
+      "confidence": 0.92,
+      "recall_count": 5,
+      "review_level": "senior",
+      "reviewed_by": "db-admin",
+      "endorsements": 2,
+      "tags": ["postgres", "migration", "lock", "alter-table"],
+      "ts": "2025-02-05T10:00:00.000Z"
+    },
+    {
+      "topic": "pg:migration-lock-cancel-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Tried to cancel the blocking query with pg_cancel_backend while the migration was running. The migration lock still held, all queries were still blocked, the migration was still blocking all traffic, the database was still locked. The connection pool exhausted before the lock released and the application timed out.",
+      "severity": "critical",
+      "confidence": 0.2,
+      "recall_count": 0,
+      "tags": ["postgres", "migration", "lock", "blocking"],
+      "ts": "2025-02-06T10:00:00.000Z"
+    },
+    {
+      "topic": "gha:pnpm-cache-lockfile-hash",
+      "outcome": "success",
+      "what_worked": "Used actions/cache with key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }} and restore-keys fallback. pnpm install in CI dropped from 90 seconds to under 4 seconds on cache hit.",
+      "what_failed": "Caching node_modules directly without a lock-file hash caused stale caches that broke installs silently.",
+      "severity": "major",
+      "confidence": 0.88,
+      "recall_count": 7,
+      "review_level": "peer",
+      "reviewed_by": "devops",
+      "endorsements": 2,
+      "tags": ["github-actions", "pnpm", "cache", "ci"],
+      "ts": "2025-03-02T10:00:00.000Z"
+    },
+    {
+      "topic": "gha:pnpm-cache-node-modules-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Tried caching the full node_modules directory in GitHub Actions. The cache key never matched because the hash excluded the lock file. pnpm install still slow in CI, install taking 90 seconds every run, cache miss on every GitHub Actions run, dependencies always reinstalled.",
+      "severity": "major",
+      "confidence": 0.2,
+      "recall_count": 0,
+      "tags": ["github-actions", "pnpm", "cache", "node-modules"],
+      "ts": "2025-03-03T10:00:00.000Z"
+    },
+    {
+      "topic": "redis:lru-eviction-policy",
+      "outcome": "success",
+      "what_worked": "Set maxmemory-policy allkeys-lru in redis.conf and maxmemory to 80% of available RAM. Redis now gracefully evicts the least-recently-used keys under memory pressure instead of returning ENOMEM errors to the application.",
+      "what_failed": "Setting maxmemory-policy noeviction made Redis return OOM errors to every write once memory was full, which crashed the application.",
+      "severity": "critical",
+      "confidence": 0.94,
+      "recall_count": 8,
+      "review_level": "senior",
+      "reviewed_by": "platform-lead",
+      "endorsements": 3,
+      "tags": ["redis", "memory", "eviction", "lru", "oom"],
+      "ts": "2025-01-28T10:00:00.000Z"
+    },
+    {
+      "topic": "redis:noeviction-attempt",
+      "outcome": "failure",
+      "what_worked": "Set maxmemory-policy noeviction so Redis would never silently lose keys.",
+      "what_failed": "Redis started returning OOM command errors and ENOMEM to all write operations once memory was full. The application crashed because every Redis SET threw an error. Redis out of memory, Redis ENOMEM error, Redis OOM error, Redis throwing errors when memory is full.",
+      "severity": "critical",
+      "confidence": 0.3,
+      "recall_count": 1,
+      "tags": ["redis", "memory", "eviction", "noeviction", "oom"],
+      "ts": "2025-01-29T10:00:00.000Z"
+    },
+    {
+      "topic": "node:event-emitter-listener-cleanup",
+      "outcome": "success",
+      "what_worked": "Added emitter.removeListener (or .off) in the cleanup function returned by useEffect / componentWillUnmount. The MaxListenersExceededWarning disappeared and heap growth under sustained load stopped.",
+      "what_failed": "Calling emitter.setMaxListeners(100) suppressed the warning but the listeners kept accumulating and the memory leak continued.",
+      "severity": "major",
+      "confidence": 0.91,
+      "recall_count": 6,
+      "review_level": "peer",
+      "reviewed_by": "backend-eng",
+      "endorsements": 2,
+      "tags": ["node", "eventemitter", "memory-leak", "listeners"],
+      "ts": "2025-02-22T10:00:00.000Z"
+    },
+    {
+      "topic": "node:event-emitter-maxlisteners-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Increased Node.js maxListeners limit using emitter.setMaxListeners(100) to suppress the MaxListenersExceededWarning. The warning was suppressed but the memory leak continued. Node.js memory growing unboundedly, MaxListenersExceededWarning, heap out of memory, event emitter memory leak, listeners accumulating.",
+      "severity": "major",
+      "confidence": 0.15,
+      "recall_count": 0,
+      "tags": ["node", "eventemitter", "memory-leak", "maxlisteners"],
+      "ts": "2025-02-23T10:00:00.000Z"
+    },
+    {
+      "topic": "node:esm-dynamic-import",
+      "outcome": "success",
+      "what_worked": "Replaced all require() calls with dynamic import() and added \"type\": \"module\" to package.json. Also added .js extensions to all relative imports. ERR_REQUIRE_ESM runtime errors from ESM-only packages (chalk, got, p-limit, etc.) disappeared.",
+      "what_failed": "Using createRequire() as a workaround patched individual packages but was not sustainable as more ESM-only packages were added.",
+      "severity": "major",
+      "confidence": 0.89,
+      "recall_count": 8,
+      "review_level": "peer",
+      "reviewed_by": "arch-team",
+      "endorsements": 2,
+      "tags": ["node", "esm", "require", "commonjs", "imports"],
+      "ts": "2025-03-08T10:00:00.000Z"
+    },
+    {
+      "topic": "jwt:clock-skew-tolerance",
+      "outcome": "success",
+      "what_worked": "Added clockTolerance: 30 (seconds) to jsonwebtoken's verify() options. JWT validation failures with 'iat is in the future' or 'jwt not active' errors in distributed services with slight NTP drift disappeared entirely.",
+      "what_failed": "Extending token TTL hid the problem but the error still appeared intermittently whenever clock drift exceeded the token's nbf window.",
+      "severity": "major",
+      "confidence": 0.87,
+      "recall_count": 4,
+      "review_level": "peer",
+      "reviewed_by": "security-eng",
+      "endorsements": 1,
+      "tags": ["jwt", "auth", "clock-skew", "kubernetes", "distributed"],
+      "ts": "2025-02-14T10:00:00.000Z"
+    },
+    {
+      "topic": "jwt:clock-skew-ttl-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Extended JWT token TTL from 1h to 24h to reduce the chance of clock-skew errors. The 'iat is in the future' JWT verification errors still appeared randomly in Kubernetes pods with slight clock drift. JWT not active error, jwt verification failed, iat is in the future, jwt clock skew error still occurring.",
+      "severity": "major",
+      "confidence": 0.2,
+      "recall_count": 0,
+      "tags": ["jwt", "auth", "clock-skew", "ttl", "iat"],
+      "ts": "2025-02-15T10:00:00.000Z"
+    },
+    {
+      "topic": "vitest:fake-timers-async",
+      "outcome": "success",
+      "what_worked": "Replaced vi.runAllTimers() with vi.runAllTimersAsync() inside an await. Vitest tests for debounced and setTimeout-based logic now complete instantly instead of timing out — the async variant flushes both the timer queue and the microtask queue.",
+      "what_failed": "vi.runAllTimers() advanced synthetic time but did not flush pending promises, so async callbacks never ran and tests timed out.",
+      "severity": "major",
+      "confidence": 0.9,
+      "recall_count": 5,
+      "review_level": "senior",
+      "reviewed_by": "test-lead",
+      "endorsements": 2,
+      "tags": ["vitest", "testing", "fake-timers", "async", "debounce"],
+      "ts": "2025-03-15T10:00:00.000Z"
+    },
+    {
+      "topic": "vitest:fake-timers-sync-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Called vi.runAllTimers() (synchronous) in tests using setTimeout with async callbacks. Tests still timed out because the synchronous call does not flush the microtask queue. Vitest test timeout, test timing out waiting for debounce, vitest fake timers not working, setTimeout test hanging, async timer test still timing out.",
+      "severity": "major",
+      "confidence": 0.2,
+      "recall_count": 0,
+      "tags": ["vitest", "testing", "fake-timers", "timeout", "settimeout"],
+      "ts": "2025-03-16T10:00:00.000Z"
+    },
+    {
+      "topic": "react:concurrent-stale-closure",
+      "outcome": "success",
+      "what_worked": "Used the functional update form of setState (prev => prev + delta) and moved expensive derived values into useMemo with correct deps. Stale closure bugs where React state updates read outdated values disappeared.",
+      "what_failed": "Wrapping updates in setTimeout did not reliably capture fresh state in Concurrent Mode.",
+      "severity": "major",
+      "confidence": 0.85,
+      "recall_count": 4,
+      "review_level": "peer",
+      "reviewed_by": "react-eng",
+      "endorsements": 1,
+      "tags": ["react", "hooks", "stale-closure", "usestate", "concurrent"],
+      "ts": "2025-01-30T10:00:00.000Z"
+    },
+    {
+      "topic": "env:dotenv-docker-override",
+      "outcome": "success",
+      "what_worked": "Moved secret env vars out of .env into Docker Compose's environment block and referenced them via ${HOST_VAR} syntax. .env is now committed (non-secret defaults only); secrets come from the host shell, never from the image.",
+      "what_failed": "Baking secrets into the image via COPY .env broke secret rotation and violated security policy.",
+      "severity": "critical",
+      "confidence": 0.9,
+      "recall_count": 3,
+      "review_level": "senior",
+      "reviewed_by": "security-lead",
+      "endorsements": 2,
+      "tags": ["docker", "env", "secrets", "dotenv", "security"],
+      "ts": "2025-02-28T10:00:00.000Z"
+    },
+    {
+      "topic": "prisma:migration-shadow-db",
+      "outcome": "success",
+      "what_worked": "Added shadowDatabaseUrl to prisma/schema.prisma for the development environment. prisma migrate dev now uses the shadow DB for safe migration diff detection instead of failing with 'P3009: migrate found failed migrations'.",
+      "what_failed": "Manually deleting migration history from _prisma_migrations and re-running caused data loss in dev and confused the CI migration check.",
+      "severity": "major",
+      "confidence": 0.88,
+      "recall_count": 4,
+      "review_level": "peer",
+      "reviewed_by": "backend-lead",
+      "endorsements": 1,
+      "tags": ["prisma", "migration", "database", "shadow-db"],
+      "ts": "2025-03-05T10:00:00.000Z"
+    }
+  ],
+  "queries": [
+    {
+      "query": "TypeScript Cannot find module error at runtime even though types compile fine",
+      "relevant": ["ts:moduleresolution-nodenext"]
+    },
+    {
+      "query": "tsconfig paths aliases fix type errors but runtime still throws module not found",
+      "relevant": ["ts:moduleresolution-nodenext"]
+    },
+    {
+      "query": "Next.js hydration mismatch warning for date display, adding keys did not help",
+      "relevant": ["next:hydration-mismatch-useeffect"]
+    },
+    {
+      "query": "Docker build rebuilds everything from scratch every time even when I only changed a source file",
+      "relevant": ["docker:layer-cache-copy-order"]
+    },
+    {
+      "query": "Docker build slow in CI, npm install runs every time even when package.json unchanged",
+      "relevant": ["docker:layer-cache-copy-order"]
+    },
+    {
+      "query": "Postgres ALTER TABLE migration blocking all application queries for several minutes",
+      "relevant": ["pg:migration-lock-timeout"]
+    },
+    {
+      "query": "GitHub Actions pnpm install takes 90 seconds every run despite caching",
+      "relevant": ["gha:pnpm-cache-lockfile-hash"]
+    },
+    {
+      "query": "Redis ENOMEM or OOM errors when memory is full, writes failing",
+      "relevant": ["redis:lru-eviction-policy"]
+    },
+    {
+      "query": "Node.js MaxListenersExceededWarning and heap growing without bound",
+      "relevant": ["node:event-emitter-listener-cleanup"]
+    },
+    {
+      "query": "ERR_REQUIRE_ESM error when importing chalk or got or other modern packages",
+      "relevant": ["node:esm-dynamic-import"]
+    },
+    {
+      "query": "JWT iat is in the future error in Kubernetes with multiple service replicas",
+      "relevant": ["jwt:clock-skew-tolerance"]
+    },
+    {
+      "query": "Vitest test timeout when testing debounce or setTimeout with fake timers",
+      "relevant": ["vitest:fake-timers-async"]
+    },
+    {
+      "query": "vi.runAllTimers does not flush async callbacks, tests still time out",
+      "relevant": ["vitest:fake-timers-async"]
+    },
+    {
+      "query": "React state update reads stale value in hooks with Concurrent Mode",
+      "relevant": ["react:concurrent-stale-closure"]
+    },
+    {
+      "query": "Prisma migrate dev failing with P3009 failed migrations in development",
+      "relevant": ["prisma:migration-shadow-db"]
+    }
+  ]
+}

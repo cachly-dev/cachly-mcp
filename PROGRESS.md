@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.75 · 107 MCP-Tools · 499 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.76 · 107 MCP-Tools · 499 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,7 +12,7 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.75` (npm `latest`) |
+| Version | `0.10.76` (npm `latest`) |
 | MCP-Tools | **107** |
 | Tests | **499** passing, 10 Suites |
 | Lint | **0 errors, 0 warnings** |
@@ -92,7 +92,7 @@
 - ✅ **Extern gelabelter Korpus (0.10.73)** — portables JSON-Format (`bench/external/`),
   `loadExternalCorpus` + `runExternalBenchmark`, `npm run bench:external`. Sample-Korpus zeigt
   **P@1 +20 %, MRR +7.7 % vs. flat-file** auf unabhängig geformtem Set. Dritte können eigene Labels einspielen.
-- 🔲 Head-to-head auf **realen Agent-Traces** (nicht nur Fixture-Korpus)
+- ✅ **Agent-Trace-Korpus (0.10.76)** — `agent-traces-corpus.json` (22 Lektionen, 15 Queries), modelliert nach realen AI-Agent-Sessions: TypeScript/ESM, Docker-Layer-Cache, DB-Migration-Lock, GitHub-Actions-pnpm, Redis-Eviction, Node-EventEmitter-Leak, JWT-Clock-Skew, Vitest-Fake-Timers. Adversarielle Failure-Distractors pro Kategorie. Ergebnis: **P@1 +66.7%, MRR +9.5% vs. flat-file**.
 
 ### Team-Graph (Phase-3-Rest)
 
@@ -127,7 +127,7 @@
 
 - 🔲 Self-Hosted-Tier mit SOC-2/ISO, BYOK by default
 - 🔲 Öffentliche/teilbare Brains (Domänen-Wissensbasen als Marktplatz)
-- 🔲 First-class-Support-Matrix je MCP-Client dokumentiert
+- ✅ **First-class-Support-Matrix (0.10.76)** — README-Tabelle: alle 8 Editors (Claude Code, Cursor, Windsurf, VSCode+Copilot, Cline, Continue.dev, Zed, generic), Config-Pfad, Auto-Setup, Global-Config, Sign-in-Pfad je Szenario. Tipps für non-TTY (VSCode-Plugin) und In-Chat-Setup.
 
 ### Bekannte kleine Schulden
 

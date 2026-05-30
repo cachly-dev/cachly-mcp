@@ -72,7 +72,7 @@ import { Redis } from 'ioredis';
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.75';
+const CURRENT_VERSION = '0.10.76';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -2375,6 +2375,7 @@ if (process.argv[2] === 'setup') {
   const { resolve, dirname } = await import('node:path');
   const { createInterface } = await import('node:readline');
 
+  const setupStartMs = Date.now();
   sendFunnelEvent('setup_started');
 
   // --yes / -y → non-interactive mode (skips all prompts, picks defaults).
@@ -2900,7 +2901,14 @@ if (process.argv[2] === 'setup') {
 
   // Setup reached the end successfully — close the funnel.
   JWT = token;
-  sendFunnelEvent('setup_completed', { instance_id: instance.id });
+  const setupElapsedS = Math.round((Date.now() - setupStartMs) / 1000);
+  sendFunnelEvent('setup_completed', { instance_id: instance.id, elapsed_s: setupElapsedS });
+
+  console.log('\n╔══════════════════════════════════════════════════════╗');
+  console.log('║  🚀  Brain is ready.                                 ║');
+  console.log(`║  ⏱️   Setup completed in ${String(setupElapsedS + 's').padEnd(5)} — restart your editor  ║`);
+  console.log('║      and your AI arrives pre-briefed every session.  ║');
+  console.log('╚══════════════════════════════════════════════════════╝\n');
 
   rl.close();
   // Give the fire-and-forget telemetry a moment to flush before exit.
