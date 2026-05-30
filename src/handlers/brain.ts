@@ -14,8 +14,15 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.80';
+const MCP_VERSION = '0.10.81';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.81': [
+    `⏱️ **Onboarding-Bench — time-to-first-recall, now measured**`,
+    `  📐 \`npm run bench:onboarding\` — cold (empty) vs seeded (starter) first-query hit rate via the real search engine`,
+    `  📊 Result: first-query hit@1 **0% → 87.5%**, hit@3 **0% → 100%**, MRR **0% → 93.8%**`,
+    `  🛡️ CI-defended in \`onboarding-bench.test.ts\` (cold must answer 0%, seeded thresholds enforced)`,
+    `  📋 \`PLAN-DASHBOARD.md\` — full build spec for the external Team-Knowledge-Reuse dashboard (separate repo)`,
+  ],
   '0.10.80': [
     `🌱 **Starter corpus — first recall in seconds, not sessions**`,
     `  📚 \`brain_seed_starter(instance_id)\` — seed 16 curated universal lessons (Docker cache, JWT skew, K8s OOM, N+1, cache stampede…)`,

@@ -150,3 +150,47 @@ covered by `external-bench.test.ts`.
 > the quality rerank can only help when the corpus carries outcome / proven-ness /
 > review signals. That is itself an honest, documented result: cachly's lift comes
 > specifically from engineering-lesson corpora where those signals exist.
+
+---
+
+## Onboarding-Bench — time-to-first-recall (`npm run bench:onboarding`)
+
+The recall-lift benches above answer "given knowledge, do we rank it better?". This
+bench answers a different, equally decisive question: **how fast does a brand-new
+user reach their first useful recall?**
+
+We model time-to-first-recall as a **cold-start hit rate**. A new user asks their
+first realistic question — phrased the way a frustrated developer types it, *not*
+using the lesson's topic slug. Two scenarios run over the same 16 queries through the
+**real keyword search engine**:
+
+- **cold** — empty Brain (fresh repo, no git-derived lessons). What every user saw
+  before v0.10.80.
+- **seeded** — Brain pre-seeded with the curated 16-lesson starter corpus
+  (`brain_seed_starter`, which auto-runs on first session when git history is empty).
+
+```bash
+npm run bench:onboarding            # pretty report
+npm run bench:onboarding -- --json  # machine-readable
+```
+
+### Result
+
+| Metric | cold (empty) | seeded (starter) |
+|---|---|---|
+| First-query hit@1 | 0.0% | **87.5%** |
+| Hit@3 | 0.0% | **100.0%** |
+| MRR | 0.0% | **93.8%** |
+| Answered (any result) | 0.0% | **100.0%** |
+
+**Interpretation.** With an empty Brain the first query returns nothing — the user
+must do work, learn a lesson, and only *then* can recall it, so time-to-first-recall
+spans at least one full work cycle (minutes → hours). With the starter corpus seeded
+on first session, the first query hits immediately → time-to-first-recall collapses
+to seconds. CI-defended in `onboarding-bench.test.ts` (cold must answer 0%, seeded
+must keep hit@3 ≥ 90%, hit@1 ≥ 70%, MRR ≥ 80%).
+
+> This is a retrieval proxy, not a wall-clock measurement of live users. The real
+> server-side wall-clock distribution (born_at → first_recall_at across actual
+> instances) is tracked per-Brain in `brain_metrics` and is the subject of the
+> external analytics dashboard (see `PLAN-DASHBOARD.md`).

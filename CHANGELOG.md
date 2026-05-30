@@ -7,6 +7,39 @@
 
 ---
 
+## [0.10.81] – 2026-05-30
+
+### Onboarding-Bench (time-to-first-recall, measured) + external dashboard plan
+
+**Measuring the v0.10.80 starter-corpus impact.** Recall-lift was already proven
+(`npm run bench`); this release measures the *other* decisive metric —
+**time-to-first-recall** — as a cold-start hit rate through the real search engine.
+
+**New: `npm run bench:onboarding`** (`src/bench/onboarding-bench.ts`)
+- 16 realistic first-session queries, phrased the way a frustrated developer types
+  them (NOT the lesson's topic slug), each mapped to a starter topic.
+- Two scenarios over the **real keyword search engine**: `cold` (empty Brain) vs
+  `seeded` (starter corpus, which auto-seeds on first session when git history is empty).
+- **Result: first-query hit@1 0% → 87.5%, hit@3 0% → 100%, MRR 0% → 93.8%, answered 0% → 100%.**
+- Interpretation: an empty Brain returns nothing on the first query (user must do work
+  + learn before any recall is possible — time-to-first-recall spans a full work cycle);
+  the seeded Brain hits immediately (collapses to seconds). Documented in BENCH.md.
+
+**5 new CI-guard tests** (`src/__tests__/onboarding-bench.test.ts`): cold must answer
+0%; seeded must keep hit@3 ≥ 90%, hit@1 ≥ 70%, MRR ≥ 80%; seeding must lift every
+metric; every cold-start query maps to a real starter topic; the bench exercises the
+whole corpus (no flattering subset).
+
+**New: `PLAN-DASHBOARD.md`** — complete build spec for the external Team-Knowledge-Reuse
+dashboard (`cachly-insights`, a separate repo): grounded in the actual funnel events and
+`cachly:stats:*` keys the MCP server already emits. Covers data sources, architecture,
+TimescaleDB schema, the five dashboard views (activation funnel, TTFR with seeded-vs-cold
+cohort split, per-org reuse, brain health, marketplace), GDPR constraints, repo bootstrap
+steps, milestones, and the one cross-repo prerequisite (resolved telemetry stream in the
+cachly API).
+
+No new tools (still 113). Build: clean `tsc`. Tests: 567 passing (14 suites). Lint: 0 warnings.
+
 ## [0.10.80] – 2026-05-30
 
 ### Starter corpus — first recall in seconds, attacking time-to-first-recall

@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.80 · 113 MCP-Tools · 562 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.81 · 113 MCP-Tools · 567 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,9 +12,9 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.80` (npm `latest`) |
+| Version | `0.10.81` (npm `latest`) |
 | MCP-Tools | **113** |
-| Tests | **562** passing, 13 Suites |
+| Tests | **567** passing, 14 Suites |
 | Lint | **0 errors, 0 warnings** |
 | Build | sauber (`tsc`, Entry `dist/src/index.js`) |
 | Bench | Precision@1 **+22.2 %**, MRR **+10.9 %**, nDCG@5 **+8.1 %** vs. BM25 |
@@ -127,11 +127,12 @@
   werden automatisch in einen langlebigen API-Key getauscht (solange noch gültig); ein abgelehnter
   401-Call self-healt einmal + retried; bei totem Credential sagen `session_start` + `get_api_status`
   klar warum + wie zu fixen. Kein stilles "0 Recalls" mehr.
-- ✅ Time-to-first-recall **messen** (0.10.64) **+ aktiv drücken (0.10.80)** — Starter-Corpus
-  (`brain_seed_starter`, 16 universelle Lektionen) macht den allerersten `smart_recall` zum Treffer
-  statt Leerlauf; auto-seeded beim ersten `session_start`, wenn die Git-Historie 0 Lektionen liefert.
-  Stempelt `born_at` beim Seed → Metrik startet sofort. Reale Suchmaschine findet die richtige
-  Starter-Lektion für natürliche Queries (getestet). Feintuning auf <2 min messbar offen 🔲.
+- ✅ Time-to-first-recall **messen** (0.10.64) **+ aktiv drücken (0.10.80)** **+ Lift bewiesen (0.10.81)** —
+  Starter-Corpus (`brain_seed_starter`, 16 universelle Lektionen) macht den allerersten `smart_recall`
+  zum Treffer statt Leerlauf; auto-seeded beim ersten `session_start`, wenn die Git-Historie 0 Lektionen
+  liefert. **Onboarding-Bench** (`npm run bench:onboarding`) misst den Effekt über die echte Suchmaschine:
+  First-Query-Hit@1 **0% → 87,5%**, Hit@3 **0% → 100%**, MRR **0% → 93,8%**. CI-verteidigt in
+  `onboarding-bench.test.ts`. Reales Wall-Clock-<2-min über echte Nutzer = Dashboard-Aufgabe (siehe `PLAN-DASHBOARD.md`).
 
 ### Enterprise / Reichweite (Phase-3/4)
 
@@ -158,7 +159,7 @@
 |---|---|---|
 | **Time-to-first-recall** | <2 min | ✅ gemessen via `brain_metrics` (born_at → first_recall_at) |
 | **Recall-Lift** (vs. BM25) | messbar >0, dann skalieren | ✅ +22.2 % P@1 (intern), in `brain_metrics` |
-| **Team-Knowledge-Reuse** | Lesson von A wird von B recallt | ✅ getrackt + inline + in `brain_metrics`; externes Dashboard 🔲 |
+| **Team-Knowledge-Reuse** | Lesson von A wird von B recallt | ✅ getrackt + inline + in `brain_metrics`; externes Dashboard **geplant** in `PLAN-DASHBOARD.md` (separates Repo `cachly-insights`) 🔲 Bau |
 
 > Alle drei sind jetzt in **einem Tool** sichtbar: `brain_metrics(instance_id)`.
 > Offen bleibt nur das *externe* Dashboard (server-side) und der *externe* Bench-Beweis (W1).
