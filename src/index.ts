@@ -69,10 +69,12 @@ import { Redis } from 'ioredis';
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
+// Mutable so the `setup`/`init` CLI can honor a `--api-url` flag for self-hosting.
+// Reassigned (if at all) before any network call is made.
+let API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.76';
+const CURRENT_VERSION = '0.10.77';
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -1130,13 +1132,27 @@ const EDITOR_FILES: Record<string, string> = {
 const CLAUDE_MD_MARKER_START = '<!-- cachly-brain-start -->';
 const CLAUDE_MD_MARKER_END   = '<!-- cachly-brain-end -->';
 
+const DEFAULT_API_URL = 'https://api.cachly.dev';
+
+// Build the env block written into an editor's MCP config. Self-hosting is
+// first-class: if the operator runs setup/init against their own backend
+// (CACHLY_API_URL set to a non-default URL), that URL is baked into the config so
+// the editor-launched server talks to the self-hosted instance — not api.cachly.dev.
+// For the default cloud backend we OMIT CACHLY_API_URL to keep configs clean (the
+// binary already defaults to it).
+function buildServerEnv(apiKey: string, instanceId: string): Record<string, string> {
+  const env: Record<string, string> = { CACHLY_JWT: apiKey, CACHLY_BRAIN_INSTANCE_ID: instanceId };
+  if (API_URL && API_URL !== DEFAULT_API_URL) env.CACHLY_API_URL = API_URL;
+  return env;
+}
+
 function buildMcpConfig(apiKey: string, instanceId: string, editor: string): string {
   if (editor === 'continue') {
     return JSON.stringify({
       experimental: {
         modelContextProtocolServers: [{
           transport: { type: 'stdio', command: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'] },
-          env: { CACHLY_API_URL: 'https://api.cachly.dev', CACHLY_JWT: apiKey, CACHLY_BRAIN_INSTANCE_ID: instanceId },
+          env: buildServerEnv(apiKey, instanceId),
         }],
       },
     }, null, 2);
@@ -1148,7 +1164,7 @@ function buildMcpConfig(apiKey: string, instanceId: string, editor: string): str
           command: {
             path: 'npx',
             args: ['-y', '@cachly-dev/mcp-server@latest'],
-            env: { CACHLY_API_URL: 'https://api.cachly.dev', CACHLY_JWT: apiKey, CACHLY_BRAIN_INSTANCE_ID: instanceId },
+            env: buildServerEnv(apiKey, instanceId),
           },
           settings: {},
         },
@@ -1160,7 +1176,7 @@ function buildMcpConfig(apiKey: string, instanceId: string, editor: string): str
       cachly: {
         command: 'npx',
         args: ['-y', '@cachly-dev/mcp-server@latest'],
-        env: { CACHLY_API_URL: 'https://api.cachly.dev', CACHLY_JWT: apiKey, CACHLY_BRAIN_INSTANCE_ID: instanceId },
+        env: buildServerEnv(apiKey, instanceId),
       },
     },
   }, null, 2);
@@ -1178,7 +1194,7 @@ async function mergeMcpConfig(
   const cachlyEntry = {
     command: 'npx',
     args: ['-y', '@cachly-dev/mcp-server@latest'],
-    env: { CACHLY_API_URL: 'https://api.cachly.dev', CACHLY_JWT: apiKey, CACHLY_BRAIN_INSTANCE_ID: instanceId },
+    env: buildServerEnv(apiKey, instanceId),
   };
 
   if (!fsOps.existsSync(configPath)) return buildMcpConfig(apiKey, instanceId, editor);
@@ -1604,7 +1620,8 @@ if (process.argv[2] === 'join') {
       const env = (existing['env'] ?? {}) as Record<string, string>;
       env['CACHLY_BRAIN_INSTANCE_ID'] = instance_id;
       if (joinJwt && !env['CACHLY_JWT']) env['CACHLY_JWT'] = joinJwt;
-      env['CACHLY_API_URL'] ??= 'https://api.cachly.dev';
+      // Only persist a self-hosted backend URL; leave default-cloud configs clean.
+      if (API_URL !== DEFAULT_API_URL) env['CACHLY_API_URL'] = API_URL;
       servers['cachly'] = { ...existing, command: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'], env };
       cfg['mcpServers'] = servers;
       await wfJ(ePath, JSON.stringify(cfg, null, 2), 'utf-8');
@@ -1999,6 +2016,9 @@ if (process.argv[2] === 'init') {
   let apiKey     = flag('api-key')     ?? process.env.CACHLY_JWT;
   const editor     = (flag('editor') ?? 'claude').toLowerCase();
   const projectDir = resolve(flag('project-dir') ?? '.');
+  // Self-hosting: --api-url overrides the backend baked into the written config.
+  const apiUrlFlag = flag('api-url');
+  if (apiUrlFlag) { API_URL = apiUrlFlag.replace(/\/+$/, ''); }
 
   // Zero-arg path: fall back to credentials saved by a previous `setup`
   // (~/.claude/mcp.json). Makes `init` a fast, idempotent re-configuration command
@@ -2023,7 +2043,7 @@ if (process.argv[2] === 'init') {
   }
 
   if (!instanceId || !apiKey) {
-    console.error('\nUsage: npx @cachly-dev/mcp-server@latest init --instance-id <uuid> --api-key <cky_live_...> [--editor claude|cursor|windsurf|copilot|continue] [--project-dir /path]\n');
+    console.error('\nUsage: npx @cachly-dev/mcp-server@latest init --instance-id <uuid> --api-key <cky_live_...> [--editor claude|cursor|windsurf|copilot|continue] [--project-dir /path] [--api-url https://your-self-hosted-backend]\n');
     console.error('First time? Run the zero-config wizard (signs you in, auto-provisions): npx @cachly-dev/mcp-server@latest setup\n');
     console.error('Get your credentials from: https://cachly.dev/setup-ai\n');
     process.exit(1);
@@ -2201,6 +2221,10 @@ if (process.argv[2] === 'health') {
   const jwt = process.env.CACHLY_JWT ?? '';
   if (!jwt) {
     fail('CACHLY_JWT not set — run: npx @cachly-dev/mcp-server@latest setup');
+  } else if (jwt.startsWith('cky_')) {
+    // Long-lived API key (the credential `setup` provisions). It is not a JWT and
+    // never expires client-side — treat a well-formed key as healthy.
+    ok('Long-lived API key set (cky_…) — no client-side expiry');
   } else {
     try {
       const parts = jwt.split('.');
@@ -2218,7 +2242,7 @@ if (process.argv[2] === 'health') {
         ok(`JWT valid${minsLeft !== null ? ` (expires in ${Math.floor(minsLeft / 60)}h ${minsLeft % 60}m)` : ''}`);
       }
     } catch {
-      fail('CACHLY_JWT format invalid (expected JWT with 3 parts)');
+      fail('CACHLY_JWT format invalid (expected a cky_ API key or a 3-part JWT)');
     }
   }
 
@@ -2354,6 +2378,27 @@ if (process.argv[2] === 'health') {
     warn('.git/hooks/post-commit not found — run: npx @cachly-dev/mcp-server@latest setup');
   }
 
+  // ── 6. Embedding provider (BYOK) ─────────────────────────────────────────────
+  console.log('\n🧬 Embedding provider (semantic search)');
+  {
+    const providerKeys: Array<[string, string]> = [
+      ['OPENAI_API_KEY', 'openai'], ['GEMINI_API_KEY', 'gemini'],
+      ['MISTRAL_API_KEY', 'mistral'], ['COHERE_API_KEY', 'cohere'],
+      ['OLLAMA_BASE_URL', 'ollama'],
+    ];
+    const explicit = (process.env.CACHLY_EMBED_PROVIDER ?? '').toLowerCase();
+    const byok = providerKeys.find(([envVar]) => process.env[envVar]);
+    if (explicit && explicit !== 'cachly') {
+      const envVar = providerKeys.find(([, p]) => p === explicit)?.[0];
+      if (envVar && process.env[envVar]) ok(`BYOK: ${explicit} (key present in ${envVar})`);
+      else warn(`CACHLY_EMBED_PROVIDER=${explicit} but its key env var is not set — semantic search will fail`);
+    } else if (byok) {
+      ok(`BYOK: ${byok[1]} auto-detected (${byok[0]} present)`);
+    } else {
+      ok('Server-side embeddings (cachly) — no key needed, uses your JWT');
+    }
+  }
+
   // ── Summary ─────────────────────────────────────────────────────────────────
   console.log(`\n${'─'.repeat(40)}`);
   if (failed === 0) {
@@ -2376,6 +2421,13 @@ if (process.argv[2] === 'setup') {
   const { createInterface } = await import('node:readline');
 
   const setupStartMs = Date.now();
+  // Self-hosting: `setup --api-url https://cachly.mycorp.internal` points the whole
+  // wizard (auth, provisioning, config writes) at a private backend.
+  const _apiUrlIdx = process.argv.indexOf('--api-url');
+  if (_apiUrlIdx !== -1 && process.argv[_apiUrlIdx + 1]) {
+    API_URL = process.argv[_apiUrlIdx + 1].replace(/\/+$/, '');
+    console.log(`ℹ️  Using self-hosted backend: ${API_URL}\n`);
+  }
   sendFunnelEvent('setup_started');
 
   // --yes / -y → non-interactive mode (skips all prompts, picks defaults).
@@ -2719,7 +2771,7 @@ if (process.argv[2] === 'setup') {
     globalConfig.mcpServers['cachly'] = {
       command: 'npx',
       args: ['-y', '@cachly-dev/mcp-server@latest'],
-      env: { CACHLY_API_URL: 'https://api.cachly.dev', CACHLY_JWT: token, CACHLY_BRAIN_INSTANCE_ID: instance.id },
+      env: buildServerEnv(token, instance.id),
     };
     await writeFile(globalClaudePath, JSON.stringify(globalConfig, null, 2), 'utf-8');
     console.log(`✅ Written: ~/.claude/mcp.json  (global — works in every project)`);
@@ -3003,37 +3055,47 @@ if (process.argv[2] === 'learn-git') {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 
-// Warn on stderr when credentials are missing so the user sees a clear
-// actionable message in their editor's MCP log instead of silent failures.
-// Skip for CLI commands that intentionally run without credentials.
+// Credential-missing handling at startup. The critical distinction is HOW we were
+// launched, because writing anything to stdout in stdio-MCP mode corrupts the
+// JSON-RPC stream and exiting kills the zero-credential device-flow onboarding.
+//   • Human in a real terminal (TTY), no args  → show the setup banner, exit 0.
+//   • Editor as an MCP stdio server (non-TTY)  → ONE stderr hint, then KEEP RUNNING
+//     so tools/list works and the first tool call starts the browser sign-in.
+// Skip entirely for CLI subcommands that intentionally run without credentials.
 const _cliNoAuthCommands = ['demo', 'share', 'health', 'setup', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade'];
-if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '') && !(!process.argv[2] && process.stdout.isTTY)) {
-  // No args + no JWT in a non-TTY context = running as MCP server without credentials.
-  // Print actionable setup banner to stdout so it's captured by callers/tests.
-  const banner =
-    '\n' +
-    '╔══════════════════════════════════════════════════════════════════╗\n' +
-    '║  🧠  cachly AI Brain — Setup required                           ║\n' +
-    '╠══════════════════════════════════════════════════════════════════╣\n' +
-    '║                                                                  ║\n' +
-    '║  CACHLY_JWT is not set. Get your free credentials at:           ║\n' +
-    '║                                                                  ║\n' +
-    '║    👉  https://cachly.dev/setup-ai                              ║\n' +
-    '║                                                                  ║\n' +
-    '║  Then run the interactive setup wizard:                         ║\n' +
-    '║                                                                  ║\n' +
-    '║    npx @cachly-dev/mcp-server@latest setup                      ║\n' +
-    '║                                                                  ║\n' +
-    '║  Free tier — no credit card required.                           ║\n' +
-    '╚══════════════════════════════════════════════════════════════════╝\n' +
-    '\n';
-  // When invoked with no args as the main entry point, write to stdout + exit cleanly.
-  // When used as MCP server (args present), write to stderr so editors see it.
-  if (!process.argv[2] && _isMain) {
+if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
+  const runningInTerminal = !process.argv[2] && process.stdout.isTTY === true && _isMain;
+  if (runningInTerminal) {
+    // A human ran `npx @cachly-dev/mcp-server` directly with no credentials.
+    // Show them how to set up, then exit cleanly.
+    const banner =
+      '\n' +
+      '╔══════════════════════════════════════════════════════════════════╗\n' +
+      '║  🧠  cachly AI Brain — Setup required                           ║\n' +
+      '╠══════════════════════════════════════════════════════════════════╣\n' +
+      '║                                                                  ║\n' +
+      '║  CACHLY_JWT is not set. Get your free credentials at:           ║\n' +
+      '║                                                                  ║\n' +
+      '║    👉  https://cachly.dev/setup-ai                              ║\n' +
+      '║                                                                  ║\n' +
+      '║  Then run the interactive setup wizard:                         ║\n' +
+      '║                                                                  ║\n' +
+      '║    npx @cachly-dev/mcp-server@latest setup                      ║\n' +
+      '║                                                                  ║\n' +
+      '║  Free tier — no credit card required.                           ║\n' +
+      '╚══════════════════════════════════════════════════════════════════╝\n' +
+      '\n';
     process.stdout.write(banner);
     process.exit(0);
   } else {
-    process.stderr.write(banner);
+    // Launched as an MCP stdio server (or HTTP) without credentials. NEVER touch
+    // stdout here — it carries the JSON-RPC protocol. Emit a single actionable
+    // hint to stderr (shown in the editor's MCP log) and fall through so the
+    // server starts and the zero-credential device flow can run on first tool call.
+    process.stderr.write(
+      '\n🧠 cachly: no CACHLY_JWT set yet — call any cachly tool and a 10-second browser sign-in starts automatically.\n' +
+      '   (Or run once: npx @cachly-dev/mcp-server@latest setup)\n\n',
+    );
   }
 } else {
   // Warn if the JWT is already expired or expiring within the hour.

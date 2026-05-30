@@ -4,7 +4,7 @@
 > Komplementär zu [STRATEGY.md](./STRATEGY.md) (das *Warum*) und
 > [VISION_10X.md](./VISION_10X.md) (das *Wohin*).
 >
-> **Stand:** v0.10.76 · 107 MCP-Tools · 499 Tests grün · 0 Lint-Warnings
+> **Stand:** v0.10.77 · 107 MCP-Tools · 499 Tests grün · 0 Lint-Warnings
 
 ---
 
@@ -12,7 +12,7 @@
 
 | Dimension | Status |
 |---|---|
-| Version | `0.10.76` (npm `latest`) |
+| Version | `0.10.77` (npm `latest`) |
 | MCP-Tools | **107** |
 | Tests | **499** passing, 10 Suites |
 | Lint | **0 errors, 0 warnings** |
@@ -125,9 +125,13 @@
 
 ### Enterprise / Reichweite (Phase-3/4)
 
-- 🔲 Self-Hosted-Tier mit SOC-2/ISO, BYOK by default
+- ✅ **Self-Hosting + BYOK first-class (0.10.77)** — `setup --api-url` / `init --api-url` zeigen auf privates Backend; `CACHLY_API_URL` nur bei Abweichung vom Default in Config geschrieben (vorher hartkodiert → self-hoster still überschrieben). BYOK-Embeddings (6 Provider) in `health` sichtbar; `cky_`-Keys korrekt akzeptiert. 🔲 SOC-2/ISO bleibt offen (Compliance, kein Code).
 - 🔲 Öffentliche/teilbare Brains (Domänen-Wissensbasen als Marktplatz)
 - ✅ **First-class-Support-Matrix (0.10.76)** — README-Tabelle: alle 8 Editors (Claude Code, Cursor, Windsurf, VSCode+Copilot, Cline, Continue.dev, Zed, generic), Config-Pfad, Auto-Setup, Global-Config, Sign-in-Pfad je Szenario. Tipps für non-TTY (VSCode-Plugin) und In-Chat-Setup.
+
+### Friktionsfreiheit / Stabilität (0.10.77)
+
+- ✅ **Editor-Onboarding ohne Pre-Creds repariert** — MCP-Server lieferte bei fehlendem JWT einen Banner auf **stdout** (zerstörte JSON-RPC-Stream) + `exit(0)` → Tools nie serviert, Device-Flow nie ausgelöst. Jetzt: stderr-Hinweis + Server läuft weiter, alle 107 Tools verfügbar, Zero-Credential-Device-Flow greift beim ersten Tool-Call. E2E über stdio verifiziert.
 
 ### Bekannte kleine Schulden
 

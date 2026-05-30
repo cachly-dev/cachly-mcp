@@ -7,6 +7,26 @@
 
 ---
 
+## [0.10.77] – 2026-05-30
+
+### Frictionless onboarding fix + first-class self-hosting / BYOK
+
+**Critical onboarding fix — editor sign-in finally works without pre-set credentials:**
+- When an editor launched cachly as an MCP stdio server **without** a `CACHLY_JWT`, the startup code wrote a setup banner to **stdout** (corrupting the JSON-RPC stream) and called `process.exit(0)` — so no tools were ever served and the documented "sign in on first tool call" path was impossible.
+- Now: an MCP-server launch with no JWT emits a single hint to **stderr** and **keeps running**, serving all 107 tools so the zero-credential device flow triggers on the first tool call. Verified end-to-end over stdio (107 tools, clean JSON-RPC stdout).
+- The human-in-a-terminal banner path is unchanged (TTY splash + exit).
+
+**Self-hosting is now first-class:**
+- `setup --api-url https://cachly.mycorp.internal` and `init --api-url …` point the entire flow (auth, provisioning, config writes) at a private backend.
+- `CACHLY_API_URL` is baked into the editor config **only when it differs from the default cloud** — default installs stay clean; self-hosted installs keep talking to your backend on every editor launch. Previously the URL was hardcoded to `api.cachly.dev` in every config writer, silently overriding self-hosters.
+
+**BYOK & health fixes:**
+- `health` now has an **Embedding provider** section: shows your BYOK provider (OpenAI / Gemini / Mistral / Cohere / Ollama) or server-side cachly embeddings, and warns if `CACHLY_EMBED_PROVIDER` is set without its key.
+- `health` now accepts `cky_` long-lived API keys (what `setup` provisions) — previously it falsely reported "format invalid (expected JWT with 3 parts)".
+- README: new **Self-hosting & BYOK** section with the full provider/env-var table.
+
+Build: clean `tsc`. Tests: 499 passing. Lint: 0 warnings.
+
 ## [0.10.76] – 2026-05-30
 
 ### Agent-trace benchmark · editor support matrix · setup timer

@@ -418,6 +418,46 @@ On the first tool call your AI will prompt you to sign in — takes 10 seconds.
 
 ---
 
+## Self-hosting & BYOK
+
+cachly is **bring-your-own-key and self-host friendly out of the box** — no
+enterprise contract required to keep data in your own infra.
+
+**Bring your own embedding key (BYOK).** Semantic search runs on the embedding
+provider *you* choose. Set one env var and cachly auto-detects it; no key needed if
+you prefer cachly's server-side embeddings (uses your JWT):
+
+| Provider | Env var | Model |
+|---|---|---|
+| OpenAI | `OPENAI_API_KEY` | `text-embedding-3-small` |
+| Google Gemini | `GEMINI_API_KEY` | `text-embedding-004` |
+| Mistral | `MISTRAL_API_KEY` | `mistral-embed` |
+| Cohere | `COHERE_API_KEY` | `embed-english-v3.0` |
+| Ollama (local, free) | `OLLAMA_BASE_URL` | `nomic-embed-text` |
+| cachly (server-side) | *(none — uses JWT)* | managed |
+
+Force a specific one with `CACHLY_EMBED_PROVIDER=openai`. Run
+`npx @cachly-dev/mcp-server@latest health` to confirm which provider is active.
+
+**Point at your own backend (self-hosting).** Every cachly install can talk to a
+private backend instead of `api.cachly.dev`:
+
+```bash
+# One-shot: wire up the wizard against your self-hosted backend
+npx @cachly-dev/mcp-server@latest setup --api-url https://cachly.mycorp.internal
+
+# Or non-interactively
+npx @cachly-dev/mcp-server@latest init \
+  --instance-id <uuid> --api-key <cky_live_...> \
+  --api-url https://cachly.mycorp.internal
+```
+
+`setup`/`init` bake `CACHLY_API_URL` into the editor config **only** when it differs
+from the default cloud — so default installs stay clean, and self-hosted installs
+keep talking to your backend on every editor launch. All data stays in your infra.
+
+---
+
 ## Pricing
 
 | Tier | RAM | Price | Best for |

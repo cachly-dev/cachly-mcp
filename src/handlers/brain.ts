@@ -14,8 +14,15 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.76';
+const MCP_VERSION = '0.10.77';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.77': [
+    `🩹 **Frictionless onboarding + first-class self-hosting/BYOK**`,
+    `  🚀 Editor-launched server now serves all tools even before sign-in — zero-credential device flow finally triggers on first tool call`,
+    `  🔒 No more stdout pollution: stdio JSON-RPC stream stays clean when no JWT is set`,
+    `  🏠 \`setup --api-url\` / \`init --api-url\` point at a self-hosted backend; URL baked into config only when non-default`,
+    `  🧬 \`health\` now shows your BYOK embedding provider + accepts cky_ long-lived keys (was a false "invalid token" failure)`,
+  ],
   '0.10.76': [
     `📊 **Agent-trace benchmark + editor matrix + setup timer**`,
     `  📂 New \`agent-traces-corpus.json\` — 22 lessons, 15 queries, realistic AI-agent debug patterns`,
