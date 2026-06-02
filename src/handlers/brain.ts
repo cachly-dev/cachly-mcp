@@ -328,6 +328,42 @@ export const BRAIN_TOOL_NAMES = new Set([
   'brain_collab_pairs', 'brain_portability',
 ]);
 
+// ── Free-tier Teaser-Gate ──────────────────────────────────────────────────
+// When a Free-tier Brain crosses its recall limit, smart_recall still delivers
+// the top hits — the magic moment is sacred — but withholds the long tail
+// behind an upgrade teaser ("🔒 N more relevant lessons available"). This is a
+// DEPTH gate (hide the tail), never an access wall: the #1 result is always
+// returned. Usage/limit come from the same authoritative numbers as the Brain
+// Health bar (GET /instances/:id/memory), cached briefly to avoid per-call latency.
+const FREE_TIER_VISIBLE_RECALLS = 3;
+const UPGRADE_URL = 'https://cachly.dev/billing';
+
+interface RecallGate {
+  reached: boolean; // true only when the tier has a finite limit AND it's been hit
+  limit: number; // -1 = unlimited
+  used: number;
+}
+
+const _recallGateCache = new Map<string, { gate: RecallGate; expiresAt: number }>();
+
+async function getRecallGate(instanceId: string, apiFetch: ApiFetch): Promise<RecallGate> {
+  const cached = _recallGateCache.get(instanceId);
+  if (cached && cached.expiresAt > Date.now()) return cached.gate;
+  try {
+    const mem = await apiFetch<{ total_recall_count?: number; recall_limit?: number }>(
+      `/api/v1/instances/${instanceId}/memory`,
+    );
+    const limit = mem?.recall_limit ?? -1;
+    const used = mem?.total_recall_count ?? 0;
+    const gate: RecallGate = { reached: limit > 0 && used >= limit, limit, used };
+    _recallGateCache.set(instanceId, { gate, expiresAt: Date.now() + 60_000 });
+    return gate;
+  } catch {
+    // Stats unavailable → never gate (fail open: value delivery beats monetization).
+    return { reached: false, limit: -1, used: 0 };
+  }
+}
+
 export async function handleBrainTool(
   name: string,
   args: Record<string, unknown>,
@@ -1097,6 +1133,11 @@ export async function handleBrainTool(
         })
         .sort((a, b) => b.hybridScore - a.hybridScore);
 
+      // ── Teaser-Gate: free tier over its recall limit hides the long tail ──────
+      const recallGate = await getRecallGate(instance_id, apiFetch);
+      const gateActive = recallGate.reached && hybridResults.length > FREE_TIER_VISIBLE_RECALLS;
+      const visibleCount = gateActive ? FREE_TIER_VISIBLE_RECALLS : 8;
+
       // ── Build output ──────────────────────────────────────────────────────────
       const lines: string[] = [`🧠 **Smart Recall** for: _"${query}"_\n`];
 
@@ -1149,7 +1190,7 @@ export async function handleBrainTool(
         // Group by sub-query for multi-topic queries
         if (subQueries.length > 1) {
           const grouped = new Map<string, HybridResult[]>();
-          for (const r of hybridResults.slice(0, 12)) {
+          for (const r of hybridResults.slice(0, gateActive ? FREE_TIER_VISIBLE_RECALLS : 12)) {
             const sq = r.subQuery ?? query;
             if (!grouped.has(sq)) grouped.set(sq, []);
             grouped.get(sq)!.push(r);
@@ -1178,7 +1219,7 @@ export async function handleBrainTool(
             lines.push(`\n⚠️ **No results for:** ${unmatched.map(s => `"${s}"`).join(', ')}`);
           }
         } else {
-          for (const r of hybridResults.slice(0, 8)) {
+          for (const r of hybridResults.slice(0, visibleCount)) {
             const label = r.key.replace('cachly:ctx:', '📝 ').replace('cachly:lesson:best:', '💡 ').replace('cachly:idx:', '📂 ');
             let authorBadge = '';
             if (r.key.startsWith('cachly:lesson:best:')) {
@@ -1194,6 +1235,14 @@ export async function handleBrainTool(
             const preview = r.content.slice(0, 400).replace(/\n/g, ' ');
             lines.push(`**${label}**${authorBadge}${contextBadge} _(${scorePart})_`);
             lines.push(`> ${preview}${r.content.length > 400 ? '…' : ''}\n`);
+          }
+        }
+
+        // ── Teaser-Gate footer: sell the withheld tail at the moment of need ──
+        if (gateActive) {
+          const withheld = Math.max(0, hybridResults.length - visibleCount);
+          if (withheld > 0) {
+            lines.push(`🔒 **${withheld} more relevant lesson${withheld !== 1 ? 's' : ''} available** — you've reached your Free recall limit (${recallGate.used}/${recallGate.limit}). Unlock your full Brain → ${UPGRADE_URL}\n`);
           }
         }
       } else {
