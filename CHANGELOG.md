@@ -7,20 +7,6 @@
 
 ---
 
-## Unreleased
-
-### Travel Chaos Organizer extracted to its own repository
-
-The `apps/travel-chaos-organizer` app (Python backend + Expo frontend) and its
-EAS CI workflows (`eas-build-android.yml`, `eas-update.yml`) and
-`scripts/generate-icons.js` were moved out of this monorepo to the standalone
-repository **[cachly-dev/travel-chaos-organizer](https://github.com/cachly-dev/travel-chaos-organizer)**.
-
-The MCP `tco_*` tools remain in cachly-mcp — they are an HTTP client of the TCO
-backend (configured via `TCO_API_URL`) and are unaffected by the source move.
-
----
-
 ## [0.10.81] – 2026-05-30
 
 ### Onboarding-Bench (time-to-first-recall, measured) + external dashboard plan

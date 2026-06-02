@@ -5,6 +5,8 @@ import type { FunnelEventName, DashboardMetrics } from './telemetry-types.js';
 import { handleTcoTool } from './handlers/tco.js';
 import { notify } from './notifier.js';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+import { execFile } from 'node:child_process';
 
 // True only when this file is the entry point (not imported by tests or other modules).
 const _isMain = process.argv[1] != null &&
@@ -76,7 +78,24 @@ import { Redis } from 'ioredis';
 let API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = process.env.CACHLY_JWT ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
-const CURRENT_VERSION = '0.10.85';
+
+// Resolve the package version at runtime from package.json so the telemetry
+// `version` field always matches the published npm version. A hardcoded constant
+// silently drifted (0.10.88 vs published 0.10.98), making release adoption
+// impossible to track. Paths cover both prod (dist/src/index.js → ../../) and
+// dev (src/index.ts → ../). Falls back to a literal if resolution fails.
+const CURRENT_VERSION: string = (() => {
+  try {
+    const req = createRequire(import.meta.url);
+    for (const rel of ['../../package.json', '../package.json']) {
+      try {
+        const pkg = req(rel) as { name?: string; version?: string };
+        if (pkg.name === '@cachly-dev/mcp-server' && pkg.version) return pkg.version;
+      } catch { /* try next candidate */ }
+    }
+  } catch { /* fall through to literal */ }
+  return '0.10.100';
+})();
 
 // Max time to wait for a freshly-provisioned instance to become "running" before
 // giving up. Free-tier provisioning in high-latency regions can take 45–90s, so the
@@ -90,31 +109,92 @@ const PROVISION_TIMEOUT_MS = Number(process.env.CACHLY_PROVISION_TIMEOUT_MS ?? 9
 let _defaultInstanceId: string = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
 // Timestamp of last failed fetch — retries after 30 s (not permanently blocked).
 let _defaultInstanceLastAttempt = 0;
+// In-flight resolution guard: a burst of parallel tool calls on startup must not
+// each list-and-provision (which would race and create duplicate instances).
+let _resolveInFlight: Promise<string> | null = null;
+
+/**
+ * Auto-provision a Brain instance via the idempotent find-or-create endpoint.
+ * Returns the instance id, or '' on failure. Fires auto_provision_failed telemetry
+ * on a non-2xx response so the activation funnel can spot free-tier breakage.
+ */
+async function autoProvisionInstance(): Promise<string> {
+  if (!JWT) return '';
+  try {
+    const autoRes = await fetch(`${API_URL}/api/v1/instances/auto`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${JWT}`, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (autoRes.ok) {
+      const body = await autoRes.json() as {
+        instance?: { id: string; status?: string };
+        instance_id?: string;
+      };
+      const id = body.instance?.id ?? body.instance_id;
+      if (id) return id;
+    } else {
+      void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${JWT}` },
+        body: JSON.stringify({ event: 'auto_provision_failed', status: autoRes.status, version: CURRENT_VERSION }),
+        signal: AbortSignal.timeout(3000),
+      }).catch(() => {});
+    }
+  } catch {
+    // Network unreachable — fire telemetry so silent provision failures are visible in the funnel.
+    void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event: 'auto_provision_failed', status: 0, reason: 'network_error', version: CURRENT_VERSION }),
+      signal: AbortSignal.timeout(3000),
+    }).catch(() => {});
+  }
+  return '';
+}
 
 async function resolveDefaultInstanceId(): Promise<string> {
   if (_defaultInstanceId) return _defaultInstanceId;
   if (!JWT) return '';
+  // Coalesce concurrent resolutions so parallel tool calls share one round-trip.
+  if (_resolveInFlight) return _resolveInFlight;
   // Cooldown: don't hammer the API on every tool call after a transient failure.
   const now = Date.now();
   if (_defaultInstanceLastAttempt > 0 && now - _defaultInstanceLastAttempt < 30_000) return '';
   _defaultInstanceLastAttempt = now;
-  try {
-    const res = await fetch(`${API_URL}/api/v1/instances`, {
-      headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return '';
-    const data = await res.json() as { data?: Array<{ id: string; status: string }> };
-    const instances = (data?.data ?? []) as Array<{ id: string; status: string }>;
-    // Prefer running, fall back to provisioning so the ID is resolved even during startup.
-    const best = instances.find(i => i.status === 'running') ?? instances.find(i => i.status === 'provisioning');
-    if (best) {
-      _defaultInstanceId = best.id;
-      _defaultInstanceLastAttempt = 0;
-      return _defaultInstanceId;
-    }
-  } catch { /* transient error — will retry after cooldown */ }
-  return '';
+  _resolveInFlight = (async (): Promise<string> => {
+    try {
+      const res = await fetch(`${API_URL}/api/v1/instances`, {
+        headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (res.ok) {
+        const data = await res.json() as { data?: Array<{ id: string; status: string }> };
+        const instances = (data?.data ?? []) as Array<{ id: string; status: string }>;
+        // Prefer running, fall back to provisioning so the ID resolves even during startup.
+        const best = instances.find(i => i.status === 'running') ?? instances.find(i => i.status === 'provisioning');
+        if (best) {
+          _defaultInstanceId = best.id;
+          _defaultInstanceLastAttempt = 0;
+          return _defaultInstanceId;
+        }
+        // Authenticated but zero instances → auto-provision so the user is never
+        // stuck. This self-heals the silent failure mode where device-flow
+        // provisioning failed once and every later tool call then ran with an
+        // empty instance_id (no recalls, never counted as an active instance).
+        const provisioned = await autoProvisionInstance();
+        if (provisioned) {
+          _defaultInstanceId = provisioned;
+          _defaultInstanceLastAttempt = 0;
+          void persistInstanceIdToConfig(provisioned);
+          return _defaultInstanceId;
+        }
+      }
+    } catch { /* transient error — will retry after cooldown */ }
+    return '';
+  })();
+  try { return await _resolveInFlight; }
+  finally { _resolveInFlight = null; }
 }
 
 // ── Self-Healing Auth ─────────────────────────────────────────────────────────
@@ -129,18 +209,23 @@ const AUTH_HEAL_COOLDOWN_MS = 60_000;
 // Surfaced in session_start / get_api_status so the user is never left guessing.
 let _authDegradedNotice = '';
 
-/** Persist a (possibly refreshed) API key to ~/.claude/mcp.json so restarts keep it. */
+/** Persist a (possibly refreshed) API key to ~/.claude/mcp.json so restarts keep it.
+ * Also updates CACHLY_JWT in Cursor and Windsurf configs when they already have a cachly entry,
+ * so users who auth via one editor don't lose their session in the others.
+ */
 async function persistApiKeyToConfig(apiKey: string): Promise<void> {
   try {
     const { writeFile, mkdir, readFile } = await import('node:fs/promises');
     const { existsSync } = await import('node:fs');
     const { resolve, dirname } = await import('node:path');
-    const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? process.env.APPDATA ?? '';
     if (!home) return;
-    const configPath = resolve(home, '.claude', 'mcp.json');
+
+    // Primary config: create or update ~/.claude/mcp.json
+    const claudePath = resolve(home, '.claude', 'mcp.json');
     let cfg: { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> } = {};
-    if (existsSync(configPath)) {
-      try { cfg = JSON.parse(await readFile(configPath, 'utf-8')) as typeof cfg; } catch { /* corrupt — start fresh */ }
+    if (existsSync(claudePath)) {
+      try { cfg = JSON.parse(await readFile(claudePath, 'utf-8')) as typeof cfg; } catch { /* corrupt — start fresh */ }
     }
     cfg.mcpServers ??= {};
     const existing = cfg.mcpServers['cachly'];
@@ -153,9 +238,60 @@ async function persistApiKeyToConfig(apiKey: string): Promise<void> {
         env: { CACHLY_JWT: apiKey },
       };
     }
-    await mkdir(dirname(configPath), { recursive: true });
-    await writeFile(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
+    await mkdir(dirname(claudePath), { recursive: true });
+    await writeFile(claudePath, JSON.stringify(cfg, null, 2), 'utf-8');
+
+    // Secondary configs: update CACHLY_JWT wherever cachly is already configured.
+    // Never create from scratch — only update existing entries (the user set these up).
+    const secondaryPaths = [
+      resolve(home, '.cursor', 'mcp.json'),
+      resolve(home, '.codeium', 'windsurf', 'mcp_config.json'),
+    ];
+    await Promise.allSettled(secondaryPaths.map(async (p) => {
+      if (!existsSync(p)) return;
+      try {
+        const raw = await readFile(p, 'utf-8');
+        const sc = JSON.parse(raw) as { mcpServers?: Record<string, { env?: Record<string, string> }> };
+        const entry = sc?.mcpServers?.['cachly'];
+        if (entry?.env) {
+          entry.env['CACHLY_JWT'] = apiKey;
+          await writeFile(p, JSON.stringify(sc, null, 2), 'utf-8');
+        }
+      } catch { /* corrupt or unwriteable — skip */ }
+    }));
   } catch { /* non-critical — never break a tool call on a filesystem error */ }
+}
+
+/**
+ * Persist the resolved instance id to ~/.claude/mcp.json so restarts reuse it
+ * (avoids a list/provision round-trip on every startup). Only updates an
+ * existing cachly entry — does not create config from scratch.
+ */
+async function persistInstanceIdToConfig(instanceId: string): Promise<void> {
+  if (!instanceId) return;
+  try {
+    const { writeFile, readFile } = await import('node:fs/promises');
+    const { existsSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const home = process.env.HOME ?? process.env.USERPROFILE ?? process.env.APPDATA ?? '';
+    if (!home) return;
+    const configPaths = [
+      resolve(home, '.claude', 'mcp.json'),
+      resolve(home, '.cursor', 'mcp.json'),
+      resolve(home, '.codeium', 'windsurf', 'mcp_config.json'),
+    ];
+    await Promise.allSettled(configPaths.map(async (p) => {
+      if (!existsSync(p)) return;
+      try {
+        const cfg = JSON.parse(await readFile(p, 'utf-8')) as { mcpServers?: Record<string, { env?: Record<string, string> }> };
+        const entry = cfg?.mcpServers?.['cachly'];
+        if (entry?.env) {
+          entry.env['CACHLY_BRAIN_INSTANCE_ID'] = instanceId;
+          await writeFile(p, JSON.stringify(cfg, null, 2), 'utf-8');
+        }
+      } catch { /* corrupt or unwriteable — skip */ }
+    }));
+  } catch { /* non-critical */ }
 }
 
 /**
@@ -212,6 +348,24 @@ async function selfHealAuth(): Promise<boolean> {
   return false;
 }
 
+// Open a URL in the user's default browser, cross-platform.
+// IMPORTANT (Windows): the cmd `start` builtin treats the FIRST quoted token as the
+// window *title*, so `start "https://…"` opens an empty console window instead of the
+// browser. The fix is to pass an empty title first: `start "" "https://…"`. We run it
+// through `cmd /c` so the builtin resolves regardless of the parent shell (pwsh/cmd).
+function openInBrowser(url: string): void {
+  try {
+    if (process.platform === 'win32') {
+      // Empty-string title arg is required so `start` does not treat the URL as the title.
+      execFile('cmd', ['/c', 'start', '', url], { windowsHide: true });
+    } else if (process.platform === 'darwin') {
+      execFile('open', [url]);
+    } else {
+      execFile('xdg-open', [url]);
+    }
+  } catch { /* non-critical — the URL is always printed for manual open */ }
+}
+
 // ── Zero-Credential Device Flow (for Smithery & zero-config installs) ─────────
 // When no CACHLY_JWT is set, the server starts an OAuth Device Flow on first tool
 // call. The user visits a short URL, enters a code, and the server polls for the
@@ -228,12 +382,15 @@ interface DeviceFlowState {
 let _deviceFlow: DeviceFlowState | null = null;
 
 async function startDeviceFlow(): Promise<DeviceFlowState | null> {
-  // Try the API proxy first (more reliable than direct Keycloak endpoint)
+  // Try the cachly API device flow first. It returns a long-lived API key directly
+  // on poll (no separate JWT→key exchange needed) and is served at the ROOT paths
+  // /auth/device + /auth/device/token (NOT under /api/v1). Requires VALKEY_L1_URL on
+  // the API; when unset the API returns 503 and we fall through to Keycloak below.
   try {
-    const res = await fetch(`${API_URL}/api/v1/auth/device/code`, {
+    const res = await fetch(`${API_URL}/auth/device`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ client_id: 'cachly-mcp-cli' }),
+      body: JSON.stringify({}),
       signal: AbortSignal.timeout(8000),
     });
     if (res.ok) {
@@ -241,10 +398,13 @@ async function startDeviceFlow(): Promise<DeviceFlowState | null> {
         device_code: string; user_code: string;
         verification_uri: string; interval: number;
       };
+      // Append the user_code so the web page (cachly.dev/device?code=…) auto-submits.
+      const base = data.verification_uri || 'https://cachly.dev/device';
+      const verifyUrl = `${base}${base.includes('?') ? '&' : '?'}code=${encodeURIComponent(data.user_code)}`;
       return {
         deviceCode: data.device_code,
         userCode: data.user_code,
-        verifyUrl: data.verification_uri,
+        verifyUrl,
         pollInterval: (data.interval ?? 5) * 1000,
         deadline: Date.now() + 10 * 60 * 1000,
         polling: false,
@@ -278,12 +438,12 @@ async function startDeviceFlow(): Promise<DeviceFlowState | null> {
 
 async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expired' | 'done'> {
   if (Date.now() > flow.deadline) return 'expired';
-  // Try API proxy first, then direct Keycloak as fallback
+  // Try the cachly API device flow first, then direct Keycloak as fallback.
   const tryProxy = async () => {
-    const res = await fetch(`${API_URL}/api/v1/auth/device/token`, {
+    const res = await fetch(`${API_URL}/auth/device/token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ device_code: flow.deviceCode, client_id: 'cachly-mcp-cli' }),
+      body: JSON.stringify({ device_code: flow.deviceCode }),
       signal: AbortSignal.timeout(8000),
     });
     if (!res.ok) return null;
@@ -325,62 +485,13 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
       // Persist the API key to ~/.claude/mcp.json so subsequent MCP server restarts
       // keep the token. Without this, JWT is lost on restart and brain_recall_count
       // is never incremented (telemetry has no api_key → no tenant resolution).
-      void (async () => {
-        try {
-          const { writeFile, mkdir, readFile } = await import('node:fs/promises');
-          const { existsSync } = await import('node:fs');
-          const { resolve, dirname } = await import('node:path');
-          const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
-          if (!home) return;
-          const configPath = resolve(home, '.claude', 'mcp.json');
-          let cfg: { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> } = {};
-          if (existsSync(configPath)) {
-            try { cfg = JSON.parse(await readFile(configPath, 'utf-8')) as typeof cfg; } catch { /* corrupt — start fresh */ }
-          }
-          cfg.mcpServers ??= {};
-          const existing = cfg.mcpServers['cachly'];
-          if (existing) {
-            existing.env ??= {};
-            existing.env['CACHLY_JWT'] = apiKey;
-          } else {
-            cfg.mcpServers['cachly'] = {
-              command: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'],
-              env: { CACHLY_JWT: apiKey },
-            };
-          }
-          await mkdir(dirname(configPath), { recursive: true });
-          await writeFile(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
-        } catch { /* non-critical — don't break the flow on filesystem errors */ }
-      })();
-      // Auto-provision: find or create the user's brain instance.
+      void persistApiKeyToConfig(apiKey);
+      // Auto-provision: find or create the user's brain instance. resolveDefaultInstanceId
+      // now lists existing instances and auto-provisions when the account has none,
+      // so a single call covers both paths (and self-heals on every later tool call
+      // if provisioning is briefly unavailable here).
       _defaultInstanceLastAttempt = 0;
       await resolveDefaultInstanceId();
-      if (!_defaultInstanceId) {
-        try {
-          const autoRes = await fetch(`${API_URL}/api/v1/instances/auto`, {
-            method: 'POST',
-            headers: { Authorization: `Bearer ${JWT}`, 'Content-Type': 'application/json' },
-            signal: AbortSignal.timeout(12000),
-          });
-          if (autoRes.ok) {
-            const body = await autoRes.json() as {
-              instance?: { id: string; status?: string };
-              instance_id?: string;
-              status?: string;
-            };
-            const id = body.instance?.id ?? body.instance_id;
-            if (id) _defaultInstanceId = id;
-          } else {
-            // Log so telemetry can detect free-tier auto-provision failures
-            void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${JWT}` },
-              body: JSON.stringify({ event: 'auto_provision_failed', status: autoRes.status, version: CURRENT_VERSION }),
-              signal: AbortSignal.timeout(3000),
-            }).catch(() => {});
-          }
-        } catch { /* non-fatal — server unreachable, getConnection will surface the error */ }
-      }
       // Give a provisioning instance a head-start so getConnection's wait is shorter.
       // The instance is almost always ready by the time the user's tool re-enters.
       if (_defaultInstanceId) {
@@ -409,29 +520,9 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
           }
         } catch { /* non-fatal — getConnection will handle the wait if still provisioning */ }
       }
-      // Persist instance_id to ~/.claude/mcp.json after it's known.
-      // Without this, every restart loses CACHLY_BRAIN_INSTANCE_ID → resolveDefaultInstanceId
-      // makes an extra API call on every startup (with 30s cooldown on failure).
-      if (_defaultInstanceId) {
-        void (async () => {
-          try {
-            const { writeFile, readFile } = await import('node:fs/promises');
-            const { existsSync } = await import('node:fs');
-            const { resolve } = await import('node:path');
-            const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
-            if (!home) return;
-            const configPath = resolve(home, '.claude', 'mcp.json');
-            if (!existsSync(configPath)) return;
-            let cfg: { mcpServers?: Record<string, { env?: Record<string, string> }> } = {};
-            try { cfg = JSON.parse(await readFile(configPath, 'utf-8')) as typeof cfg; } catch { return; }
-            const entry = cfg.mcpServers?.['cachly'];
-            if (entry?.env) {
-              entry.env['CACHLY_BRAIN_INSTANCE_ID'] = _defaultInstanceId;
-              await writeFile(configPath, JSON.stringify(cfg, null, 2), 'utf-8');
-            }
-          } catch { /* non-critical */ }
-        })();
-      }
+      // Persist instance_id to ~/.claude/mcp.json after it's known, so every
+      // restart reuses it instead of making an extra list call on startup.
+      if (_defaultInstanceId) void persistInstanceIdToConfig(_defaultInstanceId);
       return 'done';
     }
     if (data.error === 'slow_down') flow.pollInterval = Math.min(flow.pollInterval + 2000, 15000);
@@ -457,12 +548,18 @@ const pool = new Map<string, Redis>();
 
 async function getConnection(instance_id: string): Promise<Redis> {
   if (!instance_id) {
+    // With auto-provisioning, this only happens when the API was briefly
+    // unreachable during resolution. The next tool call self-heals, so lead
+    // with "retry" rather than asking the user to configure anything.
     throw new McpError(
       ErrorCode.InvalidRequest,
-      'No instance_id provided and no running instance could be resolved automatically.\n\n' +
+      '⏳ Your Brain instance is still being set up.\n\n' +
+      'This usually resolves in a few seconds — just call the tool again and it ' +
+      'will connect automatically.\n\n' +
+      'If it keeps happening:\n' +
+      '• Run `list_instances` to check your instances, or\n' +
       '• Set CACHLY_BRAIN_INSTANCE_ID in your MCP config, or\n' +
-      '• Pass instance_id explicitly to the tool, or\n' +
-      '• Run `list_instances` to see your available instances.'
+      '• Reach us at support@cachly.dev.'
     );
   }
 
@@ -706,6 +803,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         return handleTool(name, args);
       }
       if (result === 'expired') {
+        sendFunnelEvent('device_flow_failed', { reason: 'timeout' });
         _deviceFlow = null;
         return '⌛ **Authentication timed out.** Please call any tool again to restart the sign-in flow.';
       }
@@ -726,16 +824,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       _deviceFlow = flow;
       sendFunnelEvent('device_flow_started', { tool: name });
       // Try to open the browser automatically — fire-and-forget, never block
-      void (async () => {
-        try {
-          const { exec } = await import('node:child_process');
-          const url = flow.verifyUrl;
-          const cmd = process.platform === 'win32' ? `start "" "${url}"`
-            : process.platform === 'darwin' ? `open "${url}"`
-            : `xdg-open "${url}"`;
-          exec(cmd);
-        } catch { /* non-critical */ }
-      })();
+      openInBrowser(flow.verifyUrl);
       return [
         '🧠 **cachly AI Brain — sign in to activate** (browser opening...)',
         '',
@@ -745,7 +834,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         '',
         'After sign-in: call **any tool again** — your Brain activates instantly.',
         '',
-        '✨ Free forever · No credit card · 107 MCP tools · GDPR · EU servers',
+        '✨ Free forever · No credit card · 121 MCP tools · GDPR · EU servers',
       ].join('\n');
     }
 
@@ -755,7 +844,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       '',
       'Run the setup wizard once in your terminal:',
       '   ```',
-      '   npx @cachly-dev/mcp-server@latest setup',
+      '   npx @cachly-dev/mcp-server@latest autopilot',
       '   ```',
       '',
       'Or get your API key at: https://cachly.dev/setup-ai',
@@ -828,11 +917,25 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
             // Append bootstrap summary to the session_start briefing.
             // brainResult is always a string here (handleBrainTool returns string for session_start).
             const bootstrapText = String(gitBootstrap);
-            if (bootstrapText || starterText) {
-              return String(brainResult) + '\n---\n' + bootstrapText + starterText;
+            // Show a concrete count so the user knows what was seeded (the WOW moment).
+            const totalSeeded = _lastBrainFromGitCounts?.total ?? 0;
+            const seedBanner = totalSeeded > 0
+              ? `\n✅ **Brain bootstrapped from git — ${totalSeeded} lesson${totalSeeded === 1 ? '' : 's'} loaded.** Your AI already knows your history.`
+              : '';
+            if (bootstrapText || starterText || seedBanner) {
+              return String(brainResult) + seedBanner + '\n---\n' + bootstrapText + starterText;
             }
           }
-        } catch { /* git bootstrap errors must never break session_start */ }
+        } catch (gitErr) {
+          // Bootstrap failed — fire telemetry so we can investigate and tell the user
+          // what happened (don't leave them wondering why the brain is empty).
+          sendFunnelEvent('brain_from_git_failed', { ...telemetryExtra,
+            reason: gitErr instanceof Error ? gitErr.message.slice(0, 120) : 'unknown' });
+          return String(brainResult) +
+            '\n\n> ⚠️ **Auto-bootstrap from git history failed** — your Brain is live but starts empty.\n' +
+            '> Run `brain_from_git(instance_id="' + instanceId + '", repo_path="' + String(args.workspace_path) + '")` manually to seed it.\n' +
+            '> Or try `brain_seed_starter` to load 16 universal engineering lessons instantly.';
+        }
       }
     } else if (name === 'session_end') {
       sendFunnelEvent('session_end', telemetryExtra);
@@ -1167,7 +1270,7 @@ process.on('unhandledRejection', (reason) => {
 
 // ── CLI helpers ───────────────────────────────────────────────────────────────
 
-const EDITOR_FILES: Record<string, string> = {
+export const EDITOR_FILES: Record<string, string> = {
   claude:   '.mcp.json',
   cursor:   '.cursor/mcp.json',
   windsurf: '.windsurf/mcp.json',
@@ -1177,8 +1280,8 @@ const EDITOR_FILES: Record<string, string> = {
   zed:      '.zed/settings.json',            // Zed project-level context_servers
 };
 
-const CLAUDE_MD_MARKER_START = '<!-- cachly-brain-start -->';
-const CLAUDE_MD_MARKER_END   = '<!-- cachly-brain-end -->';
+export const CLAUDE_MD_MARKER_START = '<!-- cachly-brain-start -->';
+export const CLAUDE_MD_MARKER_END   = '<!-- cachly-brain-end -->';
 
 const DEFAULT_API_URL = 'https://api.cachly.dev';
 
@@ -1188,13 +1291,13 @@ const DEFAULT_API_URL = 'https://api.cachly.dev';
 // the editor-launched server talks to the self-hosted instance — not api.cachly.dev.
 // For the default cloud backend we OMIT CACHLY_API_URL to keep configs clean (the
 // binary already defaults to it).
-function buildServerEnv(apiKey: string, instanceId: string): Record<string, string> {
+export function buildServerEnv(apiKey: string, instanceId: string): Record<string, string> {
   const env: Record<string, string> = { CACHLY_JWT: apiKey, CACHLY_BRAIN_INSTANCE_ID: instanceId };
   if (API_URL && API_URL !== DEFAULT_API_URL) env.CACHLY_API_URL = API_URL;
   return env;
 }
 
-function buildMcpConfig(apiKey: string, instanceId: string, editor: string): string {
+export function buildMcpConfig(apiKey: string, instanceId: string, editor: string): string {
   if (editor === 'continue') {
     return JSON.stringify({
       experimental: {
@@ -1232,7 +1335,7 @@ function buildMcpConfig(apiKey: string, instanceId: string, editor: string): str
 
 // mergeMcpConfig reads an existing config file (if any), merges the cachly entry,
 // and returns the updated JSON string — preserving all other MCP servers and settings.
-async function mergeMcpConfig(
+export async function mergeMcpConfig(
   configPath: string,
   apiKey: string,
   instanceId: string,
@@ -1287,7 +1390,7 @@ async function mergeMcpConfig(
   return JSON.stringify(existing, null, 2);
 }
 
-function buildClaudeMdBlock(instanceId: string): string {
+export function buildClaudeMdBlock(instanceId: string): string {
   return `${CLAUDE_MD_MARKER_START}
 ## Cachly AI Brain — Always Active
 
@@ -1346,30 +1449,49 @@ Never commit code that does not compile. Run \`tsc --noEmit\` / \`go build ./...
 ${CLAUDE_MD_MARKER_END}`;
 }
 
-async function writeClaudeMd(projectDir: string, instanceId: string): Promise<'written' | 'updated' | 'appended'> {
-  const { writeFile, appendFile, readFile } = await import('node:fs/promises');
+
+/**
+ * Schreibt das Brain-Protokoll in alle relevanten Instruction-Dateien:
+ * - CLAUDE.md
+ * - AGENTS.md
+ * - .github/copilot-instructions.md
+ * Idempotent, Marker-basiert.
+ */
+export async function writeInstructions(projectDir: string, instanceId: string): Promise<Record<string, 'written'|'updated'|'appended'>> {
+  const { writeFile, appendFile, readFile, mkdir } = await import('node:fs/promises');
   const { existsSync } = await import('node:fs');
-  const { resolve } = await import('node:path');
+  const { resolve, dirname } = await import('node:path');
 
-  const claudeMdPath = resolve(projectDir, 'CLAUDE.md');
+  const files = [
+    resolve(projectDir, 'CLAUDE.md'),
+    resolve(projectDir, 'AGENTS.md'),
+    resolve(projectDir, '.github', 'copilot-instructions.md'),
+  ];
   const block = '\n' + buildClaudeMdBlock(instanceId) + '\n';
+  const results: Record<string, 'written'|'updated'|'appended'> = {};
 
-  if (existsSync(claudeMdPath)) {
-    const existing = await readFile(claudeMdPath, 'utf-8');
-    if (existing.includes(CLAUDE_MD_MARKER_START)) {
-      // Idempotent update: replace existing block (new instance-id, refreshed content)
-      const updated = existing.replace(
-        new RegExp(`${CLAUDE_MD_MARKER_START}[\\s\\S]*?${CLAUDE_MD_MARKER_END}`),
-        buildClaudeMdBlock(instanceId)
-      );
-      await writeFile(claudeMdPath, updated, 'utf-8');
-      return 'updated';
+  for (const file of files) {
+    await mkdir(dirname(file), { recursive: true });
+    if (existsSync(file)) {
+      const existing = await readFile(file, 'utf-8');
+      if (existing.includes(CLAUDE_MD_MARKER_START)) {
+        // Idempotent update: replace existing block
+        const updated = existing.replace(
+          new RegExp(`${CLAUDE_MD_MARKER_START}[\s\S]*?${CLAUDE_MD_MARKER_END}`),
+          buildClaudeMdBlock(instanceId)
+        );
+        await writeFile(file, updated, 'utf-8');
+        results[file] = 'updated';
+        continue;
+      }
+      await appendFile(file, block, 'utf-8');
+      results[file] = 'appended';
+      continue;
     }
-    await appendFile(claudeMdPath, block, 'utf-8');
-    return 'appended';
+    await writeFile(file, block.trimStart(), 'utf-8');
+    results[file] = 'written';
   }
-  await writeFile(claudeMdPath, block.trimStart(), 'utf-8');
-  return 'written';
+  return results;
 }
 
 
@@ -1384,7 +1506,7 @@ if (process.argv[2] === 'digest') {
 
   if (!apiKey || !instanceId) {
     console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
-    console.log('   Run: npx @cachly-dev/mcp-server@latest setup\n');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
     process.exit(1);
   }
 
@@ -1489,7 +1611,7 @@ if (process.argv[2] === 'invite') {
 
   if (!apiKey) {
     console.log('\n⚠️  CACHLY_JWT must be set.');
-    console.log('   Run: npx @cachly-dev/mcp-server@latest setup\n');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
     process.exit(1);
   }
 
@@ -1723,13 +1845,100 @@ if (process.argv[2] === 'upgrade') {
       console.log('');
       console.log('  Update your editor configs to pick up the new version:');
       console.log('');
-      console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest setup\x1b[0m');
+      console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest autopilot\x1b[0m');
       console.log('');
       console.log('  \x1b[2m(npx always fetches the latest when @latest is specified)\x1b[0m');
       console.log('');
     }
   } catch (e) {
     console.log(`\n❌ Could not check for updates: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+// ── CLI: cachly bench ─────────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest bench [--json] [corpus.json]
+// Runs the three-ranker recall quality benchmark (cachly vs BM25 vs flat-file)
+// on the bundled external corpus. No auth required. One shareable headline.
+if (process.argv[2] === 'bench') {
+  const { fileURLToPath } = await import('node:url');
+  const { dirname: _bd, resolve: _br } = await import('node:path');
+  const { loadExternalCorpus, runExternalBenchmark } = await import('./bench/external-corpus.js');
+  const asJson = process.argv.includes('--json');
+  const customPath = process.argv.slice(3).find(a => !a.startsWith('--'));
+  const here = _bd(fileURLToPath(import.meta.url));
+  const corpusPath = customPath
+    ? _br(process.cwd(), customPath)
+    : _br(here, 'bench', 'external', 'sample-corpus.json');
+
+  try {
+    const corpus = await loadExternalCorpus(corpusPath);
+    const r = await runExternalBenchmark(corpus);
+
+    if (asJson) {
+      console.log(JSON.stringify({
+        corpus: corpus.name,
+        lessons: r.corpusSize,
+        queries: r.queryCount,
+        cachly_p1:    Math.round(r.cachly.precisionAt1  * 1000) / 10,
+        flatfile_p1:  Math.round(r.flatfile.precisionAt1 * 1000) / 10,
+        cachly_mrr:   Math.round(r.cachly.mrr  * 1000) / 10,
+        flatfile_mrr: Math.round(r.flatfile.mrr * 1000) / 10,
+        p1_lift_vs_flatfile_pct: Math.round((r.cachly.precisionAt1 - r.flatfile.precisionAt1) * 1000) / 10,
+        mrr_lift_vs_flatfile_pct: Math.round((r.cachly.mrr - r.flatfile.mrr) * 1000) / 10,
+      }, null, 2));
+      process.exit(0);
+    }
+
+    const p1Lift   = ((r.cachly.precisionAt1 - r.flatfile.precisionAt1) * 100).toFixed(1);
+    const mrrLift  = ((r.cachly.mrr          - r.flatfile.mrr)          * 100).toFixed(1);
+    const p1Bm25   = ((r.cachly.precisionAt1 - r.baseline.precisionAt1) * 100).toFixed(1);
+    const p1Sign   = r.cachly.precisionAt1 >= r.flatfile.precisionAt1 ? '\x1b[32m+' : '\x1b[31m';
+    const mrrSign  = r.cachly.mrr          >= r.flatfile.mrr          ? '\x1b[32m+' : '\x1b[31m';
+
+    console.log('');
+    console.log('\x1b[35m  ╔══════════════════════════════════════════════════════════════╗\x1b[0m');
+    console.log('\x1b[35m  ║\x1b[0m  \x1b[1m🧠 cachly recall quality benchmark\x1b[0m                       \x1b[35m║\x1b[0m');
+    console.log('\x1b[35m  ╚══════════════════════════════════════════════════════════════╝\x1b[0m');
+    console.log('');
+    console.log(`  Corpus : ${corpus.name ?? corpusPath}`);
+    console.log(`  Dataset: ${r.corpusSize} lessons · ${r.queryCount} queries · 10 engineering domains`);
+    console.log(`           (k8s, DB, auth, CI, frontend, API, payments, observability, Node.js, infra)`);
+    console.log('');
+    console.log('  \x1b[1mPrecision@1\x1b[0m (finds the right lesson at rank #1):');
+    console.log(`    flat-file memory : \x1b[33m${(r.flatfile.precisionAt1 * 100).toFixed(1)}%\x1b[0m  (naive keyword overlap — no quality signal)`);
+    console.log(`    raw BM25         : \x1b[33m${(r.baseline.precisionAt1 * 100).toFixed(1)}%\x1b[0m  (keyword ranking)`);
+    console.log(`    cachly           : \x1b[1m\x1b[32m${(r.cachly.precisionAt1 * 100).toFixed(1)}%\x1b[0m  (BM25 + quality reranking)`);
+    console.log('');
+    console.log('  \x1b[1mMean Reciprocal Rank\x1b[0m (average rank of the right answer):');
+    console.log(`    flat-file memory : \x1b[33m${(r.flatfile.mrr * 100).toFixed(1)}%\x1b[0m`);
+    console.log(`    raw BM25         : \x1b[33m${(r.baseline.mrr * 100).toFixed(1)}%\x1b[0m`);
+    console.log(`    cachly           : \x1b[1m\x1b[32m${(r.cachly.mrr * 100).toFixed(1)}%\x1b[0m`);
+    console.log('');
+    console.log('  \x1b[1mLift vs flat-file memory\x1b[0m (what you get by switching from plain memory files):');
+    console.log(`    Precision@1 : ${p1Sign}${p1Lift}%\x1b[0m`);
+    console.log(`    MRR         : ${mrrSign}${mrrLift}%\x1b[0m`);
+    console.log(`    vs BM25     : \x1b[32m+${p1Bm25}%\x1b[0m Precision@1 (quality reranking on top of keyword search)`);
+    console.log('');
+    console.log('  \x1b[2mFlat-file = lexical overlap over raw text files (how Anthropic/Claude Memory works).\x1b[0m');
+    console.log('  \x1b[2mAdversarial distractors included — failure lessons that share the exact query vocabulary.\x1b[0m');
+    console.log('  \x1b[2mcachly ignores them because they have low confidence / failed outcome.\x1b[0m');
+    console.log('');
+    console.log('  Share your results:');
+    console.log(`  \x1b[36m"My Brain: Precision@1 ${(r.cachly.precisionAt1 * 100).toFixed(1)}% (${p1Sign}${p1Lift}% vs flat-file memory, ${r.queryCount} queries)"\x1b[0m`);
+    console.log('');
+    console.log('  Run on a custom corpus:');
+    console.log('  \x1b[2m  npx @cachly-dev/mcp-server@latest bench my-incidents.json\x1b[0m');
+    console.log('  \x1b[2m  npx @cachly-dev/mcp-server@latest bench --json   # machine-readable\x1b[0m');
+    console.log('');
+    console.log('  \x1b[1m→ Give your AI this recall quality on your own work (free, 1–5 min):\x1b[0m');
+    console.log('  \x1b[32m$ npx @cachly-dev/mcp-server@latest autopilot\x1b[0m');
+    console.log('  \x1b[90m  Signs in, configures every editor, bootstraps from your git history.\x1b[0m');
+    console.log('  \x1b[90m  Or create your Brain at: \x1b[36mhttps://cachly.dev/setup-ai\x1b[0m');
+    console.log('');
+  } catch (e) {
+    console.error(`\n❌ bench failed: ${(e as Error).message}\n`);
     process.exit(1);
   }
   process.exit(0);
@@ -1894,7 +2103,7 @@ if (process.argv[2] === 'demo') {
   const previewURL = `https://cachly.dev/preview?${previewParams.toString()}`;
 
   console.log('  \x1b[1mMake this permanent (free, 1–5 minutes):\x1b[0m');
-  console.log('  \x1b[32m$ npx @cachly-dev/mcp-server@latest setup\x1b[0m');
+  console.log('  \x1b[32m$ npx @cachly-dev/mcp-server@latest autopilot\x1b[0m');
   console.log('');
   console.log(`  \x1b[90m🔗 Shareable preview:\x1b[0m \x1b[36m${previewURL}\x1b[0m`);
   console.log('');
@@ -1914,7 +2123,7 @@ if (process.argv[2] === 'share') {
 
   if (!apiKey || !instanceId) {
     console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
-    console.log('   Run: npx @cachly-dev/mcp-server@latest setup  (takes 1–5 minutes)\n');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot  (takes 1–5 minutes)\n');
     process.exit(1);
   }
 
@@ -1954,7 +2163,7 @@ if (process.argv[2] === 'share') {
     console.log('├─────────────────────────────────────────────────────────────┤');
     console.log('│  Works with: Claude Code · Cursor · Windsurf · Copilot      │');
     console.log('│  Free · GDPR · German servers                                │');
-    console.log('│  \x1b[35mnpx @cachly-dev/mcp-server@latest setup\x1b[0m                     │');
+    console.log('│  \x1b[35mnpx @cachly-dev/mcp-server@latest autopilot\x1b[0m                 │');
     console.log('└─────────────────────────────────────────────────────────────┘');
     console.log('');
 
@@ -1988,7 +2197,7 @@ if (process.argv[2] === 'publish') {
 
   if (!apiKey || !instanceId) {
     console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
-    console.log('   Run: npx @cachly-dev/mcp-server@latest setup\n');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
     process.exit(1);
   }
 
@@ -2053,7 +2262,7 @@ if (process.argv[2] === 'publish') {
 }
 
 // ── CLI: cachly tool-specs / openapi ───────────────────────────────────────────
-// Emit the 114-tool surface in any agent framework's dialect, derived from the
+// Emit the 120-tool surface in any agent framework's dialect, derived from the
 // single TOOLS source of truth. Lets OpenAI Assistants, the Anthropic Messages
 // API, LangChain, CrewAI and AutoGen wrap cachly without hand-written glue.
 //   npx @cachly-dev/mcp-server tool-specs --format=openai   > cachly.openai.json
@@ -2093,7 +2302,7 @@ if (process.argv[2] === 'badge') {
 
   if (!instanceId) {
     console.log('\n⚠️  CACHLY_BRAIN_INSTANCE_ID must be set.');
-    console.log('   Run: npx @cachly-dev/mcp-server@latest setup  (takes 1–5 minutes)\n');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot  (takes 1–5 minutes)\n');
     process.exit(1);
   }
 
@@ -2148,10 +2357,11 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest badge\x1b[0m    ← README badge for your Brain');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest invite\x1b[0m   ← Invite a teammate');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest join <token>\x1b[0m ← Accept a Brain invite');
+  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest bench\x1b[0m     ← Recall quality vs flat-file memory');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
-  console.log('  \x1b[90mFree forever · GDPR · German servers · 114 MCP tools\x1b[0m');
+  console.log('  \x1b[90mFree forever · GDPR · German servers · 121 MCP tools\x1b[0m');
   console.log('');
   process.exit(0);
 }
@@ -2199,7 +2409,7 @@ if (process.argv[2] === 'init') {
 
   if (!instanceId || !apiKey) {
     console.error('\nUsage: npx @cachly-dev/mcp-server@latest init --instance-id <uuid> --api-key <cky_live_...> [--editor claude|cursor|windsurf|copilot|continue] [--project-dir /path] [--api-url https://your-self-hosted-backend]\n');
-    console.error('First time? Run the zero-config wizard (signs you in, auto-provisions): npx @cachly-dev/mcp-server@latest setup\n');
+    console.error('First time? Run the zero-config wizard (signs you in, auto-provisions): npx @cachly-dev/mcp-server@latest autopilot\n');
     console.error('Get your credentials from: https://cachly.dev/setup-ai\n');
     process.exit(1);
   }
@@ -2219,10 +2429,15 @@ if (process.argv[2] === 'init') {
     console.log(`\n✓  Already configured: ${configFile} (no change)`);
   }
 
-  // Always write CLAUDE.md (idempotent — safe to run multiple times)
-  const result = await writeClaudeMd(projectDir, instanceId);
-  const action = result === 'updated' ? '✅ Updated' : result === 'appended' ? '✅ Appended to' : '✅ Written';
-  console.log(`${action}: CLAUDE.md`);
+  // Always write the brain protocol to all instruction files (idempotent —
+  // safe to run multiple times). Covers CLAUDE.md, AGENTS.md and Copilot so any
+  // agent the user runs arrives pre-briefed.
+  const results = await writeInstructions(projectDir, instanceId);
+  for (const [path, action] of Object.entries(results)) {
+    const verb = action === 'updated' ? '✅ Updated' : action === 'appended' ? '✅ Appended to' : '✅ Written';
+    const name = path.split(/[\\/]/).pop() ?? path;
+    console.log(`${verb}: ${name}`);
+  }
 
   // ── CLS Phase 4: Auto-install git post-commit hook ─────────────────────────
   try {
@@ -2282,7 +2497,7 @@ if (process.argv[2] === 'status') {
 
   if (!apiKey || !instanceId) {
     console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
-    console.log('   Run: npx @cachly-dev/mcp-server@latest setup\n');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
     process.exit(1);
   }
 
@@ -2375,7 +2590,7 @@ if (process.argv[2] === 'health') {
   console.log('🔑 Auth token');
   const jwt = process.env.CACHLY_JWT ?? '';
   if (!jwt) {
-    fail('CACHLY_JWT not set — run: npx @cachly-dev/mcp-server@latest setup');
+    fail('CACHLY_JWT not set — run: npx @cachly-dev/mcp-server@latest autopilot');
   } else if (jwt.startsWith('cky_')) {
     // Long-lived API key (the credential `setup` provisions). It is not a JWT and
     // never expires client-side — treat a well-formed key as healthy.
@@ -2510,7 +2725,7 @@ if (process.argv[2] === 'health') {
     }
   }
   if (configsFound === 0) {
-    fail('No editor MCP configs found — run: npx @cachly-dev/mcp-server@latest setup');
+    fail('No editor MCP configs found — run: npx @cachly-dev/mcp-server@latest autopilot');
   }
 
   // ── 5. Git hook ─────────────────────────────────────────────────────────────
@@ -2530,7 +2745,7 @@ if (process.argv[2] === 'health') {
       warn('.git/hooks/post-commit exists but could not read');
     }
   } else {
-    warn('.git/hooks/post-commit not found — run: npx @cachly-dev/mcp-server@latest setup');
+    warn('.git/hooks/post-commit not found — run: npx @cachly-dev/mcp-server@latest autopilot');
   }
 
   // ── 6. Embedding provider (BYOK) ─────────────────────────────────────────────
@@ -2560,7 +2775,7 @@ if (process.argv[2] === 'health') {
     console.log(`✅ All checks passed (${passed} ok)\n`);
   } else {
     console.log(`❌ ${failed} check(s) failed, ${passed} passed\n`);
-    console.log(`💡 Fix issues with: npx @cachly-dev/mcp-server@latest setup\n`);
+    console.log(`💡 Fix issues with: npx @cachly-dev/mcp-server@latest autopilot\n`);
     process.exit(1);
   }
   process.exit(0);
@@ -2672,14 +2887,8 @@ if (process.argv[2] === 'setup' || _isAutopilotCli) {
       // Open browser and show code
       console.log(`   Code: \x1b[1;33m${userCode}\x1b[0m`);
       console.log(`   URL:  ${verifyUri}\n`);
-      try {
-        const { execSync } = await import('node:child_process');
-        const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-        execSync(`${openCmd} "${verifyUri}"`, { stdio: 'ignore' });
-        console.log('   ✓  Browser opened — confirm the code above to continue...\n');
-      } catch {
-        console.log('   👉  Open the URL above in your browser and enter the code.\n');
-      }
+      openInBrowser(verifyUri);
+      console.log('   ✓  Browser opened — confirm the code above to continue...\n');
 
       // Poll for token with proper timeouts
       process.stdout.write('   Waiting for authorization');
@@ -2742,18 +2951,14 @@ if (process.argv[2] === 'setup' || _isAutopilotCli) {
       console.log('   1. Sign up / log in at the URL above');
       console.log('   2. Go to Settings → API Keys → Create new key');
       console.log('   3. Copy the key (starts with cky_live_...)\n');
-      try {
-        const { execSync } = await import('node:child_process');
-        const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-        execSync(`${openCmd} "${signupUrl}"`, { stdio: 'ignore' });
-      } catch { /* can't open browser — instructions shown above */ }
+      openInBrowser(signupUrl);
       // In a non-interactive terminal (VSCode task, CI) we cannot read a pasted
       // key — exit with clear, actionable instructions instead of hanging.
       if (nonInteractive) {
         sendFunnelEvent('device_flow_failed', { reason: 'non_interactive_no_key' });
         console.error('\n   ⚠️  This terminal is non-interactive, so the key cannot be pasted here.');
         console.error('   Get your key at the URL above, then set it and re-run setup:\n');
-        console.error('     \x1b[1mCACHLY_JWT=cky_live_xxx npx @cachly-dev/mcp-server@latest setup\x1b[0m\n');
+        console.error('     \x1b[1mCACHLY_JWT=cky_live_xxx npx @cachly-dev/mcp-server@latest autopilot\x1b[0m\n');
         console.error('   Or add it to your editor\'s MCP config under env.CACHLY_JWT.\n');
         rl.close(); process.exit(1);
       }
@@ -2802,11 +3007,7 @@ if (process.argv[2] === 'setup' || _isAutopilotCli) {
     console.error(`\n\nFailed to fetch instances: ${msg}`);
     if (msg.includes('401')) {
       console.error('Token rejected. Get a valid token at https://cachly.dev/setup-ai\n');
-      try {
-        const { execSync } = await import('node:child_process');
-        const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-        execSync(`${openCmd} https://cachly.dev/setup-ai`, { stdio: 'ignore' });
-      } catch { /* ignore */ }
+      openInBrowser('https://cachly.dev/setup-ai');
     }
     rl.close(); process.exit(1);
   }
@@ -2850,11 +3051,7 @@ if (process.argv[2] === 'setup' || _isAutopilotCli) {
 
     if (instances.length === 0) {
       console.error('\nCould not create an instance automatically. Opening https://cachly.dev/instances …\n');
-      try {
-        const { execSync } = await import('node:child_process');
-        const openCmd = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-        execSync(`${openCmd} https://cachly.dev/instances`, { stdio: 'ignore' });
-      } catch { /* ignore */ }
+      openInBrowser('https://cachly.dev/instances');
       rl.close(); process.exit(1);
     }
   }
@@ -2902,6 +3099,10 @@ if (process.argv[2] === 'setup' || _isAutopilotCli) {
   // Uses mergeMcpConfig to preserve all existing MCP servers — only adds/updates
   // the cachly entry without touching filesystem, github, or other servers.
   const { existsSync: exSetup } = await import('node:fs');
+  // Track config-write failures so the final summary tells the truth instead of
+  // always claiming "Brain is ready" even when a config never got written.
+  const configWriteFailures: Array<{ file: string; reason: string }> = [];
+  let configWriteSuccesses = 0;
   for (const editor of editorsToSetup) {
     const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
     const configPath = resolve(cwd, configFile);
@@ -2911,9 +3112,12 @@ if (process.argv[2] === 'setup' || _isAutopilotCli) {
       const merged = await mergeMcpConfig(configPath, token, instance.id, editor, { readFile, existsSync: exSetup });
       await writeFile(configPath, merged, 'utf-8');
       console.log(`✅ ${wasExisting ? 'Updated' : 'Written'}: ${configFile}`);
+      configWriteSuccesses++;
     } catch (writeErr) {
-      console.log(`⚠️  Could not write ${configFile}: ${(writeErr as Error).message}`);
+      const reason = (writeErr as Error).message;
+      console.log(`⚠️  Could not write ${configFile}: ${reason}`);
       console.log(`   Fix permissions or run with sudo, then re-run setup.`);
+      configWriteFailures.push({ file: configFile, reason });
     }
   }
 
@@ -2937,14 +3141,20 @@ if (process.argv[2] === 'setup' || _isAutopilotCli) {
     };
     await writeFile(globalClaudePath, JSON.stringify(globalConfig, null, 2), 'utf-8');
     console.log(`✅ Written: ~/.claude/mcp.json  (global — works in every project)`);
+    configWriteSuccesses++;
   } catch (e) {
-    console.log(`⚠️  Could not write ~/.claude/mcp.json: ${(e as Error).message}`);
+    const reason = (e as Error).message;
+    console.log(`⚠️  Could not write ~/.claude/mcp.json: ${reason}`);
+    configWriteFailures.push({ file: '~/.claude/mcp.json', reason });
   }
 
-  // ── Step 5: CLAUDE.md (always — idempotent) ───────────────────────────────
-  const mdResult = await writeClaudeMd(cwd, instance.id);
-  const mdLabel = mdResult === 'updated' ? '✅ Updated' : mdResult === 'appended' ? '✅ Appended to' : '✅ Written';
-  console.log(`${mdLabel}: CLAUDE.md\n`);
+
+  // ── Step 5: Instructions für alle Vendors (immer, idempotent) ─────────────
+  const instrResults = await writeInstructions(cwd, instance.id);
+  for (const [file, res] of Object.entries(instrResults)) {
+    const label = res === 'updated' ? '✅ Updated' : res === 'appended' ? '✅ Appended to' : '✅ Written';
+    console.log(`${label}: ${file}`);
+  }
 
   // ── Step 5b: Bootstrap Brain from git history ─────────────────────────────
   // Pre-populates the Brain with real lessons so the first session_start shows
@@ -3131,16 +3341,51 @@ if (process.argv[2] === 'setup' || _isAutopilotCli) {
     }
   } catch { /* non-critical */ }
 
-  // Setup reached the end successfully — close the funnel.
+  // Setup reached the end — close the funnel. Report config-write outcome so the
+  // weekly funnel can spot permission/path problems blocking activation.
   JWT = token;
   const setupElapsedS = Math.round((Date.now() - setupStartMs) / 1000);
-  sendFunnelEvent('setup_completed', { instance_id: instance.id, elapsed_s: setupElapsedS });
+  if (configWriteFailures.length > 0) {
+    sendFunnelEvent('setup_config_write_failed', {
+      instance_id: instance.id,
+      failed: configWriteFailures.length,
+      succeeded: configWriteSuccesses,
+    });
+  }
+  sendFunnelEvent('setup_completed', {
+    instance_id: instance.id,
+    elapsed_s: setupElapsedS,
+    config_failures: configWriteFailures.length,
+  });
+
+  if (configWriteFailures.length > 0 && configWriteSuccesses === 0) {
+    // Nothing got written — be honest, this is NOT "ready".
+    console.log('\n╔══════════════════════════════════════════════════════╗');
+    console.log('║  ⚠️   Setup incomplete — no editor config was written ║');
+    console.log('╚══════════════════════════════════════════════════════╝');
+    console.log('\n   Your Brain instance exists, but no editor knows about it yet.');
+    console.log('   Failed writes:');
+    for (const f of configWriteFailures) console.log(`     • ${f.file} — ${f.reason}`);
+    console.log('\n   Fix the permissions above and re-run, or configure manually:');
+    console.log(`     CACHLY_JWT=${token.slice(0, 12)}… CACHLY_BRAIN_INSTANCE_ID=${instance.id}`);
+    console.log(`   Docs: https://cachly.dev/docs/mcp\n`);
+    rl.close();
+    await new Promise(r => setTimeout(r, 300));
+    process.exit(1);
+  }
 
   console.log('\n╔══════════════════════════════════════════════════════╗');
   console.log('║  🚀  Brain is ready.                                 ║');
   console.log(`║  ⏱️   Setup completed in ${String(setupElapsedS + 's').padEnd(5)} — restart your editor  ║`);
   console.log('║      and your AI arrives pre-briefed every session.  ║');
-  console.log('╚══════════════════════════════════════════════════════╝\n');
+  console.log('╚══════════════════════════════════════════════════════╝');
+  if (configWriteFailures.length > 0) {
+    // Partial success — some editors configured, some not. Tell the truth.
+    console.log('\n   ⚠️  Some editor configs could not be written (others succeeded):');
+    for (const f of configWriteFailures) console.log(`     • ${f.file} — ${f.reason}`);
+    console.log('   Fix the permissions above and re-run setup to configure them too.');
+  }
+  console.log('');
 
   rl.close();
   // Give the fire-and-forget telemetry a moment to flush before exit.
@@ -3275,7 +3520,7 @@ if (!JWT) {
 //   • Editor as an MCP stdio server (non-TTY)  → ONE stderr hint, then KEEP RUNNING
 //     so tools/list works and the first tool call starts the browser sign-in.
 // Skip entirely for CLI subcommands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'tool-specs', 'openapi'];
+const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'bench', 'tool-specs', 'openapi'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
   const runningInTerminal = !process.argv[2] && process.stdout.isTTY === true && _isMain;
   if (runningInTerminal) {
@@ -3291,9 +3536,9 @@ if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
       '║                                                                  ║\n' +
       '║    👉  https://cachly.dev/setup-ai                              ║\n' +
       '║                                                                  ║\n' +
-      '║  Then run the interactive setup wizard:                         ║\n' +
+      '║  Then run the one-command setup wizard:                         ║\n' +
       '║                                                                  ║\n' +
-      '║    npx @cachly-dev/mcp-server@latest setup                      ║\n' +
+      '║    npx @cachly-dev/mcp-server@latest autopilot                  ║\n' +
       '║                                                                  ║\n' +
       '║  Free tier — no credit card required.                           ║\n' +
       '╚══════════════════════════════════════════════════════════════════╝\n' +
@@ -3307,7 +3552,7 @@ if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
     // server starts and the zero-credential device flow can run on first tool call.
     process.stderr.write(
       '\n🧠 cachly: no CACHLY_JWT set yet — call any cachly tool and a 10-second browser sign-in starts automatically.\n' +
-      '   (Or run once: npx @cachly-dev/mcp-server@latest setup)\n\n',
+      '   (Or run once: npx @cachly-dev/mcp-server@latest autopilot)\n\n',
     );
   }
 } else {
@@ -3345,7 +3590,7 @@ if (!process.env.CACHLY_NO_UPDATE_CHECK) {
         if (latest && latest !== CURRENT_VERSION) {
           process.stderr.write(
             `\n⚡ cachly update available: ${CURRENT_VERSION} → ${latest}\n` +
-            `   Run: npx @cachly-dev/mcp-server@latest setup\n\n`,
+            `   Run: npx @cachly-dev/mcp-server@latest autopilot\n\n`,
           );
         }
       }

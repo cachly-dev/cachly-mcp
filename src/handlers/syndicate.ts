@@ -11,7 +11,8 @@ type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 
 export const SYNDICATE_TOOL_NAMES = new Set([
   'syndicate', 'syndicate_search', 'syndicate_stats', 'syndicate_trending',
-  'brain_search', 'ckg_inspect', 'brain_predict',
+  'brain_search', 'ckg_inspect', 'brain_predict', 'brain_plan',
+  'brain_marketplace', 'brain_install',
 ]);
 
 export async function handleSyndicateTool(
@@ -450,6 +451,277 @@ export async function handleSyndicateTool(
 
       lines.push(`💡 Outcome confirmed? \`learn_from_attempts(topic="fix:...", outcome="success", ...)\` → improves future predictions`);
       return lines.join('\n');
+    }
+
+    // ── brain_plan: generative planning on top of the CKG ───────────────────────
+    // Where brain_predict answers "what might fail?", brain_plan answers "what
+    // should I do, in what order?". It reads the same lessons + CKG but reframes
+    // them as an actionable plan: ranked failure modes to avoid, ordered steps
+    // grounded in proven fixes (dependency-aware), and a pre-flight checklist.
+    case 'brain_plan': {
+      const { instance_id, task, top_k = 5 } = args as { instance_id: string; task: string; top_k?: number };
+      if (!task || !task.trim()) {
+        throw new McpError(ErrorCode.InvalidParams, 'task is required');
+      }
+      const redis = await getConnection(instance_id);
+
+      const taskTokens = task.toLowerCase().replace(/[^a-z0-9\s\-_:]/g, ' ').split(/\s+/).filter(t => t.length > 2);
+
+      type PlanLesson = {
+        topic: string; outcome: string; what_worked?: string; what_failed?: string;
+        severity?: string; ts: string; verified_at?: string; recall_count?: number;
+        commands?: string[]; file_paths?: string[]; depends_on?: string[]; confidence?: number;
+      };
+
+      // Scan every best-lesson once and score by token overlap against the task.
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((res, rej) => { lStream.on('data', (b: string[]) => lessonKeys.push(...b)); lStream.on('end', res); lStream.on('error', rej); });
+
+      const scored: Array<{ l: PlanLesson; score: number; confidence: number }> = [];
+      for (const k of lessonKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        const l = safeJsonParse<PlanLesson | null>(raw, null);
+        if (!l) continue;
+        const haystack = [l.topic, l.what_worked ?? '', l.what_failed ?? ''].join(' ').toLowerCase();
+        const score = taskTokens.reduce((s, t) => s + (haystack.includes(t) ? 1 : 0), 0);
+        if (score >= 1) scored.push({ l, score, confidence: calculateConfidence(l) });
+      }
+
+      if (scored.length === 0) {
+        return [
+          `🗺️ **Brain Plan: "${task}"**`,
+          ``,
+          `No grounded plan yet — the brain hasn't seen this area.`,
+          ``,
+          `💡 As you work here and call \`learn_from_attempts\`, brain_plan will assemble`,
+          `   an ordered, proven plan from your own history. For now, proceed carefully`,
+          `   and capture what works.`,
+        ].join('\n');
+      }
+
+      // Rank: relevance first, then confidence. Split into failure modes (things
+      // that bit us before) vs. proven steps (successful fixes).
+      scored.sort((a, b) => (b.score - a.score) || (b.confidence - a.confidence));
+      const failureModes = scored.filter(s => s.l.outcome === 'failure' || (s.l.what_failed ?? '').trim().length > 0);
+      const provenSteps = scored.filter(s => s.l.outcome === 'success' || s.l.outcome === 'partial');
+
+      const lines = [`🗺️ **Brain Plan: "${task}"**`, '', `_Grounded in ${scored.length} relevant lesson${scored.length !== 1 ? 's' : ''} from your own Brain._`, ''];
+
+      // ── Section 1: failure modes to avoid, ranked by confidence ───────────────
+      if (failureModes.length > 0) {
+        lines.push(`### ⚠️ Likely failure modes (avoid these)`);
+        const sevRank: Record<string, number> = { critical: 0, major: 1, minor: 2 };
+        failureModes
+          .slice()
+          .sort((a, b) => (sevRank[a.l.severity ?? 'minor'] ?? 1) - (sevRank[b.l.severity ?? 'minor'] ?? 1) || b.confidence - a.confidence)
+          .slice(0, top_k)
+          .forEach(({ l, confidence }) => {
+            const sevEmoji = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '🟢';
+            const detail = (l.what_failed ?? l.what_worked ?? '').slice(0, 120);
+            lines.push(`${sevEmoji} **${Math.round(confidence * 100)}%** \`${l.topic}\`${detail ? ` — ${detail}` : ''}`);
+          });
+        lines.push('');
+      }
+
+      // ── Section 2: ordered, proven steps (dependency-aware) ───────────────────
+      if (provenSteps.length > 0) {
+        // Order steps so that any step a lesson depends_on comes first. We only
+        // have topics + depends_on links; do a light topological pass over the
+        // selected set, falling back to relevance order for anything unresolved.
+        const selected = provenSteps.slice(0, top_k);
+        const byTopic = new Map(selected.map(s => [s.l.topic, s]));
+        const ordered: typeof selected = [];
+        const placed = new Set<string>();
+        const place = (s: typeof selected[number], depth: number) => {
+          if (placed.has(s.l.topic) || depth > 10) return;
+          for (const dep of s.l.depends_on ?? []) {
+            const depEntry = byTopic.get(dep);
+            if (depEntry && !placed.has(dep)) place(depEntry, depth + 1);
+          }
+          if (!placed.has(s.l.topic)) { placed.add(s.l.topic); ordered.push(s); }
+        };
+        for (const s of selected) place(s, 0);
+
+        lines.push(`### 🔧 Recommended steps (proven fixes, in order)`);
+        ordered.forEach(({ l, confidence }, i) => {
+          lines.push(`${i + 1}. **${Math.round(confidence * 100)}%** \`${l.topic}\` — ${(l.what_worked ?? '').slice(0, 140)}`);
+          const cmds = (l.commands ?? []).slice(0, 2);
+          if (cmds.length > 0) lines.push(`   \`\`\`\n   ${cmds.join('\n   ')}\n   \`\`\``);
+          if ((l.depends_on ?? []).length > 0) lines.push(`   ↳ depends on: ${(l.depends_on ?? []).map(d => `\`${d}\``).join(', ')}`);
+        });
+        lines.push('');
+      }
+
+      // ── Section 3: pre-flight checklist ──────────────────────────────────────
+      const checklist = scored
+        .filter(s => (s.l.file_paths ?? []).length > 0 || (s.l.commands ?? []).length > 0)
+        .slice(0, 4);
+      if (checklist.length > 0) {
+        lines.push(`### ✅ Pre-flight checklist`);
+        const touchedFiles = [...new Set(checklist.flatMap(s => s.l.file_paths ?? []))].slice(0, 6);
+        if (touchedFiles.length > 0) {
+          lines.push(`  • Review files that were involved before: ${touchedFiles.map(f => `\`${f}\``).join(', ')}`);
+        }
+        lines.push(`  • Confirm the top failure mode above can't recur in your change`);
+        lines.push(`  • Have a rollback ready for any \`critical\`/\`major\` step`);
+        lines.push('');
+      }
+
+      lines.push(`💡 After you ship: \`learn_from_attempts(topic="...", outcome="success", ...)\` → the next plan gets sharper.`);
+      return lines.join('\n');
+    }
+
+    // ── W10: Domain Brains marketplace — brain_marketplace ──────────────────────
+    // Browse curated, installable packs of high-trust community lessons by domain.
+    case 'brain_marketplace': {
+      const { min_confirms = 1 } = args as { min_confirms?: number };
+      const params = new URLSearchParams();
+      if (min_confirms && min_confirms > 1) params.set('min_confirms', String(min_confirms));
+
+      const res = await apiFetch<{
+        brains: Array<{
+          slug: string; name: string; icon: string; description: string;
+          category: string; lesson_count: number; total_confirms: number;
+          curated: boolean; last_updated: string;
+        }>;
+        count: number;
+      }>(`/api/v1/syndication/brains${params.toString() ? `?${params}` : ''}`);
+
+      if (!res.brains || res.brains.length === 0) {
+        return [
+          `## 🧠 Domain Brain Marketplace`,
+          ``,
+          `No domain brains are available yet — the marketplace fills as the community`,
+          `contributes verified lessons. Be an early contributor:`,
+          `\`syndicate(topic="k8s:oom-kill", what_worked="raise memory limit + add probe")\``,
+        ].join('\n');
+      }
+
+      const lines: string[] = [
+        `## 🧠 Domain Brain Marketplace`,
+        `*${res.count} installable brain${res.count === 1 ? '' : 's'} · curated from the global Knowledge Commons*`,
+        ``,
+      ];
+      for (const b of res.brains) {
+        const badge = b.curated ? '⭐ curated' : 'community';
+        lines.push(
+          `### ${b.icon} ${b.name}  \`${b.slug}\``,
+          `${b.description}`,
+          `**${b.lesson_count}** lesson${b.lesson_count === 1 ? '' : 's'} · 🤝 ${b.total_confirms} community confirm${b.total_confirms === 1 ? '' : 's'} · ${badge}`,
+          `Install: \`brain_install(slug="${b.slug}")\``,
+          ``,
+        );
+      }
+      lines.push(
+        `---`,
+        `_Installed brains merge into your local Brain and surface in \`smart_recall\` — they never override your own lessons._`,
+      );
+      return lines.join('\n');
+    }
+
+    // ── W10: Domain Brains marketplace — brain_install ──────────────────────────
+    // Pull a domain brain's curated lessons into the local Brain so they're
+    // available offline in smart_recall. Idempotent + non-destructive: never
+    // clobbers the user's own lessons (only prior marketplace installs).
+    case 'brain_install': {
+      const { instance_id, slug, min_confirms = 1, limit = 200, dry_run = false } = args as {
+        instance_id: string; slug?: string; min_confirms?: number; limit?: number; dry_run?: boolean;
+      };
+      const cleanSlug = typeof slug === 'string' ? slug.trim() : '';
+      if (!cleanSlug) {
+        throw new McpError(ErrorCode.InvalidParams, 'slug is required — run brain_marketplace() to see available domain brains');
+      }
+
+      const params = new URLSearchParams();
+      if (min_confirms && min_confirms > 1) params.set('min_confirms', String(min_confirms));
+      if (limit && limit !== 200) params.set('limit', String(Math.min(Math.max(1, limit), 500)));
+
+      const pack = await apiFetch<{
+        slug: string; name: string; curated: boolean; count: number;
+        lessons: Array<{
+          topic: string; outcome: string; what_worked: string; what_failed: string;
+          severity: string; tags: string; confirm_count: number;
+        }>;
+      }>(`/api/v1/syndication/brains/${encodeURIComponent(cleanSlug)}${params.toString() ? `?${params}` : ''}`);
+
+      if (!pack.lessons || pack.lessons.length === 0) {
+        return `No installable lessons found for domain brain \`${cleanSlug}\`. Run \`brain_marketplace()\` to see what's available.`;
+      }
+
+      if (dry_run) {
+        return [
+          `## 📦 ${pack.name} (DRY RUN)`,
+          `Would install **${pack.lessons.length}** lesson${pack.lessons.length === 1 ? '' : 's'} into your Brain.`,
+          ``,
+          ...pack.lessons.slice(0, 15).map(l => `  • \`${l.topic}\` · 🤝 ${l.confirm_count}`),
+          pack.lessons.length > 15 ? `  …and ${pack.lessons.length - 15} more` : '',
+          ``,
+          `Run without \`dry_run\` to install: \`brain_install(slug="${cleanSlug}")\``,
+        ].filter(Boolean).join('\n');
+      }
+
+      const redis = await getConnection(instance_id);
+      const source = `marketplace:${cleanSlug}`;
+      const now = new Date().toISOString();
+      let installed = 0;
+      let skipped = 0;
+
+      for (const l of pack.lessons) {
+        if (!l.topic || !l.what_worked) { skipped++; continue; }
+        const bestKey = `cachly:lesson:best:${l.topic}`;
+
+        // Never clobber a user's own lesson (or a prior install from a different brain).
+        const existing = await redis.get(bestKey);
+        if (existing) {
+          const parsed = safeJsonParse<{ source?: string } | null>(existing, null);
+          if (parsed && parsed.source !== source) { skipped++; continue; }
+        }
+
+        // Tags arrive as a JSON string from the commons; normalise to an array.
+        const tags = ((): string[] => {
+          const t = safeJsonParse<unknown>(l.tags, []);
+          return Array.isArray(t) ? t.filter((x): x is string => typeof x === 'string') : [];
+        })();
+
+        const record = JSON.stringify({
+          topic: l.topic,
+          outcome: l.outcome || 'success',
+          what_worked: l.what_worked,
+          what_failed: l.what_failed || '',
+          severity: l.severity || 'minor',
+          tags,
+          visibility: 'team',
+          confidence: calculateConfidence({ ts: now, verified_at: now, recall_count: l.confirm_count }),
+          recall_count: 0,
+          source,
+          ts: now,
+          verified_at: now,
+          version: 3,
+        });
+
+        await redis.set(bestKey, record);
+        const listKey = `cachly:lessons:${l.topic}`;
+        await redis.rpush(listKey, record);
+        await redis.ltrim(listKey, -100, -1);
+        await redis.expire(listKey, 90 * 86400);
+        installed++;
+      }
+
+      // Stamp born_at so time-to-first-recall counts from the install moment.
+      await redis.set(`cachly:stats:born_at:${instance_id}`, now, 'EX', 365 * 86400, 'NX').catch(() => {});
+
+      return [
+        `## 📦 Installed: ${pack.name}`,
+        ``,
+        `**${installed}** lesson${installed === 1 ? '' : 's'} merged into your Brain${skipped > 0 ? ` · ${skipped} skipped (your own lessons take priority)` : ''}.`,
+        ``,
+        `They're live in \`smart_recall\` now — try a query in this domain:`,
+        `  • \`smart_recall(query="${pack.lessons[0]?.topic.split(':').pop() ?? 'your problem'}")\``,
+        ``,
+        `_Installed lessons are tagged \`source: "${source}"\` and never override your own. Re-run anytime to pull updates._`,
+      ].join('\n');
     }
 
     // ── Layer 3: MADC ─────────────────────────────────────────────────────────

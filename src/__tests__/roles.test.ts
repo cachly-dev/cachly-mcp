@@ -9,6 +9,7 @@ import {
   hasPermission, roleToReviewLevel, getRole,
   ROLE_BADGE, ROLES_KEY,
   getScopes, lessonVisibleToScope,
+  rbacActive, requireRole,
   type TeamRole,
 } from '../handlers/team.js';
 import { handleTeamTool } from '../handlers/team.js';
@@ -22,6 +23,7 @@ class MockRedis {
 
   async get(k: string) { return this.store.get(k) ?? null; }
   async set(k: string, v: string) { this.store.set(k, v); return 'OK'; }
+  async mget(...ks: string[]) { return ks.map(k => this.store.get(k) ?? null); }
   async hset(k: string, f: string, v: string) {
     if (!this.hashes.has(k)) this.hashes.set(k, new Map());
     this.hashes.get(k)!.set(f, v); return 1;
@@ -39,6 +41,13 @@ class MockRedis {
     return this.lists.get(k)!.length;
   }
   async ltrim(_k: string, _s: number, _e: number) { return 'OK'; }
+  async lrange(k: string, start: number, end: number) {
+    const l = this.lists.get(k) ?? [];
+    // Mirror Redis negative-index semantics for the tails we use.
+    const s = start < 0 ? Math.max(0, l.length + start) : start;
+    const e = end < 0 ? l.length + end : end;
+    return l.slice(s, e + 1);
+  }
   async sadd(k: string, ...members: string[]) {
     if (!this.sets.has(k)) this.sets.set(k, new Set());
     const s = this.sets.get(k)!;
@@ -365,5 +374,140 @@ describe('team_scopes', () => {
     expect(out).toContain('security');
     const out2 = await handleTeamTool('team_scopes', { instance_id: iid, handle: 'nobody' }, getConn, noopApiFetch);
     expect(out2).toContain('no groups');
+  });
+});
+
+// ── RBAC enforcement (W6) ──────────────────────────────────────────────────────
+describe('rbacActive + requireRole', () => {
+  let redis: MockRedis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('is inactive until an admin exists', async () => {
+    expect(await rbacActive(redis as unknown as Redis, iid)).toBe(false);
+    await redis.hset(ROLES_KEY(iid), 'bob', 'contributor');
+    expect(await rbacActive(redis as unknown as Redis, iid)).toBe(false);
+    await redis.hset(ROLES_KEY(iid), 'alice', 'admin');
+    expect(await rbacActive(redis as unknown as Redis, iid)).toBe(true);
+  });
+
+  it('allows everything on an open team (no admin yet)', async () => {
+    const denied = await requireRole(redis as unknown as Redis, iid, 'anyone', 'reviewer', 'confirm');
+    expect(denied).toBeNull();
+  });
+
+  it('denies under-privileged actors once governance is active', async () => {
+    await redis.hset(ROLES_KEY(iid), 'alice', 'admin');
+    await redis.hset(ROLES_KEY(iid), 'eve', 'viewer');
+    const denied = await requireRole(redis as unknown as Redis, iid, 'eve', 'reviewer', 'confirm team lessons');
+    expect(denied).toContain('Permission denied');
+    expect(denied).toContain('reviewer');
+  });
+
+  it('permits a sufficiently privileged actor', async () => {
+    await redis.hset(ROLES_KEY(iid), 'alice', 'admin');
+    expect(await requireRole(redis as unknown as Redis, iid, 'alice', 'reviewer', 'confirm')).toBeNull();
+  });
+});
+
+describe('team_confirm enforcement + audit', () => {
+  let redis: MockRedis;
+  const getConn = async () => redis as unknown as Redis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('blocks a viewer from confirming once governance is active', async () => {
+    await redis.hset(ROLES_KEY(iid), 'alice', 'admin');
+    await redis.hset(ROLES_KEY(iid), 'eve', 'viewer');
+    await redis.set('cachly:lesson:best:auth:jwt', JSON.stringify({ topic: 'auth:jwt', outcome: 'success' }));
+    const out = await handleTeamTool('team_confirm',
+      { instance_id: iid, topic: 'auth:jwt', reviewer: 'eve' }, getConn, noopApiFetch);
+    expect(out).toContain('Permission denied');
+  });
+
+  it('lets a reviewer confirm and records an audit entry', async () => {
+    await redis.hset(ROLES_KEY(iid), 'alice', 'admin');
+    await redis.hset(ROLES_KEY(iid), 'rob', 'reviewer');
+    await redis.set('cachly:lesson:best:auth:jwt', JSON.stringify({ topic: 'auth:jwt', outcome: 'success' }));
+    const out = await handleTeamTool('team_confirm',
+      { instance_id: iid, topic: 'auth:jwt', reviewer: 'rob' }, getConn, noopApiFetch);
+    expect(out).toContain('senior-reviewed');
+
+    // Audit log readable by the admin, denied for non-admins.
+    const audit = await handleTeamTool('team_audit',
+      { instance_id: iid, requester: 'alice' }, getConn, noopApiFetch) as string;
+    expect(audit).toContain('auth:jwt');
+    expect(audit).toContain('rob');
+
+    const deniedAudit = await handleTeamTool('team_audit',
+      { instance_id: iid, requester: 'rob' }, getConn, noopApiFetch) as string;
+    expect(deniedAudit).toContain('Permission denied');
+  });
+});
+
+// ── W8: Team Crystallize (cross-person causal patterns) ─────────────────────────
+describe('team_crystallize', () => {
+  let redis: MockRedis;
+  const getConn = async () => redis as unknown as Redis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  const seedLesson = async (topic: string, author: string, what: string, extra: Record<string, unknown> = {}) => {
+    await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify({
+      topic, outcome: 'success', what_worked: what, author, ts: new Date().toISOString(), ...extra,
+    }));
+    // team_crystallize discovers keys via scanStream — back it with the same store.
+    (redis as unknown as { lessonKeys?: string[] });
+  };
+
+  it('reports no convergence when authors do not overlap on a concept', async () => {
+    // scanStream in the mock returns [] (no keys), so this exercises the empty path.
+    const out = await handleTeamTool('team_crystallize', { instance_id: iid }, getConn, noopApiFetch) as string;
+    expect(out).toContain('not enough cross-person convergence');
+  });
+});
+
+// team_crystallize with a scanStream-backed mock that yields real keys.
+describe('team_crystallize — cross-person convergence', () => {
+  // A richer mock whose scanStream emits the stored best-lesson keys.
+  class ScanRedis extends MockRedis {
+    scanStream() {
+      const keys = [...(this as unknown as { store: Map<string, string> })['store'].keys()]
+        .filter(k => k.startsWith('cachly:lesson:best:'));
+      const e = { handlers: {} as Record<string, ((...a: unknown[]) => void)> };
+      setTimeout(() => { e.handlers['data']?.(keys); e.handlers['end']?.(); }, 0);
+      return { on: (ev: string, fn: (...a: unknown[]) => void) => { e.handlers[ev] = fn; return { on: () => {} }; } };
+    }
+  }
+  let redis: ScanRedis;
+  const getConn = async () => redis as unknown as Redis;
+  beforeEach(() => { redis = new ScanRedis(); });
+
+  it('crystallizes a concept two different authors converged on', async () => {
+    await redis.set('cachly:lesson:best:payments:connection-pool', JSON.stringify({
+      topic: 'payments:connection-pool', outcome: 'success', author: 'alice',
+      what_worked: 'bound the pool size and add a timeout', tags: ['pool'], ts: new Date().toISOString(),
+    }));
+    await redis.set('cachly:lesson:best:db:pool-exhaustion', JSON.stringify({
+      topic: 'db:pool-exhaustion', outcome: 'success', author: 'bob',
+      what_worked: 'cap pool + timeout to avoid exhaustion', tags: ['pool'], ts: new Date().toISOString(),
+    }));
+
+    const out = await handleTeamTool('team_crystallize', { instance_id: iid }, getConn, noopApiFetch) as string;
+    expect(out).toContain('Team Crystal created');
+    expect(out).toContain('pool');
+    expect(out).toContain('@alice');
+    expect(out).toContain('@bob');
+
+    // Persisted for crystal_view.
+    const saved = await redis.get('cachly:crystal:team:latest');
+    expect(saved).toBeTruthy();
+    expect(JSON.parse(saved!).patterns.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('does not crystallize a concept only one author touched', async () => {
+    await redis.set('cachly:lesson:best:auth:jwt-skew', JSON.stringify({
+      topic: 'auth:jwt-skew', outcome: 'success', author: 'alice',
+      what_worked: 'sync clocks', tags: ['jwt'], ts: new Date().toISOString(),
+    }));
+    const out = await handleTeamTool('team_crystallize', { instance_id: iid }, getConn, noopApiFetch) as string;
+    expect(out).toContain('not enough cross-person convergence');
   });
 });

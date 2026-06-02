@@ -770,7 +770,25 @@ export async function handleFedbrainTool(
       if (show_raw) {
         lines.push('', '```json', JSON.stringify(crystal, null, 2), '```');
       }
-      lines.push('', `💡 Refresh: \`memory_crystalize()\`  |  Recover: \`compact_recover(instance_id="...")\``);
+
+      // Team Crystal (W8): the cross-person, causal layer — shown alongside the
+      // per-brain crystal when team_crystallize has been run.
+      const teamRaw = await redis.get('cachly:crystal:team:latest').catch(() => null);
+      if (teamRaw) {
+        type TeamPattern = { concept: string; author_count: number; authors: string[]; convergent_fix: string; fix_topic: string; spans: string[] };
+        type TeamCrystal = { label: string; ts: string; contributors: number; analysed: number; patterns: TeamPattern[] };
+        const tc = safeJsonParse<TeamCrystal | null>(teamRaw, null);
+        if (tc && tc.patterns?.length) {
+          const tcAge = Math.floor((Date.now() - new Date(tc.ts).getTime()) / 86400000);
+          lines.push('', `---`, `💠 **Team Crystal: ${tc.label}** _(${tcAge}d ago · ${tc.contributors} contributors)_`,
+            `_Fixes multiple teammates independently converged on — the team-wide layer:_`);
+          for (const p of tc.patterns.slice(0, 5)) {
+            lines.push(`  • 🧩 **${p.concept}** — ${p.author_count} people (${p.authors.map(a => `@${a}`).join(', ')}): ${p.convergent_fix.slice(0, 90)}`);
+          }
+        }
+      }
+
+      lines.push('', `💡 Refresh: \`memory_crystalize()\` · \`team_crystallize()\`  |  Recover: \`compact_recover(instance_id="...")\``);
       return lines.join('\n');
     }
 

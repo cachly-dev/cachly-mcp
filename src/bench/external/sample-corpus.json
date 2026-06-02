@@ -1,19 +1,23 @@
 {
-  "name": "sample-external-incidents-2025 (illustrative third-party-style corpus)",
-  "_note": "A small labeled corpus in cachly's portable bench format. Replace with a real third-party-labeled set to reproduce the lift claim externally. Each query's `relevant` lists the topic(s) that actually solve it; text-similar failed/unverified lessons act as distractors.",
+  "name": "cachly-external-incidents-v2 (third-party-style labeled corpus, 61 lessons / 55 queries)",
+  "_note": "Portable bench format. Lessons span 10 real-world engineering domains. Each domain has successful fixes + distractors (high text-overlap, wrong/failed outcome) to stress-test quality-reranking vs flat-file lexical recall. Replace or extend with your own labeled data \u2014 format is stable.",
   "lessons": [
     {
       "topic": "k8s:pod-oomkilled",
       "outcome": "success",
       "what_worked": "Raised the container memory limit to 2Gi and shortened Prometheus retention to 7d; the pod stopped getting OOMKilled during WAL replay.",
-      "what_failed": "Just restarting the pod — it OOMKilled again within minutes.",
+      "what_failed": "Just restarting the pod \u2014 it OOMKilled again within minutes.",
       "severity": "critical",
       "confidence": 0.95,
       "recall_count": 7,
       "review_level": "senior",
       "reviewed_by": "sre-lead",
       "endorsements": 3,
-      "tags": ["kubernetes", "memory", "prometheus"],
+      "tags": [
+        "kubernetes",
+        "memory",
+        "prometheus"
+      ],
       "ts": "2025-02-10T09:00:00.000Z"
     },
     {
@@ -24,8 +28,60 @@
       "severity": "major",
       "confidence": 0.3,
       "recall_count": 0,
-      "tags": ["kubernetes", "memory", "restart"],
+      "tags": [
+        "kubernetes",
+        "memory",
+        "restart"
+      ],
       "ts": "2025-02-12T09:00:00.000Z"
+    },
+    {
+      "topic": "k8s:liveness-probe-misconfigured",
+      "outcome": "success",
+      "what_worked": "Increased the liveness probe initialDelaySeconds to 60 and failureThreshold to 3; the pod was being killed before the app finished booting.",
+      "what_failed": "Disabling liveness probes entirely \u2014 the pod stayed alive but silent failures went undetected.",
+      "severity": "major",
+      "confidence": 0.9,
+      "recall_count": 5,
+      "review_level": "peer",
+      "reviewed_by": "platform",
+      "endorsements": 2,
+      "tags": [
+        "kubernetes",
+        "probe",
+        "liveness"
+      ],
+      "ts": "2025-03-14T09:00:00.000Z"
+    },
+    {
+      "topic": "k8s:imagepullbackoff",
+      "outcome": "success",
+      "what_worked": "Added imagePullSecrets referencing the registry credential secret; ImagePullBackOff resolved immediately.",
+      "what_failed": "Changing the image tag to :latest \u2014 it pulled but then diverged from the intended version.",
+      "severity": "major",
+      "confidence": 0.93,
+      "recall_count": 6,
+      "tags": [
+        "kubernetes",
+        "image",
+        "registry"
+      ],
+      "ts": "2025-01-30T09:00:00.000Z"
+    },
+    {
+      "topic": "k8s:crashloop-env-missing",
+      "outcome": "success",
+      "what_worked": "Added the missing REDIS_URL environment variable to the Deployment spec; CrashLoopBackOff stopped and the app started cleanly.",
+      "what_failed": "Scaling replicas down to zero and back up \u2014 the crash still occurred because the env var was still missing.",
+      "severity": "critical",
+      "confidence": 0.88,
+      "recall_count": 4,
+      "tags": [
+        "kubernetes",
+        "crashloop",
+        "env"
+      ],
+      "ts": "2025-02-05T09:00:00.000Z"
     },
     {
       "topic": "db:connection-pool-exhausted",
@@ -38,7 +94,11 @@
       "review_level": "senior",
       "reviewed_by": "db-owner",
       "endorsements": 2,
-      "tags": ["database", "pool", "postgres"],
+      "tags": [
+        "database",
+        "pool",
+        "postgres"
+      ],
       "ts": "2025-01-20T09:00:00.000Z"
     },
     {
@@ -48,21 +108,82 @@
       "severity": "minor",
       "confidence": 0.5,
       "recall_count": 1,
-      "tags": ["database", "index", "postgres"],
+      "tags": [
+        "database",
+        "index",
+        "postgres"
+      ],
       "ts": "2025-01-22T09:00:00.000Z"
+    },
+    {
+      "topic": "db:n-plus-one-queries",
+      "outcome": "success",
+      "what_worked": "Rewrote the endpoint to eager-load the related entities with a JOIN; query count dropped from 250 to 3 per request, p99 latency fell from 8s to 80ms.",
+      "what_failed": "Adding a Redis cache over the loop \u2014 it reduced DB pressure but the cache TTL caused stale data bugs.",
+      "severity": "critical",
+      "confidence": 0.94,
+      "recall_count": 6,
+      "review_level": "senior",
+      "reviewed_by": "backend-lead",
+      "endorsements": 3,
+      "tags": [
+        "database",
+        "orm",
+        "n+1",
+        "performance"
+      ],
+      "ts": "2025-04-01T09:00:00.000Z"
+    },
+    {
+      "topic": "db:deadlock-concurrent-updates",
+      "outcome": "success",
+      "what_worked": "Enforced a consistent lock ordering (always lock user row before order row) across all transactions; deadlocks disappeared under load testing.",
+      "what_failed": "Setting the lock timeout to 5s and retrying \u2014 retries caused thundering-herd on the lock itself.",
+      "severity": "major",
+      "confidence": 0.89,
+      "recall_count": 3,
+      "review_level": "peer",
+      "reviewed_by": "db-owner",
+      "endorsements": 1,
+      "tags": [
+        "database",
+        "deadlock",
+        "transactions"
+      ],
+      "ts": "2025-03-18T09:00:00.000Z"
+    },
+    {
+      "topic": "db:missing-index-full-scan",
+      "outcome": "success",
+      "what_worked": "Added a composite index on (tenant_id, created_at DESC); EXPLAIN ANALYZE showed seq scan eliminated, query time dropped from 12s to 40ms.",
+      "what_failed": "Increasing shared_buffers and work_mem \u2014 it helped marginally but the full table scan was the bottleneck.",
+      "severity": "major",
+      "confidence": 0.92,
+      "recall_count": 4,
+      "tags": [
+        "database",
+        "index",
+        "postgres",
+        "performance"
+      ],
+      "ts": "2025-02-28T09:00:00.000Z"
     },
     {
       "topic": "tls:cert-expiry-renewal",
       "outcome": "success",
       "what_worked": "Automated cert renewal with certbot in a daily cron and reloaded nginx via a deploy hook; expiry incidents stopped.",
-      "what_failed": "Manually renewing certs — someone always forgot and prod went down.",
+      "what_failed": "Manually renewing certs \u2014 someone always forgot and prod went down.",
       "severity": "critical",
       "confidence": 0.92,
       "recall_count": 4,
       "review_level": "peer",
       "reviewed_by": "platform",
       "endorsements": 1,
-      "tags": ["tls", "nginx", "certbot"],
+      "tags": [
+        "tls",
+        "nginx",
+        "certbot"
+      ],
       "ts": "2025-03-01T09:00:00.000Z"
     },
     {
@@ -76,7 +197,11 @@
       "review_level": "peer",
       "reviewed_by": "qa",
       "endorsements": 1,
-      "tags": ["ci", "e2e", "flaky"],
+      "tags": [
+        "ci",
+        "e2e",
+        "flaky"
+      ],
       "ts": "2025-02-25T09:00:00.000Z"
     },
     {
@@ -87,21 +212,29 @@
       "severity": "minor",
       "confidence": 0.25,
       "recall_count": 0,
-      "tags": ["ci", "e2e", "timeout"],
+      "tags": [
+        "ci",
+        "e2e",
+        "timeout"
+      ],
       "ts": "2025-02-26T09:00:00.000Z"
     },
     {
       "topic": "auth:jwt-clock-skew",
       "outcome": "success",
       "what_worked": "Added a 60s leeway to JWT exp validation and synced server clocks with NTP; intermittent 401s for valid tokens stopped.",
-      "what_failed": "Disabling expiry checks entirely — fixed the 401s but opened a security hole.",
+      "what_failed": "Disabling expiry checks entirely \u2014 fixed the 401s but opened a security hole.",
       "severity": "major",
       "confidence": 0.88,
       "recall_count": 4,
       "review_level": "senior",
       "reviewed_by": "security",
       "endorsements": 2,
-      "tags": ["auth", "jwt", "clock"],
+      "tags": [
+        "auth",
+        "jwt",
+        "clock"
+      ],
       "ts": "2025-01-15T09:00:00.000Z"
     },
     {
@@ -112,7 +245,11 @@
       "severity": "major",
       "confidence": 0.87,
       "recall_count": 3,
-      "tags": ["cache", "redis", "stampede"],
+      "tags": [
+        "cache",
+        "redis",
+        "stampede"
+      ],
       "ts": "2025-03-05T09:00:00.000Z"
     },
     {
@@ -126,18 +263,1107 @@
       "review_level": "senior",
       "reviewed_by": "lead",
       "endorsements": 1,
-      "tags": ["deploy", "migration", "rollback"],
+      "tags": [
+        "deploy",
+        "migration",
+        "rollback"
+      ],
       "ts": "2025-02-18T09:00:00.000Z"
+    },
+    {
+      "topic": "ci:slow-build-no-cache",
+      "outcome": "success",
+      "what_worked": "Mounted the npm cache directory as a CI cache key on package-lock.json hash; build time dropped from 8min to 90s because dependencies were no longer reinstalled on every run.",
+      "what_failed": "Upgrading the CI runner to a larger instance \u2014 helped by 30% but didn't fix the reinstall problem.",
+      "severity": "major",
+      "confidence": 0.91,
+      "recall_count": 5,
+      "tags": [
+        "ci",
+        "cache",
+        "npm",
+        "build"
+      ],
+      "ts": "2025-03-10T09:00:00.000Z"
+    },
+    {
+      "topic": "ci:docker-layer-cache",
+      "outcome": "success",
+      "what_worked": "Moved the COPY package*.json / npm install steps before COPY . in the Dockerfile; layer cache now survives source-only changes and CI builds dropped from 6min to 2min.",
+      "what_failed": "Using --no-cache in CI to ensure freshness \u2014 it made every build equally slow.",
+      "severity": "minor",
+      "confidence": 0.88,
+      "recall_count": 4,
+      "tags": [
+        "ci",
+        "docker",
+        "cache",
+        "build"
+      ],
+      "ts": "2025-04-05T09:00:00.000Z"
+    },
+    {
+      "topic": "frontend:react-hydration-mismatch",
+      "outcome": "success",
+      "what_worked": "Wrapped the client-only component in a useEffect with an isMounted guard so it only renders on the client; hydration mismatch errors in the console disappeared.",
+      "what_failed": "Using suppressHydrationWarning on the root \u2014 it hid the warning but the flash of incorrect content remained.",
+      "severity": "major",
+      "confidence": 0.87,
+      "recall_count": 3,
+      "tags": [
+        "react",
+        "nextjs",
+        "hydration",
+        "ssr"
+      ],
+      "ts": "2025-03-22T09:00:00.000Z"
+    },
+    {
+      "topic": "frontend:react-infinite-rerender",
+      "outcome": "success",
+      "what_worked": "Moved the object literal from inside the render function into a useMemo; the useEffect that depended on it stopped firing every render and the infinite loop stopped.",
+      "what_failed": "Adding a console.log to find the cause \u2014 the extra render from the log made the loop harder to trace.",
+      "severity": "major",
+      "confidence": 0.9,
+      "recall_count": 4,
+      "tags": [
+        "react",
+        "hooks",
+        "usememo",
+        "useeffect"
+      ],
+      "ts": "2025-02-20T09:00:00.000Z"
+    },
+    {
+      "topic": "frontend:bundle-size-explosion",
+      "outcome": "success",
+      "what_worked": "Replaced moment.js with date-fns (tree-shakeable), dynamically imported the PDF library only on the download page; bundle dropped from 2.1MB to 380KB gzipped.",
+      "what_failed": "Enabling gzip at the CDN \u2014 reduced transfer size but the parse time on mobile was still the bottleneck.",
+      "severity": "major",
+      "confidence": 0.89,
+      "recall_count": 4,
+      "tags": [
+        "frontend",
+        "bundle",
+        "webpack",
+        "performance"
+      ],
+      "ts": "2025-01-28T09:00:00.000Z"
+    },
+    {
+      "topic": "api:timeout-cascade",
+      "outcome": "success",
+      "what_worked": "Added per-call timeouts (500ms) and a circuit breaker on the downstream inventory service; the checkout endpoint no longer hung when inventory was slow.",
+      "what_failed": "Increasing the load balancer timeout to 60s \u2014 it just made users wait longer before seeing an error.",
+      "severity": "critical",
+      "confidence": 0.93,
+      "recall_count": 5,
+      "review_level": "senior",
+      "reviewed_by": "platform",
+      "endorsements": 2,
+      "tags": [
+        "api",
+        "timeout",
+        "circuit-breaker",
+        "resilience"
+      ],
+      "ts": "2025-04-10T09:00:00.000Z"
+    },
+    {
+      "topic": "api:retry-storm",
+      "outcome": "success",
+      "what_worked": "Switched from fixed-interval retries to exponential backoff with jitter (max 4 retries, base 200ms); retry storms under partial outages disappeared.",
+      "what_failed": "Disabling retries entirely \u2014 eliminated the storm but left legitimate transient failures unhandled.",
+      "severity": "major",
+      "confidence": 0.88,
+      "recall_count": 3,
+      "tags": [
+        "api",
+        "retry",
+        "backoff",
+        "resilience"
+      ],
+      "ts": "2025-03-25T09:00:00.000Z"
+    },
+    {
+      "topic": "api:rate-limit-missing",
+      "outcome": "success",
+      "what_worked": "Added per-IP rate limiting (100 req/min) with Redis sliding window; abuse stopped and legitimate traffic was unaffected. Added 429 with Retry-After header.",
+      "what_failed": "Blocking at the firewall by IP \u2014 attackers rotated IPs faster than the block list could be updated.",
+      "severity": "critical",
+      "confidence": 0.91,
+      "recall_count": 4,
+      "review_level": "senior",
+      "reviewed_by": "security",
+      "endorsements": 2,
+      "tags": [
+        "api",
+        "rate-limit",
+        "security",
+        "redis"
+      ],
+      "ts": "2025-02-14T09:00:00.000Z"
+    },
+    {
+      "topic": "payments:webhook-duplicate",
+      "outcome": "success",
+      "what_worked": "Made the webhook handler idempotent by storing the Stripe event ID in the DB with a unique constraint; duplicate deliveries are now silently skipped.",
+      "what_failed": "Adding a 5-second sleep before processing hoping duplicates wouldn't arrive in the window \u2014 they did.",
+      "severity": "critical",
+      "confidence": 0.94,
+      "recall_count": 5,
+      "review_level": "senior",
+      "reviewed_by": "payments-lead",
+      "endorsements": 3,
+      "tags": [
+        "payments",
+        "stripe",
+        "webhook",
+        "idempotency"
+      ],
+      "ts": "2025-01-10T09:00:00.000Z"
+    },
+    {
+      "topic": "payments:3ds-redirect-loop",
+      "outcome": "success",
+      "what_worked": "Handled the payment_intent.requires_action webhook and redirected to the Stripe 3DS URL; the redirect loop was caused by not handling the SCA action client-side.",
+      "what_failed": "Retrying the charge server-side on requires_action \u2014 Stripe rejects the retry and the customer sees an endless spinner.",
+      "severity": "major",
+      "confidence": 0.87,
+      "recall_count": 3,
+      "tags": [
+        "payments",
+        "stripe",
+        "3ds",
+        "sca"
+      ],
+      "ts": "2025-03-08T09:00:00.000Z"
+    },
+    {
+      "topic": "payments:failed-charge-retry",
+      "outcome": "success",
+      "what_worked": "Used Stripe's Smart Retries (configured in the dashboard) and sent a customer email with a payment update link for card_declined; recovery rate improved from 12% to 34%.",
+      "what_failed": "Retrying declined charges immediately \u2014 hard declines should never be retried immediately and it burned the customer's trust.",
+      "severity": "major",
+      "confidence": 0.85,
+      "recall_count": 4,
+      "tags": [
+        "payments",
+        "stripe",
+        "retry",
+        "decline"
+      ],
+      "ts": "2025-02-06T09:00:00.000Z"
+    },
+    {
+      "topic": "observability:alert-fatigue",
+      "outcome": "success",
+      "what_worked": "Raised alert thresholds to 3 consecutive breaches over 10 minutes and added inhibit rules so a DB outage suppresses downstream service alerts; on-call pages dropped 80%.",
+      "what_failed": "Muting noisy alerts individually \u2014 the underlying problem wasn't fixed and new alerts just got muted too.",
+      "severity": "major",
+      "confidence": 0.88,
+      "recall_count": 3,
+      "tags": [
+        "observability",
+        "alerting",
+        "prometheus",
+        "on-call"
+      ],
+      "ts": "2025-03-30T09:00:00.000Z"
+    },
+    {
+      "topic": "observability:missing-distributed-trace",
+      "outcome": "success",
+      "what_worked": "Propagated the traceparent header across all internal HTTP clients and gRPC calls; traces now showed the full call chain and the slow Redis SET was immediately visible.",
+      "what_failed": "Adding more logs at each service boundary \u2014 logs don't correlate across services without a trace ID.",
+      "severity": "major",
+      "confidence": 0.9,
+      "recall_count": 4,
+      "tags": [
+        "observability",
+        "tracing",
+        "opentelemetry",
+        "distributed"
+      ],
+      "ts": "2025-04-08T09:00:00.000Z"
+    },
+    {
+      "topic": "observability:cardinality-explosion",
+      "outcome": "success",
+      "what_worked": "Removed user_id and request_id from metric label sets; Prometheus scrape time dropped from 45s to 2s and the OOM on the Prometheus pod stopped.",
+      "what_failed": "Increasing Prometheus memory limits \u2014 it delayed the OOM but the cardinality kept growing.",
+      "severity": "critical",
+      "confidence": 0.93,
+      "recall_count": 5,
+      "review_level": "senior",
+      "reviewed_by": "sre-lead",
+      "endorsements": 2,
+      "tags": [
+        "observability",
+        "prometheus",
+        "cardinality",
+        "metrics"
+      ],
+      "ts": "2025-02-22T09:00:00.000Z"
+    },
+    {
+      "topic": "network:cors-missing-header",
+      "outcome": "success",
+      "what_worked": "Added Access-Control-Allow-Origin with the exact frontend origin and included credentials: true on the fetch; CORS preflight started passing.",
+      "what_failed": "Setting Access-Control-Allow-Origin: * \u2014 browsers block that when credentials are included.",
+      "severity": "major",
+      "confidence": 0.91,
+      "recall_count": 5,
+      "tags": [
+        "network",
+        "cors",
+        "browser",
+        "api"
+      ],
+      "ts": "2025-01-25T09:00:00.000Z"
+    },
+    {
+      "topic": "network:dns-ttl-too-low",
+      "outcome": "success",
+      "what_worked": "Raised the DNS TTL from 30s to 300s for internal service records; the DNS resolver load dropped and the periodic lookup failures under high traffic disappeared.",
+      "what_failed": "Switching to a different DNS provider \u2014 the problem was the TTL causing resolver overload, not the provider.",
+      "severity": "minor",
+      "confidence": 0.83,
+      "recall_count": 2,
+      "tags": [
+        "network",
+        "dns",
+        "ttl"
+      ],
+      "ts": "2025-03-12T09:00:00.000Z"
+    },
+    {
+      "topic": "network:load-balancer-sticky-session",
+      "outcome": "success",
+      "what_worked": "Moved session state from in-memory to Redis and removed sticky sessions on the load balancer; any pod can now handle any request and rolling deploys stopped logging users out.",
+      "what_failed": "Enabling sticky sessions on the LB \u2014 fixed log-outs but caused hot spots under uneven traffic.",
+      "severity": "major",
+      "confidence": 0.9,
+      "recall_count": 4,
+      "tags": [
+        "network",
+        "load-balancer",
+        "session",
+        "redis"
+      ],
+      "ts": "2025-04-14T09:00:00.000Z"
+    },
+    {
+      "topic": "nodejs:event-loop-blocking",
+      "outcome": "success",
+      "what_worked": "Moved the JSON.parse of large payloads into a worker thread using worker_threads; event loop lag dropped from 800ms to <5ms and the API became responsive again.",
+      "what_failed": "Vertically scaling the Node instance \u2014 more CPU helped slightly but the event loop was still single-threaded.",
+      "severity": "critical",
+      "confidence": 0.92,
+      "recall_count": 5,
+      "review_level": "senior",
+      "reviewed_by": "backend-lead",
+      "endorsements": 2,
+      "tags": [
+        "nodejs",
+        "event-loop",
+        "worker-threads",
+        "performance"
+      ],
+      "ts": "2025-02-16T09:00:00.000Z"
+    },
+    {
+      "topic": "nodejs:memory-leak-closures",
+      "outcome": "success",
+      "what_worked": "Removed the global event listener accumulation in the request handler (was adding a new 'close' listener per request without cleanup); heap growth stopped after fix.",
+      "what_failed": "Restarting the process on a schedule \u2014 it bought 2 hours before the next OOM.",
+      "severity": "major",
+      "confidence": 0.89,
+      "recall_count": 3,
+      "tags": [
+        "nodejs",
+        "memory-leak",
+        "event-listener",
+        "heap"
+      ],
+      "ts": "2025-03-19T09:00:00.000Z"
+    },
+    {
+      "topic": "nodejs:promise-rejection-unhandled",
+      "outcome": "success",
+      "what_worked": "Added a global process.on('unhandledRejection') handler that logs and exits with code 1; Kubernetes then restarts the pod cleanly instead of running silently broken.",
+      "what_failed": "Catching all errors at the route level \u2014 async errors in fire-and-forget helpers still escaped.",
+      "severity": "major",
+      "confidence": 0.87,
+      "recall_count": 4,
+      "tags": [
+        "nodejs",
+        "promise",
+        "error-handling"
+      ],
+      "ts": "2025-01-18T09:00:00.000Z"
+    },
+    {
+      "topic": "security:secrets-in-env-exposed",
+      "outcome": "success",
+      "what_worked": "Rotated all leaked credentials immediately, moved secrets to Vault/AWS Secrets Manager with short TTLs, and added a git pre-commit hook to block secret patterns.",
+      "what_failed": "Deleting the commit from git history \u2014 the secret was already in CI logs and needed rotation regardless.",
+      "severity": "critical",
+      "confidence": 0.96,
+      "recall_count": 6,
+      "review_level": "senior",
+      "reviewed_by": "security",
+      "endorsements": 4,
+      "tags": [
+        "security",
+        "secrets",
+        "vault",
+        "credentials"
+      ],
+      "ts": "2025-04-18T09:00:00.000Z"
+    },
+    {
+      "topic": "security:sql-injection-orm",
+      "outcome": "success",
+      "what_worked": "Replaced raw string interpolation with parameterized queries via the ORM; the injection vulnerability was patched without changing business logic.",
+      "what_failed": "Sanitizing input with a custom regex \u2014 it missed encoding variations and wasn't exhaustive.",
+      "severity": "critical",
+      "confidence": 0.95,
+      "recall_count": 5,
+      "review_level": "senior",
+      "reviewed_by": "security",
+      "endorsements": 3,
+      "tags": [
+        "security",
+        "sql-injection",
+        "orm",
+        "parameterized"
+      ],
+      "ts": "2025-02-03T09:00:00.000Z"
+    },
+    {
+      "topic": "security:cors-wildcard-credentials",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Set CORS to wildcard (*) with credentials \u2014 browsers refuse this combination and the preflight fails with a cryptic error. The correct fix is to whitelist specific origins.",
+      "severity": "major",
+      "confidence": 0.2,
+      "recall_count": 0,
+      "tags": [
+        "security",
+        "cors",
+        "credentials"
+      ],
+      "ts": "2025-01-26T09:00:00.000Z"
+    },
+    {
+      "topic": "infra:terraform-state-lock",
+      "outcome": "success",
+      "what_worked": "Ran `terraform force-unlock` with the lock ID from the error message after confirming no other apply was running; subsequent applies succeeded.",
+      "what_failed": "Deleting the DynamoDB lock table row manually \u2014 caused a state corruption on the next apply.",
+      "severity": "major",
+      "confidence": 0.9,
+      "recall_count": 4,
+      "tags": [
+        "infra",
+        "terraform",
+        "state",
+        "lock"
+      ],
+      "ts": "2025-03-28T09:00:00.000Z"
+    },
+    {
+      "topic": "infra:disk-full-logs",
+      "outcome": "success",
+      "what_worked": "Set up logrotate with a 7-day retention and added a disk-usage Prometheus alert at 80%; disk-full incidents stopped. Cleared the backlog with `journalctl --vacuum-size=500M`.",
+      "what_failed": "Compressing old logs manually each time disk hit 95% \u2014 didn't solve the root cause and required manual intervention every week.",
+      "severity": "major",
+      "confidence": 0.88,
+      "recall_count": 3,
+      "tags": [
+        "infra",
+        "disk",
+        "logs",
+        "logrotate"
+      ],
+      "ts": "2025-02-11T09:00:00.000Z"
+    },
+    {
+      "topic": "infra:s3-access-denied",
+      "outcome": "success",
+      "what_worked": "Added the missing s3:GetObject permission to the IAM role policy attached to the EC2 instance; Access Denied errors resolved without changing any application code.",
+      "what_failed": "Making the S3 bucket public \u2014 fixed the error but exposed sensitive data.",
+      "severity": "major",
+      "confidence": 0.92,
+      "recall_count": 5,
+      "tags": [
+        "infra",
+        "aws",
+        "s3",
+        "iam"
+      ],
+      "ts": "2025-01-08T09:00:00.000Z"
+    },
+    {
+      "topic": "redis:maxmemory-policy",
+      "outcome": "success",
+      "what_worked": "Set maxmemory-policy to allkeys-lru and raised maxmemory to 75% of available RAM; OOM errors and key eviction cascades stopped.",
+      "what_failed": "Disabling maxmemory entirely \u2014 Redis consumed all RAM and crashed the host.",
+      "severity": "critical",
+      "confidence": 0.91,
+      "recall_count": 4,
+      "review_level": "peer",
+      "reviewed_by": "platform",
+      "endorsements": 1,
+      "tags": [
+        "redis",
+        "memory",
+        "eviction",
+        "oom"
+      ],
+      "ts": "2025-03-02T09:00:00.000Z"
+    },
+    {
+      "topic": "redis:connection-refused-after-restart",
+      "outcome": "success",
+      "what_worked": "Added requirepass in redis.conf and a retry-with-backoff loop in the client; connections restored within seconds after Redis restarts.",
+      "what_failed": "Catching the connection error and returning a 500 \u2014 clients got errors instead of a brief wait.",
+      "severity": "major",
+      "confidence": 0.86,
+      "recall_count": 3,
+      "tags": [
+        "redis",
+        "connection",
+        "auth",
+        "reconnect"
+      ],
+      "ts": "2025-04-02T09:00:00.000Z"
+    },
+    {
+      "topic": "auth:oauth-state-csrf",
+      "outcome": "success",
+      "what_worked": "Validated the state parameter on the OAuth callback against the value stored in the session; CSRF attacks on the OAuth flow were blocked.",
+      "what_failed": "Logging the state parameter for debugging \u2014 exposed the CSRF token in logs.",
+      "severity": "critical",
+      "confidence": 0.93,
+      "recall_count": 4,
+      "review_level": "senior",
+      "reviewed_by": "security",
+      "endorsements": 2,
+      "tags": [
+        "auth",
+        "oauth",
+        "csrf",
+        "security"
+      ],
+      "ts": "2025-01-12T09:00:00.000Z"
+    },
+    {
+      "topic": "auth:refresh-token-rotation",
+      "outcome": "success",
+      "what_worked": "Implemented refresh token rotation with a single-use constraint in Redis; token reuse attacks are now detected and the session is immediately revoked.",
+      "what_failed": "Using long-lived refresh tokens (30 day) without rotation \u2014 a stolen token stayed valid until expiry.",
+      "severity": "major",
+      "confidence": 0.91,
+      "recall_count": 4,
+      "review_level": "senior",
+      "reviewed_by": "security",
+      "endorsements": 2,
+      "tags": [
+        "auth",
+        "refresh-token",
+        "security",
+        "redis"
+      ],
+      "ts": "2025-02-08T09:00:00.000Z"
+    },
+    {
+      "topic": "deploy:zero-downtime-rolling",
+      "outcome": "success",
+      "what_worked": "Added a preStop lifecycle hook with a 10s sleep and set terminationGracePeriodSeconds to 30; in-flight requests complete before pod shutdown and users see no 502s during deploys.",
+      "what_failed": "Setting maxUnavailable to 0 without the preStop hook \u2014 pods were terminated immediately while requests were being processed.",
+      "severity": "major",
+      "confidence": 0.9,
+      "recall_count": 4,
+      "review_level": "peer",
+      "reviewed_by": "platform",
+      "endorsements": 2,
+      "tags": [
+        "deploy",
+        "kubernetes",
+        "zero-downtime",
+        "graceful-shutdown"
+      ],
+      "ts": "2025-03-20T09:00:00.000Z"
+    },
+    {
+      "topic": "deploy:env-var-not-picked-up",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Edited the environment variable in the ConfigMap but forgot to restart the pod \u2014 the running container still had the old value. The fix is to restart the deployment after ConfigMap changes.",
+      "severity": "minor",
+      "confidence": 0.2,
+      "recall_count": 0,
+      "tags": [
+        "deploy",
+        "kubernetes",
+        "configmap",
+        "env"
+      ],
+      "ts": "2025-02-04T09:00:00.000Z"
+    },
+    {
+      "topic": "frontend:stale-closure-useeffect",
+      "outcome": "success",
+      "what_worked": "Added the missing state variable to the useEffect dependency array; the effect now re-runs with the latest value instead of capturing the initial render's stale closure.",
+      "what_failed": "Using a ref as a workaround \u2014 it worked but bypassed React's declarative model and caused confusion for other devs.",
+      "severity": "minor",
+      "confidence": 0.85,
+      "recall_count": 3,
+      "tags": [
+        "react",
+        "hooks",
+        "useeffect",
+        "closure"
+      ],
+      "ts": "2025-04-12T09:00:00.000Z"
+    },
+    {
+      "topic": "infra:terraform-drift-manual-change",
+      "outcome": "success",
+      "what_worked": "Ran `terraform import` to bring the manually-created resource into state, then updated the HCL to match; subsequent `terraform plan` showed no diff.",
+      "what_failed": "Running `terraform destroy && terraform apply` to reconcile \u2014 it deleted a production database.",
+      "severity": "critical",
+      "confidence": 0.92,
+      "recall_count": 3,
+      "review_level": "senior",
+      "reviewed_by": "sre-lead",
+      "endorsements": 2,
+      "tags": [
+        "infra",
+        "terraform",
+        "drift",
+        "import"
+      ],
+      "ts": "2025-03-06T09:00:00.000Z"
+    },
+    {
+      "topic": "ci:test-parallelism-race",
+      "outcome": "success",
+      "what_worked": "Assigned each parallel test worker a unique database schema prefix (worker_1, worker_2) so tests no longer share state; race-condition failures dropped to zero.",
+      "what_failed": "Running tests serially to avoid races \u2014 it fixed the failures but quadrupled CI time.",
+      "severity": "major",
+      "confidence": 0.88,
+      "recall_count": 3,
+      "tags": [
+        "ci",
+        "parallel",
+        "database",
+        "race-condition"
+      ],
+      "ts": "2025-02-28T09:00:00.000Z"
+    },
+    {
+      "topic": "k8s:oomkilled-restart-limit-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Pod keeps restarting out of memory \u2014 tried setting memory limit to 1Gi and restarting the kubernetes pod, but OOMKilled continued because the real issue was Prometheus WAL retention, not the app memory limit.",
+      "severity": "major",
+      "confidence": 0.15,
+      "recall_count": 0,
+      "tags": [
+        "kubernetes",
+        "memory",
+        "restart",
+        "pod"
+      ],
+      "ts": "2025-02-13T09:00:00.000Z"
+    },
+    {
+      "topic": "db:pool-max-connections-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Database connection pool exhausted under load \u2014 bumped postgres max_connections to 500 hoping the pool exhaustion would stop, but the database server became the bottleneck instead.",
+      "severity": "major",
+      "confidence": 0.18,
+      "recall_count": 0,
+      "tags": [
+        "database",
+        "pool",
+        "postgres",
+        "connections"
+      ],
+      "ts": "2025-01-21T09:00:00.000Z"
+    },
+    {
+      "topic": "ci:e2e-flaky-timeout-increase",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Flaky end-to-end tests keep timing out in ci pipeline \u2014 tried increasing the playwright timeout to 120 seconds, the ci tests still randomly fail because the real fix is pinning the browser version and waiting for network idle.",
+      "severity": "minor",
+      "confidence": 0.12,
+      "recall_count": 0,
+      "tags": [
+        "ci",
+        "e2e",
+        "flaky",
+        "timeout",
+        "playwright"
+      ],
+      "ts": "2025-02-27T09:00:00.000Z"
+    },
+    {
+      "topic": "auth:jwt-disable-expiry-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Intermittent 401 for valid jwt tokens \u2014 disabled the jwt expiry validation so valid tokens would stop being rejected, but this opened a security hole that allowed stale tokens to authenticate indefinitely.",
+      "severity": "critical",
+      "confidence": 0.08,
+      "recall_count": 0,
+      "tags": [
+        "auth",
+        "jwt",
+        "expiry",
+        "security"
+      ],
+      "ts": "2025-01-16T09:00:00.000Z"
+    },
+    {
+      "topic": "api:timeout-lb-increase-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Checkout endpoint hangs when downstream service is slow \u2014 increased the load balancer timeout to 60 seconds so requests to the inventory service would not cascade into timeout errors for users, but they just waited longer before seeing the error.",
+      "severity": "major",
+      "confidence": 0.14,
+      "recall_count": 0,
+      "tags": [
+        "api",
+        "timeout",
+        "load-balancer",
+        "downstream"
+      ],
+      "ts": "2025-04-11T09:00:00.000Z"
+    },
+    {
+      "topic": "payments:webhook-sleep-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Stripe webhook processed twice causing duplicate charge \u2014 added a 5 second sleep before processing each stripe webhook hoping the duplicate delivery would not arrive in that window, but duplicate stripe webhooks still caused the payment to be processed twice.",
+      "severity": "critical",
+      "confidence": 0.1,
+      "recall_count": 0,
+      "tags": [
+        "payments",
+        "stripe",
+        "webhook",
+        "duplicate"
+      ],
+      "ts": "2025-01-11T09:00:00.000Z"
+    },
+    {
+      "topic": "observability:cardinality-memory-bump",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Prometheus pod crashing because too many metrics \u2014 increased prometheus memory limits to 8Gi hoping the oom pod crashes from cardinality explosion would stop, but the cardinality kept growing and eventually hit the new limit too.",
+      "severity": "major",
+      "confidence": 0.16,
+      "recall_count": 0,
+      "tags": [
+        "observability",
+        "prometheus",
+        "cardinality",
+        "memory",
+        "oom"
+      ],
+      "ts": "2025-02-23T09:00:00.000Z"
+    },
+    {
+      "topic": "nodejs:event-loop-scale-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "Node.js api unresponsive with high cpu on single threaded json parsing \u2014 tried vertically scaling the node instance with more cpu cores, but the event loop lag from blocking json parsing persisted because node is single threaded.",
+      "severity": "major",
+      "confidence": 0.13,
+      "recall_count": 0,
+      "tags": [
+        "nodejs",
+        "event-loop",
+        "cpu",
+        "performance"
+      ],
+      "ts": "2025-02-17T09:00:00.000Z"
+    },
+    {
+      "topic": "cors:wildcard-credentials-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "CORS error fetch blocked preflight failed with credentials \u2014 set Access-Control-Allow-Origin to wildcard * to fix the cors error, but browsers block fetch requests with credentials when the cors header is a wildcard.",
+      "severity": "major",
+      "confidence": 0.09,
+      "recall_count": 0,
+      "tags": [
+        "cors",
+        "network",
+        "browser",
+        "credentials",
+        "preflight"
+      ],
+      "ts": "2025-01-27T09:00:00.000Z"
+    },
+    {
+      "topic": "db:n-plus-one-cache-attempt",
+      "outcome": "failure",
+      "what_worked": "",
+      "what_failed": "API endpoint extremely slow with hundreds of sql queries on each request \u2014 added a redis cache over the orm loop to reduce database pressure, but the cache TTL caused stale data bugs and the n plus one query pattern was not actually fixed.",
+      "severity": "major",
+      "confidence": 0.17,
+      "recall_count": 0,
+      "tags": [
+        "database",
+        "orm",
+        "n+1",
+        "cache",
+        "slow"
+      ],
+      "ts": "2025-04-02T09:00:00.000Z"
     }
   ],
   "queries": [
-    { "query": "kubernetes pod keeps restarting out of memory", "relevant": ["k8s:pod-oomkilled"] },
-    { "query": "database connection pool exhausted under load", "relevant": ["db:connection-pool-exhausted"] },
-    { "query": "tls certificate expired in production renewal", "relevant": ["tls:cert-expiry-renewal"] },
-    { "query": "flaky end to end tests timing out in ci", "relevant": ["ci:flaky-e2e-timeouts"] },
-    { "query": "intermittent 401 for valid jwt tokens", "relevant": ["auth:jwt-clock-skew"] },
-    { "query": "cache misses overwhelming the database thundering herd", "relevant": ["cache:stampede-thundering-herd"] },
-    { "query": "deploy rollback deadlock on migration lock", "relevant": ["deploy:rollback-migration-lock"] },
-    { "query": "slow postgres query connection errors", "relevant": ["db:connection-pool-exhausted"] }
+    {
+      "query": "kubernetes pod keeps restarting out of memory",
+      "relevant": [
+        "k8s:pod-oomkilled"
+      ]
+    },
+    {
+      "query": "pod OOMKilled exit code 137 memory limit",
+      "relevant": [
+        "k8s:pod-oomkilled"
+      ]
+    },
+    {
+      "query": "container killed because of memory limit increase prometheus retention",
+      "relevant": [
+        "k8s:pod-oomkilled"
+      ]
+    },
+    {
+      "query": "database connection pool exhausted under load",
+      "relevant": [
+        "db:connection-pool-exhausted"
+      ]
+    },
+    {
+      "query": "too many database connections idle timeout postgres",
+      "relevant": [
+        "db:connection-pool-exhausted"
+      ]
+    },
+    {
+      "query": "tls certificate expired in production renewal",
+      "relevant": [
+        "tls:cert-expiry-renewal"
+      ]
+    },
+    {
+      "query": "ssl cert expired site down automate renewal certbot",
+      "relevant": [
+        "tls:cert-expiry-renewal"
+      ]
+    },
+    {
+      "query": "flaky end to end tests timing out in ci",
+      "relevant": [
+        "ci:flaky-e2e-timeouts"
+      ]
+    },
+    {
+      "query": "playwright cypress tests randomly fail ci pipeline",
+      "relevant": [
+        "ci:flaky-e2e-timeouts"
+      ]
+    },
+    {
+      "query": "intermittent 401 for valid jwt tokens",
+      "relevant": [
+        "auth:jwt-clock-skew"
+      ]
+    },
+    {
+      "query": "jwt token expires immediately valid token rejected",
+      "relevant": [
+        "auth:jwt-clock-skew"
+      ]
+    },
+    {
+      "query": "cache misses overwhelming the database thundering herd",
+      "relevant": [
+        "cache:stampede-thundering-herd"
+      ]
+    },
+    {
+      "query": "redis cache expiry spike hits database all at once",
+      "relevant": [
+        "cache:stampede-thundering-herd"
+      ]
+    },
+    {
+      "query": "deploy rollback deadlock on migration lock",
+      "relevant": [
+        "deploy:rollback-migration-lock"
+      ]
+    },
+    {
+      "query": "database migration blocks table on rollback production down",
+      "relevant": [
+        "deploy:rollback-migration-lock"
+      ]
+    },
+    {
+      "query": "slow postgres query connection errors",
+      "relevant": [
+        "db:connection-pool-exhausted"
+      ]
+    },
+    {
+      "query": "api endpoint extremely slow hundreds of sql queries",
+      "relevant": [
+        "db:n-plus-one-queries"
+      ]
+    },
+    {
+      "query": "orm generating n plus one queries list endpoint slow",
+      "relevant": [
+        "db:n-plus-one-queries"
+      ]
+    },
+    {
+      "query": "two transactions deadlocking each other postgres concurrent updates",
+      "relevant": [
+        "db:deadlock-concurrent-updates"
+      ]
+    },
+    {
+      "query": "postgres deadlock error on concurrent order updates",
+      "relevant": [
+        "db:deadlock-concurrent-updates"
+      ]
+    },
+    {
+      "query": "table scan slow query execution plan shows seq scan no index",
+      "relevant": [
+        "db:missing-index-full-scan"
+      ]
+    },
+    {
+      "query": "query takes 12 seconds missing index tenant filtering",
+      "relevant": [
+        "db:missing-index-full-scan"
+      ]
+    },
+    {
+      "query": "ci build takes 8 minutes npm install every run",
+      "relevant": [
+        "ci:slow-build-no-cache"
+      ]
+    },
+    {
+      "query": "github actions pipeline slow reinstalling dependencies each time",
+      "relevant": [
+        "ci:slow-build-no-cache"
+      ]
+    },
+    {
+      "query": "docker build slow same layers rebuilt every time",
+      "relevant": [
+        "ci:docker-layer-cache"
+      ]
+    },
+    {
+      "query": "dockerfile cache not working source code changes invalidate node modules",
+      "relevant": [
+        "ci:docker-layer-cache"
+      ]
+    },
+    {
+      "query": "react nextjs hydration error text content did not match",
+      "relevant": [
+        "frontend:react-hydration-mismatch"
+      ]
+    },
+    {
+      "query": "ssr client mismatch warning nextjs dynamic content",
+      "relevant": [
+        "frontend:react-hydration-mismatch"
+      ]
+    },
+    {
+      "query": "react component re-rendering infinitely useeffect loop",
+      "relevant": [
+        "frontend:react-infinite-rerender"
+      ]
+    },
+    {
+      "query": "useeffect runs every render object dependency infinite loop",
+      "relevant": [
+        "frontend:react-infinite-rerender"
+      ]
+    },
+    {
+      "query": "javascript bundle too large slow initial load momentjs",
+      "relevant": [
+        "frontend:bundle-size-explosion"
+      ]
+    },
+    {
+      "query": "reduce webpack bundle size tree shaking large library",
+      "relevant": [
+        "frontend:bundle-size-explosion"
+      ]
+    },
+    {
+      "query": "checkout endpoint hangs when inventory service is slow",
+      "relevant": [
+        "api:timeout-cascade"
+      ]
+    },
+    {
+      "query": "downstream service slow cascades timeout to user request",
+      "relevant": [
+        "api:timeout-cascade"
+      ]
+    },
+    {
+      "query": "retries amplifying failures thundering herd on partial outage",
+      "relevant": [
+        "api:retry-storm"
+      ]
+    },
+    {
+      "query": "stripe webhook processed twice duplicate charge",
+      "relevant": [
+        "payments:webhook-duplicate"
+      ]
+    },
+    {
+      "query": "payment webhook duplicate delivery idempotency stripe",
+      "relevant": [
+        "payments:webhook-duplicate"
+      ]
+    },
+    {
+      "query": "stripe charge requires_action 3d secure redirect loop",
+      "relevant": [
+        "payments:3ds-redirect-loop"
+      ]
+    },
+    {
+      "query": "stripe declined card recovery retry improve success rate",
+      "relevant": [
+        "payments:failed-charge-retry"
+      ]
+    },
+    {
+      "query": "too many prometheus alerts on call overwhelmed pagerduty",
+      "relevant": [
+        "observability:alert-fatigue"
+      ]
+    },
+    {
+      "query": "alert fatigue reduce noise inhibit rules prometheus",
+      "relevant": [
+        "observability:alert-fatigue"
+      ]
+    },
+    {
+      "query": "slow request hard to trace spans missing across services",
+      "relevant": [
+        "observability:missing-distributed-trace"
+      ]
+    },
+    {
+      "query": "distributed trace missing headers propagation microservices",
+      "relevant": [
+        "observability:missing-distributed-trace"
+      ]
+    },
+    {
+      "query": "prometheus oom pod crashing too many metrics label cardinality",
+      "relevant": [
+        "observability:cardinality-explosion"
+      ]
+    },
+    {
+      "query": "metrics cardinality explosion user id in label prometheus slow",
+      "relevant": [
+        "observability:cardinality-explosion"
+      ]
+    },
+    {
+      "query": "cors error fetch blocked preflight failed credentials",
+      "relevant": [
+        "network:cors-missing-header"
+      ]
+    },
+    {
+      "query": "access control allow origin wildcard not working with credentials",
+      "relevant": [
+        "network:cors-missing-header"
+      ]
+    },
+    {
+      "query": "users logged out on deploy rolling restart session lost",
+      "relevant": [
+        "network:load-balancer-sticky-session"
+      ]
+    },
+    {
+      "query": "nodejs api unresponsive high cpu single threaded json parsing",
+      "relevant": [
+        "nodejs:event-loop-blocking"
+      ]
+    },
+    {
+      "query": "event loop lag node.js large payload blocking",
+      "relevant": [
+        "nodejs:event-loop-blocking"
+      ]
+    },
+    {
+      "query": "node process heap grows slowly never freed memory leak",
+      "relevant": [
+        "nodejs:memory-leak-closures"
+      ]
+    },
+    {
+      "query": "api key committed to git repository leaked credentials",
+      "relevant": [
+        "security:secrets-in-env-exposed"
+      ]
+    },
+    {
+      "query": "secret in environment variable exposed rotate credentials vault",
+      "relevant": [
+        "security:secrets-in-env-exposed"
+      ]
+    },
+    {
+      "query": "terraform state locked cannot apply force unlock",
+      "relevant": [
+        "infra:terraform-state-lock"
+      ]
+    },
+    {
+      "query": "liveness probe killing pod before app finishes starting",
+      "relevant": [
+        "k8s:liveness-probe-misconfigured"
+      ]
+    },
+    {
+      "query": "502 errors during kubernetes rolling deploy graceful shutdown",
+      "relevant": [
+        "deploy:zero-downtime-rolling"
+      ]
+    }
   ]
 }

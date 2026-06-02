@@ -562,6 +562,49 @@ describe('Brain lesson flow', () => {
       expect(keys.some(k => k.includes('gamma'))).toBe(true);
     });
   });
+
+  // ── Welcome-back gap digest (session_start, gap ≥ 7 days) ──────────────────
+  describe('welcome-back gap digest logic', () => {
+    const DAY = 86_400_000;
+
+    // Mirror the handler: gap = days since last session; newSinceAway = lessons
+    // whose ts is strictly after the last session's ts.
+    function gapDigest(lastSessionTs: string, lessons: { topic: string; ts: string }[]) {
+      const lastTs = new Date(lastSessionTs).getTime();
+      const daysAway = Math.floor((Date.now() - lastTs) / DAY);
+      const newSinceAway = lessons.filter(l => {
+        const t = new Date(l.ts).getTime();
+        return !Number.isNaN(t) && t > lastTs;
+      });
+      return { daysAway, fires: daysAway >= 7 && !Number.isNaN(lastTs), newSinceAway };
+    }
+
+    it('does not fire when the last session was recent (< 7 days)', () => {
+      const r = gapDigest(new Date(Date.now() - 3 * DAY).toISOString(), []);
+      expect(r.fires).toBe(false);
+    });
+
+    it('fires after a 7+ day gap and counts only lessons added while away', () => {
+      const lastSessionTs = new Date(Date.now() - 10 * DAY).toISOString();
+      const lessons = [
+        { topic: 'fresh:one', ts: new Date(Date.now() - 2 * DAY).toISOString() }, // added while away
+        { topic: 'fresh:two', ts: new Date(Date.now() - 1 * DAY).toISOString() }, // added while away
+        { topic: 'old:stale', ts: new Date(Date.now() - 30 * DAY).toISOString() }, // predates the gap
+      ];
+      const r = gapDigest(lastSessionTs, lessons);
+      expect(r.fires).toBe(true);
+      expect(r.daysAway).toBeGreaterThanOrEqual(7);
+      expect(r.newSinceAway.map(l => l.topic)).toEqual(['fresh:one', 'fresh:two']);
+    });
+
+    it('fires with zero new lessons when nothing changed while away', () => {
+      const lastSessionTs = new Date(Date.now() - 14 * DAY).toISOString();
+      const lessons = [{ topic: 'old:stale', ts: new Date(Date.now() - 40 * DAY).toISOString() }];
+      const r = gapDigest(lastSessionTs, lessons);
+      expect(r.fires).toBe(true);
+      expect(r.newSinceAway).toHaveLength(0);
+    });
+  });
 });
 
 // ── End-to-end Brain flow integration ────────────────────────────────────────

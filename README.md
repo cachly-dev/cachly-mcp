@@ -22,7 +22,7 @@
     <img src="https://img.shields.io/badge/GDPR-EU%20servers-green" alt="GDPR: EU servers" />
   </a>
   &nbsp;
-  <img src="https://img.shields.io/badge/107%20MCP%20tools-violet" alt="107 MCP tools" />
+  <img src="https://img.shields.io/badge/121%20MCP%20tools-violet" alt="121 MCP tools" />
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
 </p>
@@ -101,30 +101,20 @@ Like what you see? Make it permanent in the next step.
 
 ---
 
-## The plan — three steps, then it's automatic
-
-### 1. Run one command
+## Setup — one command
 
 ```bash
-npx @cachly-dev/mcp-server@latest setup
+npx @cachly-dev/mcp-server@latest autopilot
 ```
 
-It signs you in (one browser click, no password, no credit card), detects every AI
-editor you use, writes the MCP config, seeds your brain from git history, and installs
-a git hook so it keeps learning.
-
-### 2. Restart your editor
-
-That's it. From now on your AI arrives pre-briefed — every session.
-
-### 3. Just work
-
-cachly learns in the background. You never have to "remember to save." Every fix,
-every commit, every session feeds the brain automatically.
+Autopilot does everything in a single command: it auto-detects every AI editor you use,
+writes the MCP config, signs you in via browser device-flow (one click, no password, no
+credit card), and bootstraps your brain from git history. Restart your editor and your AI
+arrives pre-briefed — every session, automatically.
 
 > **Already inside Claude / Cursor / Copilot?** Paste this to your AI and it configures everything itself:
 > ```
-> Set up cachly for this project. Run: npx @cachly-dev/mcp-server@latest setup
+> Set up cachly for this project. Run: npx @cachly-dev/mcp-server@latest autopilot
 > It gives my AI persistent memory across sessions. Follow the browser login
 > (one click, no credit card), then restart the editor.
 > ```
@@ -200,6 +190,8 @@ close without breaking its own lock-in. **That gap is where cachly wins.**
 | **`brain_who_knows`** | *"Who on my team knows about Kubernetes deploys?"* → ranked experts 🥇🥈🥉, built automatically from authorship. |
 | **`brain_file_map`** | Before you touch a file: who's worked on it and which lessons reference it. |
 | **`team_expertise_map`** | The whole team's skills matrix in one table — onboarding and bus-factor insurance. |
+| **`brain_collab_pairs`** | Person↔Person Collaboration Graph — *"Frag X und Y, die haben das zusammen gelöst."* Bus-factor alerts included. |
+| **`brain_portability`** | W9 Model-Neutrality — config for 7 clients (Claude, Cursor, Copilot, Windsurf, Cline, Zed, Continue). *"Same Brain, any model."* |
 | **`brain_from_git`** | Reads your entire git history and populates the team knowledge graph (people + files + lessons) — zero setup, retroactively. |
 | **`brain_coverage` / `skill_gaps`** | A 0–100 health score for your knowledge + a ranked list of blind spots to fix. |
 | **`brain_predict`** | Predicts likely failures *before* they happen, from past incident patterns. |
@@ -234,8 +226,10 @@ causal_trace(problem="auth breaks after restart")
 ## CLI Commands
 
 ```bash
+npx @cachly-dev/mcp-server@latest autopilot # One command — signs in, configures every editor, bootstraps from git
 npx @cachly-dev/mcp-server@latest demo      # Preview your Brain (no account needed)
-npx @cachly-dev/mcp-server@latest setup     # Wire up all your AI editors (1–5 minutes)
+npx @cachly-dev/mcp-server@latest bench     # Recall quality vs flat-file memory (no auth required)
+npx @cachly-dev/mcp-server@latest setup     # Interactive variant — pick editors yourself
 npx @cachly-dev/mcp-server@latest health    # Check token, API, editors, git hook
 npx @cachly-dev/mcp-server@latest digest    # Weekly Brain summary — shareable
 npx @cachly-dev/mcp-server@latest share     # Generate a shareable stats card + tweet
@@ -252,7 +246,7 @@ npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git
 
 ---
 
-## MCP Tools (113 total)
+## MCP Tools (120 total)
 
 ### 🧠 Session & Memory (most used)
 
@@ -271,14 +265,19 @@ npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git
 | Tool | What it does |
 |------|-------------|
 | `team_learn` / `team_recall` | Share lessons across the team with author attribution |
-| `team_confirm` | A reviewer confirms a lesson (🛡️ senior / ✔️ peer) → ranks higher in recall |
+| `team_confirm` | A reviewer confirms a lesson (🛡️ senior / ✔️ peer) → ranks higher in recall · reviewer-gated |
+| `team_assign_role` / `team_roster` / `team_whoami` | Roles (👑 admin · 🛡️ reviewer · ✏️ contributor · 👁️ viewer) — enforced once an admin is set |
+| `team_audit` | Immutable, admin-only governance trail: every role change & lesson confirmation |
 | **`brain_who_knows`** | Find your team's experts on any topic — ranked 🥇🥈🥉 |
 | **`brain_file_map`** | Experts + lessons per file, before you touch it |
 | **`team_expertise_map`** | Full team skills matrix in one table |
+| **`brain_collab_pairs`** | Person↔Person Collaboration Graph — who collaborates with whom, bus-factor alerts |
+| **`brain_portability`** | Config snippets for 7 MCP clients — proves model-neutrality, same Brain everywhere |
 | **`skill_gaps`** | Knowledge blind spots: unresolved failures, missing attribution |
 | **`brain_coverage`** | 0–100 knowledge-health score for your codebase |
 | `madc_deliberate` | Specialist AI agents vote to resolve contradictory lessons |
 | `memory_crystalize` | Distill all lessons into a Crystal for instant team context |
+| `team_crystallize` | Team Crystal — fixes that 2+ teammates independently converged on (the cross-person, causal layer) |
 
 ### 🧬 Causal Intelligence
 
@@ -305,6 +304,7 @@ npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git
 | Tool | What it does |
 |------|-------------|
 | `syndicate` / `fedbrain_search` | Contribute to / search the global Knowledge Commons |
+| `brain_marketplace` / `brain_install` | Browse + install curated Domain Brains (Kubernetes, Auth, DB…) into your Brain |
 | `cache_get` / `cache_set` / `semantic_search` / `index_project` | Cache + semantic ops |
 | `list_instances` / `create_instance` / `delete_instance` | Manage Brain instances |
 | `roadmap_add` / `roadmap_next` | Persistent project roadmap stored in the Brain |
@@ -344,7 +344,7 @@ sessions + WIP registry — typically one tool call.
 
 ## Editor support matrix
 
-`npx @cachly-dev/mcp-server@latest setup` auto-detects and configures all of the
+`npx @cachly-dev/mcp-server@latest autopilot` auto-detects and configures all of the
 following. Manual snippets are in the **Manual Setup** section below.
 
 | Editor / Client | Auto-setup | Config file written | Global config | Notes |
@@ -370,7 +370,7 @@ following. Manual snippets are in the **Manual Setup** section below.
 
 > **Tip — fastest per-project setup from inside Claude Code:**
 > ```
-> Set up cachly for this project: npx @cachly-dev/mcp-server@latest setup
+> Set up cachly for this project: npx @cachly-dev/mcp-server@latest autopilot
 > ```
 > Claude runs it and restarts automatically.
 
@@ -455,7 +455,7 @@ private backend instead of `api.cachly.dev`:
 
 ```bash
 # One-shot: wire up the wizard against your self-hosted backend
-npx @cachly-dev/mcp-server@latest setup --api-url https://cachly.mycorp.internal
+npx @cachly-dev/mcp-server@latest autopilot --api-url https://cachly.mycorp.internal
 
 # Or non-interactively
 npx @cachly-dev/mcp-server@latest init \
@@ -496,9 +496,14 @@ keep talking to your backend on every editor launch. All data stays in your infr
 
 ## 🛠️ Ecosystem & Docs
 
+**One brain, wherever you work.** Start with the MCP server, or drop the same memory
+straight into your editor — your lessons follow you across all of them.
+
 | Package | What it does |
 |---------|-------------|
-| **[`@cachly-dev/mcp-server`](https://www.npmjs.com/package/@cachly-dev/mcp-server)** | ← you are here |
+| **[`@cachly-dev/mcp-server`](https://www.npmjs.com/package/@cachly-dev/mcp-server)** | ← you are here · works with Claude, Cursor, Copilot, Windsurf, Cline, Zed |
+| **[Cachly Brain for VS Code](https://marketplace.visualstudio.com/items?itemName=cachly-dev.cachly-brain)** | One-click memory in the editor — status bar, lessons view, ambient learning. No terminal needed. |
+| **[Cachly Brain for JetBrains](https://plugins.jetbrains.com/plugin/32059-cachly-brain)** | Same brain for IntelliJ / PyCharm / GoLand / WebStorm / Rider — status bar, brain health, lessons view. |
 | **[`@cachly-dev/openclaw`](https://www.npmjs.com/package/@cachly-dev/openclaw)** | Cut LLM costs 60–90% in JS/TS apps |
 
 - 🌐 [cachly.dev](https://cachly.dev) — Dashboard & free signup
@@ -513,5 +518,5 @@ keep talking to your backend on every editor launch. All data stays in your infr
 > brain that remembers, learns, and gets sharper with every commit.
 >
 > ```bash
-> npx @cachly-dev/mcp-server@latest setup
+> npx @cachly-dev/mcp-server@latest autopilot
 > ```

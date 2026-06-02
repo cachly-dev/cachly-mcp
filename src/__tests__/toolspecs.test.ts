@@ -22,7 +22,7 @@ describe('tool-spec exporter', () => {
     expect(toOpenAITools(tools)).toHaveLength(tools.length);
     expect(toAnthropicTools(tools)).toHaveLength(tools.length);
     expect(toLangChainTools(tools)).toHaveLength(tools.length);
-    expect(tools.length).toBeGreaterThanOrEqual(114);
+    expect(tools.length).toBeGreaterThanOrEqual(120);
   });
 
   it('OpenAI format uses {type:function, function:{name,description,parameters}}', () => {

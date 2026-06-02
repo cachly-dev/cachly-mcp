@@ -13,7 +13,7 @@ It works by maintaining a Causal Knowledge Graph (CKG) — a structured store of
 ## Installation (zero config)
 
 ```bash
-npx @cachly-dev/mcp-server@latest setup
+npx @cachly-dev/mcp-server@latest autopilot
 ```
 
 This command: authenticates via OAuth device flow (one browser click), auto-detects all installed editors, writes the correct MCP config for each, creates CLAUDE.md with Brain rules, installs a git post-commit hook.

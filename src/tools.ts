@@ -879,6 +879,41 @@ const TOOLS = [
     },
   },
   {
+    name: 'brain_collab_pairs',
+    description:
+      'Show the Person↔Person Collaboration Graph for your team (W5). ' +
+      'Lists every pair of contributors who have worked together — either by touching the same files in learn_from_attempts ' +
+      'or by recalling each other\'s lessons via smart_recall(requester=...). ' +
+      'Each pair includes a "Frag @X und @Y" routing suggestion — ideal for onboarding and bus-factor analysis. ' +
+      'Also flags solo contributors whose knowledge no teammate has yet recalled (bus-factor risk). ' +
+      'Example: brain_collab_pairs() → "@alice ↔ @bob — 12 events · ask them together about auth/payments".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        min_weight:  { type: 'number', description: 'Minimum collaboration events to show a pair (default: 1)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'brain_portability',
+    description:
+      'W9 — Model-Neutrality as Feature. Proves "Bring your own model, keep your brain." ' +
+      'Returns your Brain ID plus ready-to-paste MCP config snippets for every compatible AI client: ' +
+      'Claude Code, Cursor, Windsurf, GitHub Copilot (VS Code), Cline, Zed, Continue. ' +
+      'All 7 clients connect to the same Brain — same lessons, crystals, predictions, and team data. ' +
+      'Use autopilot to configure all detected editors in one command. ' +
+      'Example: brain_portability() → config blocks for 7 clients + model-neutrality proof table.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
     name: 'skill_gaps',
     description:
       'Show knowledge blind spots in your Brain — domains with unresolved failures, ' +
@@ -1060,6 +1095,24 @@ const TOOLS = [
     },
   },
   {
+    name: 'team_audit',
+    description:
+      'View the governance audit log for a shared brain — an immutable trail of who changed roles and who confirmed which lessons, with timestamps. ' +
+      'Essential for enterprise compliance and security reviews. ' +
+      'Admin-only once governance is active (an admin has been assigned). ' +
+      'Events are recorded automatically on team_assign_role and team_confirm — no setup. ' +
+      'Example: team_audit(requester="alice") → "👑 role: bob set carol viewer → contributor · ✅ confirm: dave confirmed auth:jwt-skew (senior)".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
+        requester:   { type: 'string', description: 'Your handle — must be an admin once governance is active' },
+        limit:       { type: 'number', description: 'Max events to show, newest first (default: 50, max: 200)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
     name: 'team_grant_scope',
     description:
       'Add or remove a team member to/from a named group (sub-team) on a shared brain. ' +
@@ -1144,6 +1197,26 @@ const TOOLS = [
           type: 'string',
           description: 'Optional label for this crystal (e.g. "Q1 2026", "v2 launch"). Auto-generated from date if omitted.',
         },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'team_crystallize',
+    description:
+      'Create a Team Crystal — the team-wide, causal counterpart to memory_crystalize. ' +
+      'Where memory_crystalize compresses ONE brain by category, team_crystallize surfaces what a per-user ' +
+      'memory structurally cannot: which fixes solved structurally SIMILAR problems across MULTIPLE people. ' +
+      'A pattern only crystallizes when 2+ distinct authors independently converged on it — that cross-person ' +
+      'signal is the moat against single-user "Dreaming"-style memory. ' +
+      'Needs attributed lessons (learn_from_attempts(author=...) / team_learn). Surfaces in crystal_view. ' +
+      'Example: team_crystallize() → "🧩 pool — 3 people converged (alice, bob, carol): bounded pool + timeout".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
+        min_authors: { type: 'number', description: 'Min distinct authors that must converge for a pattern to crystallize (default: 2, min: 2)' },
+        label:       { type: 'string', description: 'Optional label (e.g. "Q1 2026"). Auto-generated from date if omitted.' },
       },
       required: ['instance_id'],
     },
@@ -1696,6 +1769,43 @@ const TOOLS = [
       required: [],
     },
   },
+  {
+    name: 'brain_marketplace',
+    description:
+      'Browse the Domain Brain marketplace — curated, installable packs of high-trust community lessons, ' +
+      'grouped by domain (Kubernetes, Auth, Database, React, Payments, …). ' +
+      'Each brain is built from verified, community-confirmed lessons in the global Knowledge Commons. ' +
+      'Use at onboarding or when starting work in an unfamiliar domain to bootstrap your Brain instantly. ' +
+      'Install one with brain_install(slug="..."). ' +
+      'Example: brain_marketplace() → "☸️ Kubernetes Incident Brain · 42 lessons · install: brain_install(slug=\\"k8s\\")".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        min_confirms: { type: 'number', description: 'Only count lessons with at least this many community confirmations (default: 1)' },
+      },
+      required: [],
+    },
+  },
+  {
+    name: 'brain_install',
+    description:
+      'Install a Domain Brain into your local Brain — pulls its curated, high-trust lessons so they surface in ' +
+      'smart_recall immediately, even offline. Idempotent and non-destructive: it NEVER overrides your own lessons ' +
+      '(only prior installs of the same brain). Re-run anytime to pull updates. ' +
+      'Browse available brains first with brain_marketplace(). ' +
+      'Example: brain_install(slug="k8s") → "📦 Installed: Kubernetes Incident Brain · 42 lessons merged".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        slug:         { type: 'string', description: 'Domain brain slug from brain_marketplace (e.g. "k8s", "auth", "db")' },
+        min_confirms: { type: 'number', description: 'Only install lessons with at least this many community confirmations (default: 1)' },
+        limit:        { type: 'number', description: 'Max lessons to install (default: 200, max: 500)' },
+        dry_run:      { type: 'boolean', description: 'Preview what would be installed without writing anything (default: false)' },
+      },
+      required: ['instance_id', 'slug'],
+    },
+  },
   // ── Layer 1: Causal Knowledge Graph ────────────────────────────────────────
   {
     name: 'brain_search',
@@ -1746,6 +1856,27 @@ const TOOLS = [
         top_k: { type: 'number', description: 'Max predictions to return (default: 5)' },
       },
       required: ['instance_id', 'context'],
+    },
+  },
+  {
+    name: 'brain_plan',
+    description:
+      'READ-ONLY — no side effects, no writes, no external network calls. ' +
+      'Generative planning layer on top of the CKG: given a task you are ABOUT to do ' +
+      '(e.g. "upgrade Postgres 14→16", "add Stripe webhooks"), returns an ordered action ' +
+      'plan grounded in your own proven lessons — the failure modes most likely to bite ' +
+      '(ranked by confidence), the concrete steps that fixed them before (with commands), ' +
+      'and a pre-flight checklist. Where brain_predict answers "what might fail?", ' +
+      'brain_plan answers "what should I do, in what order?". ' +
+      'Requires a valid instance_id (your Redis brain). Call before starting non-trivial work.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        task: { type: 'string', description: 'The change you are about to make, e.g. "migrate auth from sessions to JWT"' },
+        top_k: { type: 'number', description: 'Max items per section (default: 5)' },
+      },
+      required: ['instance_id', 'task'],
     },
   },
   // ── Layer 3: MADC ────────────────────────────────────────────────────────

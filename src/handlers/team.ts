@@ -10,11 +10,11 @@ type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 
 export const TEAM_TOOL_NAMES = new Set([
-  'sync_file_changes', 'team_learn', 'team_confirm', 'team_recall', 'team_synthesize', 'memory_crystalize',
+  'sync_file_changes', 'team_learn', 'team_confirm', 'team_recall', 'team_synthesize', 'memory_crystalize', 'team_crystallize',
   'brain_doctor', 'recall_at', 'trace_dependency', 'global_learn', 'global_recall',
   'publish_lesson', 'import_public_brain', 'setup_ai_memory',
   'team_assign_role', 'team_whoami', 'team_roster',
-  'team_grant_scope', 'team_scopes',
+  'team_grant_scope', 'team_scopes', 'team_audit',
 ]);
 
 // ── Role model helpers ────────────────────────────────────────────────────────
@@ -54,6 +54,57 @@ export function hasPermission(actorRole: TeamRole | null, required: TeamRole): b
 /** The review level a role warrants in team_confirm. */
 export function roleToReviewLevel(role: TeamRole | null): 'senior' | 'peer' {
   return role === 'admin' || role === 'reviewer' ? 'senior' : 'peer';
+}
+
+// ── RBAC enforcement (W6) ──────────────────────────────────────────────────────
+// Governance "activates" once an admin is bootstrapped on a brain (the same
+// signal team_assign_role uses). Before that, the team is open and every tool
+// behaves exactly as before — so existing single-user and small-team flows are
+// untouched. Once an admin exists, write/review tools enforce role minimums.
+
+/** True once at least one admin exists — i.e. governance has been turned on. */
+export async function rbacActive(redis: import('ioredis').Redis, instanceId: string): Promise<boolean> {
+  const allRoles = await redis.hgetall(ROLES_KEY(instanceId)).catch(() => ({} as Record<string, string>));
+  return Object.values(allRoles).includes('admin');
+}
+
+/**
+ * Enforce that `handle` holds at least `required` — but only when governance is
+ * active. Returns null when the action is permitted, or a clear refusal message
+ * (never throws — a denied write must not break the agent call). `action` is a
+ * short human phrase, e.g. "store team lessons".
+ */
+export async function requireRole(
+  redis: import('ioredis').Redis,
+  instanceId: string,
+  handle: string,
+  required: TeamRole,
+  action: string,
+): Promise<string | null> {
+  if (!(await rbacActive(redis, instanceId))) return null; // open team — allow
+  const role = handle ? await getRole(redis, instanceId, handle) : null;
+  if (hasPermission(role, required)) return null;
+  const have = role ? `${ROLE_BADGE[role]} ${role}` : 'no role';
+  return [
+    `🔒 **Permission denied** — to ${action} you need at least \`${required}\` ${ROLE_BADGE[required]} (you have: ${have}).`,
+    ``,
+    `Ask an admin to grant it:`,
+    `\`team_assign_role(instance_id="${instanceId}", handle="${handle || '<your-handle>'}", role="${required}", assigned_by="<admin>")\``,
+    `_Governance is active on this brain. Run \`team_whoami\` to check your role._`,
+  ].join('\n');
+}
+
+/** Append an immutable governance-audit entry (role changes, gated actions). */
+export async function auditLog(
+  redis: import('ioredis').Redis,
+  instanceId: string,
+  entry: Record<string, unknown>,
+): Promise<void> {
+  const key = `cachly:team:audit:${instanceId}`;
+  const rec = JSON.stringify({ ...entry, ts: new Date().toISOString() });
+  await redis.rpush(key, rec).catch(() => {});
+  await redis.ltrim(key, -500, -1).catch(() => {});
+  await redis.expire(key, 365 * 2 * 86400).catch(() => {}); // 2-year retention
 }
 
 // ── Team-level visibility scopes (groups) ─────────────────────────────────────
@@ -177,6 +228,12 @@ export async function handleTeamTool(
       const iid = instance_id;
       if (!iid) return '❌ instance_id required';
 
+      // W6 enforcement: once governance is active, a viewer (recall-only) cannot
+      // store team lessons — contributor+ required. Open teams are unaffected.
+      const redisTL = await getConnection(iid);
+      const learnDenied = await requireRole(redisTL, iid, author, 'contributor', 'store team lessons');
+      if (learnDenied) return learnDenied;
+
       // Store with author attribution via the same learn_from_attempts Redis structure
       const lesson = {
         topic, outcome, what_worked,
@@ -191,11 +248,10 @@ export async function handleTeamTool(
         version: 2,
       };
 
-      const redis = await getConnection(iid);
       const key = `cachly:lessons:${topic}`;
-      await redis.rpush(key, JSON.stringify(lesson));
+      await redisTL.rpush(key, JSON.stringify(lesson));
       if (outcome === 'success') {
-        await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(lesson));
+        await redisTL.set(`cachly:lesson:best:${topic}`, JSON.stringify(lesson));
       }
 
       return `✅ Team lesson stored by **${author}**: \`${topic}\` (${outcome})\n💡 ${what_worked.slice(0, 120)}`;
@@ -212,11 +268,16 @@ export async function handleTeamTool(
       };
       if (!instance_id) return '❌ instance_id required';
       if (!topic || !reviewer) return '❌ Required: topic, reviewer';
+      const redis = await getConnection(instance_id);
+      // W6 enforcement: once governance is active, only reviewer+ may confirm
+      // lessons (vision: "nur reviewer dürfen team_confirm"). Open teams are
+      // unaffected. A denied confirm returns guidance, never throws.
+      const confirmDenied = await requireRole(redis, instance_id, reviewer, 'reviewer', 'confirm team lessons');
+      if (confirmDenied) return confirmDenied;
       // Role-aware review level: if the reviewer has an assigned role, that determines
       // weight (admin/reviewer → senior, contributor → peer). The caller can still
       // pass `level` explicitly to override (e.g. a guest reviewer without a role).
       // This prevents self-promotion — you can't claim senior by just passing level="senior".
-      const redis = await getConnection(instance_id);
       const assignedRole = await getRole(redis, instance_id, reviewer);
       const autoLevel = roleToReviewLevel(assignedRole);
       // If the caller explicitly asked for 'peer' on a senior-role reviewer,
@@ -263,6 +324,12 @@ export async function handleTeamTool(
       await redis.rpush(logKey, JSON.stringify(reviewLog));
       await redis.ltrim(logKey, -50, -1);
       await redis.expire(logKey, 365 * 86400);
+
+      // Governance audit trail (W6): every confirm is recorded brain-wide so an
+      // admin can answer "who endorsed what, and when" for compliance.
+      await auditLog(redis, instance_id, {
+        action: 'team_confirm', actor: reviewer, topic, level: effectiveLevel,
+      });
 
       const badge = effectiveLevel === 'senior' ? '🛡️ senior-reviewed' : '✔️ peer-reviewed';
       const alreadyNote = isNewEndorser ? '' : ` (already endorsed by ${reviewer} — no change to rank)`;
@@ -492,6 +559,144 @@ export async function handleTeamTool(
         `💡 This crystal will appear in every future \`session_start\` briefing.`,
         `💡 Re-run \`memory_crystalize\` monthly to keep it fresh.`,
       ];
+      return lines.join('\n');
+    }
+
+    // ── team_crystallize (W8) ───────────────────────────────────────────────────
+    // The team-wide, causal counter to per-user "Dreaming". Where memory_crystalize
+    // compresses ONE brain by category, team_crystallize surfaces what a single-user
+    // background process structurally cannot: which fixes solved structurally
+    // SIMILAR problems across MULTIPLE people. A pattern only crystallizes when ≥2
+    // distinct authors converged on it — that cross-person signal is the moat.
+    case 'team_crystallize': {
+      const { instance_id, min_authors = 2, label: tcLabel = '' } = args as {
+        instance_id: string; min_authors?: number; label?: string;
+      };
+      const redis = await getConnection(instance_id);
+      const now = new Date();
+      const minAuthors = Math.max(2, Number(min_authors) || 2);
+
+      // Load every best-lesson with its author + tags (the cross-person signal).
+      const keys: string[] = [];
+      const stream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((res, rej) => {
+        stream.on('data', (b: string[]) => keys.push(...b));
+        stream.on('end', res);
+        stream.on('error', rej);
+      });
+
+      type TCLesson = {
+        topic: string; outcome: string; what_worked: string; severity?: string;
+        author?: string; tags?: string[]; confirm_count?: number; endorsements?: number;
+        review_level?: string; ts?: string;
+      };
+      const lessons: TCLesson[] = [];
+      if (keys.length > 0) {
+        const raws = await redis.mget(...keys);
+        for (const raw of raws) {
+          const l = safeJsonParse<TCLesson | null>(raw ?? null, null);
+          if (l && l.outcome === 'success' && l.author) lessons.push(l);
+        }
+      }
+
+      // Derive a structural "concept key" for each lesson: the topic namespace plus
+      // its most significant problem token, so "db:pool-exhaustion" and
+      // "payments:connection-pool" can converge via the shared "pool" concept.
+      const STOP = new Set(['the','and','for','with','from','that','this','fix','bug','error','issue','use','via','add','set','team']);
+      const conceptOf = (l: TCLesson): string => {
+        const [ns, ...rest] = l.topic.split(':');
+        // Tags are deliberate concept markers — two people who both tag a lesson
+        // "pool" intend the same concept even when their topics differ. Prefer a
+        // shared, intentional tag over a topic-derived token. Alphabetically-first
+        // significant tag keeps the choice deterministic across authors.
+        const sigTags = (l.tags ?? [])
+          .map(t => t.toLowerCase().trim())
+          .filter(t => t.length > 3 && !STOP.has(t))
+          .sort();
+        if (sigTags.length > 0) return sigTags[0];
+        // No usable tag — fall back to the longest topic-tail token.
+        const tail = rest.join('-').toLowerCase();
+        const tokens = tail.replace(/[^a-z0-9\s-]/g, ' ').split(/[\s-]+/)
+          .filter(t => t.length > 3 && !STOP.has(t));
+        return tokens.sort((a, b) => b.length - a.length || a.localeCompare(b))[0] ?? ns;
+      };
+
+      type Cluster = {
+        concept: string; authors: Set<string>; lessons: TCLesson[];
+        namespaces: Set<string>; bestFix: TCLesson;
+      };
+      const clusters = new Map<string, Cluster>();
+      for (const l of lessons) {
+        const concept = conceptOf(l);
+        let c = clusters.get(concept);
+        if (!c) {
+          c = { concept, authors: new Set(), lessons: [], namespaces: new Set(), bestFix: l };
+          clusters.set(concept, c);
+        }
+        c.authors.add(l.author!.toLowerCase());
+        c.lessons.push(l);
+        c.namespaces.add(l.topic.split(':')[0] || 'misc');
+        // Best fix = highest community trust (endorsements > confirm_count), senior-reviewed wins ties.
+        const score = (x: TCLesson) => (x.endorsements ?? 0) * 10 + (x.confirm_count ?? 0) + (x.review_level === 'senior' ? 5 : 0);
+        if (score(l) > score(c.bestFix)) c.bestFix = l;
+      }
+
+      // A pattern crystallizes only when enough DISTINCT people converged on it.
+      const crossPerson = [...clusters.values()]
+        .filter(c => c.authors.size >= minAuthors)
+        .sort((a, b) => (b.authors.size - a.authors.size) || (b.lessons.length - a.lessons.length));
+
+      const patterns = crossPerson.slice(0, 10).map(c => ({
+        concept: c.concept,
+        author_count: c.authors.size,
+        authors: [...c.authors],
+        lesson_count: c.lessons.length,
+        spans: [...c.namespaces],
+        convergent_fix: c.bestFix.what_worked.slice(0, 200),
+        fix_topic: c.bestFix.topic,
+      }));
+
+      // Persist the team crystal alongside (not overwriting) the per-brain crystal.
+      const effectiveLabel = tcLabel || `${now.toISOString().slice(0, 7)} Team Crystal`;
+      const crystal = {
+        label: effectiveLabel, ts: now.toISOString(), kind: 'team',
+        contributors: new Set(lessons.map(l => l.author!.toLowerCase())).size,
+        analysed: lessons.length, patterns,
+      };
+      await redis.set('cachly:crystal:team:latest', JSON.stringify(crystal));
+      await redis.expire('cachly:crystal:team:latest', 180 * 86400);
+
+      if (patterns.length === 0) {
+        return [
+          `💠 **Team Crystal — not enough cross-person convergence yet**`,
+          ``,
+          `Analysed **${lessons.length}** attributed success lessons from **${crystal.contributors}** contributor${crystal.contributors !== 1 ? 's' : ''}, but no concept had **${minAuthors}+ distinct authors** converge on it yet.`,
+          ``,
+          `This is the one thing a per-user memory can't build — it needs your team to accumulate shared, attributed lessons.`,
+          `Keep using \`learn_from_attempts(author="...")\` / \`team_learn\`; re-run as the team grows.`,
+        ].join('\n');
+      }
+
+      const lines = [
+        `💠 **Team Crystal created: ${effectiveLabel}**`,
+        ``,
+        `🧬 **${patterns.length} cross-person pattern${patterns.length !== 1 ? 's' : ''}** — fixes that ${minAuthors}+ teammates independently converged on.`,
+        `_Compressed from ${lessons.length} attributed lessons across ${crystal.contributors} contributors. This is the team-wide, causal layer a per-user "Dreaming" process structurally cannot produce._`,
+        ``,
+      ];
+      for (const p of patterns.slice(0, 6)) {
+        const spanNote = p.spans.length > 1 ? ` · spans ${p.spans.map(s => `\`${s}\``).join(', ')}` : '';
+        lines.push(
+          `### 🧩 \`${p.concept}\` — ${p.author_count} people converged${spanNote}`,
+          `**Convergent fix** (from \`${p.fix_topic}\`): ${p.convergent_fix}`,
+          `**Who solved it together:** ${p.authors.map(a => `@${a}`).join(', ')} _(ask them — they've each hit this)_`,
+          ``,
+        );
+      }
+      lines.push(
+        `---`,
+        `💡 Surfaces in \`crystal_view\` and onboarding. Re-run \`team_crystallize\` monthly.`,
+      );
       return lines.join('\n');
     }
 
@@ -1368,8 +1573,15 @@ Result: Your AI **never solves the same problem twice** and always picks up exac
         }
       }
 
+      const prevRole = allRoles[handle.toLowerCase()] ?? null;
       await redis.hset(ROLES_KEY(instance_id), handle.toLowerCase(), cleanRole);
       await redis.expire(ROLES_KEY(instance_id), 365 * 2 * 86400); // 2-year TTL
+
+      // Governance audit trail (W6): record every role change with who made it.
+      await auditLog(redis, instance_id, {
+        action: 'team_assign_role', actor: assigned_by || '(bootstrap)',
+        handle: handle.toLowerCase(), from: prevRole, to: cleanRole,
+      });
 
       const isBootstrap = !hasAdmin;
       const badge = ROLE_BADGE[cleanRole];
@@ -1451,6 +1663,59 @@ Result: Your AI **never solves the same problem twice** and always picks up exac
         `_Manage with \`team_assign_role\`. Any admin can add or change roles._`,
       );
       return lines.join('\n');
+    }
+
+    // ── team_audit ────────────────────────────────────────────────────────────
+    // Governance/compliance trail (W6): who changed roles, who confirmed which
+    // lessons, and when. Admin-gated once governance is active — the audit log is
+    // sensitive (it reveals the team's review activity). Newest entries first.
+    case 'team_audit': {
+      const { instance_id, requester = '', limit = 50 } = args as {
+        instance_id: string; requester?: string; limit?: number;
+      };
+      if (!instance_id) return '❌ Required: instance_id';
+      const redis = await getConnection(instance_id);
+
+      const denied = await requireRole(redis, instance_id, requester, 'admin', 'view the governance audit log');
+      if (denied) return denied;
+
+      const max = Math.min(Math.max(1, Number(limit) || 50), 200);
+      const raw = await redis.lrange(`cachly:team:audit:${instance_id}`, -max, -1).catch(() => [] as string[]);
+      if (raw.length === 0) {
+        return [
+          `## 📜 Governance Audit Log`,
+          ``,
+          `No governance events recorded yet.`,
+          `Events are logged automatically on \`team_assign_role\` and \`team_confirm\`.`,
+        ].join('\n');
+      }
+
+      type Audit = { action?: string; actor?: string; ts?: string; [k: string]: unknown };
+      const entries = raw
+        .map(r => safeJsonParse<Audit | null>(r, null))
+        .filter((e): e is Audit => e !== null)
+        .reverse(); // newest first
+
+      const fmt = (e: Audit): string => {
+        const when = e.ts ? new Date(e.ts).toISOString().replace('T', ' ').slice(0, 16) : '?';
+        if (e.action === 'team_assign_role') {
+          return `| ${when} | 👑 role | **${e.actor}** set \`${e.handle}\`: ${e.from ?? '—'} → **${e.to}** |`;
+        }
+        if (e.action === 'team_confirm') {
+          return `| ${when} | ✅ confirm | **${e.actor}** confirmed \`${e.topic}\` (${e.level}) |`;
+        }
+        return `| ${when} | ${e.action ?? '?'} | ${e.actor ?? '?'} |`;
+      };
+
+      return [
+        `## 📜 Governance Audit Log (${entries.length} event${entries.length !== 1 ? 's' : ''})`,
+        ``,
+        `| When (UTC) | Type | Detail |`,
+        `|---|---|---|`,
+        ...entries.map(fmt),
+        ``,
+        `_Immutable trail · 2-year retention · last ${max} events. Admin-only._`,
+      ].join('\n');
     }
 
     // ── team_grant_scope ──────────────────────────────────────────────────────

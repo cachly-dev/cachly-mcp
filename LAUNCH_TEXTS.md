@@ -14,7 +14,7 @@ Your AI forgets everything between sessions. cachly fixes that permanently. One 
 
 **The problem:** Every morning you re-explain your architecture to your AI. Every bug gets re-researched. Every fix gets re-discovered. The average developer wastes 45 minutes/day on this.
 
-**The fix:** `npx @cachly-dev/mcp-server@latest setup`
+**The fix:** `npx @cachly-dev/mcp-server@latest autopilot`
 
 One command. It signs you in (one browser click), detects every editor you have (Claude Code, Cursor, Windsurf, VS Code, Copilot, Cline, Zed), writes the correct config for each, bootstraps your Brain from your git history, and installs a git hook that learns from every future commit automatically.
 
@@ -55,7 +55,7 @@ I built cachly after noticing that my AI re-researched the same bug three times 
 
 cachly is an MCP server that gives Claude Code, Cursor, Copilot, and Windsurf persistent memory with one command:
 
-  npx @cachly-dev/mcp-server@latest setup
+  npx @cachly-dev/mcp-server@latest autopilot
 
 It detects your editors, writes all the MCP configs, bootstraps from your git history, and installs a git hook that learns from every future commit. No credentials needed in any config file — OAuth Device Flow handles auth inline on the first tool call.
 
@@ -86,7 +86,7 @@ I built persistent memory for Claude Code — no credentials, no config, one com
 After the 10th time explaining my project architecture to Claude, I built cachly.
 
 **What it does:**
-Run `npx @cachly-dev/mcp-server@latest setup` once. It:
+Run `npx @cachly-dev/mcp-server@latest autopilot` once. It:
 1. Signs you in with one browser click (no credentials in config)
 2. Detects Claude Code, Cursor, Windsurf, VS Code, Cline — writes all configs automatically
 3. Bootstraps your Brain from your git history right away
@@ -133,7 +133,7 @@ GitHub: https://github.com/cachly-dev/cachly-mcp
 Your AI forgets everything between sessions.
 I built the fix.
 
-`npx @cachly-dev/mcp-server@latest setup`
+`npx @cachly-dev/mcp-server@latest autopilot`
 
 One command → persistent AI memory across Claude, Cursor, Copilot, Windsurf.
 Free forever. 🧵

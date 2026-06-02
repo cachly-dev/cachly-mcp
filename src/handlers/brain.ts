@@ -14,8 +14,105 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.85';
+const MCP_VERSION = '0.10.98';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.98': [
+    `🌐 **Model-Neutrality as Feature (W9) — "Bring your own model, keep your brain."**`,
+    `  🔌 New \`brain_portability()\` — shows your Brain ID, all compatible MCP clients, and ready-to-paste config snippets for each; proves the same Brain works in Claude, Cursor, Copilot, Windsurf, Cline, Zed and more`,
+    `  🧠 Your lessons, crystals, and predictions are model-agnostic — no vendor lock-in at the memory layer`,
+    `  📖 New docs: cachly.dev/docs/model-neutral — "Same Brain, Any Model" guide with live config examples`,
+    `  📊 121 MCP tools (new: \`brain_portability\`)`,
+  ],
+  '0.10.97': [
+    `💠 **Team Crystallize (W8) — the team-wide, causal counter to per-user "Dreaming"**`,
+    `  🧬 New \`team_crystallize()\` — surfaces fixes that 2+ teammates *independently converged on*, the one thing a single-user memory structurally can't build`,
+    `  🧩 Cross-person clustering: groups structurally similar problems across people & namespaces (e.g. "pool exhaustion" solved the same way in payments, auth & db)`,
+    `  👥 Each pattern names who converged — instant "ask @alice and @bob, they both hit this"`,
+    `  💎 Shows up in \`crystal_view\` alongside your per-brain crystal`,
+    `  📊 120 MCP tools (new: \`team_crystallize\`)`,
+  ],
+  '0.10.96': [
+    `🔐 **Roles & Team-Scopes now ENFORCED (W6) — the enterprise governance layer**`,
+    `  🛡️ \`team_confirm\` is now reviewer-gated, \`team_learn\` blocks viewers (recall-only) — roles stop being cosmetic the moment an admin is assigned`,
+    `  📜 New \`team_audit\` tool — immutable, admin-only trail of every role change & lesson confirmation, for compliance & security reviews`,
+    `  🔓 Zero impact on open teams: governance activates only once you bootstrap an admin; before that everything works exactly as before`,
+    `  📊 119 MCP tools (new: \`team_audit\`)`,
+  ],
+  '0.10.95': [
+    `🧠 **Domain Brain Marketplace (W10) — bootstrap your Brain with curated community knowledge**`,
+    `  🛒 \`brain_marketplace()\` — browse installable packs of high-trust lessons by domain: ☸️ Kubernetes, 🔐 Auth, 🗄️ Database, ⚛️ React, 💳 Payments & more`,
+    `  📦 \`brain_install(slug="k8s")\` — merges a domain's verified lessons into your Brain; live in \`smart_recall\` instantly, even offline`,
+    `  🛡️ Idempotent + non-destructive: installed lessons are tagged \`source:"marketplace:<slug>"\` and NEVER override your own`,
+    `  🔌 New gRPC \`Subscribe\` RPC — agents get new lessons streamed live the moment they're learned (completes the M2M loop with \`Learn\`)`,
+    `  📊 118 MCP tools (new: \`brain_marketplace\`, \`brain_install\`)`,
+  ],
+  '0.10.94': [
+    `🤝 **Person↔Person Collaboration Graph (W5) — "Frag X und Y, die haben das zusammen gelöst"**`,
+    `  🕸️ New \`brain_collab_pairs()\` tool: shows every contributor pair who've touched the same files or recalled each other's lessons — ideal for onboarding and bus-factor analysis`,
+    `  📡 \`smart_recall\` now wires CKG \`collaborates\` edges live when cross-author reuse fires — collaboration graph grows with every team recall`,
+    `  ⚠️ Bus-factor section: flags solo contributors whose knowledge no teammate has yet recalled`,
+    `  📊 116 MCP tools (new: \`brain_collab_pairs\`)`,
+  ],
+  '0.10.93': [
+    `🗺️ **\`brain_plan\` — your Brain goes from "what did we learn?" to "what should I do?"**`,
+    `  🧭 Give it a task you're about to start ("upgrade Postgres 14→16") and it returns an ordered, grounded action plan: ranked failure modes to avoid, proven fix steps (dependency-aware, with commands), and a pre-flight checklist — all from your own lessons`,
+    `  🔬 Generative layer on the CKG: where \`brain_predict\` answers "what might fail?", \`brain_plan\` answers "what, in what order?"`,
+    `  📊 115 MCP tools (new: \`brain_plan\`)`,
+  ],
+  '0.10.92': [
+    `👋 **Welcome-back digest — re-entry after a week away now leads with what changed**`,
+    `  🌱 \`session_start\` detects a gap ≥ 7 days and surfaces how many lessons your Brain gained while you were gone (git, CI & teammates kept it learning), with the freshest topics`,
+    `  🧠 Zero extra latency — the digest is computed from data session_start already loads`,
+    `  🔌 New gRPC \`Learn\` RPC (M2M write path) — agents & CI can now teach the Brain directly, byte-compatible with the MCP lesson format`,
+    `  📊 115 MCP tools`,
+  ],
+  '0.10.91': [
+    `🕐 **Lesson-anchored time attribution — every recall shows when it was learned and how much it saves**`,
+    `  💡 "Brain saved you" banner now includes: when the lesson was learned (e.g. "12 May"), estimated original debug cost by severity (critical=2h, major=1h, minor=20min), and team attribution when a teammate's lesson fires`,
+    `  📅 Origin date formatted as "12 May" (same year) or "12 May 2024" (different year) — no clutter`,
+    `  👥 Cross-author recalls now show "@author" on the same banner line — the "team knowledge reuse" value is front-and-center`,
+    `  📊 115 MCP tools`,
+  ],
+  '0.10.90': [
+    `📊 **External benchmark corpus v2 — the proof is now statistically solid**`,
+    `  🧪 Expanded from 8 queries → 61 lessons / 56 queries across 10 real-world engineering domains (k8s, DB, auth, CI, frontend, API, payments, observability, network, Node.js, security, infra)`,
+    `  ⚔️  10 adversarial distractors added — failure lessons that share the exact same vocabulary as the query, forcing the quality reranker to earn its lift`,
+    `  📈 Results on the larger corpus: cachly +2.9% Precision@1 vs flat-file, +12.5% vs raw BM25 baseline — on a harder dataset, not an easy one`,
+    `  📊 115 MCP tools`,
+  ],
+  '0.10.89': [
+    `⚡ **One-command onboarding — \`autopilot\` is now the single canonical setup**`,
+    `  🚀 Every surface (README, docs, emails, dashboard, blog) now leads with \`npx @cachly-dev/mcp-server@latest autopilot\` — one command signs you in, configures every editor, and bootstraps from git`,
+    `  🧹 Retired the split-brain instructions (legacy \`@cachly-dev/init\` wrapper + the old "three steps") so there's exactly one thing to copy-paste`,
+    `  🔧 Fixed a build-breaking duplicate \`export\` on buildClaudeMdBlock that failed CI on v0.10.88`,
+    `  🔢 Version hygiene — package.json, server.json, lockfile and MCP_VERSION resynced (server.json/lockfile were stuck at 0.10.85)`,
+    `  📊 115 MCP tools`,
+  ],
+  '0.10.88': [
+    `✅ **Honest setup + tested config writer (v0.10.88)**`,
+    `  🔒 setup/autopilot now report the truth: if no editor config could be written it exits non-zero with the exact failures instead of falsely claiming "Brain is ready"`,
+    `  📊 New setup_config_write_failed telemetry — permission/path failures that block activation are now visible in reporting`,
+    `  🧪 24 new unit tests for the config writer (buildServerEnv, buildMcpConfig, mergeMcpConfig, buildClaudeMdBlock) — the merge logic that must never clobber your other MCP servers is now regression-guarded`,
+    `  📊 115 MCP tools`,
+  ],
+  '0.10.87': [
+    `🌐 **Multi-editor auth persistence + full activation telemetry (v0.10.87)**`,
+    `  ✅ JWT + instance_id now persisted to Cursor (\`~/.cursor/mcp.json\`) and Windsurf configs on auth — no more infinite re-auth for non-Claude-Code users`,
+    `  📡 \`device_flow_failed(reason="timeout")\` now fires when sign-in window expires — blind spot in the funnel is gone`,
+    `  📡 \`auto_provision_failed\` now fires on network errors too (was only HTTP non-2xx)`,
+    `  📡 \`brain_from_git_failed\` fires with error reason when auto-bootstrap throws — no more empty brain with no explanation`,
+    `  ✨ Git bootstrap shows lesson count in session_start: "Brain bootstrapped — 23 lessons loaded" — the WOW moment`,
+    `  🔧 API: McpEvent stores brain quality metrics (fixes/features/refactors/total) — git learning quality now measurable`,
+    `  📊 115 MCP tools`,
+  ],
+  '0.10.86': [
+    `🛡️ **Zero-friction activation — your Brain self-heals into existence**`,
+    `  🔧 Auto-provision now runs on *any* tool call, not just at sign-in — if instance creation ever fails once, the next call recovers it automatically`,
+    `  🤝 Parallel tool calls on startup are coalesced into one resolve (no more duplicate-instance races)`,
+    `  💬 Clearer "instance still starting" message — leads with "just retry", no manual config needed`,
+    `  📈 New activation-funnel telemetry: install → sign-in → provision, so silent churn is visible`,
+    `  📊 115 MCP tools`,
+  ],
   '0.10.85': [
     `🚀 **One-command onboarding — \`npx @cachly-dev/mcp-server@latest autopilot\`**`,
     `  ⚡ Single command does it all: auth → instance → every editor config → CLAUDE.md → Brain bootstrap → health`,
@@ -25,7 +122,7 @@ const WHATS_NEW: Record<string, string[]> = {
   '0.10.84': [
     `🤖 **M2M & agent-ecosystem reach — cachly for every caller, human or machine**`,
     `  🔑 OAuth2 \`client_credentials\` grant — set CACHLY_CLIENT_ID + CACHLY_CLIENT_SECRET for fully headless auth (CI, agents, AI-to-AI)`,
-    `  🗂️ \`npx ... tool-specs --format=openai|anthropic|langchain\` — export all 114 tools in any framework's dialect`,
+    `  🗂️ \`npx ... tool-specs --format=openai|anthropic|langchain\` — export all 121 tools in any framework's dialect`,
     `  🌐 \`npx ... openapi\` — OpenAPI 3.1 doc (1 POST path per tool) for Assistants / codegen / Postman`,
     `  🧪 14 new tests: client_credentials helpers, all four spec dialects, OpenAPI required-body inference`,
   ],
@@ -36,7 +133,7 @@ const WHATS_NEW: Record<string, string[]> = {
     `  🖥️ Consumed verbatim by the 3D frontend (react-force-graph-3d / three.js) — the visual brain map`,
     `  🔎 Filters: \`domain\`, \`min_confidence\`, \`max_nodes\` (with truncation flag), \`format="summary"\``,
     `  🧪 10 tests: kind detection, dangling-edge pruning, confidence/domain filters, schema contract`,
-    `  📊 114 MCP tools`,
+    `  📊 115 MCP tools`,
   ],
   '0.10.82': [
     `📡 **Telemetry API contracts — dashboard ingest pipeline prepared**`,
@@ -228,6 +325,7 @@ export const BRAIN_TOOL_NAMES = new Set([
   'session_start', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
   'brain_who_knows', 'brain_file_map', 'team_expertise_map',
   'skill_gaps', 'brain_coverage', 'brain_metrics', 'brain_service_map',
+  'brain_collab_pairs', 'brain_portability',
 ]);
 
 export async function handleBrainTool(
@@ -801,14 +899,14 @@ export async function handleBrainTool(
       const kwMatches = rerankByQuality(rawMatches);
 
       // Increment recall_count on matched lessons (fire-and-forget) + collect "Brain saved you here" signal.
-      type RecalledLesson = { topic: string; severity: string; recall_count: number; savedMins: number };
+      type RecalledLesson = { topic: string; severity: string; recall_count: number; savedMins: number; ts?: string; author?: string };
       const savedHere: RecalledLesson[] = [];
       const lessonMatches = kwMatches.filter(m => m.key.startsWith('cachly:lesson:best:'));
       let crossAuthorThisCall = 0;
       for (const m of lessonMatches.slice(0, 5)) {
         const existing = await redis.get(m.key).catch(() => null);
         if (existing) {
-          const lesson = safeJsonParse(existing, null as null | { recall_count?: number; outcome?: string; severity?: string; author?: string; [k: string]: unknown });
+          const lesson = safeJsonParse(existing, null as null | { recall_count?: number; outcome?: string; severity?: string; author?: string; ts?: string; [k: string]: unknown });
           if (lesson) {
             const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, verified_at: new Date().toISOString() };
             redis.set(m.key, JSON.stringify(updated)).catch(() => {});
@@ -824,6 +922,12 @@ export async function handleBrainTool(
               crossAuthorThisCall++;
               redis.incr(`cachly:stats:cross_author_recalls:${instance_id}`).catch(() => {});
               redis.sadd(`cachly:stats:reuse_pairs:${instance_id}`, `${requester}<-${lesson.author}`).catch(() => {});
+              // W5: wire person↔person CKG collaborates edges from knowledge-reuse events.
+              // This feeds brain_collab_pairs and enriches brain_who_knows with reuse-based edges.
+              const reqPersonId = `person:${ckgSlug(requester)}`;
+              const authPersonId = `person:${ckgSlug(lesson.author!)}`;
+              ckgUpdateEdge(redis, reqPersonId, 'collaborates', authPersonId, true).catch(() => {});
+              ckgUpdateEdge(redis, authPersonId, 'collaborates', reqPersonId, true).catch(() => {});
             }
 
             // Surface banner for proven successes (recall_count >= 1 means it's been validated)
@@ -833,6 +937,8 @@ export async function handleBrainTool(
                 severity: sev ?? 'major',
                 recall_count: (lesson.recall_count ?? 0) + 1,
                 savedMins,
+                ts: lesson.ts,
+                author: lesson.author,
               });
             }
           }
@@ -998,7 +1104,20 @@ export async function handleBrainTool(
       const SORDER: Record<string, number> = { critical: 0, major: 1, minor: 2 };
       const topLesson = savedHere.sort((a, b) => (SORDER[a.severity] ?? 1) - (SORDER[b.severity] ?? 1))[0];
       if (topLesson) {
-        lines.push(`> 💡 **Brain saved you ~${topLesson.savedMins}m here** — ${topLesson.severity} issue from \`${topLesson.topic}\` recalled ${topLesson.recall_count}× proven\n`);
+        const fmtMins = (m: number) => m >= 60 ? `${m / 60}h` : `${m}min`;
+        const learnedStr = (() => {
+          if (!topLesson.ts) return null;
+          const d = new Date(topLesson.ts);
+          if (isNaN(d.getTime())) return null;
+          const now = new Date();
+          const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          const sameYear = d.getFullYear() === now.getFullYear();
+          return sameYear ? `${d.getDate()} ${months[d.getMonth()]}` : `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
+        })();
+        const debugCostMins = topLesson.severity === 'critical' ? 120 : topLesson.severity === 'major' ? 60 : 20;
+        const authorStr = topLesson.author && topLesson.author !== requester ? ` · by @${topLesson.author}` : '';
+        const learnedPart = learnedStr ? ` · learned ${learnedStr} (was a ${fmtMins(debugCostMins)} debug)` : '';
+        lines.push(`> 💡 **Brain saved you ~${fmtMins(topLesson.savedMins)} here** — \`${topLesson.topic}\`${learnedPart} · recalled ${topLesson.recall_count}×${authorStr}\n`);
       }
       if (crossAuthorThisCall > 0) {
         lines.push(`> 👥 **Team knowledge reuse** — ${crossAuthorThisCall} of these lesson${crossAuthorThisCall !== 1 ? 's were' : ' was'} written by a teammate. This is the value only a shared brain delivers.\n`);
@@ -1228,6 +1347,32 @@ export async function handleBrainTool(
         const m = Math.round(timeSavedMins % 60);
         const timeStr = h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
         lines.push(`⏱️ **Brain saved you ~${timeStr} total** (time not re-researching known fixes)`, '');
+      }
+
+      // ── Welcome-back digest (gap ≥ 7 days) ──────────────────────────────────
+      // When the user has been away a week or more, lead with a short "what
+      // happened while you were gone" digest. All data is already loaded above
+      // (lastSession + lessons), so this adds zero Redis round-trips. The point
+      // is re-entry value: the brain kept compounding (git/CI/teammates) and we
+      // surface the growth before anything else competes for attention.
+      if (lastSession?.ts) {
+        const lastTs = new Date(lastSession.ts).getTime();
+        const daysAway = Math.floor((Date.now() - lastTs) / 86_400_000);
+        if (daysAway >= 7 && !Number.isNaN(lastTs)) {
+          const newSinceAway = lessons.filter(l => {
+            const t = new Date(l.ts).getTime();
+            return !Number.isNaN(t) && t > lastTs;
+          });
+          lines.push(`👋 **Welcome back** — it's been ${daysAway} days since your last session.`);
+          if (newSinceAway.length > 0) {
+            // lessons is already recency-sorted desc, so take the freshest few.
+            const topNew = newSinceAway.slice(0, 3).map(l => `\`${l.topic}\``).join(', ');
+            lines.push(`   🌱 Your Brain grew by **${newSinceAway.length} lesson${newSinceAway.length !== 1 ? 's' : ''}** while you were gone (git, CI & teammates kept it learning): ${topNew}${newSinceAway.length > 3 ? ', …' : ''}`);
+          } else {
+            lines.push(`   🧠 ${lessons.length} lesson${lessons.length !== 1 ? 's' : ''} held steady and ready — recall anything with \`smart_recall\`.`);
+          }
+          lines.push(`   💡 Full breakdown: \`npx @cachly-dev/mcp-server@latest digest\``, '');
+        }
       }
 
       // ── What's New (shown once per version update) ──────────────────────────
@@ -2979,6 +3124,303 @@ export async function handleBrainTool(
         `---`,
         `_Tag lessons with \`service="${service}"\` to keep this map current. For infra, pass \`service_kind="system"\`._`,
       );
+      return lines.join('\n');
+    }
+
+    // ── brain_collab_pairs ───────────────────────────────────────────────────
+    // W5: Person↔Person Collaboration Graph. Shows who works with whom on the
+    // team — built from (a) shared file-touches during learn_from_attempts and
+    // (b) cross-author knowledge-reuse events from smart_recall. Answers the
+    // onboarding question: "Frag X und Y — they solved that together."
+    case 'brain_collab_pairs': {
+      const { instance_id, min_weight = 1 } = args as { instance_id: string; min_weight?: number };
+      const redis = await getConnection(instance_id);
+      const minW = typeof min_weight === 'number' && min_weight >= 1 ? Math.floor(min_weight) : 1;
+
+      // Collect all person nodes.
+      const personKeys = await scanKeys(redis, 'cachly:ckg:node:person:*', { max: 500 });
+      type PInfo = { id: string; handle: string; domain: string; count: number };
+      const persons = new Map<string, PInfo>();
+      for (const k of personKeys) {
+        const raw = await redis.get(k);
+        if (!raw) continue;
+        const pn = safeJsonParse<PersonNode | null>(raw, null);
+        if (!pn || pn.type !== 'person') continue;
+        persons.set(pn.id, { id: pn.id, handle: pn.handle, domain: pn.domain, count: pn.count });
+      }
+
+      if (persons.size === 0) {
+        return [
+          `## 🤝 Team Collaboration Graph`,
+          ``,
+          `No contributors found yet.`,
+          ``,
+          `The graph builds automatically as teammates store lessons with \`author="name"\`:`,
+          `\`learn_from_attempts(topic="...", author="alice", file_paths=["src/auth.ts"], ...)\``,
+        ].join('\n');
+      }
+
+      // Collect unique A↔B pairs with combined trial count.
+      type Pair = { a: PInfo; b: PInfo; trials: number; confidence: number };
+      const pairMap = new Map<string, Pair>();
+
+      for (const [personId, pInfo] of persons) {
+        const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${personId}`);
+        for (const ek of edgeKeys) {
+          const er = await redis.get(ek);
+          if (!er) continue;
+          const edge = safeJsonParse<CKGEdge | null>(er, null);
+          if (!edge || edge.edgeType !== 'collaborates') continue;
+          const otherInfo = persons.get(edge.to);
+          if (!otherInfo) continue;
+
+          // Canonical pair key: alphabetically smaller id first.
+          const [idA, idB] = personId < edge.to ? [personId, edge.to] : [edge.to, personId];
+          const pairKey = `${idA}||${idB}`;
+          const existing = pairMap.get(pairKey);
+          if (existing) {
+            existing.trials += edge.trials;
+          } else {
+            const [pA, pB] = personId < edge.to ? [pInfo, otherInfo] : [otherInfo, pInfo];
+            pairMap.set(pairKey, { a: pA, b: pB, trials: edge.trials, confidence: edge.confidence });
+          }
+        }
+      }
+
+      const pairs = [...pairMap.values()]
+        .filter(p => p.trials >= minW)
+        .sort((a, b) => b.trials - a.trials);
+
+      // Find solo contributors (no collaborators).
+      const connectedIds = new Set<string>();
+      for (const p of pairs) { connectedIds.add(p.a.id); connectedIds.add(p.b.id); }
+      const soloPersons = [...persons.values()].filter(p => !connectedIds.has(p.id));
+
+      const lines: string[] = [
+        `## 🤝 Team Collaboration Graph`,
+        ``,
+      ];
+
+      if (pairs.length === 0) {
+        lines.push(
+          `No collaboration pairs yet (min weight: ${minW}).`,
+          ``,
+          `Pairs appear when two contributors touch the same file in \`learn_from_attempts\``,
+          `or when someone recalls a teammate's lesson via \`smart_recall(requester="...")\`.`,
+        );
+      } else {
+        lines.push(`**${pairs.length} collaboration pair${pairs.length !== 1 ? 's' : ''}** across ${connectedIds.size} contributor${connectedIds.size !== 1 ? 's' : ''}:`, ``);
+
+        for (const p of pairs.slice(0, 20)) {
+          const conf = (p.confidence * 100).toFixed(0);
+          const sharedDomains = [p.a.domain, p.b.domain]
+            .filter((d, i, arr) => d && arr.indexOf(d) === i)
+            .map(d => `\`${d}\``)
+            .join(', ');
+          lines.push(
+            `### @${p.a.handle} ↔ @${p.b.handle}`,
+            `- **${p.trials} collaboration event${p.trials !== 1 ? 's' : ''}** · ${conf}% confidence`,
+            `- Domains: ${sharedDomains || '_unknown_'}`,
+            `> 💬 _"Frag **@${p.a.handle}** und **@${p.b.handle}** — they've solved problems together in these areas."_`,
+            ``,
+          );
+        }
+
+        if (pairs.length > 20) {
+          lines.push(`_...and ${pairs.length - 20} more pairs. Use \`min_weight\` to filter._`, ``);
+        }
+      }
+
+      if (soloPersons.length > 0) {
+        lines.push(
+          `---`,
+          `### ⚠️ Bus Factor Alert — No Collaborators Yet`,
+          ``,
+          `${soloPersons.length} contributor${soloPersons.length !== 1 ? 's have' : ' has'} knowledge that no teammate has recalled or co-touched:`,
+          ``,
+          ...soloPersons.slice(0, 10).map(p => `- **@${p.handle}** — ${p.count} lesson${p.count !== 1 ? 's' : ''} · domain: \`${p.domain}\``),
+          ``,
+          `_Tip: pair these contributors with teammates on shared files to reduce bus factor._`,
+        );
+      }
+
+      lines.push(
+        ``,
+        `---`,
+        `_Collaboration edges build from \`learn_from_attempts(author=..., file_paths=[...])\` and \`smart_recall(requester=...)\` cross-author reuse._`,
+      );
+      return lines.join('\n');
+    }
+
+    // ── brain_portability ─────────────────────────────────────────────────────
+
+    case 'brain_portability': {
+      const { instance_id } = args as { instance_id: string };
+
+      const clients = [
+        {
+          name: 'Claude Code',
+          slug: 'claude-code',
+          icon: '🤖',
+          configPath: '~/.claude/settings.json',
+          configBlock: JSON.stringify({
+            mcpServers: {
+              cachly: {
+                command: 'npx',
+                args: ['@cachly-dev/mcp-server@latest'],
+                env: { CACHLY_INSTANCE_ID: instance_id },
+              },
+            },
+          }, null, 2),
+        },
+        {
+          name: 'Cursor',
+          slug: 'cursor',
+          icon: '🖱️',
+          configPath: '~/.cursor/mcp.json',
+          configBlock: JSON.stringify({
+            mcpServers: {
+              cachly: {
+                command: 'npx',
+                args: ['@cachly-dev/mcp-server@latest'],
+                env: { CACHLY_INSTANCE_ID: instance_id },
+              },
+            },
+          }, null, 2),
+        },
+        {
+          name: 'Windsurf',
+          slug: 'windsurf',
+          icon: '🏄',
+          configPath: '~/.windsurf/mcp.json',
+          configBlock: JSON.stringify({
+            mcpServers: {
+              cachly: {
+                command: 'npx',
+                args: ['@cachly-dev/mcp-server@latest'],
+                env: { CACHLY_INSTANCE_ID: instance_id },
+              },
+            },
+          }, null, 2),
+        },
+        {
+          name: 'GitHub Copilot (VS Code)',
+          slug: 'copilot',
+          icon: '🐙',
+          configPath: '.vscode/mcp.json (workspace)',
+          configBlock: JSON.stringify({
+            servers: {
+              cachly: {
+                type: 'stdio',
+                command: 'npx',
+                args: ['@cachly-dev/mcp-server@latest'],
+                env: { CACHLY_INSTANCE_ID: instance_id },
+              },
+            },
+          }, null, 2),
+        },
+        {
+          name: 'Cline',
+          slug: 'cline',
+          icon: '⚡',
+          configPath: '~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json',
+          configBlock: JSON.stringify({
+            mcpServers: {
+              cachly: {
+                command: 'npx',
+                args: ['@cachly-dev/mcp-server@latest'],
+                env: { CACHLY_INSTANCE_ID: instance_id },
+              },
+            },
+          }, null, 2),
+        },
+        {
+          name: 'Zed',
+          slug: 'zed',
+          icon: '⚡',
+          configPath: '~/.config/zed/settings.json',
+          configBlock: JSON.stringify({
+            context_servers: {
+              cachly: {
+                command: { path: 'npx', args: ['@cachly-dev/mcp-server@latest'] },
+                env: { CACHLY_INSTANCE_ID: instance_id },
+              },
+            },
+          }, null, 2),
+        },
+        {
+          name: 'Continue',
+          slug: 'continue',
+          icon: '▶️',
+          configPath: '~/.continue/config.json',
+          configBlock: JSON.stringify({
+            mcpServers: [
+              {
+                name: 'cachly',
+                command: 'npx @cachly-dev/mcp-server@latest',
+                env: { CACHLY_INSTANCE_ID: instance_id },
+              },
+            ],
+          }, null, 2),
+        },
+      ];
+
+      const lines: string[] = [
+        `## 🌐 Brain Portability — Same Brain, Any Model`,
+        ``,
+        `> _"Bring your own model, keep your brain."_`,
+        ``,
+        `**Your Brain ID:** \`${instance_id}\``,
+        ``,
+        `This Brain ID is model-agnostic. Every lesson you've learned, every Memory Crystal you've distilled,`,
+        `and every prediction from your Causal Knowledge Graph is accessible from **any MCP-compatible AI client**.`,
+        ``,
+        `---`,
+        ``,
+        `### Compatible Clients (${clients.length} supported)`,
+        ``,
+      ];
+
+      for (const c of clients) {
+        lines.push(
+          `#### ${c.icon} ${c.name}`,
+          `Config: \`${c.configPath}\``,
+          ``,
+          '```json',
+          c.configBlock,
+          '```',
+          ``,
+        );
+      }
+
+      lines.push(
+        `---`,
+        ``,
+        `### What travels with you`,
+        ``,
+        `| Data | Model-neutral? |`,
+        `|------|---------------|`,
+        `| Lessons (learn_from_attempts) | ✅ Full access in all clients |`,
+        `| Memory Crystals (memory_crystalize) | ✅ Included in every session_start |`,
+        `| Causal Knowledge Graph (brain_predict) | ✅ Same graph, same predictions |`,
+        `| Team lessons (team_learn, team_confirm) | ✅ Team is per-Brain, not per-model |`,
+        `| Domain Brain Marketplace installs | ✅ Installed once, available everywhere |`,
+        `| Session handoffs (session_handoff) | ✅ Cross-client continuity |`,
+        ``,
+        `---`,
+        ``,
+        `### One-command setup for any new client`,
+        ``,
+        '```bash',
+        `npx @cachly-dev/mcp-server@latest autopilot`,
+        '```',
+        ``,
+        `Autopilot detects all installed editors and writes the config for each — with your \`${instance_id}\` Brain ID pre-filled.`,
+        ``,
+        `---`,
+        `_Docs: cachly.dev/docs/model-neutral • Your Brain, Any Model_`,
+      );
+
       return lines.join('\n');
     }
 
