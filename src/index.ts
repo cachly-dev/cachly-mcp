@@ -788,6 +788,70 @@ async function sendAnonymousTelemetry(toolName: string): Promise<void> {
   } catch { /* fire-and-forget, never block the user */ }
 }
 
+// ── Feature-Gate (premium tools) ────────────────────────────────────────────
+// Free tier delivers the magic moment: keyword + CKG recall, learn, sessions.
+// The deeper intelligence layers — causal root-cause tracing, predictive risk,
+// and the shared Team Brain — are Premium. Value through depth, not volume. A
+// free user who reaches for one of these gets the value pitched at the exact
+// moment of need, never a silent failure.
+const PREMIUM_TOOLS = new Set<string>([
+  // Predictive + causal intelligence
+  'causal_trace', 'brain_predict', 'brain_plan', 'brain_predict_failures',
+  // Team Brain (shared, multi-author knowledge)
+  'team_learn', 'team_confirm', 'team_recall', 'team_synthesize', 'team_crystallize',
+  'global_learn', 'global_recall',
+]);
+
+const PREMIUM_PITCH: Record<string, string> = {
+  causal_trace: 'Causal root-cause tracing — follow the failure chain to the real cause, not just the symptom.',
+  brain_predict: 'Predictive risk — your Brain warns you what will break *before* you run it.',
+  brain_plan: 'Generative planning — turn a goal into an ordered, risk-aware plan from your own history.',
+  brain_predict_failures: 'Failure prediction — catch CI/build breakage before it happens.',
+  team_learn: 'Team Brain — one shared memory across your whole team.',
+  team_confirm: 'Team Brain — peer + senior review that raises lesson trust.',
+  team_recall: 'Team Brain — recall everything your teammates have already solved.',
+  team_synthesize: 'Team Brain — synthesize collective knowledge across authors.',
+  team_crystallize: "Team Brain — compress your team's wisdom into a shareable crystal.",
+  global_learn: "Team Brain — contribute to your organization's shared memory.",
+  global_recall: 'Team Brain — recall across your entire organization.',
+};
+
+const UPGRADE_URL_FG = 'https://cachly.dev/billing';
+
+interface TierInfo { tier: string; isFree: boolean }
+const _tierCache = new Map<string, { info: TierInfo; expiresAt: number }>();
+
+async function getTierInfo(instanceId: string): Promise<TierInfo> {
+  const cached = _tierCache.get(instanceId);
+  if (cached && cached.expiresAt > Date.now()) return cached.info;
+  try {
+    const inst = await apiFetch<Instance>(`/api/v1/instances/${instanceId}`);
+    const tier = (inst?.tier ?? 'free').toLowerCase();
+    const info: TierInfo = { tier, isFree: tier === 'free' || tier === '' };
+    _tierCache.set(instanceId, { info, expiresAt: Date.now() + 60_000 });
+    return info;
+  } catch {
+    // Tier unknown → fail open (never block on a stats hiccup).
+    return { tier: 'unknown', isFree: false };
+  }
+}
+
+/** Returns an upgrade teaser if a free-tier caller reached for a premium tool, else null. */
+async function featureGate(name: string, instanceId: string | undefined): Promise<string | null> {
+  if (!PREMIUM_TOOLS.has(name) || !instanceId) return null;
+  const { isFree } = await getTierInfo(instanceId);
+  if (!isFree) return null;
+  const pitch = PREMIUM_PITCH[name] ?? 'A Premium intelligence feature.';
+  return [
+    `🔒 **\`${name}\` is a Premium feature**`,
+    ``,
+    `${pitch}`,
+    ``,
+    `Your Free Brain keeps full keyword + causal-graph recall, learning, and sessions — forever.`,
+    `Unlock the deeper layer (causal tracing · predictive risk · Team Brain) → ${UPGRADE_URL_FG}`,
+  ].join('\n');
+}
+
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
   // Guard: if no JWT, return actionable onboarding message instead of HTTP 401
   if (!JWT) {
@@ -857,6 +921,14 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   if (!args.instance_id) {
     const defaultId = await resolveDefaultInstanceId();
     if (defaultId) args = { ...args, instance_id: defaultId };
+  }
+
+  // Feature-Gate: free tier reaching for a Premium tool gets the upgrade pitch
+  // at the moment of need (the magic moment of basic recall stays untouched).
+  const gateMsg = await featureGate(name, args.instance_id as string | undefined);
+  if (gateMsg !== null) {
+    sendFunnelEvent('premium_gate_hit', { tool: name, instance_id: (args.instance_id as string) ?? '' });
+    return gateMsg;
   }
 
   // Delegate brain tools (learn, recall, session, etc.)

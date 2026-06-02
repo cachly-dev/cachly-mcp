@@ -988,10 +988,13 @@ export async function handleBrainTool(
       }
 
       // ── Layer 2: Semantic search (parallel, optional) ────────────────────────
+      // Semantic recall is a Premium depth layer: free tier keeps full keyword +
+      // CKG recall (the magic moment), paid tiers add embedding-based retrieval.
       const inst = await apiFetch<Instance | null>(`/api/v1/instances/${instance_id}`).catch(() => null);
+      const tierIsFree = !inst?.tier || inst.tier.toLowerCase() === 'free';
       type SemHit = { key: string; similarity: number; content: string };
       const semHits: SemHit[] = [];
-      if (inst?.vector_token && hasEmbedProvider()) {
+      if (!tierIsFree && inst?.vector_token && hasEmbedProvider()) {
         try {
           const embedding = await computeEmbedding(query);
           const vectorUrl = `https://api.cachly.dev/v1/sem/${inst!.vector_token}`;

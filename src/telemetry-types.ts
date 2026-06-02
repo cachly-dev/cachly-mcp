@@ -36,6 +36,8 @@ export type FunnelEventName =
   | 'brain_predict'
   | 'brain_predict_failures'
   | 'brain_seed_starter'
+  // Monetization
+  | 'premium_gate_hit'
   // Open-ended for future extension
   | (string & Record<never, never>);
 
