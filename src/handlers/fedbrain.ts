@@ -4,6 +4,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse, normalizeGitPath } from '../utils.js';
+import { buildClsPostCommitHook } from '../cls-hook.js';
 
 // Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
 export let _lastBrainFromGitCounts: { fixes: number; features: number; refactors: number; total: number } | null = null;
@@ -333,20 +334,7 @@ export async function handleFedbrainTool(
       const lines: string[] = [`🔌 **CLS Hook Installation Guide**\n`];
 
       if (hooksArr.includes('git')) {
-        const hookScript = [
-          `#!/bin/sh`,
-          `# cachly CLS — Continuous Learning Stream git hook`,
-          `# Installed by cls_install_hooks · runs silently on every commit`,
-          `INSTANCE="${instance_id}"`,
-          `SHA=$(git rev-parse HEAD 2>/dev/null || echo "")`,
-          `MSG=$(git log -1 --pretty=%B 2>/dev/null | head -1)`,
-          `FILES=$(git diff-tree --no-commit-id -r --name-only HEAD 2>/dev/null | tr '\\n' ',' | sed 's/,$//')`,
-          `node -e "`,
-          `const p={instance_id:'$INSTANCE',source:'git_commit',payload:{message:$(echo "$MSG" | jq -R . 2>/dev/null || echo '"commit"'),sha:'$SHA',files:'$FILES'.split(',').filter(Boolean)}};`,
-          `try{require('child_process').execSync('npx @cachly-dev/mcp-server@latest cls-ingest \\''+JSON.stringify(p)+'\\'',{stdio:'ignore',timeout:5000})}catch(e){}`,
-          `" 2>/dev/null &`,
-          `exit 0`,
-        ].join('\n');
+        const hookScript = buildClsPostCommitHook(instance_id);
 
         lines.push(`### Git post-commit hook`);
         lines.push(`**Quick install (run once per repo):**`);

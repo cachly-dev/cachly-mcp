@@ -717,6 +717,7 @@ import { handleRoadmapTool } from './handlers/roadmap.js';
 import { handleAdvancedTool } from './handlers/advanced.js';
 import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
+import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import { handleShareTool } from './handlers/share.js';
 import { handleVizTool } from './handlers/viz.js';
 import type { Instance } from './handlers/brain.js';
@@ -2513,37 +2514,11 @@ if (process.argv[2] === 'init') {
 
   // ── CLS Phase 4: Auto-install git post-commit hook ─────────────────────────
   try {
-    const { existsSync } = await import('node:fs');
-    const gitHookDir = resolve(projectDir, '.git', 'hooks');
-    const hookPath   = resolve(gitHookDir, 'post-commit');
-    if (existsSync(resolve(projectDir, '.git'))) {
-      await mkdir(gitHookDir, { recursive: true });
-      const hookScript = [
-        `#!/bin/sh`,
-        `# cachly CLS — Continuous Learning Stream (installed by cachly init)`,
-        `# Runs silently on every commit to keep your brain up to date.`,
-        `CACHLY_INSTANCE="${instanceId}"`,
-        `SHA=$(git rev-parse HEAD 2>/dev/null || echo "")`,
-        `MSG=$(git log -1 --pretty=%B 2>/dev/null | head -1 | tr '"' "'" | cut -c1-200)`,
-        `FILES=$(git diff-tree --no-commit-id -r --name-only HEAD 2>/dev/null | tr '\\n' ',' | sed 's/,$//')`,
-        `node -e "try{require('child_process').execSync('npx @cachly-dev/mcp-server@latest cls-ingest \\''+ JSON.stringify({instance_id:'$CACHLY_INSTANCE',source:'git_commit',payload:{message:'$MSG',sha:'$SHA',files:'$FILES'.split(',').filter(Boolean)}})+'\\'' ,{stdio:'ignore',timeout:5000})}catch(e){}" 2>/dev/null &`,
-        `exit 0`,
-      ].join('\n');
-      let existing = '';
-      try { const { readFile } = await import('node:fs/promises'); existing = await readFile(hookPath, 'utf-8'); } catch { /* no existing hook */ }
-      if (existing && !existing.includes('cachly CLS')) {
-        // Append to existing hook
-        await writeFile(hookPath, existing.trimEnd() + '\n\n' + hookScript + '\n', 'utf-8');
-        console.log(`✅ Appended: .git/hooks/post-commit (CLS hook)`);
-      } else if (!existing) {
-        await writeFile(hookPath, hookScript + '\n', 'utf-8');
-        const { chmod } = await import('node:fs/promises');
-        await chmod(hookPath, 0o755);
-        console.log(`✅ Written: .git/hooks/post-commit (CLS hook)`);
-      } else {
-        console.log(`✓  CLS hook already present in .git/hooks/post-commit`);
-      }
-    }
+    const r = await installClsPostCommitHook(projectDir, instanceId, JWT || undefined);
+    if (r === 'written')        console.log(`✅ Written: .git/hooks/post-commit (CLS hook)`);
+    else if (r === 'upgraded')  console.log(`✅ Upgraded: .git/hooks/post-commit (CLS hook → ${CLS_HOOK_VERSION})`);
+    else if (r === 'appended')  console.log(`✅ Appended: .git/hooks/post-commit (CLS hook)`);
+    else if (r === 'unchanged') console.log(`✓  CLS hook already current in .git/hooks/post-commit`);
   } catch { /* non-critical — git hook is a best-effort feature */ }
 
   const initSecs = ((Date.now() - initStart) / 1000).toFixed(1);
@@ -3382,35 +3357,10 @@ if (process.argv[2] === 'setup' || _isAutopilotCli) {
 
   // ── CLS Phase 4: Auto-install git post-commit hook in setup flow ─────────
   try {
-    const { existsSync } = await import('node:fs');
-    const { writeFile: wf2, mkdir: mk2, chmod: ch2, readFile: rf2 } = await import('node:fs/promises');
-    const { resolve: res2 } = await import('node:path');
-    const setupProjectDir = process.cwd();
-    const gitHookDir2 = res2(setupProjectDir, '.git', 'hooks');
-    const hookPath2   = res2(gitHookDir2, 'post-commit');
-    if (existsSync(res2(setupProjectDir, '.git'))) {
-      await mk2(gitHookDir2, { recursive: true });
-      const hs2 = [
-        `#!/bin/sh`,
-        `# cachly CLS — Continuous Learning Stream (installed by cachly setup)`,
-        `CACHLY_INSTANCE="${instance.id}"`,
-        `SHA=$(git rev-parse HEAD 2>/dev/null || echo "")`,
-        `MSG=$(git log -1 --pretty=%B 2>/dev/null | head -1 | tr '"' "'" | cut -c1-200)`,
-        `FILES=$(git diff-tree --no-commit-id -r --name-only HEAD 2>/dev/null | tr '\\n' ',' | sed 's/,$//')`,
-        `node -e "try{require('child_process').execSync('npx @cachly-dev/mcp-server@latest cls-ingest \\''+ JSON.stringify({instance_id:'$CACHLY_INSTANCE',source:'git_commit',payload:{message:'$MSG',sha:'$SHA',files:'$FILES'.split(',').filter(Boolean)}})+'\\'' ,{stdio:'ignore',timeout:5000})}catch(e){}" 2>/dev/null &`,
-        `exit 0`,
-      ].join('\n');
-      let ex2 = '';
-      try { ex2 = await rf2(hookPath2, 'utf-8'); } catch { /* no existing */ }
-      if (!ex2) {
-        await wf2(hookPath2, hs2 + '\n', 'utf-8');
-        await ch2(hookPath2, 0o755);
-        console.log(`\n✅  CLS git hook installed — your brain will learn from every commit.`);
-      } else if (!ex2.includes('cachly CLS')) {
-        await wf2(hookPath2, ex2.trimEnd() + '\n\n' + hs2 + '\n', 'utf-8');
-        console.log(`\n✅  CLS git hook appended to existing post-commit.`);
-      }
-    }
+    const r = await installClsPostCommitHook(process.cwd(), instance.id, token || undefined);
+    if (r === 'written')        console.log(`\n✅  CLS git hook installed — your brain will learn from every commit.`);
+    else if (r === 'upgraded')  console.log(`\n✅  CLS git hook upgraded to ${CLS_HOOK_VERSION}.`);
+    else if (r === 'appended')  console.log(`\n✅  CLS git hook appended to existing post-commit.`);
   } catch { /* non-critical */ }
 
   // Setup reached the end — close the funnel. Report config-write outcome so the
@@ -3546,6 +3496,34 @@ if (process.argv[2] === 'learn-git') {
   } catch (err) {
     console.error(`\n❌  learn-git failed: ${(err as Error).message}\n`);
     process.exit(1);
+  }
+  process.exit(0);
+}
+
+// ── cls-ingest: CLI entrypoint for the git post-commit hook ───────────────────
+// Invoked as: cachly cls-ingest '<json>'  where json = { instance_id, source, payload }.
+// Auth comes from CACHLY_JWT (embedded in the generated hook). This is a silent,
+// best-effort sink: ANY problem (no JWT, bad JSON, network) exits 0 so a commit
+// is never blocked or noisy. Without this command the hook was a no-op.
+if (process.argv[2] === 'cls-ingest') {
+  try {
+    const raw = process.argv[3];
+    if (!raw || !JWT) process.exit(0); // nothing to do / not authenticated → silent
+    let parsed: { instance_id?: string; source?: string; payload?: Record<string, unknown> };
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      process.exit(0); // malformed payload → never block the commit
+    }
+    const instanceId = parsed.instance_id ?? _defaultInstanceId;
+    if (!instanceId || !parsed.source) process.exit(0);
+    await handleTool('cls_ingest', {
+      instance_id: instanceId,
+      source: parsed.source,
+      payload: parsed.payload ?? {},
+    });
+  } catch {
+    // Swallow everything — a learning sink must never break `git commit`.
   }
   process.exit(0);
 }

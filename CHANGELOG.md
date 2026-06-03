@@ -7,6 +7,31 @@
 
 ---
 
+## [0.10.102] – 2026-06-03 — *"CLS git hook actually works"*
+
+### Added
+- **`cls-ingest` CLI command** — `npx @cachly-dev/mcp-server@latest cls-ingest '<json>'`
+  now exists. Previously the generated git post-commit hook called this command but it
+  silently fell into stdio-MCP mode and was killed by timeout; no commit data was ever
+  ingested. The new command parses the JSON payload, authenticates via `CACHLY_JWT`, and
+  calls the `cls_ingest` tool. Exits 0 silently on any error — a commit is never blocked.
+- **`buildClsPostCommitHook(instanceId, apiKey?)` helper** (`src/cls-hook.ts`) —
+  centralised, versioned (v2) hook builder shared by `init`, `setup`, and `autopilot`.
+  Passes commit message / sha / files via **environment variables** (not JS-source
+  interpolation) and calls the CLI via `execFileSync` — immune to apostrophes, shell
+  quoting, and `$`/backtick injection.
+- **`installClsPostCommitHook(projectDir, instanceId, apiKey?)` helper** — idempotent
+  installer with version-aware upgrade: existing v1 hooks are replaced in place; foreign
+  hooks without a cachly block are appended to.
+
+### Fixed
+- **Hook v1 generated invalid JS on any commit message containing an apostrophe** (`don't`,
+  `won't`, etc.) — the interpolation `message:'$MSG'` broke the script. Rewritten in v2.
+- All three install sites (`init`, `setup`, `autopilot`) now use the shared installer —
+  no more divergence between code paths.
+
+---
+
 ## [0.10.81] – 2026-05-30
 
 ### Onboarding-Bench (time-to-first-recall, measured) + external dashboard plan
