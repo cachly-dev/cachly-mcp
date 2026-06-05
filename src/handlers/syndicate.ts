@@ -13,6 +13,7 @@ export const SYNDICATE_TOOL_NAMES = new Set([
   'syndicate', 'syndicate_search', 'syndicate_stats', 'syndicate_trending',
   'brain_search', 'ckg_inspect', 'brain_predict', 'brain_plan',
   'brain_marketplace', 'brain_install',
+  'brain_conflicts', 'brain_resolve_conflict',
 ]);
 
 export async function handleSyndicateTool(
@@ -721,6 +722,174 @@ export async function handleSyndicateTool(
         `  • \`smart_recall(query="${pack.lessons[0]?.topic.split(':').pop() ?? 'your problem'}")\``,
         ``,
         `_Installed lessons are tagged \`source: "${source}"\` and never override your own. Re-run anytime to pull updates._`,
+      ].join('\n');
+    }
+
+    // ── brain_conflicts: list live belief conflicts + active agents ─────────────
+    // Surfaces every unresolved belief_conflict marker (a previously confirmed
+    // fix now contradicted by a failure) plus the agents currently writing to
+    // this Brain. This is the arbitration inbox for multi-agent teams (Move 4).
+    case 'brain_conflicts': {
+      const { instance_id } = args as { instance_id: string };
+      const redis = await getConnection(instance_id);
+
+      // Scan conflict markers
+      type ConflictMarker = {
+        topic: string; concept_id?: string; detected_at: string;
+        fix_confidence: number; fix_trials: number; failure_outcome: string;
+        reported_by?: string; what_failed?: string; resolved?: boolean;
+      };
+      const conflictKeys: string[] = [];
+      const cStream = redis.scanStream({ match: 'cachly:ckg:conflict:*', count: 100 });
+      await new Promise<void>((resolve, reject) => {
+        cStream.on('data', (batch: string[]) => conflictKeys.push(...batch));
+        cStream.on('end', resolve);
+        cStream.on('error', reject);
+      });
+
+      const conflicts: ConflictMarker[] = [];
+      if (conflictKeys.length > 0) {
+        const raws = await redis.mget(...conflictKeys);
+        for (const raw of raws) {
+          const c = safeJsonParse<ConflictMarker | null>(raw ?? null, null);
+          if (c && !c.resolved) conflicts.push(c);
+        }
+      }
+
+      // Scan active agents
+      type ActiveAgent = { author: string; last_topic?: string; last_outcome?: string; ts: string };
+      const agentKeys: string[] = [];
+      const aStream = redis.scanStream({ match: 'cachly:agents:active:*', count: 100 });
+      await new Promise<void>((resolve, reject) => {
+        aStream.on('data', (batch: string[]) => agentKeys.push(...batch));
+        aStream.on('end', resolve);
+        aStream.on('error', reject);
+      });
+      const agents: ActiveAgent[] = [];
+      if (agentKeys.length > 0) {
+        const raws = await redis.mget(...agentKeys);
+        for (const raw of raws) {
+          const a = safeJsonParse<ActiveAgent | null>(raw ?? null, null);
+          if (a) agents.push(a);
+        }
+      }
+
+      const lines: string[] = [`## ⚔️ Brain Conflicts & Live Agents`, ``];
+
+      lines.push(`**🤖 Active agents (last 1h):** ${agents.length}`);
+      if (agents.length > 0) {
+        for (const a of agents.sort((x, y) => y.ts.localeCompare(x.ts)).slice(0, 10)) {
+          const ago = Math.round((Date.now() - new Date(a.ts).getTime()) / 60000);
+          lines.push(`  - **${a.author}** — last: \`${a.last_topic ?? '?'}\` (${a.last_outcome ?? '?'}, ${ago}m ago)`);
+        }
+      }
+      lines.push('');
+
+      if (conflicts.length === 0) {
+        lines.push(`**✅ No unresolved belief conflicts.** The Brain is in consensus.`);
+        return lines.join('\n');
+      }
+
+      lines.push(`**⚠️ Unresolved belief conflicts:** ${conflicts.length}`);
+      lines.push('');
+      lines.push(`| Topic | Confirmed fix | Contradicted by | Detected |`);
+      lines.push(`|---|---|---|---|`);
+      for (const c of conflicts.sort((x, y) => y.detected_at.localeCompare(x.detected_at)).slice(0, 20)) {
+        const ago = Math.round((Date.now() - new Date(c.detected_at).getTime()) / 3600000);
+        lines.push(`| \`${c.topic}\` | ${(c.fix_confidence * 100).toFixed(0)}% (n=${c.fix_trials}) | ${c.reported_by ?? 'unknown'} | ${ago}h ago |`);
+      }
+      lines.push('');
+      lines.push(`_Arbitrate with \`brain_resolve_conflict(instance_id="${instance_id}", topic="<topic>", winner="success"|"failure")\`._`);
+
+      return lines.join('\n');
+    }
+
+    // ── brain_resolve_conflict: arbitrate a belief conflict ─────────────────────
+    // Picks a winning side for a contested topic. The losing side's CKG fixes
+    // edges are decayed to near-zero confidence and the loser's `best` lesson is
+    // archived; the winner is reinforced. The resolution is recorded so the
+    // conflict no longer surfaces. Human-in-the-loop is the strongest signal.
+    case 'brain_resolve_conflict': {
+      const { instance_id, topic, winner, resolved_by = 'human' } = args as {
+        instance_id: string; topic: string; winner: 'success' | 'failure'; resolved_by?: string;
+      };
+      if (!topic || !topic.trim()) {
+        throw new McpError(ErrorCode.InvalidParams, 'topic is required');
+      }
+      if (winner !== 'success' && winner !== 'failure') {
+        throw new McpError(ErrorCode.InvalidParams, 'winner must be "success" or "failure"');
+      }
+      const redis = await getConnection(instance_id);
+      const conceptId = ckgSlug(topic);
+      const conflictKey = `cachly:ckg:conflict:${conceptId}`;
+
+      const markerRaw = await redis.get(conflictKey);
+      if (!markerRaw) {
+        return `📭 No active conflict found for \`${topic}\`. Run \`brain_conflicts(instance_id="${instance_id}")\` to list open conflicts.`;
+      }
+
+      // ── Decay the losing side's `fixes` edges ─────────────────────────────────
+      // winner=success → the fix is real; keep fixes edges, no decay.
+      // winner=failure → the fix is wrong; decay fixes edges to 0.1.
+      let decayedEdges = 0;
+      if (winner === 'failure') {
+        const fromKeys = await redis.smembers(`cachly:ckg:idx:from:${conceptId}`);
+        for (const ek of fromKeys) {
+          const er = await redis.get(ek);
+          if (!er) continue;
+          const edge = safeJsonParse<CKGEdge | null>(er, null);
+          if (!edge || edge.edgeType !== 'fixes') continue;
+          edge.confidence = 0.1;
+          await redis.set(ek, JSON.stringify(edge));
+          decayedEdges++;
+        }
+      }
+
+      // ── Archive the losing `best` lesson (if its outcome is the losing side) ──
+      let archivedLesson = false;
+      const bestKey = `cachly:lesson:best:${topic}`;
+      const bestRaw = await redis.get(bestKey);
+      if (bestRaw) {
+        const lesson = safeJsonParse<{ outcome?: string; state?: string; audit_trail?: unknown[]; [k: string]: unknown } | null>(bestRaw, null);
+        if (lesson && lesson.outcome === winner) {
+          // The surviving lesson matches the winner — reinforce by clearing any provisional state.
+          if (lesson.state === 'provisional') {
+            lesson.state = 'active';
+            lesson.verified_at = new Date().toISOString();
+            await redis.set(bestKey, JSON.stringify(lesson));
+          }
+        } else if (lesson && lesson.outcome && lesson.outcome !== winner) {
+          // The stored best lesson is the losing side — archive it.
+          lesson.state = 'archived';
+          lesson.audit_trail = [
+            ...(Array.isArray(lesson.audit_trail) ? lesson.audit_trail : []),
+            { ts: new Date().toISOString(), action: 'conflict_loser_archived', resolved_by },
+          ];
+          await redis.set(bestKey, JSON.stringify(lesson));
+          archivedLesson = true;
+        }
+      }
+
+      // ── Mark the conflict resolved ────────────────────────────────────────────
+      const marker = safeJsonParse<Record<string, unknown> | null>(markerRaw, null) ?? {};
+      marker.resolved = true;
+      marker.winner = winner;
+      marker.resolved_by = resolved_by;
+      marker.resolved_at = new Date().toISOString();
+      await redis.set(conflictKey, JSON.stringify(marker), 'EX', 60 * 60 * 24 * 30);
+
+      return [
+        `## ✅ Conflict resolved — \`${topic}\``,
+        ``,
+        `**Winner:** ${winner === 'success' ? '✅ success (fix is valid)' : '❌ failure (fix retired)'}`,
+        `**Resolved by:** ${resolved_by}`,
+        ``,
+        `- CKG \`fixes\` edges decayed: **${decayedEdges}**`,
+        `- Losing lesson archived: **${archivedLesson ? 'yes' : 'no'}**`,
+        ``,
+        winner === 'failure'
+          ? `_The contradicted fix is retired. smart_recall will stop surfacing it; future attempts start fresh._`
+          : `_The fix is reaffirmed. The contradicting failure no longer blocks recall._`,
       ].join('\n');
     }
 

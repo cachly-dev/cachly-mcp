@@ -891,14 +891,11 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       // Try to open the browser automatically — fire-and-forget, never block
       openInBrowser(flow.verifyUrl);
       return [
-        '🧠 **cachly AI Brain — create your free account or sign in** (browser opening...)',
+        '🧠 **cachly AI Brain — sign in to activate** (browser opening...)',
         '',
         `👉 **${flow.verifyUrl}**`,
         '',
         `Code: **${flow.userCode}** (pre-filled if browser opened automatically)`,
-        '',
-        'New here? Click **Register** on the page — it\'s free, no credit card needed.',
-        'Already have an account? Just sign in.',
         '',
         'After sign-in: call **any tool again** — your Brain activates instantly.',
         '',

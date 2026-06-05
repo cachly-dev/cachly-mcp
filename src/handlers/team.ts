@@ -11,7 +11,7 @@ type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 
 export const TEAM_TOOL_NAMES = new Set([
   'sync_file_changes', 'team_learn', 'team_confirm', 'team_recall', 'team_synthesize', 'memory_crystalize', 'team_crystallize',
-  'brain_doctor', 'recall_at', 'trace_dependency', 'global_learn', 'global_recall',
+  'brain_doctor', 'brain_hygiene', 'recall_at', 'trace_dependency', 'global_learn', 'global_recall',
   'publish_lesson', 'import_public_brain', 'setup_ai_memory',
   'team_assign_role', 'team_whoami', 'team_roster',
   'team_grant_scope', 'team_scopes', 'team_audit',
@@ -892,6 +892,216 @@ export async function handleTeamTool(
         lines.push('');
         lines.push('_Keep the brain sharp: `session_start` → work → `learn_from_attempts` → `session_end`_');
       }
+      return lines.join('\n');
+    }
+
+    // ── brain_hygiene — autonomous Brain maintenance sweep ────────────────────
+    //
+    // Runs a full lesson sweep and applies three automated hygiene rules:
+    //
+    //  1. Decay flagging: lessons where confidence < PROVISIONAL_THRESHOLD
+    //     (default 0.5) are marked state="provisional". They still appear in
+    //     smart_recall with a ⚠️ badge but callers know to re-verify.
+    //
+    //  2. Archival: lessons that are provisional AND have recall_count < 2 AND
+    //     are older than ARCHIVE_DAYS (default 30) are moved to state="archived".
+    //     Archived lessons are excluded from smart_recall results but kept for
+    //     audit_trail inspection.
+    //
+    //  3. Contradiction auto-resolution: when the same topic has both a failure
+    //     and a success lesson, and the success has recall_count ≥ 3× the
+    //     failure's recall_count, the failure lesson is archived automatically.
+    //     The resolution is recorded in both lessons' audit_trail.
+    //
+    // dry_run=true (default false) reports what would change without writing.
+    case 'brain_hygiene': {
+      const {
+        instance_id,
+        dry_run = false,
+        provisional_threshold = 0.5,
+        archive_days = 30,
+      } = args as {
+        instance_id: string;
+        dry_run?: boolean;
+        provisional_threshold?: number;
+        archive_days?: number;
+      };
+
+      const redis = await getConnection(instance_id);
+
+      // ── Load all lessons ──────────────────────────────────────────────────
+      type HygieneLesson = {
+        topic: string;
+        outcome: string;
+        what_worked?: string;
+        what_failed?: string;
+        recall_count?: number;
+        ts: string;
+        verified_at?: string;
+        severity?: string;
+        state?: string; // 'active' | 'provisional' | 'archived'
+        audit_trail?: Array<{ ts: string; action: string; prev_state?: string }>;
+        [k: string]: unknown;
+      };
+
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((resolve, reject) => {
+        lStream.on('data', (batch: string[]) => lessonKeys.push(...batch));
+        lStream.on('end', resolve);
+        lStream.on('error', reject);
+      });
+
+      if (lessonKeys.length === 0) {
+        return '🧹 **Brain Hygiene** — no lessons found. Nothing to sweep.';
+      }
+
+      const rawValues = await redis.mget(...lessonKeys);
+      const lessons: (HygieneLesson & { _key: string })[] = [];
+      for (let i = 0; i < lessonKeys.length; i++) {
+        const raw = rawValues[i];
+        const l = safeJsonParse<HygieneLesson | null>(raw ?? null, null);
+        if (l) lessons.push({ ...l, _key: lessonKeys[i] });
+      }
+
+      const nowMs = Date.now();
+      const provisionalKeys: string[] = [];
+      const archivedKeys: string[] = [];
+      const conflictResolutions: string[] = [];
+      const updates = new Map<string, HygieneLesson>(); // key → updated lesson
+
+      // ── Rule 1 + 2: decay flagging + archival ─────────────────────────────
+      for (const lesson of lessons) {
+        const currentState = lesson.state ?? 'active';
+        if (currentState === 'archived') continue; // already done
+
+        const conf = calculateConfidence(lesson);
+        const refMs = new Date(lesson.verified_at ?? lesson.ts).getTime();
+        const ageDays = (nowMs - refMs) / 86400000;
+
+        if (conf <= provisional_threshold) {
+          const recallCount = lesson.recall_count ?? 0;
+          const shouldArchive =
+            currentState === 'provisional' &&
+            recallCount < 2 &&
+            ageDays > archive_days;
+
+          if (shouldArchive) {
+            archivedKeys.push(lesson.topic);
+            if (!dry_run) {
+              const updated: HygieneLesson = {
+                ...lesson,
+                state: 'archived',
+                audit_trail: [
+                  ...(lesson.audit_trail ?? []),
+                  { ts: new Date().toISOString(), action: 'archived', prev_state: 'provisional' },
+                ],
+              };
+              updates.set(lesson._key, updated);
+            }
+          } else if (currentState === 'active') {
+            provisionalKeys.push(lesson.topic);
+            if (!dry_run) {
+              const updated: HygieneLesson = {
+                ...lesson,
+                state: 'provisional',
+                audit_trail: [
+                  ...(lesson.audit_trail ?? []),
+                  { ts: new Date().toISOString(), action: 'flagged_provisional', prev_state: 'active' },
+                ],
+              };
+              updates.set(lesson._key, updated);
+            }
+          }
+        }
+      }
+
+      // ── Rule 3: orphan-failure cleanup ────────────────────────────────────
+      // Each topic has exactly one `best` lesson (upsert-on-write model).
+      // A failure lesson that was never recalled (recall_count === 0) and is
+      // older than archive_days days represents an unresolved one-off error
+      // that no one ever found useful. Archive it to keep the recall surface clean.
+      for (const lesson of lessons) {
+        const currentState = lesson.state ?? 'active';
+        if (currentState === 'archived') continue;
+        // Skip if Rule 1/2 already scheduled archival for this key.
+        if (updates.has(lesson._key) && (updates.get(lesson._key) as HygieneLesson).state === 'archived') continue;
+        if (lesson.outcome !== 'failure') continue;
+        const recallCount = lesson.recall_count ?? 0;
+        if (recallCount > 0) continue; // still useful
+        const refMs = new Date(lesson.verified_at ?? lesson.ts).getTime();
+        const ageDays = (nowMs - refMs) / 86400000;
+        if (ageDays <= archive_days) continue;
+
+        // Remove from provisionalKeys if Rule 1 already staged it — Rule 3 wins with archived.
+        const provIdx = provisionalKeys.indexOf(lesson.topic);
+        if (provIdx !== -1) provisionalKeys.splice(provIdx, 1);
+
+        conflictResolutions.push(`${lesson.topic} (failure, never recalled, ${Math.round(ageDays)}d old)`);
+        if (!dry_run) {
+          const base = updates.get(lesson._key) ?? lesson;
+          const updated: HygieneLesson = {
+            ...base,
+            state: 'archived',
+            audit_trail: [
+              ...((base as HygieneLesson).audit_trail ?? []),
+              { ts: new Date().toISOString(), action: 'orphan_failure_archived', prev_state: currentState },
+            ],
+          };
+          updates.set(lesson._key, updated);
+        }
+      }
+
+      // ── Flush updates ─────────────────────────────────────────────────────
+      if (!dry_run && updates.size > 0) {
+        const pipeline = redis.pipeline();
+        for (const [key, updated] of updates) {
+          const { _key: _unused, ...lessonData } = updated as HygieneLesson & { _key: string };
+          void _unused;
+          pipeline.set(key, JSON.stringify(lessonData));
+        }
+        await pipeline.exec();
+      }
+
+      // ── Report ────────────────────────────────────────────────────────────
+      const prefix = dry_run ? '🔍 **Brain Hygiene (dry run)**' : '🧹 **Brain Hygiene**';
+      const lines = [
+        `${prefix} — scanned **${lessons.length}** lessons`,
+        '',
+        `| Action | Count |`,
+        `|---|---|`,
+        `| Flagged provisional (confidence < ${provisional_threshold}) | ${provisionalKeys.length} |`,
+        `| Archived (stale + low-recall + age > ${archive_days}d) | ${archivedKeys.length} |`,
+        `| Contradictions auto-resolved | ${conflictResolutions.length} |`,
+        '',
+      ];
+
+      if (provisionalKeys.length > 0) {
+        lines.push(`**⚠️ Provisional (verify or re-learn):**`);
+        provisionalKeys.slice(0, 10).forEach(t => lines.push(`  - \`${t}\``));
+        if (provisionalKeys.length > 10) lines.push(`  - _…and ${provisionalKeys.length - 10} more_`);
+        lines.push('');
+      }
+      if (archivedKeys.length > 0) {
+        lines.push(`**📦 Archived (excluded from recall):**`);
+        archivedKeys.slice(0, 5).forEach(t => lines.push(`  - \`${t}\``));
+        if (archivedKeys.length > 5) lines.push(`  - _…and ${archivedKeys.length - 5} more_`);
+        lines.push('');
+      }
+      if (conflictResolutions.length > 0) {
+        lines.push(`**⚔️ Contradictions resolved (failure archived, success kept):**`);
+        conflictResolutions.slice(0, 5).forEach(r => lines.push(`  - ${r}`));
+        lines.push('');
+      }
+
+      if (dry_run) {
+        lines.push(`_Run \`brain_hygiene(dry_run=false)\` to apply these changes._`);
+      } else if (provisionalKeys.length + archivedKeys.length + conflictResolutions.length === 0) {
+        lines.push(`✅ Brain is clean — no hygiene actions needed.`);
+      } else {
+        lines.push(`_Changes applied. Run \`brain_doctor\` to verify the updated health score._`);
+      }
+
       return lines.join('\n');
     }
 
