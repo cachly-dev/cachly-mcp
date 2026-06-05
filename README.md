@@ -494,6 +494,18 @@ keep talking to your backend on every editor launch. All data stays in your infr
 
 ---
 
+## 🧠 Brain v3 — what's new
+
+| Feature | Tool | What it does |
+|---|---|---|
+| Autonomous hygiene | `brain_hygiene` | Sweeps stale lessons, flags provisional, archives orphans |
+| PR risk scan | `brain_plan` + `cachly-action scan` | Predicts CI failures before they run, posts PR comment |
+| Multi-agent arbitration | `brain_conflicts` · `brain_resolve_conflict` | Detects + resolves conflicting lessons across agents |
+| Plans dashboard | `brain_plan` | Persistent plans in the UI with step tracking and brain-viz overlay |
+| Privacy federation | `brain_contribute_signal` · `brain_import_meta` | Share patterns without sharing data — k-anonymous global commons |
+
+---
+
 ## 🛠️ Ecosystem & Docs
 
 **One brain, wherever you work.** Start with the MCP server, or drop the same memory
@@ -505,11 +517,11 @@ straight into your editor — your lessons follow you across all of them.
 | **[Cachly Brain for VS Code](https://marketplace.visualstudio.com/items?itemName=cachly-dev.cachly-brain)** | One-click memory in the editor — status bar, lessons view, ambient learning. No terminal needed. |
 | **[Cachly Brain for JetBrains](https://plugins.jetbrains.com/plugin/32059-cachly-brain)** | Same brain for IntelliJ / PyCharm / GoLand / WebStorm / Rider — status bar, brain health, lessons view. |
 | **[`@cachly-dev/openclaw`](https://www.npmjs.com/package/@cachly-dev/openclaw)** | Cut LLM costs 60–90% in JS/TS apps |
+| **[cachly-dev/cachly-action](https://github.com/cachly-dev/cachly-action)** | GitHub Action: auto-setup, PR risk scan, auto-learn from merged PRs, weekly hygiene |
 
 - 🌐 [cachly.dev](https://cachly.dev) — Dashboard & free signup
 - 📖 [Docs](https://cachly.dev/docs/ai-memory) — Full documentation
-- 📊 [BENCH.md](./BENCH.md) — The recall-quality proof
-- 🧭 [STRATEGY.md](./STRATEGY.md) · [VISION_10X.md](./VISION_10X.md) · [PROGRESS.md](./PROGRESS.md)
+- 🗺️ [Public Roadmap](https://cachly.dev/roadmap) — what's coming next
 - 💬 [GitHub Issues](https://github.com/cachly-dev/cachly-mcp/issues) — Bugs & feature requests
 
 ---

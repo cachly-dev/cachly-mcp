@@ -7,6 +7,15 @@
 
 ---
 
+## [0.10.103] – 2026-06-05 — *"v4 Move 1 — Closed-loop CI"*
+
+### Added
+- **`brain_confirm_ci`** — closed-loop CI self-calibration. Call after every CI run with `job_status` (success/failure/cancelled) and the topics the run covered. Confirmed failures boost lesson confidence +15%; false positives (brain predicted failure but CI passed) reduce it −10%; capped 0.05–0.99.
+- **cachly-action `confirm` mode** — new `mode: confirm` step in `cachly-action` auto-posts CI outcome to the Brain at pipeline end.
+- **`cachly brain` CLI** — `lessons`, `recall`, `stats`, `ci-confirm`, `federation list/contribute` available from the terminal (`@cachly-dev/cli@0.3.0`).
+
+---
+
 ## [0.10.102] – 2026-06-03 — *"CLS git hook actually works"*
 
 ### Added

@@ -1944,6 +1944,33 @@ const TOOLS = [
       required: ['instance_id', 'topic', 'winner'],
     },
   },
+  // ── v4 Move 1: Closed-loop CI learning ───────────────────────────────────
+  {
+    name: 'brain_confirm_ci',
+    description:
+      'Close the CI feedback loop: tell the Brain whether a CI job passed or failed and which topics ' +
+      'it covered. The Brain adjusts lesson confidence automatically — confirmed failures get +15%, ' +
+      'false positives (brain predicted failure but CI passed) get −10%. ' +
+      'Called automatically by cachly-action at the end of every pipeline. ' +
+      'Also use manually after a deploy to confirm or refute the brain\'s last prediction.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        job_status: { type: 'string', enum: ['success', 'failure', 'cancelled'], description: 'Outcome of the CI job' },
+        topics: {
+          type: 'array', items: { type: 'string' },
+          description: 'Topics touched by this CI run (e.g. ["auth:jwt", "deploy:k8s"])',
+        },
+        scan_topics: {
+          type: 'array', items: { type: 'string' },
+          description: 'Topics the brain predicted would fail (from the scan response). Used to detect false positives.',
+        },
+        source: { type: 'string', description: 'Optional: "github_actions", "gitlab_ci", etc.' },
+      },
+      required: ['instance_id', 'job_status', 'topics'],
+    },
+  },
   // ── Move 5: Privacy-preserving federation ────────────────────────────────
   {
     name: 'brain_contribute_signal',

@@ -14,6 +14,7 @@ export const SYNDICATE_TOOL_NAMES = new Set([
   'brain_search', 'ckg_inspect', 'brain_predict', 'brain_plan',
   'brain_marketplace', 'brain_install',
   'brain_conflicts', 'brain_resolve_conflict',
+  'brain_confirm_ci',
 ]);
 
 export async function handleSyndicateTool(
@@ -891,6 +892,74 @@ export async function handleSyndicateTool(
           ? `_The contradicted fix is retired. smart_recall will stop surfacing it; future attempts start fresh._`
           : `_The fix is reaffirmed. The contradicting failure no longer blocks recall._`,
       ].join('\n');
+    }
+
+    // ── v4 Move 1: brain_confirm_ci — closed-loop CI learning ────────────────
+    case 'brain_confirm_ci': {
+      const {
+        instance_id,
+        job_status,
+        topics,
+        scan_topics = [],
+        source = 'manual',
+      } = args as {
+        instance_id: string;
+        job_status: string;
+        topics: string[];
+        scan_topics?: string[];
+        source?: string;
+      };
+
+      if (!job_status || !['success', 'failure', 'cancelled'].includes(job_status)) {
+        throw new Error('job_status must be success, failure, or cancelled');
+      }
+      if (!topics?.length) throw new Error('topics is required');
+
+      if (job_status === 'cancelled') {
+        return '⏭️ CI was cancelled — no confidence changes applied.';
+      }
+
+      type DeltaResult = {
+        updated: number;
+        confidence_deltas: Array<{ topic: string; old: number; new: number; delta: number; reason: string }>;
+        job_status: string;
+      };
+
+      let result: DeltaResult;
+      try {
+        result = await apiFetch<DeltaResult>(
+          `/api/v1/instances/${instance_id}/ci-outcome`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ job_status, topics, scan_topics, source }),
+          },
+        );
+      } catch {
+        return `⚠️ Could not reach Brain API — CI outcome not recorded. Will retry on next call.`;
+      }
+
+      if (result.updated === 0) {
+        return [
+          `🤖 **brain_confirm_ci** — CI ${job_status}`,
+          '',
+          `No confidence changes (no matching predictions for these topics).`,
+          `Topics checked: ${topics.slice(0, 5).map(t => `\`${t}\``).join(', ')}${topics.length > 5 ? ` +${topics.length - 5} more` : ''}`,
+        ].join('\n');
+      }
+
+      const lines = [
+        `🤖 **brain_confirm_ci** — CI ${job_status === 'success' ? '✅' : '❌'} · ${result.updated} lesson${result.updated !== 1 ? 's' : ''} updated`,
+        '',
+        `| Topic | Old | New | Δ | Reason |`,
+        `|---|---|---|---|---|`,
+      ];
+      for (const d of result.confidence_deltas) {
+        const sign = d.delta > 0 ? '+' : '';
+        const icon = d.reason === 'confirmed_failure' ? '🔴' : '🟡';
+        lines.push(`| \`${d.topic}\` | ${(d.old * 100).toFixed(0)}% | ${(d.new * 100).toFixed(0)}% | ${sign}${(d.delta * 100).toFixed(0)}% | ${icon} ${d.reason} |`);
+      }
+      lines.push('', `_Brain self-calibrated from real CI signal. No manual \`learn_from_attempts\` needed._`);
+      return lines.join('\n');
     }
 
     // ── Layer 3: MADC ─────────────────────────────────────────────────────────
