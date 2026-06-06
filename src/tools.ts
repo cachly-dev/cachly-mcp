@@ -1971,6 +1971,36 @@ const TOOLS = [
       required: ['instance_id', 'job_status', 'topics'],
     },
   },
+  // ── v4 Move 2: Proactive briefing ─────────────────────────────────────────
+  {
+    name: 'brain_briefing',
+    description:
+      'Push-based Brain warning: instead of waiting for you to ask, the Brain proactively checks ' +
+      'whether the file you just opened, the PR you are about to raise, or the deploy you are about ' +
+      'to run matches any known failure pattern — and surfaces warnings BEFORE something breaks. ' +
+      'Call this on file_open (with the file path as context), pr_open (with the PR title/body), ' +
+      'or deploy (with a short description of what is being deployed). ' +
+      'Returns a risk_level (low/medium/high) plus up to 5 ranked warnings with confidence and a known fix.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        event_type: {
+          type: 'string', enum: ['file_open', 'pr_open', 'deploy', 'manual'],
+          description: 'What triggered this briefing — determines how the context is interpreted',
+        },
+        context: {
+          type: 'string',
+          description: 'The event context: file path for file_open, title+body for pr_open, short description for deploy/manual',
+        },
+        threshold: {
+          type: 'number',
+          description: 'Minimum confidence (0–1) for a warning to be surfaced. Default 0.6 — raise it to reduce noise.',
+        },
+      },
+      required: ['instance_id', 'event_type', 'context'],
+    },
+  },
   // ── Move 5: Privacy-preserving federation ────────────────────────────────
   {
     name: 'brain_contribute_signal',

@@ -7,6 +7,14 @@
 
 ---
 
+## [0.10.104] – 2026-06-06 — *"v4 Move 2 — Proactive briefing"*
+
+### Added
+- **`brain_briefing`** — flips the Brain from pull-only to push. Call it on `file_open` (with the file path), `pr_open` (with the PR title/body), or `deploy` (with a short description) and the Brain proactively surfaces up to 5 ranked warnings — confidence, severity, what to watch, and a known fix — *before* anything breaks. Returns an overall `risk_level` (low/medium/high) derived from the strongest match. Optional `threshold` (default 0.6) tunes signal-to-noise.
+- New API endpoint `POST /api/v1/instances/:id/briefing` — tokenises the event context (camelCase-aware, same tokeniser as PR scan), matches it against the instance's lessons above the confidence threshold, and ranks results.
+
+---
+
 ## [0.10.103] – 2026-06-05 — *"v4 Move 1 — Closed-loop CI"*
 
 ### Added

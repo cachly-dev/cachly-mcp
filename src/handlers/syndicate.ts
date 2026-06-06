@@ -14,7 +14,7 @@ export const SYNDICATE_TOOL_NAMES = new Set([
   'brain_search', 'ckg_inspect', 'brain_predict', 'brain_plan',
   'brain_marketplace', 'brain_install',
   'brain_conflicts', 'brain_resolve_conflict',
-  'brain_confirm_ci',
+  'brain_confirm_ci', 'brain_briefing',
 ]);
 
 export async function handleSyndicateTool(
@@ -959,6 +959,72 @@ export async function handleSyndicateTool(
         lines.push(`| \`${d.topic}\` | ${(d.old * 100).toFixed(0)}% | ${(d.new * 100).toFixed(0)}% | ${sign}${(d.delta * 100).toFixed(0)}% | ${icon} ${d.reason} |`);
       }
       lines.push('', `_Brain self-calibrated from real CI signal. No manual \`learn_from_attempts\` needed._`);
+      return lines.join('\n');
+    }
+
+    case 'brain_briefing': {
+      const {
+        instance_id,
+        event_type,
+        context,
+        threshold,
+      } = args as {
+        instance_id: string;
+        event_type: string;
+        context: string;
+        threshold?: number;
+      };
+
+      if (!['file_open', 'pr_open', 'deploy', 'manual'].includes(event_type)) {
+        throw new Error('event_type must be file_open, pr_open, deploy, or manual');
+      }
+      if (!context?.trim()) throw new Error('context is required');
+
+      type BriefingWarning = { topic: string; confidence: number; severity: string; message: string; fix: string };
+      type BriefingResult = {
+        event_type: string;
+        risk_level: 'low' | 'medium' | 'high';
+        warnings: BriefingWarning[];
+        matched_lessons: number;
+      };
+
+      let result: BriefingResult;
+      try {
+        result = await apiFetch<BriefingResult>(
+          `/api/v1/instances/${instance_id}/briefing`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ event_type, context, ...(threshold !== undefined ? { threshold } : {}) }),
+          },
+        );
+      } catch {
+        return `⚠️ Could not reach Brain API — no proactive briefing available right now.`;
+      }
+
+      const eventIcon = event_type === 'file_open' ? '📂' : event_type === 'pr_open' ? '🔀' : event_type === 'deploy' ? '🚀' : '🔍';
+
+      if (result.warnings.length === 0) {
+        return [
+          `${eventIcon} **brain_briefing** — ${event_type} · ✅ no known risk patterns matched`,
+          '',
+          `Checked against ${result.matched_lessons} related lesson${result.matched_lessons !== 1 ? 's' : ''}. You're clear to proceed.`,
+        ].join('\n');
+      }
+
+      const riskIcon = result.risk_level === 'high' ? '🔴' : result.risk_level === 'medium' ? '🟡' : '🟢';
+      const lines = [
+        `${eventIcon} **brain_briefing** — ${event_type} · ${riskIcon} risk: ${result.risk_level.toUpperCase()}`,
+        '',
+        `The Brain proactively found ${result.warnings.length} known pattern${result.warnings.length !== 1 ? 's' : ''} that may apply here:`,
+        '',
+        `| Topic | Confidence | Severity | What to watch | Known fix |`,
+        `|---|---|---|---|---|`,
+      ];
+      for (const w of result.warnings) {
+        const fix = w.fix ? (w.fix.length > 80 ? w.fix.slice(0, 80) + '…' : w.fix) : '—';
+        lines.push(`| \`${w.topic}\` | ${(w.confidence * 100).toFixed(0)}% | ${w.severity} | ${w.message} | ${fix} |`);
+      }
+      lines.push('', `_Surfaced proactively — no \`smart_recall\` needed. Address the highest-confidence items first._`);
       return lines.join('\n');
     }
 
