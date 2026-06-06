@@ -4,6 +4,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse, normalizeGitPath } from '../utils.js';
+import { buildClsPostCommitHook } from '../cls-hook.js';
 
 // Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
 export let _lastBrainFromGitCounts: { fixes: number; features: number; refactors: number; total: number } | null = null;
@@ -28,6 +29,7 @@ export const FEDBRAIN_TOOL_NAMES = new Set([
   'madc_deliberate', 'cls_ingest', 'cls_install_hooks', 'fedbrain_contribute', 'fedbrain_search',
   'fedbrain_confirm', 'fedbrain_status', 'brain_federate', 'crystal_view', 'compact_recover',
   'brain_from_git', 'brain_predict_failures',
+  'brain_contribute_signal', 'brain_import_meta',
 ]);
 
 export async function handleFedbrainTool(
@@ -333,20 +335,7 @@ export async function handleFedbrainTool(
       const lines: string[] = [`🔌 **CLS Hook Installation Guide**\n`];
 
       if (hooksArr.includes('git')) {
-        const hookScript = [
-          `#!/bin/sh`,
-          `# cachly CLS — Continuous Learning Stream git hook`,
-          `# Installed by cls_install_hooks · runs silently on every commit`,
-          `INSTANCE="${instance_id}"`,
-          `SHA=$(git rev-parse HEAD 2>/dev/null || echo "")`,
-          `MSG=$(git log -1 --pretty=%B 2>/dev/null | head -1)`,
-          `FILES=$(git diff-tree --no-commit-id -r --name-only HEAD 2>/dev/null | tr '\\n' ',' | sed 's/,$//')`,
-          `node -e "`,
-          `const p={instance_id:'$INSTANCE',source:'git_commit',payload:{message:$(echo "$MSG" | jq -R . 2>/dev/null || echo '"commit"'),sha:'$SHA',files:'$FILES'.split(',').filter(Boolean)}};`,
-          `try{require('child_process').execSync('npx @cachly-dev/mcp-server@latest cls-ingest \\''+JSON.stringify(p)+'\\'',{stdio:'ignore',timeout:5000})}catch(e){}`,
-          `" 2>/dev/null &`,
-          `exit 0`,
-        ].join('\n');
+        const hookScript = buildClsPostCommitHook(instance_id);
 
         lines.push(`### Git post-commit hook`);
         lines.push(`**Quick install (run once per repo):**`);
@@ -1245,6 +1234,135 @@ export async function handleFedbrainTool(
       return lines.join('\n');
     }
 
+
+    // ── Move 5: brain_contribute_signal — privacy-safe federation ────────────
+    case 'brain_contribute_signal': {
+      const { instance_id, topic_category, outcome, confidence = 0.5 } = args as {
+        instance_id: string;
+        topic_category: string;
+        outcome: string;
+        confidence?: number;
+      };
+
+      if (!topic_category?.trim()) throw new Error('topic_category is required');
+      if (!['success', 'failure', 'partial'].includes(outcome)) {
+        throw new Error('outcome must be success, failure, or partial');
+      }
+
+      // Bucket locally before sending — no raw confidence value leaves the instance.
+      const bucket = confidence >= 0.75 ? 'high' : confidence >= 0.5 ? 'medium' : 'low';
+
+      let apiResult = '📦 Signal stored locally (commons API unavailable)';
+      try {
+        await apiFetch<{ accepted: boolean; k_threshold: number }>('/api/v1/federation/signals', {
+          method: 'POST',
+          body: JSON.stringify({
+            topic_category: topic_category.trim().toLowerCase(),
+            outcome,
+            confidence: confidence,
+          }),
+        });
+        apiResult = '✅ Signal contributed to the global commons (no raw data shared)';
+      } catch {
+        // Store in local outbox for later sync
+        const redis = await getConnection(instance_id);
+        const outboxKey = `cachly:fed:outbox:${Date.now()}`;
+        await redis.set(outboxKey, JSON.stringify({ topic_category, outcome, bucket, ts: new Date().toISOString() }), 'EX', 60 * 60 * 24 * 7).catch(() => {});
+      }
+
+      return [
+        `🔒 **Brain Contribute Signal: \`${topic_category}\`**`,
+        '',
+        `📊 Outcome: **${outcome}** · Confidence bucket: **${bucket}**`,
+        `🛡️ Privacy: topic category only — no lesson text, no org identity`,
+        '',
+        apiResult,
+        '',
+        `💡 When ≥ k orgs contribute the same pattern, a meta-lesson appears in \`brain_import_meta\`.`,
+      ].join('\n');
+    }
+
+    // ── Move 5: brain_import_meta — import k-anonymous meta-lessons ──────────
+    case 'brain_import_meta': {
+      const { instance_id, category, limit = 20 } = args as {
+        instance_id: string;
+        category?: string;
+        limit?: number;
+      };
+
+      type MetaLessonAPI = {
+        topic_category: string;
+        dominant_outcome: string;
+        avg_confidence: number;
+        signal_count: number;
+        derived_at: string;
+      };
+
+      let metas: MetaLessonAPI[] = [];
+      let kThreshold = 3;
+      try {
+        const qs = new URLSearchParams();
+        if (category) qs.set('category', category);
+        qs.set('limit', String(Math.min(limit, 200)));
+        const resp = await apiFetch<{ meta_lessons: MetaLessonAPI[]; k_threshold: number }>(
+          `/api/v1/federation/meta?${qs.toString()}`
+        );
+        metas = resp.meta_lessons ?? [];
+        kThreshold = resp.k_threshold ?? 3;
+      } catch {
+        return '❌ Could not reach the global commons API. Try again later.';
+      }
+
+      if (metas.length === 0) {
+        return [
+          `🌐 **Brain Import Meta-Lessons**`,
+          '',
+          `No meta-lessons available yet (k-threshold: ${kThreshold} signals required).`,
+          '',
+          `💡 Contribute signals with \`brain_contribute_signal\` to help build the commons.`,
+        ].join('\n');
+      }
+
+      // Store meta-lessons in local Brain as state:'meta' (never overwrite real lessons).
+      const redis = await getConnection(instance_id);
+      let imported = 0;
+      for (const m of metas) {
+        const localKey = `cachly:lesson:best:meta:${m.topic_category}`;
+        const existing = await redis.get(localKey);
+        if (!existing) {
+          await redis.set(localKey, JSON.stringify({
+            topic: `meta:${m.topic_category}`,
+            outcome: m.dominant_outcome,
+            what_worked: `Meta-pattern from ${m.signal_count} independent orgs`,
+            what_failed: '',
+            recall_count: 0,
+            ts: m.derived_at,
+            state: 'meta',
+            avg_confidence: m.avg_confidence,
+            signal_count: m.signal_count,
+            audit_trail: [{ ts: new Date().toISOString(), action: 'imported_meta' }],
+          }));
+          imported++;
+        }
+      }
+
+      const lines = [
+        `🌐 **Brain Import Meta-Lessons** (k ≥ ${kThreshold})`,
+        '',
+        `| Topic Category | Outcome | Confidence | Signals |`,
+        `|---|---|---|---|`,
+      ];
+      for (const m of metas.slice(0, 15)) {
+        const conf = (m.avg_confidence * 100).toFixed(0) + '%';
+        lines.push(`| \`${m.topic_category}\` | ${m.dominant_outcome} | ${conf} | ${m.signal_count} |`);
+      }
+      if (metas.length > 15) lines.push(`| _…${metas.length - 15} more_ | | | |`);
+      lines.push('', `✅ **${imported}** new meta-lessons imported into local Brain.`);
+      if (imported < metas.length) {
+        lines.push(`_(${metas.length - imported} already present — not overwritten)_`);
+      }
+      return lines.join('\n');
+    }
 
     default:
       return null;

@@ -193,7 +193,7 @@ export async function handleShareTool(
         `**Anyone can import this Brain with:**`,
         `\`brain_import(instance_id="<their-id>", share_id="${shareId}")\``,
         ``,
-        `_To list all your shares, run \`brain_share_list\` (coming soon)._`,
+        `_To list all your shares, run \`brain_share_list\`._`,
       ].filter(l => l !== '').join('\n');
     }
 

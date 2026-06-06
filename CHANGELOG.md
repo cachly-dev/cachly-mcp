@@ -7,6 +7,48 @@
 
 ---
 
+## [0.10.104] – 2026-06-06 — *"v4 Move 2 — Proactive briefing"*
+
+### Added
+- **`brain_briefing`** — flips the Brain from pull-only to push. Call it on `file_open` (with the file path), `pr_open` (with the PR title/body), or `deploy` (with a short description) and the Brain proactively surfaces up to 5 ranked warnings — confidence, severity, what to watch, and a known fix — *before* anything breaks. Returns an overall `risk_level` (low/medium/high) derived from the strongest match. Optional `threshold` (default 0.6) tunes signal-to-noise.
+- New API endpoint `POST /api/v1/instances/:id/briefing` — tokenises the event context (camelCase-aware, same tokeniser as PR scan), matches it against the instance's lessons above the confidence threshold, and ranks results.
+
+---
+
+## [0.10.103] – 2026-06-05 — *"v4 Move 1 — Closed-loop CI"*
+
+### Added
+- **`brain_confirm_ci`** — closed-loop CI self-calibration. Call after every CI run with `job_status` (success/failure/cancelled) and the topics the run covered. Confirmed failures boost lesson confidence +15%; false positives (brain predicted failure but CI passed) reduce it −10%; capped 0.05–0.99.
+- **cachly-action `confirm` mode** — new `mode: confirm` step in `cachly-action` auto-posts CI outcome to the Brain at pipeline end.
+- **`cachly brain` CLI** — `lessons`, `recall`, `stats`, `ci-confirm`, `federation list/contribute` available from the terminal (`@cachly-dev/cli@0.3.0`).
+
+---
+
+## [0.10.102] – 2026-06-03 — *"CLS git hook actually works"*
+
+### Added
+- **`cls-ingest` CLI command** — `npx @cachly-dev/mcp-server@latest cls-ingest '<json>'`
+  now exists. Previously the generated git post-commit hook called this command but it
+  silently fell into stdio-MCP mode and was killed by timeout; no commit data was ever
+  ingested. The new command parses the JSON payload, authenticates via `CACHLY_JWT`, and
+  calls the `cls_ingest` tool. Exits 0 silently on any error — a commit is never blocked.
+- **`buildClsPostCommitHook(instanceId, apiKey?)` helper** (`src/cls-hook.ts`) —
+  centralised, versioned (v2) hook builder shared by `init`, `setup`, and `autopilot`.
+  Passes commit message / sha / files via **environment variables** (not JS-source
+  interpolation) and calls the CLI via `execFileSync` — immune to apostrophes, shell
+  quoting, and `$`/backtick injection.
+- **`installClsPostCommitHook(projectDir, instanceId, apiKey?)` helper** — idempotent
+  installer with version-aware upgrade: existing v1 hooks are replaced in place; foreign
+  hooks without a cachly block are appended to.
+
+### Fixed
+- **Hook v1 generated invalid JS on any commit message containing an apostrophe** (`don't`,
+  `won't`, etc.) — the interpolation `message:'$MSG'` broke the script. Rewritten in v2.
+- All three install sites (`init`, `setup`, `autopilot`) now use the shared installer —
+  no more divergence between code paths.
+
+---
+
 ## [0.10.81] – 2026-05-30
 
 ### Onboarding-Bench (time-to-first-recall, measured) + external dashboard plan

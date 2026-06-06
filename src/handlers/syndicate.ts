@@ -13,6 +13,8 @@ export const SYNDICATE_TOOL_NAMES = new Set([
   'syndicate', 'syndicate_search', 'syndicate_stats', 'syndicate_trending',
   'brain_search', 'ckg_inspect', 'brain_predict', 'brain_plan',
   'brain_marketplace', 'brain_install',
+  'brain_conflicts', 'brain_resolve_conflict',
+  'brain_confirm_ci', 'brain_briefing',
 ]);
 
 export async function handleSyndicateTool(
@@ -722,6 +724,308 @@ export async function handleSyndicateTool(
         ``,
         `_Installed lessons are tagged \`source: "${source}"\` and never override your own. Re-run anytime to pull updates._`,
       ].join('\n');
+    }
+
+    // ── brain_conflicts: list live belief conflicts + active agents ─────────────
+    // Surfaces every unresolved belief_conflict marker (a previously confirmed
+    // fix now contradicted by a failure) plus the agents currently writing to
+    // this Brain. This is the arbitration inbox for multi-agent teams (Move 4).
+    case 'brain_conflicts': {
+      const { instance_id } = args as { instance_id: string };
+      const redis = await getConnection(instance_id);
+
+      // Scan conflict markers
+      type ConflictMarker = {
+        topic: string; concept_id?: string; detected_at: string;
+        fix_confidence: number; fix_trials: number; failure_outcome: string;
+        reported_by?: string; what_failed?: string; resolved?: boolean;
+      };
+      const conflictKeys: string[] = [];
+      const cStream = redis.scanStream({ match: 'cachly:ckg:conflict:*', count: 100 });
+      await new Promise<void>((resolve, reject) => {
+        cStream.on('data', (batch: string[]) => conflictKeys.push(...batch));
+        cStream.on('end', resolve);
+        cStream.on('error', reject);
+      });
+
+      const conflicts: ConflictMarker[] = [];
+      if (conflictKeys.length > 0) {
+        const raws = await redis.mget(...conflictKeys);
+        for (const raw of raws) {
+          const c = safeJsonParse<ConflictMarker | null>(raw ?? null, null);
+          if (c && !c.resolved) conflicts.push(c);
+        }
+      }
+
+      // Scan active agents
+      type ActiveAgent = { author: string; last_topic?: string; last_outcome?: string; ts: string };
+      const agentKeys: string[] = [];
+      const aStream = redis.scanStream({ match: 'cachly:agents:active:*', count: 100 });
+      await new Promise<void>((resolve, reject) => {
+        aStream.on('data', (batch: string[]) => agentKeys.push(...batch));
+        aStream.on('end', resolve);
+        aStream.on('error', reject);
+      });
+      const agents: ActiveAgent[] = [];
+      if (agentKeys.length > 0) {
+        const raws = await redis.mget(...agentKeys);
+        for (const raw of raws) {
+          const a = safeJsonParse<ActiveAgent | null>(raw ?? null, null);
+          if (a) agents.push(a);
+        }
+      }
+
+      const lines: string[] = [`## ⚔️ Brain Conflicts & Live Agents`, ``];
+
+      lines.push(`**🤖 Active agents (last 1h):** ${agents.length}`);
+      if (agents.length > 0) {
+        for (const a of agents.sort((x, y) => y.ts.localeCompare(x.ts)).slice(0, 10)) {
+          const ago = Math.round((Date.now() - new Date(a.ts).getTime()) / 60000);
+          lines.push(`  - **${a.author}** — last: \`${a.last_topic ?? '?'}\` (${a.last_outcome ?? '?'}, ${ago}m ago)`);
+        }
+      }
+      lines.push('');
+
+      if (conflicts.length === 0) {
+        lines.push(`**✅ No unresolved belief conflicts.** The Brain is in consensus.`);
+        return lines.join('\n');
+      }
+
+      lines.push(`**⚠️ Unresolved belief conflicts:** ${conflicts.length}`);
+      lines.push('');
+      lines.push(`| Topic | Confirmed fix | Contradicted by | Detected |`);
+      lines.push(`|---|---|---|---|`);
+      for (const c of conflicts.sort((x, y) => y.detected_at.localeCompare(x.detected_at)).slice(0, 20)) {
+        const ago = Math.round((Date.now() - new Date(c.detected_at).getTime()) / 3600000);
+        lines.push(`| \`${c.topic}\` | ${(c.fix_confidence * 100).toFixed(0)}% (n=${c.fix_trials}) | ${c.reported_by ?? 'unknown'} | ${ago}h ago |`);
+      }
+      lines.push('');
+      lines.push(`_Arbitrate with \`brain_resolve_conflict(instance_id="${instance_id}", topic="<topic>", winner="success"|"failure")\`._`);
+
+      return lines.join('\n');
+    }
+
+    // ── brain_resolve_conflict: arbitrate a belief conflict ─────────────────────
+    // Picks a winning side for a contested topic. The losing side's CKG fixes
+    // edges are decayed to near-zero confidence and the loser's `best` lesson is
+    // archived; the winner is reinforced. The resolution is recorded so the
+    // conflict no longer surfaces. Human-in-the-loop is the strongest signal.
+    case 'brain_resolve_conflict': {
+      const { instance_id, topic, winner, resolved_by = 'human' } = args as {
+        instance_id: string; topic: string; winner: 'success' | 'failure'; resolved_by?: string;
+      };
+      if (!topic || !topic.trim()) {
+        throw new McpError(ErrorCode.InvalidParams, 'topic is required');
+      }
+      if (winner !== 'success' && winner !== 'failure') {
+        throw new McpError(ErrorCode.InvalidParams, 'winner must be "success" or "failure"');
+      }
+      const redis = await getConnection(instance_id);
+      const conceptId = ckgSlug(topic);
+      const conflictKey = `cachly:ckg:conflict:${conceptId}`;
+
+      const markerRaw = await redis.get(conflictKey);
+      if (!markerRaw) {
+        return `📭 No active conflict found for \`${topic}\`. Run \`brain_conflicts(instance_id="${instance_id}")\` to list open conflicts.`;
+      }
+
+      // ── Decay the losing side's `fixes` edges ─────────────────────────────────
+      // winner=success → the fix is real; keep fixes edges, no decay.
+      // winner=failure → the fix is wrong; decay fixes edges to 0.1.
+      let decayedEdges = 0;
+      if (winner === 'failure') {
+        const fromKeys = await redis.smembers(`cachly:ckg:idx:from:${conceptId}`);
+        for (const ek of fromKeys) {
+          const er = await redis.get(ek);
+          if (!er) continue;
+          const edge = safeJsonParse<CKGEdge | null>(er, null);
+          if (!edge || edge.edgeType !== 'fixes') continue;
+          edge.confidence = 0.1;
+          await redis.set(ek, JSON.stringify(edge));
+          decayedEdges++;
+        }
+      }
+
+      // ── Archive the losing `best` lesson (if its outcome is the losing side) ──
+      let archivedLesson = false;
+      const bestKey = `cachly:lesson:best:${topic}`;
+      const bestRaw = await redis.get(bestKey);
+      if (bestRaw) {
+        const lesson = safeJsonParse<{ outcome?: string; state?: string; audit_trail?: unknown[]; [k: string]: unknown } | null>(bestRaw, null);
+        if (lesson && lesson.outcome === winner) {
+          // The surviving lesson matches the winner — reinforce by clearing any provisional state.
+          if (lesson.state === 'provisional') {
+            lesson.state = 'active';
+            lesson.verified_at = new Date().toISOString();
+            await redis.set(bestKey, JSON.stringify(lesson));
+          }
+        } else if (lesson && lesson.outcome && lesson.outcome !== winner) {
+          // The stored best lesson is the losing side — archive it.
+          lesson.state = 'archived';
+          lesson.audit_trail = [
+            ...(Array.isArray(lesson.audit_trail) ? lesson.audit_trail : []),
+            { ts: new Date().toISOString(), action: 'conflict_loser_archived', resolved_by },
+          ];
+          await redis.set(bestKey, JSON.stringify(lesson));
+          archivedLesson = true;
+        }
+      }
+
+      // ── Mark the conflict resolved ────────────────────────────────────────────
+      const marker = safeJsonParse<Record<string, unknown> | null>(markerRaw, null) ?? {};
+      marker.resolved = true;
+      marker.winner = winner;
+      marker.resolved_by = resolved_by;
+      marker.resolved_at = new Date().toISOString();
+      await redis.set(conflictKey, JSON.stringify(marker), 'EX', 60 * 60 * 24 * 30);
+
+      return [
+        `## ✅ Conflict resolved — \`${topic}\``,
+        ``,
+        `**Winner:** ${winner === 'success' ? '✅ success (fix is valid)' : '❌ failure (fix retired)'}`,
+        `**Resolved by:** ${resolved_by}`,
+        ``,
+        `- CKG \`fixes\` edges decayed: **${decayedEdges}**`,
+        `- Losing lesson archived: **${archivedLesson ? 'yes' : 'no'}**`,
+        ``,
+        winner === 'failure'
+          ? `_The contradicted fix is retired. smart_recall will stop surfacing it; future attempts start fresh._`
+          : `_The fix is reaffirmed. The contradicting failure no longer blocks recall._`,
+      ].join('\n');
+    }
+
+    // ── v4 Move 1: brain_confirm_ci — closed-loop CI learning ────────────────
+    case 'brain_confirm_ci': {
+      const {
+        instance_id,
+        job_status,
+        topics,
+        scan_topics = [],
+        source = 'manual',
+      } = args as {
+        instance_id: string;
+        job_status: string;
+        topics: string[];
+        scan_topics?: string[];
+        source?: string;
+      };
+
+      if (!job_status || !['success', 'failure', 'cancelled'].includes(job_status)) {
+        throw new Error('job_status must be success, failure, or cancelled');
+      }
+      if (!topics?.length) throw new Error('topics is required');
+
+      if (job_status === 'cancelled') {
+        return '⏭️ CI was cancelled — no confidence changes applied.';
+      }
+
+      type DeltaResult = {
+        updated: number;
+        confidence_deltas: Array<{ topic: string; old: number; new: number; delta: number; reason: string }>;
+        job_status: string;
+      };
+
+      let result: DeltaResult;
+      try {
+        result = await apiFetch<DeltaResult>(
+          `/api/v1/instances/${instance_id}/ci-outcome`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ job_status, topics, scan_topics, source }),
+          },
+        );
+      } catch {
+        return `⚠️ Could not reach Brain API — CI outcome not recorded. Will retry on next call.`;
+      }
+
+      if (result.updated === 0) {
+        return [
+          `🤖 **brain_confirm_ci** — CI ${job_status}`,
+          '',
+          `No confidence changes (no matching predictions for these topics).`,
+          `Topics checked: ${topics.slice(0, 5).map(t => `\`${t}\``).join(', ')}${topics.length > 5 ? ` +${topics.length - 5} more` : ''}`,
+        ].join('\n');
+      }
+
+      const lines = [
+        `🤖 **brain_confirm_ci** — CI ${job_status === 'success' ? '✅' : '❌'} · ${result.updated} lesson${result.updated !== 1 ? 's' : ''} updated`,
+        '',
+        `| Topic | Old | New | Δ | Reason |`,
+        `|---|---|---|---|---|`,
+      ];
+      for (const d of result.confidence_deltas) {
+        const sign = d.delta > 0 ? '+' : '';
+        const icon = d.reason === 'confirmed_failure' ? '🔴' : '🟡';
+        lines.push(`| \`${d.topic}\` | ${(d.old * 100).toFixed(0)}% | ${(d.new * 100).toFixed(0)}% | ${sign}${(d.delta * 100).toFixed(0)}% | ${icon} ${d.reason} |`);
+      }
+      lines.push('', `_Brain self-calibrated from real CI signal. No manual \`learn_from_attempts\` needed._`);
+      return lines.join('\n');
+    }
+
+    case 'brain_briefing': {
+      const {
+        instance_id,
+        event_type,
+        context,
+        threshold,
+      } = args as {
+        instance_id: string;
+        event_type: string;
+        context: string;
+        threshold?: number;
+      };
+
+      if (!['file_open', 'pr_open', 'deploy', 'manual'].includes(event_type)) {
+        throw new Error('event_type must be file_open, pr_open, deploy, or manual');
+      }
+      if (!context?.trim()) throw new Error('context is required');
+
+      type BriefingWarning = { topic: string; confidence: number; severity: string; message: string; fix: string };
+      type BriefingResult = {
+        event_type: string;
+        risk_level: 'low' | 'medium' | 'high';
+        warnings: BriefingWarning[];
+        matched_lessons: number;
+      };
+
+      let result: BriefingResult;
+      try {
+        result = await apiFetch<BriefingResult>(
+          `/api/v1/instances/${instance_id}/briefing`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ event_type, context, ...(threshold !== undefined ? { threshold } : {}) }),
+          },
+        );
+      } catch {
+        return `⚠️ Could not reach Brain API — no proactive briefing available right now.`;
+      }
+
+      const eventIcon = event_type === 'file_open' ? '📂' : event_type === 'pr_open' ? '🔀' : event_type === 'deploy' ? '🚀' : '🔍';
+
+      if (result.warnings.length === 0) {
+        return [
+          `${eventIcon} **brain_briefing** — ${event_type} · ✅ no known risk patterns matched`,
+          '',
+          `Checked against ${result.matched_lessons} related lesson${result.matched_lessons !== 1 ? 's' : ''}. You're clear to proceed.`,
+        ].join('\n');
+      }
+
+      const riskIcon = result.risk_level === 'high' ? '🔴' : result.risk_level === 'medium' ? '🟡' : '🟢';
+      const lines = [
+        `${eventIcon} **brain_briefing** — ${event_type} · ${riskIcon} risk: ${result.risk_level.toUpperCase()}`,
+        '',
+        `The Brain proactively found ${result.warnings.length} known pattern${result.warnings.length !== 1 ? 's' : ''} that may apply here:`,
+        '',
+        `| Topic | Confidence | Severity | What to watch | Known fix |`,
+        `|---|---|---|---|---|`,
+      ];
+      for (const w of result.warnings) {
+        const fix = w.fix ? (w.fix.length > 80 ? w.fix.slice(0, 80) + '…' : w.fix) : '—';
+        lines.push(`| \`${w.topic}\` | ${(w.confidence * 100).toFixed(0)}% | ${w.severity} | ${w.message} | ${fix} |`);
+      }
+      lines.push('', `_Surfaced proactively — no \`smart_recall\` needed. Address the highest-confidence items first._`);
+      return lines.join('\n');
     }
 
     // ── Layer 3: MADC ─────────────────────────────────────────────────────────

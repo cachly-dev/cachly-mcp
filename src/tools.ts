@@ -1338,6 +1338,38 @@ const TOOLS = [
     },
   },
   {
+    name: 'brain_hygiene',
+    description:
+      'Autonomously sweep and maintain your Brain — flags stale lessons as provisional, archives long-dormant ones, ' +
+      'and resolves contradictions where success clearly dominates failure. ' +
+      'Safe to run on a schedule (weekly CI job) or on-demand before a big release. ' +
+      'Lesson state lifecycle: active → provisional (confidence < threshold) → archived (stale + low-recall + old). ' +
+      'Archived lessons are excluded from smart_recall but preserved for audit. ' +
+      'dry_run=true (default false) shows what would change without writing anything.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: {
+          type: 'string',
+          description: 'UUID of the cache instance',
+        },
+        dry_run: {
+          type: 'boolean',
+          description: 'Report changes without applying them (default false)',
+        },
+        provisional_threshold: {
+          type: 'number',
+          description: 'Confidence below which a lesson is flagged provisional (default 0.5)',
+        },
+        archive_days: {
+          type: 'number',
+          description: 'Days after which a provisional low-recall lesson is archived (default 30)',
+        },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
     name: 'global_learn',
     description:
       'Store a lesson that applies across ALL your projects (cross-project knowledge). ' +
@@ -1877,6 +1909,132 @@ const TOOLS = [
         top_k: { type: 'number', description: 'Max items per section (default: 5)' },
       },
       required: ['instance_id', 'task'],
+    },
+  },
+  {
+    name: 'brain_conflicts',
+    description:
+      'READ-ONLY — list every unresolved belief_conflict (a previously confirmed fix now contradicted by a failure) ' +
+      'plus the agents currently writing to this Brain (last 1h). This is the arbitration inbox for multi-agent teams: ' +
+      'when several AI sessions share one Brain, contradictory writes surface here instead of silently overwriting each other. ' +
+      'Resolve any listed conflict with brain_resolve_conflict.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
+    name: 'brain_resolve_conflict',
+    description:
+      'Arbitrate a contested topic by picking the winning side. winner="success" reaffirms the fix (the contradicting ' +
+      'failure stops blocking recall); winner="failure" retires the fix (its CKG fixes-edges decay to ~0 and the losing ' +
+      'lesson is archived). Human-in-the-loop resolution is the strongest possible confidence signal. ' +
+      'List open conflicts first with brain_conflicts.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        topic: { type: 'string', description: 'The contested topic, e.g. "fix:jwks-rotation"' },
+        winner: { type: 'string', enum: ['success', 'failure'], description: 'Which side wins the arbitration' },
+        resolved_by: { type: 'string', description: 'Who resolved it (agent name or "human"); default "human"' },
+      },
+      required: ['instance_id', 'topic', 'winner'],
+    },
+  },
+  // ── v4 Move 1: Closed-loop CI learning ───────────────────────────────────
+  {
+    name: 'brain_confirm_ci',
+    description:
+      'Close the CI feedback loop: tell the Brain whether a CI job passed or failed and which topics ' +
+      'it covered. The Brain adjusts lesson confidence automatically — confirmed failures get +15%, ' +
+      'false positives (brain predicted failure but CI passed) get −10%. ' +
+      'Called automatically by cachly-action at the end of every pipeline. ' +
+      'Also use manually after a deploy to confirm or refute the brain\'s last prediction.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        job_status: { type: 'string', enum: ['success', 'failure', 'cancelled'], description: 'Outcome of the CI job' },
+        topics: {
+          type: 'array', items: { type: 'string' },
+          description: 'Topics touched by this CI run (e.g. ["auth:jwt", "deploy:k8s"])',
+        },
+        scan_topics: {
+          type: 'array', items: { type: 'string' },
+          description: 'Topics the brain predicted would fail (from the scan response). Used to detect false positives.',
+        },
+        source: { type: 'string', description: 'Optional: "github_actions", "gitlab_ci", etc.' },
+      },
+      required: ['instance_id', 'job_status', 'topics'],
+    },
+  },
+  // ── v4 Move 2: Proactive briefing ─────────────────────────────────────────
+  {
+    name: 'brain_briefing',
+    description:
+      'Push-based Brain warning: instead of waiting for you to ask, the Brain proactively checks ' +
+      'whether the file you just opened, the PR you are about to raise, or the deploy you are about ' +
+      'to run matches any known failure pattern — and surfaces warnings BEFORE something breaks. ' +
+      'Call this on file_open (with the file path as context), pr_open (with the PR title/body), ' +
+      'or deploy (with a short description of what is being deployed). ' +
+      'Returns a risk_level (low/medium/high) plus up to 5 ranked warnings with confidence and a known fix.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        event_type: {
+          type: 'string', enum: ['file_open', 'pr_open', 'deploy', 'manual'],
+          description: 'What triggered this briefing — determines how the context is interpreted',
+        },
+        context: {
+          type: 'string',
+          description: 'The event context: file path for file_open, title+body for pr_open, short description for deploy/manual',
+        },
+        threshold: {
+          type: 'number',
+          description: 'Minimum confidence (0–1) for a warning to be surfaced. Default 0.6 — raise it to reduce noise.',
+        },
+      },
+      required: ['instance_id', 'event_type', 'context'],
+    },
+  },
+  // ── Move 5: Privacy-preserving federation ────────────────────────────────
+  {
+    name: 'brain_contribute_signal',
+    description:
+      'Contribute a privacy-safe signal to the global Brain commons. Only the topic category, outcome, ' +
+      'and confidence bucket (high/medium/low) are shared — no lesson text, no org identity. ' +
+      'When ≥ k independent orgs contribute the same pattern, a meta-lesson is derived in the commons. ' +
+      'Use this instead of fedbrain_contribute when privacy is required (enterprise, GDPR).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        topic_category: { type: 'string', description: 'Normalised topic, e.g. "auth:jwt" or "deploy:k8s"' },
+        outcome: { type: 'string', enum: ['success', 'failure', 'partial'], description: 'Outcome of the pattern' },
+        confidence: { type: 'number', description: 'Confidence 0–1 (bucketed before sending; default 0.5)' },
+      },
+      required: ['instance_id', 'topic_category', 'outcome'],
+    },
+  },
+  {
+    name: 'brain_import_meta',
+    description:
+      'Import k-anonymous meta-lessons from the global Brain commons into your local Brain. ' +
+      'Meta-lessons are derived from ≥ k independent org signals — no individual org data is revealed. ' +
+      'Imported lessons get state="meta" and never overwrite your own lessons. ' +
+      'Filter by category to target relevant patterns.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        category: { type: 'string', description: 'Optional filter, e.g. "auth" or "deploy"' },
+        limit: { type: 'number', description: 'Max meta-lessons to import (default 20, max 200)' },
+      },
+      required: ['instance_id'],
     },
   },
   // ── Layer 3: MADC ────────────────────────────────────────────────────────

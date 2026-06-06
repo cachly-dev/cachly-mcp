@@ -629,10 +629,21 @@ export async function handleBrainTool(
             const existEdge = safeJsonParse<CKGEdge | null>(er, null);
             if (!existEdge) continue;
             if (existEdge.edgeType === 'fixes' && existEdge.confidence > 0.7 && existEdge.trials >= 3) {
-              beliefConflict = `⚠️ **belief_conflict** on \`${topic}\`: previously confirmed fix (confidence ${existEdge.confidence.toFixed(2)}, n=${existEdge.trials}) now reports failure. Both beliefs retained as \`contested\`. Use \`ckg_inspect(concept="${conceptId}")\` to review.`;
-              // Store conflict marker
+              beliefConflict = `⚠️ **belief_conflict** on \`${topic}\`: previously confirmed fix (confidence ${existEdge.confidence.toFixed(2)}, n=${existEdge.trials}) now reports failure. Both beliefs retained as \`contested\`. Use \`brain_resolve_conflict(instance_id="...", topic="${topic}", winner="success"|"failure")\` to arbitrate, or \`ckg_inspect(concept="${conceptId}")\` to review.`;
+              // Store conflict marker — records WHICH agent reported the contradiction
+              // so multi-agent arbitration can show both sides (Move 4).
               const conflictKey = `cachly:ckg:conflict:${conceptId}`;
-              await redis.set(conflictKey, JSON.stringify({ topic, detected_at: new Date().toISOString(), fix_confidence: existEdge.confidence, fix_trials: existEdge.trials, failure_outcome: outcome }), 'EX', 60 * 60 * 24 * 90);
+              await redis.set(conflictKey, JSON.stringify({
+                topic,
+                concept_id: conceptId,
+                detected_at: new Date().toISOString(),
+                fix_confidence: existEdge.confidence,
+                fix_trials: existEdge.trials,
+                failure_outcome: outcome,
+                reported_by: author || 'unknown',
+                what_failed: what_failed || '',
+                resolved: false,
+              }), 'EX', 60 * 60 * 24 * 90);
               // Auto-trigger MADC deliberation in background — never blocks learn_from_attempts
               // Note: fire-and-forget; madc_deliberate is handled elsewhere in the switch
               // (conflict marker stored above — no warm-up call needed)
@@ -692,6 +703,14 @@ export async function handleBrainTool(
       // Builds the "who knows what" map automatically from author + file_paths.
       // Person → authored → Concept edges power brain_who_knows queries.
       if (author) {
+        // Agent activity registry (Move 4): track which agents are actively
+        // writing to this Brain, keyed by author, with a 1h TTL. Powers
+        // brain_conflicts' "who is live" view and multi-agent arbitration.
+        redis.set(
+          `cachly:agents:active:${author}`,
+          JSON.stringify({ author, last_topic: topic, last_outcome: outcome, ts: new Date().toISOString() }),
+          'EX', 60 * 60,
+        ).catch(() => {});
         try {
           const domain = topic.split(':')[0] ?? 'unknown';
           const personId = await ckgUpsertPersonNode(redis, author, domain);
@@ -937,12 +956,15 @@ export async function handleBrainTool(
       // Increment recall_count on matched lessons (fire-and-forget) + collect "Brain saved you here" signal.
       type RecalledLesson = { topic: string; severity: string; recall_count: number; savedMins: number; ts?: string; author?: string };
       const savedHere: RecalledLesson[] = [];
+      // Exclude archived lessons — they are kept for audit but must not surface in recall.
       const lessonMatches = kwMatches.filter(m => m.key.startsWith('cachly:lesson:best:'));
       let crossAuthorThisCall = 0;
       for (const m of lessonMatches.slice(0, 5)) {
         const existing = await redis.get(m.key).catch(() => null);
         if (existing) {
-          const lesson = safeJsonParse(existing, null as null | { recall_count?: number; outcome?: string; severity?: string; author?: string; ts?: string; [k: string]: unknown });
+          const lesson = safeJsonParse(existing, null as null | { recall_count?: number; outcome?: string; severity?: string; author?: string; ts?: string; state?: string; [k: string]: unknown });
+          // Skip archived lessons — brain_hygiene moves them here; they should not resurface.
+          if (lesson?.state === 'archived') continue;
           if (lesson) {
             const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, verified_at: new Date().toISOString() };
             redis.set(m.key, JSON.stringify(updated)).catch(() => {});
