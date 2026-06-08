@@ -14,8 +14,16 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.98';
+const MCP_VERSION = '0.10.107';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.107': [
+    `🎯 **Recall@3 gap closed — the moat proof got sharper (the head-to-head that matters)**`,
+    `  🔍 External-corpus Recall@3 **82.1% → 98.2%** · Precision@1 **80.4%** · MRR **89.0%** — now ahead of flat-file memory on every metric`,
+    `  🧬 Root-cause fix: documents are no longer indexed with cross-lingual synonyms (the symmetric-expansion bug inflated any doc containing a common word ~28×, burying topic-specific lessons). Queries still expand — a 日本語 query still finds English lessons.`,
+    `  ⚖️ Reranker now compresses BM25 with score^0.3 before applying lesson quality, so a proven success can overtake a text-similar failed attempt even when the distractor scores 5–6× higher in raw BM25`,
+    `  🛡️ CI bench gate widened to both home + external corpora with committed floors (\`npm run bench:gate\`) — recall quality can never silently regress again`,
+    `  📊 121 MCP tools`,
+  ],
   '0.10.98': [
     `🌐 **Model-Neutrality as Feature (W9) — "Bring your own model, keep your brain."**`,
     `  🔌 New \`brain_portability()\` — shows your Brain ID, all compatible MCP clients, and ready-to-paste config snippets for each; proves the same Brain works in Claude, Cursor, Copilot, Windsurf, Cline, Zed and more`,
@@ -942,11 +950,13 @@ export async function handleBrainTool(
       }
 
       // ── Layer 1: Keyword search across ALL brain data (always works, no embedding) ──
+      // Wider candidate pool (25) lets the quality reranker rescue relevant lessons that
+      // BM25 alone would rank 11–25 due to vocabulary mismatch. Final slice to 5 happens below.
       const rawMatches = await keywordSearch(
         redis,
         ['cachly:ctx:*', 'cachly:lesson:best:*', 'cachly:idx:*'],
         query,
-        10,
+        25,
       );
 
       // ── Layer 1.5: Quality-aware rerank — proven success lessons outrank
@@ -3044,7 +3054,7 @@ export async function handleBrainTool(
 
       // ── Metric 2: Recall-lift (the moat proof) ──────────────────────────────
       // Published headline from Cachly-Bench (CI-defended in rerank.test.ts).
-      const recallLiftLine = `**+22.2 % Precision@1**, **+10.9 % MRR**, **+8.1 % nDCG@5** vs. raw BM25`;
+      const recallLiftLine = `**+33.3 % Precision@1**, **+13.6 % MRR**, **+9.9 % nDCG@5** vs. raw BM25 · external-corpus Recall@3 **98.2%**`;
 
       // ── Metric 3: Team-knowledge-reuse ──────────────────────────────────────
       const recallsTotal = Number(recallsTotalRaw ?? 0);

@@ -1457,7 +1457,7 @@ describe('Phase 3C: brain_metrics — the three decisive metrics', () => {
 
   it('always shows the published recall-lift moat number', async () => {
     const out = await handleBrainTool('brain_metrics', { instance_id: iid }, getConn, noopApiFetch);
-    expect(out).toContain('+22.2 % Precision@1');
+    expect(out).toContain('+33.3 % Precision@1');
   });
 
   it('records born_at on first learn (first-wins NX semantics)', async () => {

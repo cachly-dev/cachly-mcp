@@ -1,8 +1,8 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.10.104",
+  "version": "0.10.107",
   "mcpName": "io.github.cachly-dev/cachly-mcp",
-  "description": "Your AI forgets everything between sessions. cachly fixes that permanently. Persistent memory + causal root-cause analysis for Claude Code, Cursor, Copilot & Windsurf. Learns from every bug fix, git commit, and CI run automatically. Arrives pre-briefed. Predicts failures before they happen. One-command setup (npx ... autopilot). 121 MCP tools · Free tier forever · GDPR · EU servers.",
+  "description": "Your AI forgets everything between sessions. cachly fixes that permanently. Persistent memory + causal root-cause analysis for Claude Code, Cursor, Copilot & Windsurf. Learns from every bug fix, git commit, and CI run automatically. Arrives pre-briefed. Predicts failures before they happen. One-command setup (npx ... autopilot). 132 MCP tools · Free tier forever · GDPR · EU servers.",
   "type": "module",
   "files": [
     "dist/src/**/*",
@@ -25,6 +25,7 @@
     "bench": "tsx src/bench/cachly-bench.ts",
     "bench:external": "tsx src/bench/external-corpus.ts",
     "bench:onboarding": "tsx src/bench/onboarding-bench.ts",
+    "bench:gate": "tsx src/bench/gate.ts",
     "test:e2e": "bash scripts/e2e-run.sh",
     "test:e2e:api": "bash scripts/e2e-run.sh api",
     "test:e2e:cli": "bash scripts/e2e-run.sh cli",

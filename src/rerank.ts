@@ -69,8 +69,12 @@ const REVIEW_LEVEL_WEIGHT: Record<string, number> = {
 
 // Clamp so a strong text match is never fully buried by quality, and a weak text
 // match is never catapulted to the top purely on quality.
+// MAX lowered 2.5→1.8: on larger corpora a high-quality but weakly-matching lesson
+// could overtake a strongly-matching relevant one and push it out of the top-k.
+// 1.8 keeps the home-corpus Precision@1 lift while improving external-corpus
+// Precision@1 + MRR (validated by src/bench/external-corpus.ts).
 const MIN_MULTIPLIER = 0.5;
-const MAX_MULTIPLIER = 2.5;
+const MAX_MULTIPLIER = 1.8;
 
 const LESSON_KEY_PREFIX = 'cachly:lesson:best:';
 
@@ -122,24 +126,25 @@ export function extractLessonQuality(match: Pick<KeywordMatch, 'key' | 'content'
 /**
  * Rerank BM25 keyword matches by lesson quality.
  *
- * The BM25 scores are first min-max normalized to [0,1] so the quality multiplier
- * acts on a comparable scale across queries; ties are broken by the original BM25
- * score (stable, deterministic).
+ * BM25 scores are compressed with a 0.3-power root before quality is applied.
+ * Compression is the key: a distractor lesson whose `what_failed` contains the
+ * exact query phrase can score 5–6× higher in BM25 than the correct success lesson.
+ * A linear quality multiplier of ±40% cannot overcome that gap; after ^0.3
+ * compression the ratio shrinks to ~1.5×, well within the quality range.
+ *
+ * The formula  compressed_score * (0.4 + 0.6 * boost)  gives quality 60% weight
+ * on the compressed axis. A failure lesson (boost ≈ 0.5) retains 70% of its
+ * compressed score; a senior-confirmed success (boost ≈ 1.8) gets 148%.
+ * Ties are broken by the raw BM25 score (stable, deterministic).
  */
 export function rerankByQuality(matches: KeywordMatch[]): RerankedMatch[] {
   if (matches.length === 0) return [];
 
-  const maxScore = Math.max(...matches.map(m => m.score));
-  const minScore = Math.min(...matches.map(m => m.score));
-  const range = maxScore - minScore || 1;
-
   const reranked: RerankedMatch[] = matches.map(m => {
-    const norm = (m.score - minScore) / range; // 0..1
+    const compressed = Math.pow(Math.max(0, m.score), 0.3);
     const lesson = extractLessonQuality(m);
     const boost = qualityMultiplier(lesson);
-    // Blend: keep a floor of raw relevance so a top text hit stays competitive,
-    // then layer the quality multiplier on the normalized component.
-    const finalScore = m.score * (0.4 + 0.6 * boost) + norm * (boost - 1) * 0.0001;
+    const finalScore = compressed * (0.4 + 0.6 * boost);
     return { ...m, finalScore, qualityBoost: boost };
   });
 

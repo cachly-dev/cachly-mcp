@@ -1233,7 +1233,19 @@ function expandCrossLingual(token: string): string[] {
  *  • Hindi   → Devanagari word tokenization + light suffix stemming
  *  • All scripts → cross-lingual synonym expansion (EN↔JA↔ZH↔KO↔AR↔HE↔FA↔HI↔DE↔FR↔ES↔IT↔PT)
  */
-function tokenize(text: string): string[] {
+/**
+ * Tokenize text for BM25 indexing or query expansion.
+ *
+ * @param text - The text to tokenize
+ * @param options.crossLingualExpand - When true (default), adds cross-lingual synonym
+ *   tokens for every base token. Set to false when indexing DOCUMENTS so that
+ *   English documents don't get indexed with all Arabic/Japanese/etc. synonyms of
+ *   every word they contain — that inflates BM25 scores catastrophically when a query
+ *   also expands the same term. Query tokenization keeps expansion enabled so a
+ *   Japanese query still finds English documents (query "デプロイ" → expands to "deploy").
+ */
+function tokenize(text: string, options?: { crossLingualExpand?: boolean }): string[] {
+  const doCrossLingualExpand = options?.crossLingualExpand ?? true;
   const tokens: string[] = [];
   // Pre-process: split camelCase/PascalCase identifiers and snake_case before lowercasing
   const lower = preprocessText(text).toLowerCase();
@@ -1328,7 +1340,13 @@ function tokenize(text: string): string[] {
     }
   }
 
-  // ── Cross-lingual expansion ──────────────────────────────────────────────
+  // ── Cross-lingual expansion (query mode only) ────────────────────────────
+  // Only run when tokenizing queries. Skipped for documents to prevent the
+  // symmetric-expansion inflation bug: if both query and document expand "error"
+  // to 28 synonyms, BM25 counts all 28 as exact matches — a single common word
+  // inflates any document's score 28×, burying topic-specific matches.
+  if (!doCrossLingualExpand) return tokens;
+
   // For each token, look up synonyms in other languages and add them.
   // CJK synonyms are bigram-expanded inline; Latin/RTL synonyms added as-is.
   const expansions: string[] = [];
@@ -1575,7 +1593,7 @@ async function keywordSearch(
     const content = results?.[i]?.[1] as string | null;
     if (!content) continue;
 
-    const tokens = tokenize(`${allKeys[i]} ${content}`);
+    const tokens = tokenize(`${allKeys[i]} ${content}`, { crossLingualExpand: false });
     if (tokens.length === 0) continue;
 
     // Term frequency map

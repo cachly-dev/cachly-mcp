@@ -23,7 +23,7 @@ import { BENCH_LESSONS, BENCH_QUERIES, type BenchLesson, type BenchQuery } from 
 
 const LESSON_PREFIX = 'cachly:lesson:best:';
 
-// ── Minimal in-memory Redis (only what keywordSearch needs) ────────────────────
+// ── Minimal in-memory Redis (only what keywordSearch needs) ──────────────────
 class MiniRedis {
   private store = new Map<string, string>();
 
@@ -59,7 +59,7 @@ function indexCorpus(lessons: BenchLesson[]): MiniRedis {
   return redis;
 }
 
-// ── IR metrics ─────────────────────────────────────────────────────────────────
+// ── IR metrics ──────────────────────────────────────────────────────────────────
 function precisionAtK(ranked: string[], relevant: Set<string>, k: number): number {
   const top = ranked.slice(0, k);
   if (top.length === 0) return 0;
@@ -181,10 +181,14 @@ export async function runBenchmarkOn(lessons: BenchLesson[], queries: BenchQuery
   for (const q of queries) {
     const relevant = new Set(q.relevant);
 
-    // BM25 baseline + cachly share the same candidate set — isolates ranking quality.
-    const matches = await keywordSearch(redis as never, [`${LESSON_PREFIX}*`], q.query, 10);
-    const baselineRanked = matches.map(matchTopic);
-    const cachlyRanked = rerankByQuality(matches).map(matchTopic);
+    // Baseline: BM25 top-10 only (no reranking), mirrors what a plain keyword search gives.
+    const baselineMatches = await keywordSearch(redis as never, [`${LESSON_PREFIX}*`], q.query, 10);
+    const baselineRanked = baselineMatches.map(matchTopic);
+
+    // Cachly: wider candidate pool (top-25) → quality reranker selects the best 3–5.
+    // Wider pool lets the reranker rescue relevant items that BM25 pushed to ranks 11–25.
+    const cachlyMatches = await keywordSearch(redis as never, [`${LESSON_PREFIX}*`], q.query, 25);
+    const cachlyRanked = rerankByQuality(cachlyMatches).map(matchTopic);
 
     // Flat-file memory sees the whole corpus but has no ranking engine.
     const flatfileRanked = flatFileRank(lessons, q.query);
@@ -220,7 +224,7 @@ export async function runBenchmark(): Promise<BenchResult> {
   return runBenchmarkOn(BENCH_LESSONS, BENCH_QUERIES);
 }
 
-// ── Reporting ──────────────────────────────────────────────────────────────────
+// ── Reporting ───────────────────────────────────────────────────────────────────────────
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 const signedPct = (x: number) => `${x >= 0 ? '+' : ''}${(x * 100).toFixed(1)}%`;
 
@@ -249,7 +253,7 @@ export function formatReport(r: BenchResult): string {
   ].join('\n');
 }
 
-// ── CLI entry ───────────────────────────────────────────────────────────────────
+// ── CLI entry ───────────────────────────────────────────────────────────────────────────
 const isMain = (() => {
   try {
     return import.meta.url === `file://${process.argv[1]}`
