@@ -1295,7 +1295,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
   // Auto-start brain session on first tool call that has an instance_id.
   // Skip session management tools to avoid recursion.
-  const sessionTools = new Set(['session_start', 'session_end', 'auto_learn_session']);
+  const sessionTools = new Set(['session_start', 'session_start_summary', 'session_end', 'auto_learn_session']);
   if (!sessionTools.has(name) && !_autoSessionStarted && !_autoSessionStarting) {
     const instanceId = ((args as Record<string, unknown>)?.instance_id as string | undefined)
       || _defaultInstanceId

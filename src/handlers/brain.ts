@@ -330,7 +330,7 @@ type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 
 export const BRAIN_TOOL_NAMES = new Set([
   'learn_from_attempts', 'recall_best_solution', 'smart_recall',
-  'session_start', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
+  'session_start', 'session_start_summary', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
   'brain_who_knows', 'brain_file_map', 'team_expertise_map',
   'skill_gaps', 'brain_coverage', 'brain_metrics', 'brain_service_map',
   'brain_collab_pairs', 'brain_portability',
@@ -2113,6 +2113,123 @@ export async function handleBrainTool(
       }
 
       return lines.join('\n');
+    }
+
+    // ── session_start_summary ─────────────────────────────────────────────────
+    case 'session_start_summary': {
+      const {
+        instance_id,
+        focus,
+        top_n: topNRaw = 10,
+        author = '',
+      } = args as { instance_id: string; focus: string; top_n?: number; author?: string };
+
+      if (!focus || !focus.trim()) {
+        throw new Error('focus is required for session_start_summary');
+      }
+
+      const topN = Math.min(Math.max(1, Math.floor(Number(topNRaw) || 10)), 25);
+      const redis = await getConnection(instance_id);
+
+      // 1. Scan all best-solution lessons (same as session_start)
+      const lessonKeys: string[] = [];
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      await new Promise<void>((resolve, reject) => {
+        lStream.on('data', (batch: string[]) => lessonKeys.push(...batch));
+        lStream.on('end', resolve);
+        lStream.on('error', reject);
+      });
+
+      type SummaryLesson = {
+        topic: string; outcome: string; what_worked: string; what_failed?: string;
+        ts: string; verified_at?: string; severity?: string; recall_count?: number;
+        tags?: string[]; confidence?: number;
+      };
+      const lessons: SummaryLesson[] = [];
+      if (lessonKeys.length > 0) {
+        const raws = await redis.mget(...lessonKeys);
+        for (const raw of raws) {
+          const l = safeJsonParse<SummaryLesson | null>(raw ?? null, null);
+          if (l) lessons.push(l);
+        }
+      }
+
+      // 2. If brain has 0 lessons return graceful empty message
+      if (lessons.length === 0) {
+        return [
+          `🧠 Brain Summary — no lessons yet`,
+          ``,
+          `Your brain is empty. Use \`learn_from_attempts\` after solving tasks to build it up.`,
+          `💡 Tip: \`brain_seed_starter(instance_id="${instance_id}")\` to bootstrap with 16 universal lessons.`,
+        ].join('\n');
+      }
+
+      // 3. If lessons.length <= top_n, return all of them (no need to score)
+      const needsRanking = lessons.length > topN;
+
+      // 4. Score lessons for relevance to focus
+      const focusWords = focus.toLowerCase().split(/\s+/).filter(Boolean);
+      const nowMs = Date.now();
+
+      const scored = lessons.map(l => {
+        // Keyword relevance: topic or tags contain focus words
+        const inTopic = focusWords.filter(w => l.topic.toLowerCase().includes(w)).length;
+        const inTags  = focusWords.filter(w => (l.tags ?? []).some(t => t.toLowerCase().includes(w))).length;
+        const relevance = (inTopic * 2) + inTags;
+
+        // Recall-count bonus (proven-ness, log-scaled, capped)
+        const rc = Math.max(0, l.recall_count ?? 0);
+        const recallBonus = Math.min(1.5, Math.log1p(rc) / 10);
+
+        // Severity bonus
+        const sevBonus = l.severity === 'critical' ? 1.0 : l.severity === 'major' ? 0.5 : 0;
+
+        // Recency bonus: lessons updated in the last 30 days get up to +0.5
+        const ageDays = (nowMs - new Date(l.verified_at ?? l.ts).getTime()) / 86_400_000;
+        const recencyBonus = ageDays < 30 ? 0.5 * (1 - ageDays / 30) : 0;
+
+        // Outcome bonus: success > partial > failure
+        const outcomeBonus = l.outcome === 'success' ? 0.5 : l.outcome === 'partial' ? 0.2 : 0;
+
+        const score = relevance + recallBonus + sevBonus + recencyBonus + outcomeBonus;
+        return { lesson: l, score };
+      });
+
+      // Sort descending by score, then by recency as tiebreak
+      scored.sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        return new Date(b.lesson.ts).getTime() - new Date(a.lesson.ts).getTime();
+      });
+
+      const selected = (needsRanking ? scored.slice(0, topN) : scored).map(s => s.lesson);
+      const total = lessons.length;
+      const shown = selected.length;
+
+      // 5. Build concise briefing
+      const divider = '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━';
+      const header = needsRanking
+        ? `🧠 Brain Summary — top ${shown} of ${total} lessons for "${focus}"`
+        : `🧠 Brain Summary — all ${shown} lesson${shown !== 1 ? 's' : ''} for "${focus}"`;
+
+      const summaryLines: string[] = [header, divider, ''];
+
+      for (const l of selected) {
+        const sevIcon = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '⚠️' : '✅';
+        const sevLabel = l.severity ? `[${l.severity}] ` : '[minor] ';
+        const rc = l.recall_count ?? 0;
+        const rcStr = rc > 0 ? ` (✓ recalled ${rc}×)` : '';
+        const snippet = l.what_worked.slice(0, 110);
+        summaryLines.push(`${sevIcon} ${sevLabel}\`${l.topic}\` — ${snippet}${rcStr}`);
+      }
+
+      summaryLines.push('');
+      if (needsRanking) {
+        summaryLines.push(`💡 Showing top ${shown} of ${total} lessons · \`session_start\` for full briefing`);
+      } else {
+        summaryLines.push(`💡 All ${shown} lesson${shown !== 1 ? 's' : ''} shown · \`session_start\` for full briefing`);
+      }
+
+      return summaryLines.join('\n');
     }
 
     // ── session_end ───────────────────────────────────────────────────────────

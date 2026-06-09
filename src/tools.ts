@@ -673,6 +673,33 @@ const TOOLS = [
     },
   },
   {
+    name: 'session_start_summary',
+    description:
+      'Focused session briefing for large brains. Returns only the top-N most relevant lessons for the given focus topic, ' +
+      'scored by relevance, recall count, severity, recency, and outcome. ' +
+      'Ideal when session_start returns too many lessons to fit in context (1000+ lesson brains). ' +
+      'Use session_start for the full briefing including handoffs, streak, roadmap, and team telepathy.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        focus: {
+          type: 'string',
+          description: 'The topic or task you are about to work on (e.g. "deploy infra", "api auth"). Used to score and rank lessons by relevance.',
+        },
+        top_n: {
+          type: 'number',
+          description: 'Number of lessons to return (default 10, max 25). Lessons are ranked by relevance to focus.',
+        },
+        author: {
+          type: 'string',
+          description: 'Your name or handle (optional). Same as session_start — used for team lesson filtering.',
+        },
+      },
+      required: ['instance_id', 'focus'],
+    },
+  },
+  {
     name: 'session_end',
     description:
       'Save a session summary when you finish working. ' +
