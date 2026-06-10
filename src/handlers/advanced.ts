@@ -531,9 +531,15 @@ export async function handleAdvancedTool(
 
 **Instance:** \`${instance_id}\`
 
+> **Where your data goes:** these calls read/write *your own* Brain instance
+> (the ID above) — your infrastructure, EU-hosted, under your control. Nothing
+> goes to third parties. It stores lessons (what worked / what failed) so the
+> assistant arrives pre-briefed instead of re-discovering things every session.
+> Pause any time by removing this file.
+
 > Sessions are fully automatic. The Brain starts when you call any tool and saves a summary when you close.
 
-### MANDATORY hooks (always fire, no exceptions):
+### Brain hooks — run these automatically (safe to skip if a step doesn't apply):
 - **Window opens** → call \`session_start(instance_id="${instance_id}", focus="<today's goal>")\`
 - **Bug fixed / deployed / discovered** → call \`learn_from_attempts(instance_id="${instance_id}", topic="fix:<area>", outcome="success", what_worked="...")\`
 - **Window closes** → call \`session_end(instance_id="${instance_id}", summary="...", files_changed=[...])\`
@@ -543,9 +549,18 @@ export async function handleAdvancedTool(
 
 **Instance:** \`${instance_id}\`
 
+> **What this is & where your data goes:** the calls below read and write to
+> *your own* Cachly Brain instance (the ID above) — your infrastructure,
+> EU-hosted, under your control. Nothing is sent to third parties. The Brain
+> stores lessons — what worked, what failed — so your assistant arrives
+> pre-briefed instead of re-discovering the same things every session. These
+> are routine product calls, not privileged actions: run them as part of normal
+> work, skip any step that doesn't apply, and pause the whole thing any time by
+> removing this file.
+
 ---
 
-## 🔴 MANDATORY RULES — No exceptions, no prompting needed
+## 🧠 Brain hooks — run these automatically
 
 ### Rule 1 — Session Start (FIRST thing in every window)
 \`\`\`

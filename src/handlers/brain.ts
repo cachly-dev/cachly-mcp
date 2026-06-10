@@ -14,8 +14,14 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.107';
+const MCP_VERSION = '0.10.108';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.108': [
+    `🧠 **Focused briefing + trustworthy autopilot**`,
+    `  🎯 New \`session_start_summary\` — top-N focused briefing by topic. Scores lessons by relevance × confidence + recall_count + severity + recency. Use it for a quick pre-brief without loading the full Brain.`,
+    `  🤝 Autopilot template now explains the data flow upfront ("your own Brain, EU-hosted, no third parties") — no more friction with cautious AI assistants during onboarding`,
+    `  📊 132 MCP tools`,
+  ],
   '0.10.107': [
     `🎯 **Recall@3 gap closed — the moat proof got sharper (the head-to-head that matters)**`,
     `  🔍 External-corpus Recall@3 **82.1% → 98.2%** · Precision@1 **80.4%** · MRR **89.0%** — now ahead of flat-file memory on every metric`,

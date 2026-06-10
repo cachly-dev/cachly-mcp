@@ -7,6 +7,16 @@
 
 ---
 
+## [0.10.108] – 2026-06-09 — *"Focused briefing + trustworthy autopilot"*
+
+### Added
+- **`session_start_summary`** — focused top-N briefing for large Brains. Requires `focus` (the topic you're about to work on), optional `top_n` (default 10, max 25). Scores lessons by keyword relevance × confidence + recall_count + severity + recency + outcome boosts. Returns a concise ranked briefing with header; graceful empty-brain message if no lessons exist. Use instead of `session_start` when you want a quick pre-brief on a specific topic without loading the full Brain.
+
+### Fixed
+- **Autopilot template** (`autopilot` tool) — replaced `🔴 MANDATORY RULES — No exceptions` framing with a transparency preamble that explains the data flow (reads/writes the user's own Brain instance, EU-hosted, no third parties) and frames the hooks as routine product calls rather than privileged commands. Prevents cautious AI assistants from warning users during onboarding.
+
+---
+
 ## [0.10.104] – 2026-06-06 — *"v4 Move 2 — Proactive briefing"*
 
 ### Added
