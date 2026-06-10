@@ -7,6 +7,7 @@ import type { Instance } from './brain.js';
 import { computeEmbedding, hasEmbedProvider, embedProviderHint } from '../embeddings.js';
 import { detectNamespace } from '../namespace.js';
 import { simpleHash } from '../confidence.js';
+import { scanKeys } from '../utils.js';
 
 interface SemanticSearchResponse {
   found: boolean; id?: string; similarity?: number; prompt?: string;
@@ -19,7 +20,7 @@ export const CACHE_TOOL_NAMES = new Set([
   'cache_get', 'cache_set', 'cache_delete', 'cache_exists', 'cache_ttl', 'cache_keys',
   'cache_stats', 'semantic_search', 'detect_namespace', 'cache_warmup', 'index_project',
   'cache_mset', 'cache_mget', 'cache_lock_acquire', 'cache_lock_release',
-  'cache_stream_set', 'cache_stream_get',
+  'cache_stream_set', 'cache_stream_get', 'cache_org_stats',
 ]);
 
 export async function handleCacheTool(
@@ -30,9 +31,15 @@ export async function handleCacheTool(
 ): Promise<string | null> {
   switch (name) {
     case 'cache_get': {
-      const { instance_id, key } = args as { instance_id: string; key: string };
+      const { instance_id, key, org_id } = args as { instance_id: string; key: string; org_id?: string };
       const redis = await getConnection(instance_id);
-      const value = await redis.get(key);
+      let value = await redis.get(key);
+      let source = 'direct';
+      if (value === null && org_id) {
+        const orgKey = `org:${org_id}:sem:${key}`;
+        value = await redis.get(orgKey);
+        if (value !== null) source = `org:${org_id}:sem`;
+      }
       if (value === null) return `Key \`${key}\` → **not found** (null)`;
       let pretty = value;
       try {
@@ -40,23 +47,31 @@ export async function handleCacheTool(
       } catch {
         // not JSON — return raw
       }
-      return `Key \`${key}\`:\n\`\`\`\n${pretty}\n\`\`\``;
+      const sourceNote = source !== 'direct' ? ` _(from shared org namespace \`${source}\`)_` : '';
+      return `Key \`${key}\`:${sourceNote}\n\`\`\`\n${pretty}\n\`\`\``;
     }
 
     case 'cache_set': {
-      const { instance_id, key, value, ttl } = args as {
+      const { instance_id, key, value, ttl, org_id } = args as {
         instance_id: string;
         key: string;
         value: string;
         ttl?: number;
+        org_id?: string;
       };
       const redis = await getConnection(instance_id);
       if (ttl && ttl > 0) {
         await redis.set(key, value, 'EX', ttl);
-        return `✅ Set \`${key}\` (TTL: ${ttl}s)`;
+        if (org_id) {
+          await redis.set(`org:${org_id}:sem:${key}`, value, 'EX', ttl);
+        }
+        return `✅ Set \`${key}\` (TTL: ${ttl}s)${org_id ? ` + shared to \`org:${org_id}:sem\`` : ''}`;
       }
       await redis.set(key, value);
-      return `✅ Set \`${key}\` (no expiry)`;
+      if (org_id) {
+        await redis.set(`org:${org_id}:sem:${key}`, value);
+      }
+      return `✅ Set \`${key}\` (no expiry)${org_id ? ` + shared to \`org:${org_id}:sem\`` : ''}`;
     }
 
     case 'cache_delete': {
@@ -146,7 +161,7 @@ export async function handleCacheTool(
         .filter((l: string) => l.startsWith('db'))
         .map((l: string) => `  ${l.trim()}`);
 
-      return [
+      const lines = [
         `📊 **Cache Stats for instance \`${instance_id}\`:**`,
         ``,
         `  💾 Memory used:   ${usedMem} (peak: ${peakMem})`,
@@ -157,7 +172,80 @@ export async function handleCacheTool(
         keyspaceLines.length > 0
           ? `  🗂️ Keyspace:\n${keyspaceLines.join('\n')}`
           : `  🗂️ Keyspace: (empty)`,
-      ].join('\n');
+      ];
+
+      try {
+        const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
+        if (inst.vector_token) {
+          const vectorBase = process.env.CACHLY_VECTOR_URL ?? 'https://api.cachly.dev';
+          const statsRes = await fetch(`${vectorBase}/v1/sem/${inst.vector_token}/stats`, {
+            signal: AbortSignal.timeout(5000),
+          });
+          if (statsRes.ok) {
+            const data = await statsRes.json() as {
+              total_entries?: number;
+              total_hits?: number;
+              savings?: {
+                estimated_total_saved_usd?: number;
+                estimated_monthly_saved_usd?: number;
+                avg_cost_per_call_usd?: number;
+                hits_last_24h?: number;
+              };
+              top_hits?: Array<{ prompt: string; hit_count: number }>;
+            };
+
+            const fmt = (n: number | undefined, decimals = 2): string =>
+              n !== undefined ? n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : 'n/a';
+            const fmtInt = (n: number | undefined): string =>
+              n !== undefined ? n.toLocaleString('en-US') : 'n/a';
+
+            const totalHits = data.total_hits ?? 0;
+            const totalEntries = data.total_entries ?? 0;
+
+            if (totalHits === 0 && totalEntries === 0) {
+              const proj = (devs: number) => (devs * 50 * 0.25 * 0.002 * 30).toFixed(2);
+              lines.push(
+                ``,
+                `💰 **Tokenmaxxing ROI — Projection:**`,
+                `  📭 No cache hits yet — you're just getting started.`,
+                ``,
+                `  📊 Typical savings for your team size:`,
+                `     5  devs × 50 LLM calls/day × 25% hit-rate → ~$${proj(5)}/month`,
+                `     10 devs × 50 LLM calls/day × 25% hit-rate → ~$${proj(10)}/month`,
+                `     20 devs × 50 LLM calls/day × 25% hit-rate → ~$${proj(20)}/month`,
+                `     (Assumes avg $0.002/call saved per cache hit)`,
+                ``,
+                `  🚀 Next: route LLM calls through cachly to start accumulating hits.`,
+                `     Docs: https://cachly.dev/docs/semantic`,
+              );
+            } else {
+              lines.push(
+                ``,
+                `💰 **Tokenmaxxing ROI:**`,
+                `  📦 Semantic entries:  ${fmtInt(data.total_entries)}`,
+                `  🎯 Total cache hits:  ${fmtInt(data.total_hits)}`,
+                `  ⏱️ Hits last 24h:     ${fmtInt(data.savings?.hits_last_24h)}`,
+                `  💵 Total saved:       $${fmt(data.savings?.estimated_total_saved_usd)}`,
+                `  📈 Projected/month:   $${fmt(data.savings?.estimated_monthly_saved_usd)}`,
+                `  📊 Avg per hit:       $${fmt(data.savings?.avg_cost_per_call_usd, 4)}`,
+              );
+            }
+
+            if (data.top_hits && data.top_hits.length > 0) {
+              lines.push(``, `🔝 Top cached prompts:`);
+              const topN = data.top_hits.slice(0, 3);
+              topN.forEach((hit, i) => {
+                const truncated = hit.prompt.length > 50 ? `${hit.prompt.slice(0, 50)}…` : hit.prompt;
+                lines.push(`  ${i + 1}. "${truncated}" (hit ${hit.hit_count}×)`);
+              });
+            }
+          }
+        }
+      } catch {
+        // API unavailable or free tier — skip silently
+      }
+
+      return lines.join('\n');
     }
 
     case 'semantic_search': {
@@ -629,6 +717,65 @@ export async function handleCacheTool(
       const full = chunks.join('');
       const preview = full.slice(0, 500);
       return `✅ **cache_stream_get** – ${len} chunk(s) retrieved for \`${key}\`.\n\n**Preview** (first 500 chars):\n\`\`\`\n${preview}${preview.length < full.length ? '…' : ''}\n\`\`\``;
+    }
+
+    case 'cache_org_stats': {
+      const { instance_id, org_id } = args as { instance_id: string; org_id: string };
+      const redis = await getConnection(instance_id);
+      const namespace = `org:${org_id}:sem`;
+      const keys = await scanKeys(redis, `${namespace}:*`, { max: 10000, timeoutMs: 5000 });
+      const entryCount = keys.length;
+      const lines = [
+        `🏢 Org Cache Stats for org \`${org_id}\`:`,
+        `  📦 Shared entries:  ${entryCount}`,
+        `  🔑 Namespace:       ${namespace}`,
+        `  👥 Benefit:         All instances sharing this org_id serve from the same cache`,
+        ``,
+        `💡 To enable sharing: set org_id="${org_id}" in cache_set calls`,
+      ];
+
+      // Org-wide savings aggregation (API endpoint may not be deployed yet,
+      // or the caller may not be an org member — fail silently in that case).
+      try {
+        const savings = await apiFetch<{
+          org_id: string;
+          instance_count: number;
+          total_hits: number;
+          hits_last_24h: number;
+          estimated_total_saved_usd: number;
+          estimated_monthly_saved_usd: number;
+          per_instance: Array<{
+            instance_id: string;
+            name: string;
+            total_hits: number;
+            estimated_total_saved_usd: number;
+          }>;
+        }>(`/api/v1/orgs/${org_id}/savings`);
+
+        const usd = (n: number) => `$${(n ?? 0).toFixed(2)}`;
+        lines.push(
+          ``,
+          `💰 Org-wide Tokenmaxxing ROI:`,
+          `  🖥️ Instances:        ${savings.instance_count}`,
+          `  🎯 Total cache hits:  ${savings.total_hits.toLocaleString('en-US')}`,
+          `  ⏱️ Hits last 24h:     ${savings.hits_last_24h.toLocaleString('en-US')}`,
+          `  💵 Total saved:       ${usd(savings.estimated_total_saved_usd)}`,
+          `  📈 Projected/month:   ${usd(savings.estimated_monthly_saved_usd)}`,
+        );
+        const top = [...(savings.per_instance ?? [])]
+          .sort((a, b) => b.estimated_total_saved_usd - a.estimated_total_saved_usd)
+          .slice(0, 5);
+        if (top.length > 0) {
+          lines.push(``, `  Top instances by savings:`);
+          for (const inst of top) {
+            lines.push(`    • ${inst.name || inst.instance_id}: ${usd(inst.estimated_total_saved_usd)} (${inst.total_hits.toLocaleString('en-US')} hits)`);
+          }
+        }
+      } catch {
+        // Endpoint unavailable / not a member / network error → Redis-only output.
+      }
+
+      return lines.join('\n');
     }
 
     default:

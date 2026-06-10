@@ -94,6 +94,7 @@ const TOOLS = [
       properties: {
         instance_id: { type: 'string', description: 'UUID of the instance' },
         key: { type: 'string', description: 'Cache key to retrieve' },
+        org_id: { type: 'string', description: 'Optional org ID — if the direct key misses, falls back to the shared org namespace org:{org_id}:sem:{key}' },
       },
       required: ['instance_id', 'key'],
     },
@@ -114,6 +115,7 @@ const TOOLS = [
         key: { type: 'string', description: 'Cache key' },
         value: { type: 'string', description: 'Value to store (string or JSON)' },
         ttl: { type: 'number', description: 'Time-to-live in seconds (optional, omit for no expiry)' },
+        org_id: { type: 'string', description: 'Optional org ID — also writes the key to the shared org namespace org:{org_id}:sem:{key} with the same TTL' },
       },
       required: ['instance_id', 'key', 'value'],
     },
@@ -1647,6 +1649,24 @@ const TOOLS = [
       required: ['instance_id', 'key'],
     },
   },
+  {
+    name: 'cache_org_stats',
+    description:
+      'Show shared cache statistics for an org namespace. ' +
+      'Scans all keys under org:{org_id}:sem:* and reports how many entries are shared. ' +
+      'Use this to verify org-sharing is working and to monitor cross-instance cache utilization. ' +
+      'Also aggregates org-wide ROI via the Cachly API: total cache hits, hits in the last 24h, ' +
+      'estimated total and projected monthly USD savings across all org instances, plus a per-instance breakdown. ' +
+      'Zero-config: no API changes required — any cache_set call with org_id writes to this namespace.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        org_id: { type: 'string', description: 'Org ID to inspect (e.g. "acme", "my-company")' },
+      },
+      required: ['instance_id', 'org_id'],
+    },
+  },
 
   // ── v0.6 Cognitive Cache Tools ────────────────────────────────────────────
   {
@@ -2279,6 +2299,34 @@ const TOOLS = [
         incremental: { type: 'boolean', description: 'Only process commits since last run (default: true). Set false to reprocess all.' },
       },
       required: ['instance_id'],
+    },
+  },
+  {
+    name: 'brain_from_ci',
+    description:
+      'Bulk-ingest CI run outcomes into the Brain — the brain_from_git equivalent for CI history. ' +
+      'Feed it an array of {job, status, prev_status} objects from your CI system and it will learn ' +
+      'which jobs have been fixed, broken, or are stable. Use it to bootstrap the Brain from historical CI logs.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID' },
+        outcomes: {
+          type: 'array',
+          description: 'List of CI run outcomes to ingest',
+          items: {
+            type: 'object',
+            properties: {
+              job: { type: 'string', description: 'Job name (e.g. "test", "build", "lint")' },
+              status: { type: 'string', description: 'Current status: success|failure|error' },
+              prev_status: { type: 'string', description: 'Previous run status (optional, needed to detect transitions)' },
+              context: { type: 'string', description: 'Optional: error message, branch, commit hash, etc.' },
+            },
+            required: ['job', 'status'],
+          },
+        },
+      },
+      required: ['instance_id', 'outcomes'],
     },
   },
   {

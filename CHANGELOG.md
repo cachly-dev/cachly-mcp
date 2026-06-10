@@ -7,6 +7,38 @@
 
 ---
 
+## [0.10.111] – 2026-06-10 — *"Org-wide ROI + GitLab CI"*
+
+### Added
+- **Org-wide ROI in `cache_org_stats`** — calls the new `GET /api/v1/orgs/:id/savings` endpoint and appends org-aggregated savings: instance count, total hits, hits last 24h, total + monthly USD savings, top-5 per-instance breakdown. Falls back to Redis-only output when the endpoint is unavailable or the caller is not an org member.
+- **`GET /api/v1/orgs/:id/savings`** (Go API) — sums `SavingsEstimate` across all instances with `org_id = :id`. Caller must be an accepted org member (403 otherwise). Instances whose stats fail are skipped with a warn log.
+- **`src/ci-integration/brain-from-ci-gitlab.yml`** — GitLab CI integration: two `.post` jobs (`on_success`/`on_failure`, since GitLab does not expose final pipeline status to a running job), `allow_failure: true`, same `push-ci-outcome.mjs` helper.
+- **`.github/workflows/brain-ci-feedback.yml`** — dogfooding: cachly's own repo now pushes every CI outcome to the Brain (requires `CACHLY_JWT` + `CACHLY_BRAIN_INSTANCE_ID` repo secrets; skips cleanly until set).
+
+### Fixed
+- **GitHub Action template** — removed job-level `if` referencing `secrets.*` (the `secrets` context is not available in job-level `if` expressions; the workflow would fail to parse). `PREV_STATUS` now derived from `run_attempt > 1` instead of `previous_attempt_url`.
+
+---
+
+## [0.10.110] – 2026-06-10 — *"Zero friction: ROI-Projektor, Org-Cache, CI ready-to-paste"*
+
+### Added
+- **`cache_stats` ROI-Projektor** — when no hits exist yet (day 1 of rollout), shows a projection calculator: "5/10/20 devs × 50 LLM calls/day × 25% hit-rate → $X/month". ROI is visible before accumulating a single hit.
+- **`cache_org_stats`** — new tool showing aggregated shared-namespace stats for an org. Convention: `org:{org_id}:sem:*`. Zero API changes — works with existing Redis.
+- **`org_id` on `cache_set`/`cache_get`** — optional parameter. When set, `cache_set` mirrors writes to the org namespace; `cache_get` falls back to org namespace on miss. Fully backwards-compatible.
+- **`src/ci-integration/brain-from-ci-action.yml`** — copy-pasteable GitHub Actions workflow. Triggers on `workflow_run` (completed), maps conclusion to `job_status`, POSTs to `POST /api/v1/instances/:id/ci-outcome`. Brain self-calibrates confidence on every CI run. Requires `CACHLY_JWT` + `CACHLY_BRAIN_INSTANCE_ID` secrets.
+- **`src/ci-integration/push-ci-outcome.mjs`** — standalone Node.js helper (no MCP dep). Always exits 0 — CI never fails because of Brain push errors.
+
+---
+
+## [0.10.109] – 2026-06-10 — *"Tokenmaxxing ROI + Closed-loop CI"*
+
+### Added
+- **`brain_from_ci`** — bulk CI history ingestion. Takes an array of `{job, status, prev_status?, context?}` outcomes and batch-ingests them into the Brain. Red→green transitions write a fix lesson (confidence 0.65) + CKG `fixes` edge; green→red transitions add a CKG `causes` edge. The `brain_from_git` equivalent for CI logs.
+- **`cache_stats` Tokenmaxxing ROI** — the tool now fetches semantic cache analytics from the API and appends a "💰 Tokenmaxxing ROI" section: total semantic entries, total/24h cache hits, estimated USD saved (total + monthly projection), and top 3 most-cached prompts. Free tier: Redis-only stats shown as before.
+
+---
+
 ## [0.10.108] – 2026-06-09 — *"Focused briefing + trustworthy autopilot"*
 
 ### Added

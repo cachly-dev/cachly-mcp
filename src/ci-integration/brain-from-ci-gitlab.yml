@@ -1,0 +1,46 @@
+# brain-from-ci-gitlab.yml
+#
+# Copy these two jobs into your .gitlab-ci.yml (or `include:` this file) to
+# automatically push CI outcomes to your cachly Brain so it can
+# self-calibrate prediction confidence.
+#
+# GitLab does not expose the final pipeline status to a running job, so the
+# reliable pattern is one job per outcome: `on_success` fires only when all
+# earlier stages passed, `on_failure` only when at least one failed.
+#
+# Required CI/CD variables (Settings → CI/CD → Variables, masked):
+#   CACHLY_JWT                – your cachly API key / Keycloak access token
+#   CACHLY_BRAIN_INSTANCE_ID  – your Brain instance UUID (from cachly dashboard)
+#
+# Optional:
+#   CACHLY_API_URL            – override API base (default: https://api.cachly.dev)
+#
+# The helper script always exits 0 and silently skips when the variables are
+# unset (e.g. forks / external MRs) — your pipeline never fails because of a
+# Brain push error.
+
+cachly-brain-push-success:
+  stage: .post                # runs after all other stages
+  image: node:20-alpine
+  rules:
+    - when: on_success
+  variables:
+    GIT_DEPTH: "1"
+    JOB_NAME: "$CI_PROJECT_NAME-pipeline"
+    JOB_STATUS: "success"
+  script:
+    - node sdk/mcp/src/ci-integration/push-ci-outcome.mjs
+  allow_failure: true
+
+cachly-brain-push-failure:
+  stage: .post
+  image: node:20-alpine
+  rules:
+    - when: on_failure
+  variables:
+    GIT_DEPTH: "1"
+    JOB_NAME: "$CI_PROJECT_NAME-pipeline"
+    JOB_STATUS: "failure"
+  script:
+    - node sdk/mcp/src/ci-integration/push-ci-outcome.mjs
+  allow_failure: true

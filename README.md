@@ -22,7 +22,7 @@
     <img src="https://img.shields.io/badge/GDPR-EU%20servers-green" alt="GDPR: EU servers" />
   </a>
   &nbsp;
-  <img src="https://img.shields.io/badge/121%20MCP%20tools-violet" alt="121 MCP tools" />
+  <img src="https://img.shields.io/badge/136%20MCP%20tools-violet" alt="136 MCP tools" />
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
 </p>
@@ -246,7 +246,27 @@ npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git
 
 ---
 
-## MCP Tools (120 total)
+## CI integration — your pipeline teaches the Brain
+
+Every CI run is a lesson: a red→green transition is a proven fix, a green→red one is a
+known cause. Ready-to-paste templates live in
+[`src/ci-integration/`](./src/ci-integration/):
+
+- **GitHub Actions** — copy [`brain-from-ci-action.yml`](./src/ci-integration/brain-from-ci-action.yml)
+  into `.github/workflows/`. It triggers on `workflow_run` (completed) and pushes the
+  outcome to your Brain. Requires `CACHLY_JWT` + `CACHLY_BRAIN_INSTANCE_ID` secrets.
+- **GitLab CI** — copy [`brain-from-ci-gitlab.yml`](./src/ci-integration/brain-from-ci-gitlab.yml)
+  into your pipeline: two `.post` jobs (`on_success` / `on_failure`) with `allow_failure: true`.
+- **Anything else** — [`push-ci-outcome.mjs`](./src/ci-integration/push-ci-outcome.mjs) is a
+  standalone Node.js helper with zero dependencies. It always exits 0 — your CI never
+  fails because of a Brain push.
+
+Already have months of CI history? Backfill it in one call with the **`brain_from_ci`**
+MCP tool — bulk-ingests past outcomes the same way `brain_from_git` ingests commits.
+
+---
+
+## MCP Tools (136 total)
 
 ### 🧠 Session & Memory (most used)
 
@@ -286,6 +306,7 @@ npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git
 | **`causal_trace`** | Root-cause analysis through the Causal Knowledge Graph |
 | **`brain_predict`** / `brain_predict_failures` | Predict likely failures before they happen |
 | **`brain_from_git`** | Bootstrap people + files + lessons from git history — incremental |
+| **`brain_from_ci`** | Bulk-ingest CI outcomes: red→green becomes a fix lesson + causal `fixes` edge, green→red a `causes` edge — `brain_from_git` for CI logs |
 | `memory_consolidate` | Detect contradictions, merge duplicates, expire stale lessons |
 | `ckg_inspect` | Inspect the causal graph around any concept |
 
@@ -305,7 +326,8 @@ npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git
 |------|-------------|
 | `syndicate` / `fedbrain_search` | Contribute to / search the global Knowledge Commons |
 | `brain_marketplace` / `brain_install` | Browse + install curated Domain Brains (Kubernetes, Auth, DB…) into your Brain |
-| `cache_get` / `cache_set` / `semantic_search` / `index_project` | Cache + semantic ops |
+| `cache_get` / `cache_set` / `semantic_search` / `index_project` | Cache + semantic ops — pass `org_id` on `cache_get`/`cache_set` to share the cache org-wide (writes mirror to `org:{org_id}:sem`, reads fall back to it on miss) |
+| `cache_stats` / `cache_org_stats` | Tokenmaxxing ROI: hits, estimated USD saved + monthly projection — per instance or aggregated across your whole org. Zero hits yet? You get a day-1 ROI projection instead. |
 | `list_instances` / `create_instance` / `delete_instance` | Manage Brain instances |
 | `roadmap_add` / `roadmap_next` | Persistent project roadmap stored in the Brain |
 

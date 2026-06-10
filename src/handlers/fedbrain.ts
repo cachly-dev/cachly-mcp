@@ -9,6 +9,9 @@ import { buildClsPostCommitHook } from '../cls-hook.js';
 // Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
 export let _lastBrainFromGitCounts: { fixes: number; features: number; refactors: number; total: number } | null = null;
 
+// Last brain_from_ci counts — set after each run so index.ts can include them in telemetry
+export let _lastBrainFromCiCounts: { fixes: number; breaks: number; stable: number; total: number } | null = null;
+
 // Git concurrency semaphore (for brain_from_git parallel workers)
 let _gitSemCount = 0;
 const _GIT_SEM_MAX = 10;
@@ -28,7 +31,7 @@ type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 export const FEDBRAIN_TOOL_NAMES = new Set([
   'madc_deliberate', 'cls_ingest', 'cls_install_hooks', 'fedbrain_contribute', 'fedbrain_search',
   'fedbrain_confirm', 'fedbrain_status', 'brain_federate', 'crystal_view', 'compact_recover',
-  'brain_from_git', 'brain_predict_failures',
+  'brain_from_git', 'brain_from_ci', 'brain_predict_failures',
   'brain_contribute_signal', 'brain_import_meta',
 ]);
 
@@ -1098,6 +1101,76 @@ export async function handleFedbrainTool(
       } finally {
         _gitSemRelease();
       }
+    }
+
+    // ── brain_from_ci ─────────────────────────────────────────────────────────
+    case 'brain_from_ci': {
+      const { instance_id, outcomes } = args as {
+        instance_id: string;
+        outcomes: Array<{ job: string; status: string; prev_status?: string; context?: string }>;
+      };
+      const redis = await getConnection(instance_id);
+      const ts = Date.now();
+
+      let fixes = 0;
+      let breaks = 0;
+      let stable = 0;
+      const total = outcomes.length;
+
+      for (const entry of outcomes) {
+        const status = String(entry.status ?? '');
+        const prev_status = String(entry.prev_status ?? '');
+        const job = String(entry.job ?? 'unknown');
+        const ciCtx = String(entry.context ?? '');
+
+        const isFixed = ['failure', 'red', 'error'].includes(prev_status) && ['success', 'green', 'passed'].includes(status);
+        const isBroken = ['success', 'green', 'passed'].includes(prev_status) && ['failure', 'red', 'error'].includes(status);
+
+        const slug = `ci:${ckgSlug(job)}`;
+        const conceptId = ckgSlug(slug);
+        await ckgUpsertNode(redis, conceptId, 'ci', 'job');
+
+        if (isFixed) {
+          const problemId = ckgSlug(`problem:${ckgSlug(job)}`);
+          await ckgUpsertNode(redis, problemId, 'problem', 'ci-failure');
+          await ckgUpdateEdge(redis, conceptId, 'fixes', problemId, true);
+          const lessonObj = {
+            topic: slug, outcome: 'success' as const,
+            what_worked: `CI job "${job}" went ${prev_status} → ${status}`,
+            what_failed: `Job "${job}" was failing`, context: `brain_from_ci: ${ciCtx}`,
+            severity: 'major' as const, file_paths: [], commands: [], tags: ['brain_from_ci', 'ci'],
+            depends_on: [], recall_count: 0, ts, verified_at: ts, confidence: 0.65,
+            audit_trail: [{ ts, action: 'brain_from_ci_fixed' }], version: 3,
+          };
+          await redis.rpush(`cachly:lessons:${slug}`, JSON.stringify(lessonObj));
+          await redis.ltrim(`cachly:lessons:${slug}`, -100, -1);
+          await redis.set(`cachly:lesson:best:${slug}`, JSON.stringify(lessonObj));
+          fixes++;
+        } else if (isBroken) {
+          const causeId = ckgSlug(`cause:${ckgSlug(job)}`);
+          await ckgUpsertNode(redis, causeId, 'cause', 'ci-break');
+          await ckgUpdateEdge(redis, conceptId, 'causes', causeId, false);
+          breaks++;
+        } else {
+          stable++;
+        }
+
+        const clsKey = `cachly:cls:${instance_id}`;
+        await redis.rpush(clsKey, JSON.stringify({ source: 'ci_outcome', payload: { status, prev_status, job }, ts }));
+        await redis.ltrim(clsKey, -200, -1);
+      }
+
+      _lastBrainFromCiCounts = { fixes, breaks, stable, total };
+
+      return [
+        `📥 **brain_from_ci**: Ingested ${total} outcomes — ${fixes} fixes learned, ${breaks} breaks noted, ${stable} stable`,
+        '',
+        fixes > 0 ? `✅ ${fixes} fix lesson${fixes !== 1 ? 's' : ''} written (confidence 0.65) — CKG \`fixes\` edges added` : '',
+        breaks > 0 ? `🔴 ${breaks} break${breaks !== 1 ? 's' : ''} noted — CKG \`causes\` edges added` : '',
+        stable > 0 ? `📊 ${stable} stable outcome${stable !== 1 ? 's' : ''} recorded` : '',
+        '',
+        `💡 Explore: \`brain_search(query="ci")\`  |  \`brain_predict(context="<job-name>")\``,
+      ].filter(Boolean).join('\n');
     }
 
     // ── brain_predict_failures ─────────────────────────────────────────────────

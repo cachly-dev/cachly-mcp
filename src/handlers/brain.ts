@@ -14,8 +14,30 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.108';
+const MCP_VERSION = '0.10.111';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.111': [
+    `🏢 **Org-wide ROI + GitLab CI — the CFO number, aggregated**`,
+    `  💰 \`cache_org_stats\` now shows **org-wide Tokenmaxxing ROI**: total savings summed across every instance in your org, monthly projection, top-5 instances by savings. One number for the whole team.`,
+    `  🔌 Backed by new API endpoint \`GET /api/v1/orgs/:id/savings\` (org members only)`,
+    `  🦊 GitLab CI integration: \`brain-from-ci-gitlab.yml\` — two \`.post\` jobs (on_success/on_failure), same helper script, pipeline never fails because of Brain push`,
+    `  🛠️ GitHub Action template fixed: \`secrets.*\` in job-level \`if\` is invalid — guard removed (helper script skips cleanly on missing secrets)`,
+    `  📊 136 MCP tools`,
+  ],
+  '0.10.110': [
+    `🏢 **Zero friction: ROI-Projektor, Org-Shared-Cache, CI ready-to-paste**`,
+    `  📈 \`cache_stats\` — zero-hit projection calculator: shows expected monthly savings for 5/10/20-dev teams before a single cache hit lands. ROI visible from day 1.`,
+    `  🏢 New \`cache_org_stats\` — shared org-level cache stats across multiple instances. Convention-based (\`org:{id}:sem\`), zero API changes needed.`,
+    `  🔗 \`cache_set\`/\`cache_get\` now accept optional \`org_id\` — write to personal + org namespace, fall back to org on miss. Fully backwards-compatible.`,
+    `  📋 Copy-paste CI integration: \`brain-from-ci-action.yml\` → Brain self-calibrates confidence on every GitHub Actions run. No config beyond two repo secrets.`,
+    `  📊 136 MCP tools`,
+  ],
+  '0.10.109': [
+    `💰 **Tokenmaxxing ROI + Closed-loop CI learning**`,
+    `  📊 \`cache_stats\` now shows a **Tokenmaxxing ROI** section — total tokens saved, monthly cost projection, and top 3 most-cached prompts. Finally a number you can show the CFO.`,
+    `  🔄 New \`brain_from_ci\` — bulk-ingest CI history into the Brain (red→green = learned fix, green→red = CKG causal edge). The brain_from_git equivalent for CI. Bootstrap the Brain from your CI logs in one call.`,
+    `  📊 134 MCP tools`,
+  ],
   '0.10.108': [
     `🧠 **Focused briefing + trustworthy autopilot**`,
     `  🎯 New \`session_start_summary\` — top-N focused briefing by topic. Scores lessons by relevance × confidence + recall_count + severity + recency. Use it for a quick pre-brief without loading the full Brain.`,
