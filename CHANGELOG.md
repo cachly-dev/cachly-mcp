@@ -7,6 +7,27 @@
 
 ---
 
+## [0.10.113] – 2026-06-12 — *"Week-over-week savings trend"*
+
+### Added
+- **`hits_last_7d`, `hits_prev_7d`, `week_over_week_pct` fields** in `SavingsEstimate` — new `CountHitsInWindow` repo method computes both 7-day windows (current + prior) per instance. The `week_over_week_pct` field is `null` when both windows are zero.
+- **`cache_stats` WoW trend line** — shows `📈 +23.0% vs prev week` (green) or `📉 -15.5%` (red). First week with any hits shows `+100%`. Line omitted entirely when no prior-week baseline exists yet.
+- **7 Go unit tests** for trend math (`TestWeekOverWeekPct`), **3 MCP tests** for trend rendering in `cache_stats`.
+
+---
+
+## [0.10.112] – 2026-06-11 — *"Accurate ROI — configurable cost per call"*
+
+### Added
+- **`set_cost_per_call` MCP tool** — set your real per-call LLM cost so savings estimates in `cache_stats` are accurate. Pre-filled hints for gpt-4o ($0.015), claude-3-5-sonnet ($0.009), gpt-4o-mini ($0.002), claude-haiku ($0.001).
+- **`PUT /api/v1/instances/:id/cost-per-call`** (Go API) — persists `cost_per_call_usd` per instance. Validated (must be > 0 and ≤ 100). Used by `GetStats`, org savings aggregation, and the SSE analytics stream automatically.
+- **Per-instance `cost_per_call_usd` field** on the `Instance` model (GORM default: 0.002). AutoMigrate adds the column; existing rows default to $0.002.
+
+### Fixed
+- Device flow onboarding message showed stale "121 MCP tools" — updated to 136.
+
+---
+
 ## [0.10.111] – 2026-06-10 — *"Org-wide ROI + GitLab CI"*
 
 ### Added

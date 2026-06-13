@@ -20,7 +20,7 @@ export const CACHE_TOOL_NAMES = new Set([
   'cache_get', 'cache_set', 'cache_delete', 'cache_exists', 'cache_ttl', 'cache_keys',
   'cache_stats', 'semantic_search', 'detect_namespace', 'cache_warmup', 'index_project',
   'cache_mset', 'cache_mget', 'cache_lock_acquire', 'cache_lock_release',
-  'cache_stream_set', 'cache_stream_get', 'cache_org_stats',
+  'cache_stream_set', 'cache_stream_get', 'cache_org_stats', 'set_cost_per_call',
 ]);
 
 export async function handleCacheTool(
@@ -190,6 +190,9 @@ export async function handleCacheTool(
                 estimated_monthly_saved_usd?: number;
                 avg_cost_per_call_usd?: number;
                 hits_last_24h?: number;
+                hits_last_7d?: number;
+                hits_prev_7d?: number;
+                week_over_week_pct?: number;
               };
               top_hits?: Array<{ prompt: string; hit_count: number }>;
             };
@@ -219,12 +222,18 @@ export async function handleCacheTool(
                 `     Docs: https://cachly.dev/docs/semantic`,
               );
             } else {
+              const wow = data.savings?.week_over_week_pct;
+              const wowLine = wow !== undefined
+                ? `  ${wow >= 0 ? '📈' : '📉'} 7d trend:          ${wow >= 0 ? '+' : ''}${wow.toFixed(1)}% vs prev week`
+                : '';
               lines.push(
                 ``,
                 `💰 **Tokenmaxxing ROI:**`,
                 `  📦 Semantic entries:  ${fmtInt(data.total_entries)}`,
                 `  🎯 Total cache hits:  ${fmtInt(data.total_hits)}`,
                 `  ⏱️ Hits last 24h:     ${fmtInt(data.savings?.hits_last_24h)}`,
+                `  📅 Hits last 7d:      ${fmtInt(data.savings?.hits_last_7d)}`,
+                ...(wowLine ? [wowLine] : []),
                 `  💵 Total saved:       $${fmt(data.savings?.estimated_total_saved_usd)}`,
                 `  📈 Projected/month:   $${fmt(data.savings?.estimated_monthly_saved_usd)}`,
                 `  📊 Avg per hit:       $${fmt(data.savings?.avg_cost_per_call_usd, 4)}`,
@@ -776,6 +785,31 @@ export async function handleCacheTool(
       }
 
       return lines.join('\n');
+    }
+
+    case 'set_cost_per_call': {
+      const { instance_id, cost_per_call_usd } = args as { instance_id: string; cost_per_call_usd: number };
+      if (!cost_per_call_usd || cost_per_call_usd <= 0 || cost_per_call_usd > 100) {
+        throw new McpError(ErrorCode.InvalidParams, 'cost_per_call_usd must be a positive number ≤ 100');
+      }
+      await apiFetch<unknown>(`/api/v1/instances/${instance_id}/cost-per-call`, {
+        method: 'PUT',
+        body: JSON.stringify({ cost_per_call_usd }),
+      });
+      const examples: Record<string, string> = {
+        '0.02': 'claude-opus-4.8',
+        '0.015': 'gpt-5.5',
+        '0.009': 'claude-sonnet-4.6',
+        '0.002': 'gpt-5.5-mini',
+        '0.001': 'claude-haiku-4.5',
+      };
+      const modelHint = examples[cost_per_call_usd.toString()] ? ` (${examples[cost_per_call_usd.toString()]})` : '';
+      return [
+        `✅ **Cost per call updated** — $${cost_per_call_usd.toFixed(4)}${modelHint}`,
+        ``,
+        `ROI savings in \`cache_stats\` will now use $${cost_per_call_usd.toFixed(4)} per avoided LLM call.`,
+        `Run \`cache_stats\` to see your updated savings estimate.`,
+      ].join('\n');
     }
 
     default:

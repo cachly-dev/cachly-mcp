@@ -14,8 +14,21 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.111';
+const MCP_VERSION = '0.10.113';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.113': [
+    `📈 **Week-over-week savings trend in \`cache_stats\`**`,
+    `  📅 \`cache_stats\` now shows **7-day hits** + **WoW trend %** (e.g. \`+23.0% vs prev week\`) so ROI momentum is visible, not just the cumulative total.`,
+    `  ⬇️ Goes red (📉) on drops, green (📈) on growth — first week always shows +100% (new).`,
+    `  🔧 Backed by new \`CountHitsInWindow\` repo method + \`hits_last_7d\`, \`hits_prev_7d\`, \`week_over_week_pct\` fields in \`SavingsEstimate\`.`,
+    `  📊 137 MCP tools`,
+  ],
+  '0.10.112': [
+    `⚙️ **Configurable cost_per_call_usd — accurate ROI for any LLM**`,
+    `  💡 New \`set_cost_per_call\` tool: set your real per-call cost (claude-opus-4.8 → $0.02, gpt-5.5 → $0.015, claude-sonnet-4.6 → $0.009, claude-haiku-4.5 → $0.001) so savings estimates in \`cache_stats\` reflect your actual bill.`,
+    `  🔧 New API: \`PUT /api/v1/instances/:id/cost-per-call\` — persisted per instance, used by \`cache_stats\`, org savings, and SSE analytics stream.`,
+    `  📊 137 MCP tools`,
+  ],
   '0.10.111': [
     `🏢 **Org-wide ROI + GitLab CI — the CFO number, aggregated**`,
     `  💰 \`cache_org_stats\` now shows **org-wide Tokenmaxxing ROI**: total savings summed across every instance in your org, monthly projection, top-5 instances by savings. One number for the whole team.`,

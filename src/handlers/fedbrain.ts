@@ -5,6 +5,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse, normalizeGitPath } from '../utils.js';
 import { buildClsPostCommitHook } from '../cls-hook.js';
+import { installBrainWatchHook } from '../brain-watch-hook.js';
 
 // Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
 export let _lastBrainFromGitCounts: { fixes: number; features: number; refactors: number; total: number } | null = null;
@@ -32,7 +33,7 @@ export const FEDBRAIN_TOOL_NAMES = new Set([
   'madc_deliberate', 'cls_ingest', 'cls_install_hooks', 'fedbrain_contribute', 'fedbrain_search',
   'fedbrain_confirm', 'fedbrain_status', 'brain_federate', 'crystal_view', 'compact_recover',
   'brain_from_git', 'brain_from_ci', 'brain_predict_failures',
-  'brain_contribute_signal', 'brain_import_meta',
+  'brain_contribute_signal', 'brain_import_meta', 'brain_watch',
 ]);
 
 export async function handleFedbrainTool(
@@ -1435,6 +1436,49 @@ export async function handleFedbrainTool(
         lines.push(`_(${metas.length - imported} already present — not overwritten)_`);
       }
       return lines.join('\n');
+    }
+
+    // ── brain_watch ───────────────────────────────────────────────────────────
+    case 'brain_watch': {
+      const { instance_id = '', project_dir = '.', api_key } = args as {
+        instance_id?: string; project_dir?: string; api_key?: string;
+      };
+      const { resolve } = await import('node:path');
+      const projectDir = resolve(project_dir);
+
+      const { result, hookPath } = await installBrainWatchHook(
+        projectDir,
+        instance_id,
+        api_key as string | undefined,
+      );
+
+      if (result === 'skipped-no-git') {
+        return [
+          `⚠️ **brain_watch: no git repository found**`,
+          '',
+          `No \`.git\` directory in \`${projectDir}\`.`,
+          `Pass \`project_dir\` pointing to a git checkout.`,
+        ].join('\n');
+      }
+
+      const statusLine: Record<string, string> = {
+        written:   '✅ Hook installed (new)',
+        upgraded:  '🔄 Hook upgraded to latest version',
+        appended:  '📎 Hook appended to existing post-commit script',
+        unchanged: '✓ Hook already up to date — nothing changed',
+      };
+
+      return [
+        `🧠 **brain_watch ${statusLine[result] ?? result}**`,
+        '',
+        `Hook path: \`${hookPath}\``,
+        `Instance:  \`${instance_id || '(none — set CACHLY_BRAIN_INSTANCE_ID or pass instance_id)'}\``,
+        '',
+        `Every future commit will automatically teach your Brain.`,
+        `No manual \`brain_from_git\` needed — the hook runs silently in the background.`,
+        '',
+        `💡 Verify: \`git commit --allow-empty -m "test brain_watch"\` then \`smart_recall(query="test")\``,
+      ].join('\n');
     }
 
     default:

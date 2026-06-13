@@ -9,7 +9,7 @@
  * Run: npx vitest run src/__tests__/org-shared-cache.test.ts
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { handleCacheTool } from '../handlers/cache.js';
 
 // ── Minimal fake Redis ────────────────────────────────────────────────────────
@@ -242,5 +242,133 @@ describe('cache_org_stats', () => {
     expect(result).toContain('Shared entries:  1');
     expect(result).toContain('org:acme:sem');
     expect(result).not.toContain('Org-wide');
+  });
+});
+
+describe('set_cost_per_call', () => {
+  it('calls PUT /api/v1/instances/:id/cost-per-call and returns confirmation', async () => {
+    let captured: { path: string; opts: RequestInit } | null = null;
+    const apiFetch = async <T>(path: string, opts: RequestInit = {}): Promise<T> => {
+      captured = { path, opts };
+      return {} as T;
+    };
+
+    const result = await handleCacheTool(
+      'set_cost_per_call',
+      { instance_id: 'test-inst-id', cost_per_call_usd: 0.015 },
+      async () => { throw new Error('should not call getConnection'); },
+      apiFetch,
+    );
+
+    expect(captured).not.toBeNull();
+    expect(captured!.path).toBe('/api/v1/instances/test-inst-id/cost-per-call');
+    expect(captured!.opts.method).toBe('PUT');
+    const body = JSON.parse(captured!.opts.body as string);
+    expect(body.cost_per_call_usd).toBe(0.015);
+    expect(result).toContain('Cost per call updated');
+    expect(result).toContain('$0.0150');
+    expect(result).toContain('gpt-5');
+  });
+
+  it('includes model hint for known cost values', async () => {
+    const apiFetch = async <T>(): Promise<T> => ({} as T);
+    const r = await handleCacheTool(
+      'set_cost_per_call',
+      { instance_id: 'x', cost_per_call_usd: 0.001 },
+      async () => { throw new Error('no redis'); },
+      apiFetch,
+    );
+    expect(r).toContain('claude-haiku');
+  });
+});
+
+describe('cache_stats week-over-week trend', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  // Fake Redis that satisfies the info() calls cache_stats makes
+  function makeFakeRedisForStats() {
+    return {
+      info: async (section?: string) => {
+        if (section === 'clients') return 'connected_clients:3\r\n';
+        // all + stats + keyspace all go through info(section)
+        return [
+          'used_memory_human:1.00M',
+          'used_memory_peak_human:2.00M',
+          'keyspace_hits:500',
+          'keyspace_misses:50',
+          'instantaneous_ops_per_sec:12',
+        ].join('\r\n') + '\r\n';
+      },
+    };
+  }
+
+  function stubFetchWithSavings(wow: number | undefined) {
+    vi.stubGlobal('fetch', async (url: string | URL) => {
+      const u = String(url);
+      // /v1/sem/:token/stats
+      if (u.includes('/v1/sem/') && u.includes('/stats')) {
+        return {
+          ok: true,
+          json: async () => ({
+            total_entries: 100,
+            total_hits: 500,
+            savings: {
+              hits_last_24h: 20,
+              hits_last_7d: 120,
+              hits_prev_7d: 100,
+              week_over_week_pct: wow,
+              estimated_total_saved_usd: 1.0,
+              estimated_monthly_saved_usd: 1.2,
+              avg_cost_per_call_usd: 0.002,
+            },
+          }),
+        };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    });
+  }
+
+  const apiFetch = async <T>(path: string): Promise<T> => {
+    if (path.includes('/instances/')) {
+      return { id: 'inst-1', name: 'test', vector_token: 'tok-abc' } as unknown as T;
+    }
+    throw new Error('unexpected apiFetch path: ' + path);
+  };
+
+  it('shows 7d trend with positive growth', async () => {
+    stubFetchWithSavings(20.0);
+    const result = await handleCacheTool(
+      'cache_stats',
+      { instance_id: 'inst-1' },
+      async () => makeFakeRedisForStats() as never,
+      apiFetch,
+    );
+    expect(result).toContain('Hits last 7d');
+    expect(result).toContain('+20.0%');
+    expect(result).toContain('📈');
+  });
+
+  it('shows 7d trend with negative growth', async () => {
+    stubFetchWithSavings(-15.5);
+    const result = await handleCacheTool(
+      'cache_stats',
+      { instance_id: 'inst-1' },
+      async () => makeFakeRedisForStats() as never,
+      apiFetch,
+    );
+    expect(result).toContain('-15.5%');
+    expect(result).toContain('📉');
+  });
+
+  it('omits trend line when week_over_week_pct is absent', async () => {
+    stubFetchWithSavings(undefined);
+    const result = await handleCacheTool(
+      'cache_stats',
+      { instance_id: 'inst-1' },
+      async () => makeFakeRedisForStats() as never,
+      apiFetch,
+    );
+    expect(result).toContain('Hits last 7d');
+    expect(result).not.toContain('trend');
   });
 });

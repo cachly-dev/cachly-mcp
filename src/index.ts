@@ -899,7 +899,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         '',
         'After sign-in: call **any tool again** — your Brain activates instantly.',
         '',
-        '✨ Free forever · No credit card · 121 MCP tools · GDPR · EU servers',
+        '✨ Free forever · No credit card · 136 MCP tools · GDPR · EU servers',
       ].join('\n');
     }
 

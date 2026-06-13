@@ -1668,6 +1668,29 @@ const TOOLS = [
     },
   },
 
+  {
+    name: 'set_cost_per_call',
+    description:
+      'Set the assumed cost per avoided LLM API call (USD) for this instance. ' +
+      'This is used to compute accurate ROI savings estimates in cache_stats. ' +
+      'The default ($0.002) is calibrated for a small model (gpt-5.5-mini class). ' +
+      'Set your actual model cost for accurate numbers: ' +
+      'claude-opus-4.8 → $0.02, gpt-5.5 → $0.015, claude-sonnet-4.6 → $0.009, claude-haiku-4.5 → $0.001. ' +
+      'After updating, cache_stats will show savings computed from your real cost. ' +
+      'Use list_instances to find your instance_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        cost_per_call_usd: {
+          type: 'number',
+          description: 'Cost per LLM API call in USD. Common values: 0.02 (claude-opus-4.8), 0.015 (gpt-5.5), 0.009 (claude-sonnet-4.6), 0.002 (gpt-5.5-mini), 0.001 (claude-haiku-4.5).',
+        },
+      },
+      required: ['instance_id', 'cost_per_call_usd'],
+    },
+  },
+
   // ── v0.6 Cognitive Cache Tools ────────────────────────────────────────────
   {
     name: 'memory_consolidate',
@@ -2327,6 +2350,26 @@ const TOOLS = [
         },
       },
       required: ['instance_id', 'outcomes'],
+    },
+  },
+  {
+    name: 'brain_watch',
+    description:
+      'Install an ambient git post-commit hook that automatically learns from every commit — ' +
+      'no manual brain_from_git needed. After installation every `git commit` silently POSTs ' +
+      'the commit message, SHA, and changed files to the cachly Brain API in the background. ' +
+      'Idempotent: running brain_watch twice installs the hook only once. ' +
+      'Uses curl (not Node/npx) so it works in any environment. ' +
+      'The hook always exits 0 and runs asynchronously — it never blocks a commit. ' +
+      'Returns the hook path and installation status (written/upgraded/appended/unchanged/skipped-no-git).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'Brain instance ID to learn into' },
+        project_dir: { type: 'string', description: 'Path to the git repository (default: current directory ".")' },
+        api_key: { type: 'string', description: 'Optional cachly API key (cky_…) to embed in the hook for authentication' },
+      },
+      required: [],
     },
   },
   {
