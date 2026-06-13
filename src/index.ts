@@ -2835,7 +2835,8 @@ if (process.argv[2] === 'health') {
 // `setup` but fully automatic (no prompts) — auth → instance → all editor
 // configs → CLAUDE.md → git/starter bootstrap → health, in a single shot.
 const _isAutopilotCli = process.argv[2] === 'autopilot';
-if (process.argv[2] === 'setup' || _isAutopilotCli) {
+// 'autosetup' is the canonical alias; 'setup' kept for backwards compat.
+if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopilotCli) {
   const { writeFile, mkdir, readFile } = await import('node:fs/promises');
   const { existsSync } = await import('node:fs');
   const { resolve, dirname } = await import('node:path');
@@ -3571,7 +3572,7 @@ if (!JWT) {
 //   • Editor as an MCP stdio server (non-TTY)  → ONE stderr hint, then KEEP RUNNING
 //     so tools/list works and the first tool call starts the browser sign-in.
 // Skip entirely for CLI subcommands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'bench', 'tool-specs', 'openapi'];
+const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'autosetup', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'bench', 'tool-specs', 'openapi'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
   const runningInTerminal = !process.argv[2] && process.stdout.isTTY === true && _isMain;
   if (runningInTerminal) {

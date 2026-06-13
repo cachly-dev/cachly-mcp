@@ -101,6 +101,26 @@ Like what you see? Make it permanent in the next step.
 
 ---
 
+## Brain-first — Semantic Cache as Proof-Point
+
+cachly is not a semantic cache with a brain bolt-on. The Brain is the product. The
+Semantic Cache is the **proof-point** — it shows ROI in dollars from day one, with zero
+trust required. It opens the door. The Brain is why teams never leave.
+
+| | Wedge — Land | Moat — Retain |
+|---|---|---|
+| **Feature** | Semantic Cache | AI Brain (Lessons, Recall, Team-Sharing) |
+| **Value** | Measurable cost savings from day one | Compounding team intelligence |
+| **Metric** | Cache-hit rate, $/month saved | Lessons retained, WoW trend, recall quality |
+| **Analogy** | Datadog APM (surfaces the problem) | Stripe (becomes critical infrastructure) |
+
+**The org-level advantage:** Brain lessons and cache hits are shared across the whole
+team — one person's fix becomes every agent's reflex. Anthropic Projects Memory is
+per-user and model-locked. cachly is team-wide and model-neutral. That's the structural
+moat no first-party tool can build.
+
+---
+
 ## Setup — one command
 
 ```bash
@@ -229,7 +249,7 @@ causal_trace(problem="auth breaks after restart")
 npx @cachly-dev/mcp-server@latest autopilot # One command — signs in, configures every editor, bootstraps from git
 npx @cachly-dev/mcp-server@latest demo      # Preview your Brain (no account needed)
 npx @cachly-dev/mcp-server@latest bench     # Recall quality vs flat-file memory (no auth required)
-npx @cachly-dev/mcp-server@latest setup     # Interactive variant — pick editors yourself
+npx @cachly-dev/mcp-server@latest autosetup # Interactive variant — pick editors yourself
 npx @cachly-dev/mcp-server@latest health    # Check token, API, editors, git hook
 npx @cachly-dev/mcp-server@latest digest    # Weekly Brain summary — shareable
 npx @cachly-dev/mcp-server@latest share     # Generate a shareable stats card + tweet
@@ -378,17 +398,17 @@ following. Manual snippets are in the **Manual Setup** section below.
 | **Cline** | ✅ detected via VS Code | `.vscode/mcp.json` | — | Shares config with Copilot; restart VS Code |
 | **Continue.dev** | ✅ detected via `.continue/` | `.continue/config.json` | — | Uses `modelContextProtocolServers` key |
 | **Zed** | ✅ detected via `.zed/` | `.zed/settings.json` | — | Uses `context_servers` key |
-| **Windsurf (global)** | `setup --editor windsurf` | `~/.windsurf/mcp.json` | ✅ | Pass `--editor` to target global config |
-| **Any other MCP client** | `init --editor claude` | `.mcp.json` | — | Standard `mcpServers` stdio format |
+| **Windsurf (global)** | `autosetup --editor windsurf` | `~/.windsurf/mcp.json` | ✅ | Pass `--editor` to target global config |
+| **Any other MCP client** | `autosetup --editor claude` | `.mcp.json` | — | Standard `mcpServers` stdio format |
 
 **Which sign-in path each editor uses:**
 
 | Scenario | Path |
 |---|---|
-| `setup` from a real terminal (TTY) | OAuth device-flow → browser click → API key saved automatically |
-| `setup` from VSCode task / CI (non-TTY) | Auto-detects non-interactive, opens browser with step-by-step guide, prints `CACHLY_JWT=... setup` instruction |
+| `autosetup` from a real terminal (TTY) | OAuth device-flow → browser click → API key saved automatically |
+| `autosetup` from VSCode task / CI (non-TTY) | Auto-detects non-interactive, opens browser with step-by-step guide, prints `CACHLY_JWT=... autosetup` instruction |
 | First tool call from Claude Code (no JWT yet) | Inline device-flow: MCP returns URL + code, browser opens automatically, next call proceeds |
-| `CACHLY_JWT=cky_live_xxx npx ... setup` | Skips auth step entirely, uses provided key |
+| `CACHLY_JWT=cky_live_xxx npx ... autosetup` | Skips auth step entirely, uses provided key |
 
 > **Tip — fastest per-project setup from inside Claude Code:**
 > ```
@@ -480,12 +500,12 @@ private backend instead of `api.cachly.dev`:
 npx @cachly-dev/mcp-server@latest autopilot --api-url https://cachly.mycorp.internal
 
 # Or non-interactively
-npx @cachly-dev/mcp-server@latest init \
+npx @cachly-dev/mcp-server@latest autosetup \
   --instance-id <uuid> --api-key <cky_live_...> \
   --api-url https://cachly.mycorp.internal
 ```
 
-`setup`/`init` bake `CACHLY_API_URL` into the editor config **only** when it differs
+`autosetup` bakes `CACHLY_API_URL` into the editor config **only** when it differs
 from the default cloud — so default installs stay clean, and self-hosted installs
 keep talking to your backend on every editor launch. All data stays in your infra.
 
