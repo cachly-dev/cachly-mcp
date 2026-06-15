@@ -2855,6 +2855,22 @@ const TOOLS = [
       required: ['instance_id'],
     },
   },
+  {
+    name: 'brain_set_pref',
+    description:
+      'Persist a user preference for this Brain instance. ' +
+      'Preferences are stored in Redis and survive restarts. ' +
+      'Known keys: `auto_changelog` (set to "false" to disable the automatic changelog shown at session_start).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance (Brain ID).' },
+        key:         { type: 'string', description: 'Preference key (e.g. "auto_changelog").' },
+        value:       { type: 'string', description: 'Value to set (e.g. "false" to disable, "true" to re-enable).' },
+      },
+      required: ['instance_id', 'key', 'value'],
+    },
+  },
 ] as const;
 
 

@@ -381,7 +381,7 @@ export const BRAIN_TOOL_NAMES = new Set([
   'session_start', 'session_start_summary', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
   'brain_who_knows', 'brain_file_map', 'team_expertise_map',
   'skill_gaps', 'brain_coverage', 'brain_metrics', 'brain_service_map',
-  'brain_collab_pairs', 'brain_portability', 'brain_changelog',
+  'brain_collab_pairs', 'brain_portability', 'brain_changelog', 'brain_set_pref',
 ]);
 
 // ── Free-tier Teaser-Gate ──────────────────────────────────────────────────
@@ -2160,6 +2160,49 @@ export async function handleBrainTool(
         lines.push(`🩺 _Run \`brain_doctor\` to fix: ${reasons.join(', ')}._`);
       }
 
+      // ── Auto-Changelog — new lessons since last session ──────────────────────
+      // Appended at the end so it never competes with the core briefing.
+      // Skipped on: first session, no new lessons, or when disabled via prefs.
+      try {
+        const autoChangelogPref = await redis.get(`cachly:prefs:auto_changelog:${instance_id}`).catch(() => null);
+        const autoChangelogEnabled = autoChangelogPref !== 'false';
+        if (autoChangelogEnabled && lastSession?.ts && !isFirstSession) {
+          const lastTs = new Date(lastSession.ts).getTime();
+          if (!Number.isNaN(lastTs)) {
+            const newLessons = lessons.filter(l => {
+              const t = new Date(l.ts).getTime();
+              return !Number.isNaN(t) && t > lastTs;
+            });
+            if (newLessons.length > 0) {
+              const ago = Math.round((Date.now() - lastTs) / 60000);
+              const agoStr = ago < 60 ? `${ago}m` : ago < 1440 ? `${Math.round(ago / 60)}h` : `${Math.round(ago / 1440)}d`;
+              lines.push('');
+              lines.push(`📋 **${newLessons.length} new lesson${newLessons.length !== 1 ? 's' : ''} since your last session** (${agoStr} ago):`);
+              // Group by category
+              const catMap = new Map<string, typeof newLessons>();
+              for (const l of newLessons.slice(0, 20)) {
+                const cat = l.topic.includes(':') ? l.topic.split(':')[0] : 'general';
+                const arr = catMap.get(cat) ?? [];
+                arr.push(l);
+                catMap.set(cat, arr);
+              }
+              for (const [cat, catLessons] of catMap) {
+                lines.push(`  **${cat}**`);
+                for (const l of catLessons) {
+                  const icon = l.outcome === 'failure' ? '❌' : l.severity === 'critical' ? '🚨' : l.severity === 'major' ? '⚠️' : '✅';
+                  const body = (l.outcome === 'failure' ? l.what_failed : l.what_worked) ?? '';
+                  lines.push(`    ${icon} \`${l.topic}\`${body ? ` — ${body.slice(0, 80)}` : ''}`);
+                }
+              }
+              if (newLessons.length > 20) {
+                lines.push(`  … and ${newLessons.length - 20} more. Call \`brain_changelog\` for the full list.`);
+              }
+              lines.push(`  _Disable auto-changelog: \`brain_set_pref(instance_id="${instance_id}", key="auto_changelog", value="false")\`_`);
+            }
+          }
+        }
+      } catch { /* changelog must never block session_start */ }
+
       return lines.join('\n');
     }
 
@@ -3692,7 +3735,6 @@ export async function handleBrainTool(
       const redis = await getConnection(instance_id);
       const cutoff = Date.now() - Number(days) * 86_400_000;
 
-      // Scan all lessons and collect recent ones.
       const keys: string[] = await scanKeys(redis, 'cachly:lesson:best:*', { max: 4000, timeoutMs: 4000 });
       type RawLesson = {
         topic?: string;
@@ -3719,7 +3761,6 @@ export async function handleBrainTool(
         recent.push({ ...lesson, topic });
       }
 
-      // Sort by timestamp desc, cap at max_lessons.
       recent.sort((a, b) => {
         const ta = a.ts ? new Date(a.ts).getTime() : 0;
         const tb = b.ts ? new Date(b.ts).getTime() : 0;
@@ -3735,7 +3776,6 @@ export async function handleBrainTool(
         ].join('\n');
       }
 
-      // Group by category (topic prefix before first ':').
       const groups = new Map<string, typeof lessons>();
       for (const l of lessons) {
         const cat = l.topic.includes(':') ? l.topic.split(':')[0] : 'general';
@@ -3780,6 +3820,24 @@ export async function handleBrainTool(
 
       return lines.join('\n');
     }
+
+    // ── brain_set_pref ────────────────────────────────────────────────────────
+    case 'brain_set_pref': {
+      const {
+        instance_id,
+        key,
+        value,
+      } = args as { instance_id: string; key: string; value: string };
+
+      if (!key || !key.trim()) throw new Error('key is required');
+
+      const redis = await getConnection(instance_id);
+      const redisKey = `cachly:prefs:${key.trim()}:${instance_id}`;
+      await redis.set(redisKey, String(value));
+
+      return `✅ Preference \`${key}\` set to \`${value}\` for this Brain instance.`;
+    }
+
 
     // ── sync_file_changes ─────────────────────────────────────────────────────
 
