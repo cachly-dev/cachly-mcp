@@ -993,6 +993,24 @@ const TOOLS = [
     },
   },
   {
+    name: 'brain_changelog',
+    description:
+      'Generate a human-readable Markdown changelog of lessons learned in the last N days. ' +
+      'Groups lessons by topic category, annotates with author, recall count and confidence. ' +
+      'Ideal for weekly standups, sprint retros, or async team updates — share the output directly in Slack or a doc. ' +
+      'Example: brain_changelog(instance_id="...", days=7) → grouped Markdown changelog of the week\'s learning.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        days: { type: 'number', description: 'How many days back to include (default: 7)' },
+        max_lessons: { type: 'number', description: 'Maximum number of lessons to include (default: 30)' },
+        include_failures: { type: 'boolean', description: 'Include failure-outcome lessons (default: true)' },
+      },
+      required: ['instance_id'],
+    },
+  },
+  {
     name: 'brain_service_map',
     description:
       'Map everything the Brain knows about a running service or system: who operates it, ' +

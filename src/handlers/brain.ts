@@ -14,8 +14,15 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.113';
+const MCP_VERSION = '0.10.114';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.114': [
+    `📋 **\`brain_changelog\` — weekly knowledge digest in one call**`,
+    `  📅 Generates a grouped Markdown changelog of lessons learned in the last N days.`,
+    `  👥 Grouped by topic category, annotated with author, recall count, and confidence — paste directly into standup or Slack.`,
+    `  ⚙️ Params: \`days\` (default 7), \`max_lessons\` (default 30), \`include_failures\` (default true).`,
+    `  📊 138 MCP tools`,
+  ],
   '0.10.113': [
     `📈 **Week-over-week savings trend in \`cache_stats\`**`,
     `  📅 \`cache_stats\` now shows **7-day hits** + **WoW trend %** (e.g. \`+23.0% vs prev week\`) so ROI momentum is visible, not just the cumulative total.`,
@@ -374,7 +381,7 @@ export const BRAIN_TOOL_NAMES = new Set([
   'session_start', 'session_start_summary', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
   'brain_who_knows', 'brain_file_map', 'team_expertise_map',
   'skill_gaps', 'brain_coverage', 'brain_metrics', 'brain_service_map',
-  'brain_collab_pairs', 'brain_portability',
+  'brain_collab_pairs', 'brain_portability', 'brain_changelog',
 ]);
 
 // ── Free-tier Teaser-Gate ──────────────────────────────────────────────────
@@ -3661,6 +3668,114 @@ export async function handleBrainTool(
         ``,
         `---`,
         `_Docs: cachly.dev/docs/model-neutral • Your Brain, Any Model_`,
+      );
+
+      return lines.join('\n');
+    }
+
+    // ── brain_changelog ───────────────────────────────────────────────────────
+    // Generates a human-readable Markdown changelog of recent lessons.
+    // Useful for weekly standups, sprint reviews, or async team updates.
+    case 'brain_changelog': {
+      const {
+        instance_id,
+        days = 7,
+        max_lessons = 30,
+        include_failures = true,
+      } = args as {
+        instance_id: string;
+        days?: number;
+        max_lessons?: number;
+        include_failures?: boolean;
+      };
+
+      const redis = await getConnection(instance_id);
+      const cutoff = Date.now() - Number(days) * 86_400_000;
+
+      // Scan all lessons and collect recent ones.
+      const keys: string[] = await scanKeys(redis, 'cachly:lesson:best:*', { max: 4000, timeoutMs: 4000 });
+      type RawLesson = {
+        topic?: string;
+        outcome?: string;
+        what_worked?: string;
+        what_failed?: string;
+        severity?: string;
+        author?: string;
+        ts?: string;
+        recall_count?: number;
+        confidence?: number;
+        tags?: string[];
+      };
+
+      const recent: (RawLesson & { topic: string })[] = [];
+      for (const k of keys) {
+        const raw = await redis.get(k).catch(() => null);
+        if (!raw) continue;
+        const lesson = safeJsonParse<RawLesson>(raw, {});
+        const ts = lesson.ts ? new Date(lesson.ts).getTime() : 0;
+        if (ts < cutoff) continue;
+        if (!include_failures && lesson.outcome === 'failure') continue;
+        const topic = k.replace('cachly:lesson:best:', '');
+        recent.push({ ...lesson, topic });
+      }
+
+      // Sort by timestamp desc, cap at max_lessons.
+      recent.sort((a, b) => {
+        const ta = a.ts ? new Date(a.ts).getTime() : 0;
+        const tb = b.ts ? new Date(b.ts).getTime() : 0;
+        return tb - ta;
+      });
+      const lessons = recent.slice(0, Number(max_lessons));
+
+      if (lessons.length === 0) {
+        return [
+          `## 📋 Brain Changelog — last ${days} day${Number(days) !== 1 ? 's' : ''}`,
+          ``,
+          `_No new lessons learned in this window. Your Brain already knows everything it knows — add new lessons with \`learn_from_attempts\`._`,
+        ].join('\n');
+      }
+
+      // Group by category (topic prefix before first ':').
+      const groups = new Map<string, typeof lessons>();
+      for (const l of lessons) {
+        const cat = l.topic.includes(':') ? l.topic.split(':')[0] : 'general';
+        const arr = groups.get(cat) ?? [];
+        arr.push(l);
+        groups.set(cat, arr);
+      }
+
+      const severityEmoji = (s?: string) =>
+        s === 'critical' ? '🚨' : s === 'major' ? '⚠️' : s === 'minor' ? '💡' : '✨';
+      const outcomeEmoji = (o?: string) =>
+        o === 'failure' ? '❌' : o === 'partial' ? '🔶' : '✅';
+
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const lines: string[] = [
+        `## 📋 Brain Changelog — ${dateStr} (last ${days} day${Number(days) !== 1 ? 's' : ''})`,
+        ``,
+        `_${lessons.length} lesson${lessons.length !== 1 ? 's' : ''} learned across ${groups.size} topic area${groups.size !== 1 ? 's' : ''}_`,
+        ``,
+      ];
+
+      for (const [cat, catLessons] of Array.from(groups.entries()).sort((a, b) => b[1].length - a[1].length)) {
+        lines.push(`### ${cat}`);
+        lines.push('');
+        for (const l of catLessons) {
+          const icon = l.outcome === 'failure' ? outcomeEmoji(l.outcome) : severityEmoji(l.severity);
+          const body = l.outcome === 'failure' ? l.what_failed : l.what_worked;
+          const meta: string[] = [];
+          if (l.author) meta.push(`by **${l.author}**`);
+          if (l.recall_count) meta.push(`${l.recall_count} recall${l.recall_count !== 1 ? 's' : ''}`);
+          if (l.confidence !== undefined) meta.push(`${Math.round(l.confidence * 100)}% confidence`);
+          lines.push(`- ${icon} **${l.topic}**${body ? ` — ${body}` : ''}`);
+          if (meta.length) lines.push(`  _${meta.join(' · ')}_`);
+        }
+        lines.push('');
+      }
+
+      lines.push(
+        '---',
+        `_Generated from Brain \`${instance_id}\` · Share this in your standup or Slack_`,
       );
 
       return lines.join('\n');
