@@ -14,8 +14,15 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.114';
+const MCP_VERSION = '0.10.115';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.115': [
+    `🔧 **\`brain_get_pref\` + \`brain_set_pref\` — persistent Brain preferences**`,
+    `  📖 \`brain_get_pref\` reads back any stored preference (omit key to list all).`,
+    `  ✏️ \`brain_set_pref\` saves a preference to Redis — survives restarts, scoped per Brain instance.`,
+    `  💡 Known key: \`auto_changelog\` — set to "false" to silence the new-lessons digest at session_start.`,
+    `  📊 141 MCP tools`,
+  ],
   '0.10.114': [
     `📋 **\`brain_changelog\` — weekly knowledge digest in one call**`,
     `  📅 Generates a grouped Markdown changelog of lessons learned in the last N days.`,
@@ -381,7 +388,8 @@ export const BRAIN_TOOL_NAMES = new Set([
   'session_start', 'session_start_summary', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
   'brain_who_knows', 'brain_file_map', 'team_expertise_map',
   'skill_gaps', 'brain_coverage', 'brain_metrics', 'brain_service_map',
-  'brain_collab_pairs', 'brain_portability', 'brain_changelog', 'brain_set_pref',
+  'brain_collab_pairs', 'brain_portability', 'brain_changelog',
+  'brain_set_pref', 'brain_get_pref',
 ]);
 
 // ── Free-tier Teaser-Gate ──────────────────────────────────────────────────
@@ -3838,6 +3846,26 @@ export async function handleBrainTool(
       return `✅ Preference \`${key}\` set to \`${value}\` for this Brain instance.`;
     }
 
+    // ── brain_get_pref ────────────────────────────────────────────────────────
+    case 'brain_get_pref': {
+      const { instance_id, key } = args as { instance_id: string; key?: string };
+      const redis = await getConnection(instance_id);
+      if (key && key.trim()) {
+        const val = await redis.get(`cachly:prefs:${key.trim()}:${instance_id}`).catch(() => null);
+        return val === null
+          ? `ℹ️ Preference \`${key}\` is not set (using default).`
+          : `🔧 Preference \`${key}\` = \`${val}\``;
+      }
+      const prefKeys = await scanKeys(redis, `cachly:prefs:*:${instance_id}`, { max: 200, timeoutMs: 2000 });
+      if (prefKeys.length === 0) return 'ℹ️ No preferences set for this Brain instance.';
+      const vals = await redis.mget(...prefKeys);
+      const lines = ['🔧 **Brain preferences:**', ''];
+      for (let i = 0; i < prefKeys.length; i++) {
+        const k = prefKeys[i].replace('cachly:prefs:', '').replace(`:${instance_id}`, '');
+        lines.push(`- \`${k}\` = \`${vals[i] ?? '(null)'}\``);
+      }
+      return lines.join('\n');
+    }
 
     // ── sync_file_changes ─────────────────────────────────────────────────────
 

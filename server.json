@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cachly-dev/cachly-mcp",
-  "description": "Your AI forgets everything between sessions. cachly fixes that permanently. A causal brain that learns WHY things break — built from every bug fix, git commit, and CI run, without any explicit calls. Arrives pre-briefed each session. Predicts failures before they happen. Never re-researches the same problem. 137 MCP tools · Free tier · EU servers · GDPR.",
+  "description": "Your AI forgets everything between sessions. cachly fixes that permanently. A causal brain that learns WHY things break — built from every bug fix, git commit, and CI run, without any explicit calls. Arrives pre-briefed each session. Predicts failures before they happen. Never re-researches the same problem. 141 MCP tools · Free tier · EU servers · GDPR.",
   "repository": {
     "url": "https://github.com/cachly-dev/cachly-mcp",
     "source": "github"
   },
-  "version": "0.10.113",
+  "version": "0.10.115",
   "packages": [
     {
       "registryType": "npm",
       "name": "@cachly-dev/mcp-server",
       "identifier": "@cachly-dev/mcp-server",
-      "version": "0.10.113",
+      "version": "0.10.115",
       "transport": {
         "type": "stdio"
       }

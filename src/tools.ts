@@ -2871,6 +2871,22 @@ const TOOLS = [
       required: ['instance_id', 'key', 'value'],
     },
   },
+  {
+    name: 'brain_get_pref',
+    description:
+      'Read back one or all preferences stored for this Brain instance. ' +
+      'Call with a `key` to get a single value, or omit `key` to list every preference that has been set. ' +
+      'Returns a default note when a key has never been set. ' +
+      'Complement to `brain_set_pref`.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the Brain instance.' },
+        key:         { type: 'string', description: 'Preference key to read. Omit to list all preferences.' },
+      },
+      required: ['instance_id'],
+    },
+  },
 ] as const;
 
 
