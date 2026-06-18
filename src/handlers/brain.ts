@@ -21,7 +21,7 @@ const WHATS_NEW: Record<string, string[]> = {
     `  📖 \`brain_get_pref\` reads back any stored preference (omit key to list all).`,
     `  ✏️ \`brain_set_pref\` saves a preference to Redis — survives restarts, scoped per Brain instance.`,
     `  💡 Known key: \`auto_changelog\` — set to "false" to silence the new-lessons digest at session_start.`,
-    `  📊 141 MCP tools`,
+    `  📊 140 MCP tools`,
   ],
   '0.10.114': [
     `📋 **\`brain_changelog\` — weekly knowledge digest in one call**`,
