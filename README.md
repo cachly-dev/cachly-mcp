@@ -22,9 +22,14 @@
     <img src="https://img.shields.io/badge/GDPR-EU%20servers-green" alt="GDPR: EU servers" />
   </a>
   &nbsp;
-  <img src="https://img.shields.io/badge/136%20MCP%20tools-violet" alt="136 MCP tools" />
+  <img src="https://img.shields.io/badge/140%20MCP%20tools-violet" alt="140 MCP tools" />
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
+</p>
+
+<p align="center">
+  <strong><a href="https://cachly.dev/sign-up">⚡ Get your free Brain → cachly.dev</a></strong><br/>
+  <sub>Free forever · no credit card · 1-command setup · German servers · GDPR</sub>
 </p>
 
 ---
@@ -286,7 +291,7 @@ MCP tool — bulk-ingests past outcomes the same way `brain_from_git` ingests co
 
 ---
 
-## MCP Tools (136 total)
+## MCP Tools (140 total)
 
 ### 🧠 Session & Memory (most used)
 
