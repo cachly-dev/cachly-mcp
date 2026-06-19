@@ -68,6 +68,29 @@ Three mechanisms, each load-bearing (see `src/search.ts`, `src/rerank.ts`):
    overcome. Compressing with `score^0.3` shrinks the ratio to ~1.5×, then
    `compressed * (0.4 + 0.6 * qualityBoost)` lets a proven success win.
 
+## Token cost — measured (`npm run bench:cost`)
+
+Recall quality is one half of the value; **token cost** is the other. This bench
+measures the part that is exactly tokenizer-countable on the same corpus: how many
+**context input tokens** a targeted recall sends per call versus the "paste
+everything" approach (a flat-file / CLAUDE.md dump, or anything that re-sends the
+whole knowledge base into the prompt each call).
+
+### Current result (home corpus, 17 lessons · 13 queries)
+
+| approach                              | context tokens / call |
+|---------------------------------------|-----------------------|
+| paste everything (flat-file / dump)   | 939                   |
+| cachly targeted recall (top-3)        | ~57                   |
+| **context-token reduction**           | **~94%**              |
+
+Counted with `gpt-tokenizer` (cl100k_base). The reduction grows with the size of
+your knowledge base — re-sending everything scales linearly, targeted recall does
+not. This is **retrieval efficiency only**: it is an honest input-token number, not
+a blanket "X% lower bill". Output tokens, multi-turn dynamics, and semantic-cache
+hit rate are out of scope here (the cache's real per-instance hit rate and € saved
+are reported live in the dashboard).
+
 ## CI regression gate
 
 `src/bench/gate.ts` runs both corpora and asserts cachly's metrics stay at or

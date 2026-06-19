@@ -34,7 +34,8 @@
     "test:e2e:funnel": "bash scripts/e2e-run.sh funnel",
     "test:e2e:provisioning": "bash scripts/e2e-run.sh provisioning",
     "lint": "eslint src",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bench:cost": "tsx src/bench/cost.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.0",
@@ -44,6 +45,7 @@
     "@eslint/js": "^9.39.4",
     "@types/node": "^22",
     "eslint": "^9",
+    "gpt-tokenizer": "^3.4.0",
     "tsx": "^4",
     "typescript": "^5",
     "typescript-eslint": "^8",
