@@ -899,7 +899,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         '',
         'After sign-in: call **any tool again** — your Brain activates instantly.',
         '',
-        '✨ Free forever · No credit card · 136 MCP tools · GDPR · EU servers',
+        '✨ Free forever · No credit card · 140 MCP tools · GDPR · EU servers',
       ].join('\n');
     }
 
@@ -2434,7 +2434,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
-  console.log('  \x1b[90mFree forever · GDPR · German servers · 121 MCP tools\x1b[0m');
+  console.log('  \x1b[90mFree forever · GDPR · German servers · 140 MCP tools\x1b[0m');
   console.log('');
   process.exit(0);
 }

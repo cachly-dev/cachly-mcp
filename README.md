@@ -293,6 +293,11 @@ MCP tool — bulk-ingests past outcomes the same way `brain_from_git` ingests co
 
 ## MCP Tools (140 total)
 
+The full tool catalog is generated from `sdk/mcp/src/tools.ts`. Cross-surface
+coverage is tracked in [`../../docs/generated/surface-parity.md`](../../docs/generated/surface-parity.md),
+and pinned OpenAPI/OpenAI/Anthropic/LangChain projections live in
+[`../../docs/generated/tool-specs/`](../../docs/generated/tool-specs/).
+
 ### 🧠 Session & Memory (most used)
 
 | Tool | What it does |
