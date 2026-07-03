@@ -106,7 +106,10 @@ describe('runExternalBenchmark', () => {
     expect(r.cachly.precisionAt1).toBeGreaterThan(r.flatfile.precisionAt1);
     expect(r.corpusSize).toBe(corpus.lessons.length);
     expect(r.queryCount).toBe(corpus.queries.length);
-  });
+    // 30s timeout: this benchmark is compute-heavy and shares the self-hosted
+    // runner with ~20 concurrent CI jobs, so the default 5s vitest limit tips
+    // over under CPU contention (observed 5015ms) and flaked the deploy gate.
+  }, 30_000);
 
   it('the sample JSON is parseable and self-consistent', async () => {
     const raw = JSON.parse(await readFile(samplePath, 'utf-8'));
