@@ -1026,6 +1026,60 @@ describe('Trust badges (recall_best_solution)', () => {
   });
 });
 
+// ── last_recalled_at stamping (recall recency for the recall-quality dashboard) ──
+
+describe('last_recalled_at stamping', () => {
+  let redis: MockRedis;
+  const getConn = async () => redis as unknown as Redis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('recall_best_solution stamps last_recalled_at in the same ISO format as ts', async () => {
+    await seedLesson(redis, 'deploy:y', { recall_count: 1 });
+    const before = Date.now();
+    await handleBrainTool('recall_best_solution', { instance_id: 'i1', topic: 'deploy:y' }, getConn, noopApiFetch);
+    const stored = JSON.parse((await redis.get('cachly:lesson:best:deploy:y'))!) as { recall_count: number; last_recalled_at?: string };
+    expect(stored.recall_count).toBe(2);
+    expect(stored.last_recalled_at).toBeDefined();
+    // Same format as `ts` (new Date().toISOString()) — round-trips exactly.
+    expect(new Date(stored.last_recalled_at!).toISOString()).toBe(stored.last_recalled_at);
+    expect(new Date(stored.last_recalled_at!).getTime()).toBeGreaterThanOrEqual(before);
+  });
+
+  it('smart_recall stamps last_recalled_at on surfaced lessons', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: 'i1', topic: 'valkey:timeout', outcome: 'success',
+      what_worked: 'raise plugh timeout to 30s',
+    }, getConn, noopApiFetch);
+    await handleBrainTool('smart_recall', { instance_id: 'i1', query: 'plugh timeout' }, getConn, noopApiFetch);
+    const stored = JSON.parse((await redis.get('cachly:lesson:best:valkey:timeout'))!) as { recall_count: number; last_recalled_at?: string };
+    expect(stored.recall_count).toBe(1);
+    expect(stored.last_recalled_at).toBeDefined();
+    expect(new Date(stored.last_recalled_at!).toISOString()).toBe(stored.last_recalled_at);
+  });
+
+  it('learn_from_attempts never stamps last_recalled_at, but preserves an existing stamp', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: 'i1', topic: 'ci:cache', outcome: 'success', what_worked: 'restore keys',
+    }, getConn, noopApiFetch);
+    let stored = JSON.parse((await redis.get('cachly:lesson:best:ci:cache'))!) as { recall_count: number; last_recalled_at?: string };
+    expect(stored.last_recalled_at).toBeUndefined();
+
+    // A recall stamps it …
+    await handleBrainTool('recall_best_solution', { instance_id: 'i1', topic: 'ci:cache' }, getConn, noopApiFetch);
+    stored = JSON.parse((await redis.get('cachly:lesson:best:ci:cache'))!) as { recall_count: number; last_recalled_at?: string };
+    const stamped = stored.last_recalled_at;
+    expect(stamped).toBeDefined();
+
+    // … and a subsequent learn carries it over unchanged (like recall_count).
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: 'i1', topic: 'ci:cache', outcome: 'success', what_worked: 'restore keys v2',
+    }, getConn, noopApiFetch);
+    stored = JSON.parse((await redis.get('cachly:lesson:best:ci:cache'))!) as { recall_count: number; last_recalled_at?: string };
+    expect(stored.last_recalled_at).toBe(stamped);
+    expect(stored.recall_count).toBe(1);
+  });
+});
+
 describe('Proven Laws crystallization (session_start)', () => {
   let redis: MockRedis;
   const getConn = async () => redis as unknown as Redis;

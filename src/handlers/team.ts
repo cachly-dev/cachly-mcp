@@ -107,6 +107,51 @@ export async function auditLog(
   await redis.expire(key, 365 * 2 * 86400).catch(() => {}); // 2-year retention
 }
 
+// ── Lessons-Review workflow (P1-1) ────────────────────────────────────────────
+// When an org enables pending-mode (PUT /orgs/:id/lesson-review), the API
+// mirrors the setting onto each org instance's Valkey as REVIEW_MODE_KEY = "1".
+// Team-shared lesson writes then land under PROPOSED_LESSON_PREFIX instead of
+// cachly:lesson:best:*, so every recall path (which reads best:*) automatically
+// ignores them until an org owner/admin approves the proposal in the dashboard
+// (Team → Review). Key absent = direct writes, exactly as before.
+
+export const REVIEW_MODE_KEY = 'cachly:team:review_mode';
+export const PROPOSED_LESSON_PREFIX = 'cachly:lesson:proposed:';
+// Proposals expire after 90 days (same window as the lesson history lists) so
+// an abandoned review queue cleans itself up.
+const PROPOSAL_TTL_SECONDS = 90 * 86400;
+
+/** True when the org has turned on review-required mode for this brain. */
+export async function reviewModeEnabled(redis: import('ioredis').Redis, instanceId?: string): Promise<boolean> {
+  void instanceId; // per-instance flag; id only kept for future API fallback
+  const raw = await redis.get(REVIEW_MODE_KEY).catch(() => null);
+  return raw === '1' || raw === 'true' || raw === 'on';
+}
+
+/**
+ * Store a lesson as a pending proposal (one per topic, latest wins — mirroring
+ * the upsert semantics of cachly:lesson:best:<topic>) and tell the caller what
+ * happens next. Never throws — a queued lesson must not break the agent call.
+ */
+export async function storeLessonProposal(
+  redis: import('ioredis').Redis,
+  topic: string,
+  record: Record<string, unknown>,
+): Promise<string> {
+  const proposal = { ...record, proposed_at: new Date().toISOString(), status: 'pending' };
+  await redis
+    .set(`${PROPOSED_LESSON_PREFIX}${topic}`, JSON.stringify(proposal), 'EX', PROPOSAL_TTL_SECONDS)
+    .catch(() => {});
+  const author = typeof record.author === 'string' && record.author ? ` by **${record.author}**` : '';
+  return [
+    `📝 **Lesson submitted for review** — \`${topic}\`${author} is now a pending proposal.`,
+    ``,
+    `This team requires review before knowledge enters the Team Brain (org setting).`,
+    `An org owner/admin can approve or reject it in the dashboard under **Team → Review**.`,
+    `Until approved it will NOT surface in \`smart_recall\` / \`team_recall\`.`,
+  ].join('\n');
+}
+
 // ── Team-level visibility scopes (groups) ─────────────────────────────────────
 // A named sub-team (e.g. "backend", "security"). Lessons can be scoped to a group
 // via `group` on learn_from_attempts; they then only surface in recall for members
@@ -247,6 +292,13 @@ export async function handleTeamTool(
         recall_count: 0,
         version: 2,
       };
+
+      // P1-1 Lessons-Review: when the org enabled pending-mode, the lesson
+      // becomes a proposal (cachly:lesson:proposed:<topic>) instead of landing
+      // in the recall keyspace. Default (flag absent) = direct write, as before.
+      if (await reviewModeEnabled(redisTL, iid)) {
+        return storeLessonProposal(redisTL, topic, lesson);
+      }
 
       const key = `cachly:lessons:${topic}`;
       await redisTL.rpush(key, JSON.stringify(lesson));
@@ -1242,14 +1294,15 @@ export async function handleTeamTool(
         return `📭 No global lessons${topic ? ` for \`${topic}\`` : ''}.\n\nAdd cross-project knowledge with \`global_learn(topic="...", lesson="...")\`.`;
       }
 
-      // Increment recall_count
+      // Increment recall_count + stamp last_recalled_at (recall-recency signal)
       for (const l of lessons) {
         const k = `cachly:global:lesson:${l.topic}`;
         const raw = await redis.get(k);
         if (raw) {
-          const rec = safeJsonParse(raw, null as null | { recall_count?: number });
+          const rec = safeJsonParse(raw, null as null | { recall_count?: number; last_recalled_at?: string });
           if (!rec) continue;
           rec.recall_count = (rec.recall_count ?? 0) + 1;
+          rec.last_recalled_at = new Date().toISOString();
           await redis.set(k, JSON.stringify(rec));
         }
       }

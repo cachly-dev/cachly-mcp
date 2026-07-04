@@ -7,7 +7,8 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertServiceNode } from '../ckg.js';
 import { safeJsonParse, scanKeys } from '../utils.js';
 import type { CKGEdge, CKGNode, PersonNode, ServiceNode } from '../ckg.js';
-import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope } from './team.js';
+import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
+         reviewModeEnabled, storeLessonProposal } from './team.js';
 import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
          indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality } from '../rerank.js';
@@ -482,6 +483,22 @@ export async function handleBrainTool(
       const redis = await getConnection(instance_id);
       const ts = new Date().toISOString();
 
+      // ── Lessons-Review workflow (P1-1) ─────────────────────────────────────
+      // When the org enabled pending-mode on this (shared) brain, team-visible
+      // lessons become proposals awaiting owner/admin approval instead of
+      // landing in the recall keyspace. Private notes stay direct — they never
+      // surface in team recall anyway. Flag absent = direct write, as before.
+      if (visibility !== 'private' && await reviewModeEnabled(redis, instance_id)) {
+        return storeLessonProposal(redis, topic, {
+          topic, outcome, what_worked, what_failed, context: ctx, severity,
+          file_paths, commands, tags, depends_on,
+          ...(author ? { author } : {}),
+          ...(service ? { service } : {}),
+          ...(group ? { group: String(group).toLowerCase().trim() } : {}),
+          visibility, recall_count: 0, ts, confidence: 1.0, version: 3,
+        });
+      }
+
       // ── Structured template hints ──────────────────────────────────────────
       const category = topic.split(':')[0];
       const template = STRUCTURED_TEMPLATES[category];
@@ -497,16 +514,19 @@ export async function handleBrainTool(
       // ── Deduplication + audit trail ────────────────────────────────────────
       let isUpdate = false;
       let recallCount = 0;
+      let lastRecalledAt: string | undefined;
       let auditTrail: Array<{ ts: string; action: string; prev_outcome?: string }> = [];
       const existingRaw = await redis.get(`cachly:lesson:best:${topic}`);
       if (existingRaw) {
         try {
           const prev = JSON.parse(existingRaw) as {
             recall_count?: number;
+            last_recalled_at?: string;
             outcome?: string;
             audit_trail?: Array<{ ts: string; action: string; prev_outcome?: string }>;
           };
           recallCount = prev.recall_count ?? 0;
+          lastRecalledAt = prev.last_recalled_at; // learn never stamps it — only recall does
           auditTrail = prev.audit_trail ?? [];
           auditTrail.push({ ts, action: 'updated', prev_outcome: prev.outcome });
           if (auditTrail.length > 20) auditTrail = auditTrail.slice(-20);
@@ -610,6 +630,7 @@ export async function handleBrainTool(
         ...(group ? { group: String(group).toLowerCase().trim() } : {}),
         visibility,
         recall_count: recallCount,
+        ...(lastRecalledAt ? { last_recalled_at: lastRecalledAt } : {}),
         ts,
         verified_at: outcome === 'success' || outcome === 'partial' ? ts : undefined,
         confidence: 1.0,
@@ -891,11 +912,14 @@ export async function handleBrainTool(
         const ageDays = (Date.now() - new Date(ref).getTime()) / 86400000;
         const badge = confidenceBadge(confidence, ageDays);
 
-        // Recall resets verified_at (confidence clock restart)
+        // Recall resets verified_at (confidence clock restart) and stamps
+        // last_recalled_at so the recall-quality dashboard can measure recency.
+        const recalledAt = new Date().toISOString();
         const updatedLesson = {
           ...lesson,
           recall_count: (lesson.recall_count ?? 0) + 1,
-          verified_at: new Date().toISOString(),
+          verified_at: recalledAt,
+          last_recalled_at: recalledAt,
           confidence: 1.0,
         };
         await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
@@ -1039,7 +1063,8 @@ export async function handleBrainTool(
           // Skip archived lessons — brain_hygiene moves them here; they should not resurface.
           if (lesson?.state === 'archived') continue;
           if (lesson) {
-            const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, verified_at: new Date().toISOString() };
+            const recalledAt = new Date().toISOString();
+            const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, verified_at: recalledAt, last_recalled_at: recalledAt };
             redis.set(m.key, JSON.stringify(updated)).catch(() => {});
             const sev = lesson.severity as string;
             const savedMins = sev === 'critical' ? 240 : sev === 'major' ? 60 : 30;
