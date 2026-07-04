@@ -7,6 +7,14 @@
 
 ---
 
+## [0.10.117] – 2026-07-03 — *"TCO extraction — 126 tools"*
+
+### Removed
+- **All 14 `tco_*` tools** (Travel Chaos Organizer) — TCO now lives as a standalone app outside this monorepo. Tool count: 140 → 126. No other tool changed; if you never set `TCO_API_URL`, nothing changes for you.
+
+### Changed
+- Package/registry descriptions, docs, and generated tool specs updated to the new count (drift-guard verified across 14 surfaces).
+
 ## [0.10.113] – 2026-06-12 — *"Week-over-week savings trend"*
 
 ### Added

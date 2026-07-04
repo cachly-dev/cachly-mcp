@@ -22,7 +22,7 @@
     <img src="https://img.shields.io/badge/GDPR-EU%20servers-green" alt="GDPR: EU servers" />
   </a>
   &nbsp;
-  <img src="https://img.shields.io/badge/140%20MCP%20tools-violet" alt="140 MCP tools" />
+  <img src="https://img.shields.io/badge/140%20MCP%20tools-violet" alt="126 MCP tools" />
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
 </p>

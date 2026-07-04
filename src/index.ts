@@ -2,7 +2,6 @@
 import { jwtExpiryMs, checkJwt, handleApiError, diagnoseAuth, planAuthHeal,
          readClientCredentialsFromEnv, buildClientCredentialsBody, clientCredentialsTokenUrl } from './auth.js';
 import type { FunnelEventName, DashboardMetrics } from './telemetry-types.js';
-import { handleTcoTool } from './handlers/tco.js';
 import { notify } from './notifier.js';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -40,24 +39,12 @@ const _isMain = process.argv[1] != null &&
  * ── Auth & Status ────────────────────────────────────────────────────────────
  *   • get_api_status        – check API health + JWT auth info (Keycloak)
  *
- * ── Travel Chaos Organizer (TCO) ────────────────────────────────────────────
- *   • tco_list_trips    – list all trips
- *   • tco_create_trip   – create a new trip
- *   • tco_get_timeline  – get timeline items for a trip
- *   • tco_delete_trip   – delete a trip
- *   • tco_inbox_list    – list Chaos Inbox items
- *   • tco_inbox_assign  – assign inbox item to a trip
- *   • tco_inbox_reject  – reject/discard an inbox item
- *   • tco_parse_url     – fetch a URL and parse with Ollama
- *   • tco_import_email  – import raw email text
- *   (Requires TCO_API_URL env var; auth forwarded from CACHLY_JWT — same Keycloak realm)
  *
  * Configuration (env vars):
  *   CACHLY_API_URL      – default https://api.cachly.dev
  *   CACHLY_JWT          – your JWT (Keycloak access token)
  *   CACHLY_EMBED_PROVIDER – embedding backend: openai (default), gemini, mistral, cohere, ollama, cachly (server fallback)
  *   CACHLY_EMBED_MODEL  – override embedding model (optional)
- *   TCO_API_URL         – Travel Chaos Organizer backend URL (optional, enables tco_* tools)
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -899,7 +886,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         '',
         'After sign-in: call **any tool again** — your Brain activates instantly.',
         '',
-        '✨ Free forever · No credit card · 140 MCP tools · GDPR · EU servers',
+        '✨ Free forever · No credit card · 126 MCP tools · GDPR · EU servers',
       ].join('\n');
     }
 
@@ -1091,10 +1078,6 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     }
     return fedbrainResult;
   }
-
-  // Delegate Travel Chaos Organizer tools (requires TCO_API_URL env var)
-  const tcoResult = await handleTcoTool(name, args, JWT ?? '');
-  if (tcoResult !== null) return tcoResult;
 
   switch (name) {
     // ── Instance management ──────────────────────────────────────────────
@@ -2434,7 +2417,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
-  console.log('  \x1b[90mFree forever · GDPR · German servers · 140 MCP tools\x1b[0m');
+  console.log('  \x1b[90mFree forever · GDPR · German servers · 126 MCP tools\x1b[0m');
   console.log('');
   process.exit(0);
 }
