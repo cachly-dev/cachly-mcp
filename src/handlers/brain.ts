@@ -967,7 +967,9 @@ export async function handleBrainTool(
           trustBadge,
           `${badge} **Best solution for \`${topic}\`** ${sevEmoji}${lesson.severity ? ` (${lesson.severity})` : ''} · recalled ${updatedLesson.recall_count}×`,
           ``,
-          `**What worked:** ${lesson.what_worked}`,
+          // what_worked may be empty for unresolved failure lessons (the API
+          // accepts empty what_worked when outcome=failure) — skip the line.
+          lesson.what_worked ? `**What worked:** ${lesson.what_worked}` : '',
           lesson.what_failed ? `**What failed (avoid this):** ${lesson.what_failed}` : '',
           lesson.context ? `**Context:** ${lesson.context}` : '',
           (lesson.file_paths ?? []).length > 0 ? `**Files:** ${(lesson.file_paths ?? []).map((f: string) => `\`${f}\``).join(', ')}` : '',
