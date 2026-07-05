@@ -29,6 +29,7 @@
 import { EventEmitter } from 'node:events';
 import { keywordSearch, type KeywordMatch } from '../search.js';
 import { STARTER_CORPUS } from '../starter-corpus.js';
+import { buildFirstContactReport, suggestRecallQueries, type FirstContactProof } from '../first-contact.js';
 
 const LESSON_PREFIX = 'cachly:lesson:best:';
 
@@ -145,6 +146,55 @@ export async function runOnboardingBenchmark(): Promise<OnboardingResult> {
   return { cold, seeded, queryCount: COLD_START_QUERIES.length, corpusSize: STARTER_CORPUS.length };
 }
 
+// ── First-contact simulation — the brain_from_git response shape ───────────────
+// P1-5 "Onboarding-Magie": beyond hit rates, the *response* of the first seeding
+// run must carry the user to their first recall: seeded summary, an in-response
+// proof-of-value recall, and copy-pasteable next queries. We simulate the full
+// first-contact flow in memory (seed → real keywordSearch proof → build response)
+// and measure its wall-clock duration = the actual time-to-first-recall.
+
+export interface FirstContactResult {
+  /** The rendered first-contact response, as a new user would see it. */
+  report: string;
+  /** Did the internal proof-of-value search return a hit against a just-seeded topic? */
+  proofHit: boolean;
+  /** The copy-pasteable follow-up queries embedded in the response. */
+  suggestedQueries: string[];
+  /** Wall-clock ms for seed + first internal recall — measured time-to-first-recall. */
+  timeToFirstRecallMs: number;
+}
+
+export async function runFirstContactSimulation(): Promise<FirstContactResult> {
+  const t0 = Date.now();
+  const redis = seededRedis();
+  const topics = STARTER_CORPUS.map(l => l.topic);
+
+  // Proof-of-value exactly like the brain_from_git handler: one real search
+  // (production engine) against a topic that was seeded milliseconds ago.
+  const probe = STARTER_CORPUS[0]!;
+  const hits = await keywordSearch(redis as unknown as never, [`${LESSON_PREFIX}*`], probe.what_worked, 1);
+  const proof: FirstContactProof | null = hits.length > 0
+    ? { query: probe.what_worked.slice(0, 80), topic: matchTopic(hits[0]!), snippet: probe.what_worked.slice(0, 120) }
+    : null;
+  const timeToFirstRecallMs = Date.now() - t0;
+
+  const categories = new Map<string, number>();
+  for (const t of topics) {
+    const c = t.split(':')[0] ?? 'general';
+    categories.set(c, (categories.get(c) ?? 0) + 1);
+  }
+  const suggestedQueries = suggestRecallQueries(topics, 'demo-instance');
+  const report = buildFirstContactReport({
+    repoDir: '(in-memory demo repo)', revRange: 'HEAD',
+    processed: STARTER_CORPUS.length, ingested: STARTER_CORPUS.length, skipped: 0,
+    durationMs: Math.max(timeToFirstRecallMs, 1), isIncremental: false,
+    instanceId: 'demo-instance',
+    categories: [...categories.entries()].sort((a, b) => b[1] - a[1]),
+    proof, suggestedQueries,
+  });
+  return { report, proofHit: proof !== null, suggestedQueries, timeToFirstRecallMs };
+}
+
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
 
 export function formatOnboardingReport(r: OnboardingResult): string {
@@ -183,10 +233,19 @@ const isMain = (() => {
 
 if (isMain) {
   const asJson = process.argv.includes('--json');
-  runOnboardingBenchmark()
-    .then((result) => {
-      if (asJson) console.log(JSON.stringify(result, null, 2));
-      else console.log(formatOnboardingReport(result));
+  Promise.all([runOnboardingBenchmark(), runFirstContactSimulation()])
+    .then(([result, firstContact]) => {
+      if (asJson) {
+        console.log(JSON.stringify({ ...result, firstContact }, null, 2));
+        return;
+      }
+      console.log(formatOnboardingReport(result));
+      console.log(`📬 First-contact response preview (what a new user sees after brain_from_git seeding):`);
+      console.log('');
+      console.log(firstContact.report.split('\n').map(l => `   ${l}`).join('\n'));
+      console.log('');
+      console.log(`⏱️  Measured time-to-first-recall (seed + first proof recall): ${firstContact.timeToFirstRecallMs}ms — target < 5 min`);
+      console.log('');
     })
     .catch((e: Error) => {
       console.error(`\n❌ Onboarding bench failed: ${e.message}\n`);

@@ -6,6 +6,8 @@ import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse, normalizeGitPath } from '../utils.js';
 import { buildClsPostCommitHook } from '../cls-hook.js';
 import { installBrainWatchHook } from '../brain-watch-hook.js';
+import { keywordSearch } from '../search.js';
+import { buildFirstContactReport, suggestRecallQueries, type FirstContactProof } from '../first-contact.js';
 
 // Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
 export let _lastBrainFromGitCounts: { fixes: number; features: number; refactors: number; total: number } | null = null;
@@ -903,6 +905,7 @@ export async function handleFedbrainTool(
 
     // ── brain_from_git ────────────────────────────────────────────────────────
     case 'brain_from_git': {
+      const startedAt = Date.now();
       const { instance_id, repo_path = '.', limit = 100, branch = 'HEAD', since = '', incremental = true } = args as {
         instance_id: string; repo_path?: string; limit?: number; branch?: string; since?: string; incremental?: boolean;
       };
@@ -966,7 +969,14 @@ export async function handleFedbrainTool(
         if (isIncremental) {
           return `✅ brain_from_git: Brain is up to date — no new commits since last run (last SHA: \`${lastSha.slice(0, 8)}\`).`;
         }
-        return `⚠️ No commits found in \`${repoDir}\` on branch \`${branch}\`${since ? ` since ${since}` : ''}.`;
+        // Empty repo — first contact must still leave the user with a working path,
+        // not a bare warning (roadmap P1-5: onboarding-magic for empty/small repos).
+        return buildFirstContactReport({
+          repoDir, revRange, processed: 0, ingested: 0, skipped: 0,
+          durationMs: Date.now() - startedAt, isIncremental: false,
+          instanceId: instance_id, categories: [], suggestedQueries: [],
+          emptyReason: `No commits found in \`${repoDir}\` on branch \`${branch}\`${since ? ` since ${since}` : ''}.`,
+        });
       }
 
       // Pattern classifiers
@@ -996,6 +1006,10 @@ export async function handleFedbrainTool(
       let ingested = 0;
       let skipped = 0;
       const categoryCount = new Map<string, number>();
+      const severityCount = new Map<string, number>();
+      const seededTopics: string[] = [];
+      // Best commit to use for the proof-of-value recall — prefer a fix (highest signal).
+      let proofCandidate: { topic: string; subject: string } | null = null;
       const total = commits.length;
       const progressInterval = Math.max(1, Math.floor(total / 10)); // emit ~10 progress updates
       let lastProgressAt = 0;
@@ -1016,6 +1030,11 @@ export async function handleFedbrainTool(
         const domain = extractDomain(commit.subject);
         const topic = `${category}:${domain}`;
         categoryCount.set(category, (categoryCount.get(category) ?? 0) + 1);
+        severityCount.set(severity, (severityCount.get(severity) ?? 0) + 1);
+        seededTopics.push(topic);
+        if (!proofCandidate || (category === 'fix' && !proofCandidate.topic.startsWith('fix:'))) {
+          proofCandidate = { topic, subject: commit.subject };
+        }
 
         const commitFiles = commit.files.filter(f => f.length > 0).slice(0, 12);
         const lessonObj = {
@@ -1076,8 +1095,6 @@ export async function handleFedbrainTool(
         await redis.set(lastShaKey, commits[0].sha, 'EX', 90 * 24 * 3600); // expire after 90 days
       }
 
-      const categoryBreakdown = [...categoryCount.entries()].sort((a, b) => b[1] - a[1]).map(([k, v]) => `  • **${k}** (${v})`).join('\n');
-
       _lastBrainFromGitCounts = {
         fixes: categoryCount.get('fix') ?? 0,
         features: categoryCount.get('feat') ?? 0,
@@ -1085,20 +1102,34 @@ export async function handleFedbrainTool(
         total: ingested,
       };
 
-      return [
-        `🔁 **brain_from_git: ${repoDir}**`,
-        isIncremental ? `🔄 Incremental mode — only new commits since \`${lastSha.slice(0, 8)}\` were processed` : '',
-        ``,
-        `📂 Branch: \`${revRange}\`  |  Processed: **${commits.length}** commits  |  Ingested: **${ingested}** lessons  |  Skipped: ${skipped}`,
-        ``,
-        `**Breakdown by category:**`,
-        categoryBreakdown,
-        ``,
-        `💡 New lessons are stored with confidence 0.55 (auto-inferred).`,
-        `💡 As you confirm them via \`learn_from_attempts\`, confidence rises automatically.`,
-        `🔍 Explore: \`brain_search(query="fix")\`  |  \`ckg_inspect(concept="deploy")\``,
-        `💾 Next run will automatically continue from the latest commit (incremental mode).`,
-      ].filter(Boolean).join('\n');
+      // ── Proof of value: run ONE real recall against a topic seeded seconds ago,
+      // so the first-contact response already demonstrates a working search hit.
+      let proof: FirstContactProof | null = null;
+      if (proofCandidate && ingested > 0) {
+        try {
+          const hits = await keywordSearch(redis, ['cachly:lesson:best:*'], proofCandidate.subject, 1);
+          if (hits.length > 0) {
+            const parsed = safeJsonParse<{ topic?: string; what_worked?: string }>(hits[0]!.content, {});
+            proof = {
+              query: proofCandidate.subject.slice(0, 80),
+              topic: parsed.topic ?? hits[0]!.key.replace('cachly:lesson:best:', ''),
+              snippet: (parsed.what_worked ?? '').slice(0, 120) || proofCandidate.subject.slice(0, 120),
+            };
+          }
+        } catch { /* proof is best-effort — never fail the seeding response */ }
+      }
+
+      return buildFirstContactReport({
+        repoDir, revRange,
+        processed: commits.length, ingested, skipped,
+        durationMs: Date.now() - startedAt,
+        isIncremental, lastSha,
+        instanceId: instance_id,
+        categories: [...categoryCount.entries()].sort((a, b) => b[1] - a[1]),
+        severities: [...severityCount.entries()].sort((a, b) => b[1] - a[1]),
+        proof,
+        suggestedQueries: suggestRecallQueries(seededTopics, instance_id),
+      });
       } finally {
         _gitSemRelease();
       }
