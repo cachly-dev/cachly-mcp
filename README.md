@@ -63,7 +63,7 @@ hundreds of teams lose the same knowledge the same way, and we built the fix:
 - **It learns automatically** — from every commit, every fix, every session. No extra calls.
 - **It arrives pre-briefed** — your AI opens each session already knowing your stack.
 - **It's shared** — one engineer's solved bug becomes the whole team's reflex.
-- **It's provable** — quality-aware recall beats raw text search by **+22.2 % Precision@1**
+- **It's provable** — quality-aware recall beats raw text search by **+33.3 % Precision@1**
   ([see the benchmark](./BENCH.md)). A claim without a number is marketing; this is the number.
 - **It's neutral** — speaks [MCP](https://modelcontextprotocol.io), so it works with
   Claude, Cursor, Copilot, Windsurf, Cline, Zed. Switch models anytime — **your brain stays.**
@@ -177,7 +177,7 @@ using only Claude, alone.** That's not the game we're playing. Here's the honest
 | Works across **models & tools** | ✅ MCP — Claude, Cursor, Copilot, Windsurf, Zed… | ❌ Claude + Anthropic API only |
 | **Structured** knowledge | ✅ topic · outcome · severity · causal graph | ⚠️ flat text files, read linearly |
 | **Causal root-cause** (`causal_trace`) | ✅ problem → chain → proven fix | ❌ |
-| **Provable recall quality** | ✅ +22.2 % Precision@1 vs. BM25 ([benchmark](./BENCH.md)) | ❌ no public metric |
+| **Provable recall quality** | ✅ +33.3 % Precision@1 vs. BM25 ([benchmark](./BENCH.md)) | ❌ no public metric |
 | **Governance** (review, attribution, audit) | ✅ `team_confirm`, roles, audit trail | ❌ |
 | **Self-hosting / BYOK / VPC** | ✅ data stays in your infra | ❌ Anthropic-hosted |
 | Survives a **model switch** | ✅ your brain is yours | ❌ memory is gone or fragmented |
