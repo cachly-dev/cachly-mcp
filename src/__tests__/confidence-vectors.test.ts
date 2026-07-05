@@ -24,7 +24,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import ts from 'typescript';
@@ -54,7 +54,16 @@ const REPO_ROOT = path.resolve(HERE, '../../../..');
 const VECTORS_PATH = path.join(REPO_ROOT, 'docs/spec/confidence-vectors.json');
 const BRAIN_TS_PATH = path.join(REPO_ROOT, 'sdk/openclaw/src/brain.ts');
 
-const vectorFile = JSON.parse(readFileSync(VECTORS_PATH, 'utf8')) as VectorFile;
+// This is a MONOREPO-only cross-package parity suite: it reads the shared vector
+// spec and the canonical brain.ts, both of which live outside this package. When
+// sdk/mcp is published standalone to npm (the @cachly-dev/mcp-server mirror), those
+// paths don't exist — detect that and skip instead of throwing ENOENT at import,
+// which was failing the mirror's publish job.
+const IS_MONOREPO = existsSync(VECTORS_PATH) && existsSync(BRAIN_TS_PATH);
+
+const vectorFile = IS_MONOREPO
+  ? (JSON.parse(readFileSync(VECTORS_PATH, 'utf8')) as VectorFile)
+  : null;
 
 // ── Load the real brain.ts with an in-memory ioredis ──────────────────────────
 
@@ -111,7 +120,7 @@ function loadBrainModule(): BrainModule {
   return moduleShim.exports as unknown as BrainModule;
 }
 
-const brainModule = loadBrainModule();
+const brainModule = IS_MONOREPO ? loadBrainModule() : null;
 
 // snake_case learn payload (vector JSON) → camelCase LearnInput (brain.ts API)
 function toLearnInput(topic: string, learn: Record<string, unknown>): Record<string, unknown> {
@@ -129,8 +138,8 @@ function toLearnInput(topic: string, learn: Record<string, unknown>): Record<str
 
 // ── Run every vector through the real learn() ─────────────────────────────────
 
-describe('confidence calibration golden vectors (docs/spec/confidence-vectors.json)', () => {
-  const { epsilon, vectors } = vectorFile;
+describe.skipIf(!IS_MONOREPO)('confidence calibration golden vectors (docs/spec/confidence-vectors.json)', () => {
+  const { epsilon, vectors } = vectorFile!;
 
   it('has a sane vector file', () => {
     expect(vectors.length).toBeGreaterThanOrEqual(15);
@@ -142,7 +151,7 @@ describe('confidence calibration golden vectors (docs/spec/confidence-vectors.js
 
   for (const vector of vectors) {
     it(vector.description, async () => {
-      const brain = brainModule.createCachlyBrain({ url: 'redis://fake:6379' });
+      const brain = brainModule!.createCachlyBrain({ url: 'redis://fake:6379' });
       const store = (brain as unknown as { redis: FakeRedis }).redis.data;
       const key = `cachly:lesson:best:${vector.topic}`;
 
