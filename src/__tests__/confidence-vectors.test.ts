@@ -138,7 +138,15 @@ function toLearnInput(topic: string, learn: Record<string, unknown>): Record<str
 
 // ── Run every vector through the real learn() ─────────────────────────────────
 
-describe.skipIf(!IS_MONOREPO)('confidence calibration golden vectors (docs/spec/confidence-vectors.json)', () => {
+describe('confidence calibration golden vectors (docs/spec/confidence-vectors.json)', () => {
+  // NOTE: describe.skipIf() only skips *running* the tests — the callback body
+  // still executes at collection time, which would dereference the null
+  // vectorFile in the standalone mirror. Guard with an early return instead.
+  if (!IS_MONOREPO) {
+    it.skip('skipped outside the monorepo (docs/spec + sdk/openclaw not present)', () => {});
+    return;
+  }
+
   const { epsilon, vectors } = vectorFile!;
 
   it('has a sane vector file', () => {
