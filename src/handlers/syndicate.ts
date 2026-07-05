@@ -5,9 +5,87 @@ import { ckgSlug } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { keywordSearch } from '../search.js';
 import { safeJsonParse } from '../utils.js';
+import type { Instance } from './brain.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
+
+// ── Org-scoped brain_predict (§3.4) ──────────────────────────────────────────
+
+interface OrgPredictRecurrence { team: string; count: number; last_seen?: string }
+interface OrgPredictFix { summary: string; confidence: number; confirm_count: number; source_team?: string }
+interface OrgPredictWarning {
+  problem: string;
+  severity: string;
+  recurrence: OrgPredictRecurrence[];
+  team_span: number;
+  fixes: OrgPredictFix[];
+}
+interface OrgPredictResponse { warnings: OrgPredictWarning[]; prevention_candidate: boolean }
+
+// tryOrgPredict resolves the caller's org from the instance record and calls the
+// server-side Org Knowledge Graph prediction (POST /orgs/:id/brain/predict). It
+// returns the rendered cross-team report, or null to signal "degrade to instance
+// scope" (instance has no org, endpoint 404/unavailable, or no cross-team signal).
+async function tryOrgPredict(
+  instanceId: string,
+  ctx: string,
+  topK: number,
+  scope: string,
+  apiFetch: ApiFetch,
+): Promise<string | null> {
+  const inst = await apiFetch<Instance | null>(`/api/v1/instances/${instanceId}`).catch(() => null);
+  const orgId = inst?.org_id;
+  if (!orgId) return null; // solo instance — no org graph to widen into.
+
+  let res: OrgPredictResponse | null = null;
+  try {
+    res = await apiFetch<OrgPredictResponse>(`/api/v1/orgs/${orgId}/brain/predict`, {
+      method: 'POST',
+      body: JSON.stringify({ context: ctx, top_k: topK }),
+    });
+  } catch {
+    return null; // endpoint unavailable / not a member / graph disabled → degrade.
+  }
+  if (!res || !res.warnings || res.warnings.length === 0) return null;
+  return renderOrgPredict(ctx, res, scope);
+}
+
+function renderOrgPredict(ctx: string, res: OrgPredictResponse, scope: string): string {
+  const lines = [`🔮 **Org Brain Predict: "${ctx}"**`, ''];
+
+  for (const w of res.warnings) {
+    const otherTeams = Math.max(0, w.team_span - 1);
+    const totalHits = w.recurrence.reduce((s, r) => s + (r.count ?? 0), 0);
+    const sevIcon = w.severity === 'critical' ? '🔴' : w.severity === 'major' ? '🟠' : '🟡';
+    if (w.team_span >= 2) {
+      lines.push(`⚠️ **CROSS-TEAM RISK** — this pattern failed ${totalHits}× across ${otherTeams} other team${otherTeams === 1 ? '' : 's'}:`);
+    } else {
+      lines.push(`⚠️ **RISK** — this pattern failed ${totalHits}× before:`);
+    }
+    lines.push(`   ${sevIcon} problem: \`${w.problem}\``);
+    for (const r of w.recurrence.slice(0, 6)) {
+      const last = r.last_seen ? ` (last: ${r.last_seen.slice(0, 10)})` : '';
+      lines.push(`      • ${r.team}  ×${r.count}${last}`);
+    }
+    const bestFix = w.fixes[0];
+    if (bestFix) {
+      const confPct = Math.round((bestFix.confidence ?? 0) * 100);
+      const confirmedBy = bestFix.source_team ? ` (${bestFix.source_team})` : '';
+      lines.push(`   ✅ Proven fix — ${confPct}% confidence, confirmed ${bestFix.confirm_count}×${confirmedBy}:`);
+      lines.push(`      ${bestFix.summary}`);
+    }
+    lines.push('');
+  }
+
+  if (scope === 'org+commons') {
+    // TODO(P3-4): overlay public MetaLesson / syndication hits here. For now
+    // org+commons behaves as org scope (the org graph is the higher-signal source).
+    lines.push('_(org+commons: public-commons overlay not yet wired — showing org graph only)_');
+  }
+  lines.push(`💡 Heeded the warning? \`learn_from_attempts(..., tags=["prevented-by-org-graph"])\` → counts as a prevented cross-team mistake.`);
+  return lines.join('\n');
+}
 
 export const SYNDICATE_TOOL_NAMES = new Set([
   'syndicate', 'syndicate_search', 'syndicate_stats', 'syndicate_trending',
@@ -357,7 +435,21 @@ export async function handleSyndicateTool(
 
     // ── Layer 4: brain_predict (PPE) ─────────────────────────────────────────
     case 'brain_predict': {
-      const { instance_id, context: ctx, top_k = 5 } = args as { instance_id: string; context: string; top_k?: number };
+      const { instance_id, context: ctx, top_k = 5, scope = 'instance' } = args as {
+        instance_id: string; context: string; top_k?: number; scope?: string;
+      };
+
+      // scope="org" / "org+commons" — widen prediction across the whole org via
+      // the Org Knowledge Graph (§3.4). Resolve the org from the instance the same
+      // way cache_org_stats does (instance record → org_id), then call the
+      // server-side traversal. Graceful-degrade to the instance path on any miss
+      // (no org, endpoint unavailable, empty graph) so there is zero regression.
+      if (scope === 'org' || scope === 'org+commons') {
+        const orgResult = await tryOrgPredict(instance_id, ctx, top_k, scope, apiFetch);
+        if (orgResult !== null) return orgResult;
+        // fall through to the instance-scoped path below.
+      }
+
       const redis = await getConnection(instance_id);
 
       const ctxTokens = ctx.toLowerCase().replace(/[^a-z0-9\s\-_:]/g, ' ').split(/\s+/).filter(t => t.length > 2);

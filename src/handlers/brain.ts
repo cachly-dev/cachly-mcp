@@ -372,6 +372,9 @@ export interface Instance {
   host?: string; port?: number; password?: string; tls_enabled?: boolean;
   vector_token?: string; memory_mb: number; encryption_at_rest: boolean;
   created_at: string;
+  // org_id links the instance to an Organization; present when the instance is
+  // owned by an org. Used by brain_predict(scope="org") to resolve the org graph.
+  org_id?: string;
 }
 
 interface SemanticSearchResponse {

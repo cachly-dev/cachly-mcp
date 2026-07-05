@@ -1967,13 +1967,25 @@ const TOOLS = [
       'to predict likely failures and return the highest-confidence fixes. ' +
       '"Pre-load" means results are returned inline — nothing is cached or persisted. ' +
       'Requires a valid instance_id (your Redis brain). No rate limits. ' +
-      'Call at session start when working on a specific feature or debugging area.',
+      'Call at session start when working on a specific feature or debugging area. ' +
+      'Set scope="org" to widen prediction across your whole organisation — surfaces ' +
+      'cross-team risks ("failed 3× across 2 other teams") from the Org Knowledge Graph, ' +
+      'so an incident in one team becomes a vaccine for yours.',
     inputSchema: {
       type: 'object',
       properties: {
         instance_id: { type: 'string', description: 'Brain instance ID' },
         context: { type: 'string', description: 'What you\'re working on, e.g. "upgrading Keycloak from 21 to 24"' },
         top_k: { type: 'number', description: 'Max predictions to return (default: 5)' },
+        scope: {
+          type: 'string',
+          enum: ['instance', 'org', 'org+commons'],
+          description:
+            'Prediction scope (default "instance"). "instance" = this brain only (today\'s behaviour). ' +
+            '"org" = cross-team Org Knowledge Graph: ranked warnings from failures that recurred in OTHER ' +
+            'teams/repos in your organisation, with proven fixes and confidence. "org+commons" = org graph ' +
+            'plus public syndicated lessons. Falls back to "instance" when the instance has no org.',
+        },
       },
       required: ['instance_id', 'context'],
     },
