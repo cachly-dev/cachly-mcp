@@ -16,6 +16,10 @@
 //     with no output, so Claude Code simply proceeds without the extra context
 //     (§6.3 guardrail 5).
 
+import { existsSync } from 'node:fs';
+import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
+
 /** Bumped whenever a hook script changes so installers can upgrade old hooks. */
 export const AMBIENT_HOOK_VERSION = 'v1';
 
@@ -23,8 +27,7 @@ export const AMBIENT_HOOK_VERSION = 'v1';
  * The CLI subcommand the hooks pipe their payload to. It reads the hook JSON on
  * stdin, runs smart_recall through the relevance gate (ambient-recall.ts), and
  * prints the `hookSpecificOutput` JSON Claude Code injects as additionalContext.
- * The CLI self-limits its latency budget (§6.3 guardrail 4) — added in the next
- * slice; until then the hook is a silent no-op (the `|| true` guarantees exit 0).
+ * The CLI self-limits its latency budget (§6.3 guardrail 4). See ambient-cli.ts.
  */
 export const AMBIENT_CLI_SUBCOMMAND = 'ambient-recall';
 
@@ -99,4 +102,128 @@ export function buildAmbientSettingsHooks(paths: AmbientHookPaths): {
     SessionStart: [{ hooks: [{ type: 'command', command: paths.sessionStart }] }],
     UserPromptSubmit: [{ hooks: [{ type: 'command', command: paths.userPromptSubmit }] }],
   };
+}
+
+// ── Installer ────────────────────────────────────────────────────────────────
+// Writes the two hook scripts into `.claude/hooks/` and merges the settings
+// fragment into `.claude/settings.json`. Idempotent and non-destructive:
+//   • re-running upgrades the scripts in place (version marker) and never
+//     duplicates a settings entry that already points at our script,
+//   • foreign hooks in the user's settings are preserved (we append, never
+//     overwrite the arrays).
+// Never throws — returns a status the caller can log.
+
+const HOOK_DIR = '.claude/hooks';
+const SESSION_START_SCRIPT = 'cachly-ambient-session-start.sh';
+const PROMPT_SUBMIT_SCRIPT = 'cachly-ambient-prompt-submit.sh';
+const SETTINGS_FILE = '.claude/settings.json';
+
+export interface AmbientInstallResult {
+  sessionStartPath: string;
+  promptSubmitPath: string;
+  scripts: 'written' | 'upgraded' | 'unchanged';
+  settings: 'written' | 'merged' | 'unchanged';
+}
+
+interface HookCommandEntry {
+  hooks?: Array<{ type?: string; command?: string }>;
+}
+interface ClaudeSettings {
+  hooks?: Record<string, HookCommandEntry[]>;
+  [k: string]: unknown;
+}
+
+/** True when some matcher group in `groups` already wires exactly `command`. */
+function hasHookCommand(groups: HookCommandEntry[] | undefined, command: string): boolean {
+  return (groups ?? []).some((g) => (g.hooks ?? []).some((h) => h.command === command));
+}
+
+/**
+ * Merge our SessionStart + UserPromptSubmit entries into an existing settings
+ * object without disturbing anything else. Returns the new object and whether it
+ * changed. Pure — unit-tested.
+ */
+export function mergeAmbientSettings(
+  existing: ClaudeSettings,
+  paths: AmbientHookPaths,
+): { settings: ClaudeSettings; changed: boolean } {
+  const next: ClaudeSettings = { ...existing, hooks: { ...(existing.hooks ?? {}) } };
+  const hooks = next.hooks!;
+  let changed = false;
+
+  const ensure = (event: 'SessionStart' | 'UserPromptSubmit', command: string) => {
+    const groups = Array.isArray(hooks[event]) ? [...hooks[event]] : [];
+    if (hasHookCommand(groups, command)) {
+      hooks[event] = groups;
+      return;
+    }
+    groups.push({ hooks: [{ type: 'command', command }] });
+    hooks[event] = groups;
+    changed = true;
+  };
+
+  ensure('SessionStart', paths.sessionStart);
+  ensure('UserPromptSubmit', paths.userPromptSubmit);
+  return { settings: next, changed };
+}
+
+/**
+ * Install/upgrade the Ambient Recall hooks in `projectDir`. Best-effort:
+ * a filesystem error surfaces as a thrown error only for the top-level caller,
+ * which wraps it in try/catch (the git-hook feature is non-critical).
+ */
+export async function installAmbientHooks(
+  projectDir: string,
+  instanceId: string,
+  apiKey?: string,
+): Promise<AmbientInstallResult> {
+  const hookDir = resolve(projectDir, HOOK_DIR);
+  const sessionStartPath = resolve(hookDir, SESSION_START_SCRIPT);
+  const promptSubmitPath = resolve(hookDir, PROMPT_SUBMIT_SCRIPT);
+  await mkdir(hookDir, { recursive: true });
+
+  const opts: AmbientHookOptions = { instanceId, apiKey };
+  const sessionScript = buildSessionStartHook(opts);
+  const promptScript = buildUserPromptSubmitHook(opts);
+
+  const readIf = async (p: string): Promise<string> => {
+    try { return await readFile(p, 'utf-8'); } catch { return ''; }
+  };
+  const prevSession = await readIf(sessionStartPath);
+  const prevPrompt = await readIf(promptSubmitPath);
+
+  let scripts: AmbientInstallResult['scripts'];
+  if (!prevSession && !prevPrompt) scripts = 'written';
+  else if (prevSession === sessionScript && prevPrompt === promptScript) scripts = 'unchanged';
+  else scripts = 'upgraded';
+
+  if (scripts !== 'unchanged') {
+    await writeFile(sessionStartPath, sessionScript + '\n', 'utf-8');
+    await writeFile(promptSubmitPath, promptScript + '\n', 'utf-8');
+    await chmod(sessionStartPath, 0o755).catch(() => {});
+    await chmod(promptSubmitPath, 0o755).catch(() => {});
+  }
+
+  // Merge the settings fragment.
+  const settingsPath = resolve(projectDir, SETTINGS_FILE);
+  const settingsExisted = existsSync(settingsPath);
+  let existingSettings: ClaudeSettings = {};
+  if (settingsExisted) {
+    try { existingSettings = JSON.parse(await readFile(settingsPath, 'utf-8')) as ClaudeSettings; }
+    catch { existingSettings = {}; } // corrupt/empty file → start fresh (still non-destructive to hooks we add)
+  }
+  const { settings, changed } = mergeAmbientSettings(existingSettings, {
+    sessionStart: sessionStartPath,
+    userPromptSubmit: promptSubmitPath,
+  });
+  let settingsStatus: AmbientInstallResult['settings'];
+  if (!settingsExisted) settingsStatus = 'written';
+  else if (!changed) settingsStatus = 'unchanged';
+  else settingsStatus = 'merged';
+  if (settingsStatus !== 'unchanged') {
+    await mkdir(resolve(projectDir, '.claude'), { recursive: true });
+    await writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
+  }
+
+  return { sessionStartPath, promptSubmitPath, scripts, settings: settingsStatus };
 }

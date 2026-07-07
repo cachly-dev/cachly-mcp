@@ -3,6 +3,7 @@ import {
   buildSessionStartHook,
   buildUserPromptSubmitHook,
   buildAmbientSettingsHooks,
+  mergeAmbientSettings,
   AMBIENT_HOOK_VERSION,
   AMBIENT_CLI_SUBCOMMAND,
 } from '../ambient-hooks.js';
@@ -58,5 +59,57 @@ describe('settings fragment', () => {
     });
     expect(frag.SessionStart[0].hooks[0]).toEqual({ type: 'command', command: '/h/session.sh' });
     expect(frag.UserPromptSubmit[0].hooks[0]).toEqual({ type: 'command', command: '/h/prompt.sh' });
+  });
+});
+
+const paths = { sessionStart: '/h/s.sh', userPromptSubmit: '/h/p.sh' };
+
+describe('mergeAmbientSettings', () => {
+  it('adds both hooks to empty settings', () => {
+    const { settings, changed } = mergeAmbientSettings({}, paths);
+    expect(changed).toBe(true);
+    expect(settings.hooks!.SessionStart[0].hooks![0].command).toBe('/h/s.sh');
+    expect(settings.hooks!.UserPromptSubmit[0].hooks![0].command).toBe('/h/p.sh');
+  });
+
+  it('is idempotent — re-merging the same paths does not change or duplicate', () => {
+    const first = mergeAmbientSettings({}, paths).settings;
+    const { settings, changed } = mergeAmbientSettings(first, paths);
+    expect(changed).toBe(false);
+    expect(settings.hooks!.SessionStart).toHaveLength(1);
+    expect(settings.hooks!.UserPromptSubmit).toHaveLength(1);
+  });
+
+  it('preserves foreign hooks and unrelated settings', () => {
+    const existing = {
+      model: 'opus',
+      hooks: {
+        SessionStart: [{ hooks: [{ type: 'command', command: '/other/thing.sh' }] }],
+        PostToolUse: [{ hooks: [{ type: 'command', command: '/keep.sh' }] }],
+      },
+    };
+    const { settings, changed } = mergeAmbientSettings(existing, paths);
+    expect(changed).toBe(true);
+    expect(settings.model).toBe('opus');
+    expect(settings.hooks!.PostToolUse).toEqual(existing.hooks.PostToolUse);
+    // foreign SessionStart entry kept, ours appended
+    expect(settings.hooks!.SessionStart).toHaveLength(2);
+    expect(settings.hooks!.SessionStart.some((g) => g.hooks!.some((h) => h.command === '/other/thing.sh'))).toBe(true);
+    expect(settings.hooks!.SessionStart.some((g) => g.hooks!.some((h) => h.command === '/h/s.sh'))).toBe(true);
+  });
+
+  it('does not duplicate when our command is already present among foreign entries', () => {
+    const existing = {
+      hooks: {
+        UserPromptSubmit: [
+          { hooks: [{ type: 'command', command: '/foreign.sh' }] },
+          { hooks: [{ type: 'command', command: '/h/p.sh' }] },
+        ],
+      },
+    };
+    const { settings, changed } = mergeAmbientSettings(existing, paths);
+    // SessionStart is newly added (changed), but UserPromptSubmit already has ours → not duplicated
+    expect(changed).toBe(true);
+    expect(settings.hooks!.UserPromptSubmit).toHaveLength(2);
   });
 });

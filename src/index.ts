@@ -705,6 +705,8 @@ import { handleAdvancedTool } from './handlers/advanced.js';
 import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
+import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
+import { runAmbient, truncateToTokens } from './ambient-cli.js';
 import { handleShareTool } from './handlers/share.js';
 import { handleVizTool } from './handlers/viz.js';
 import type { Instance } from './handlers/brain.js';
@@ -2504,6 +2506,19 @@ if (process.argv[2] === 'init') {
     else if (r === 'unchanged') console.log(`✓  CLS hook already current in .git/hooks/post-commit`);
   } catch { /* non-critical — git hook is a best-effort feature */ }
 
+  // ── Ambient Recall Phase 4: auto-install SessionStart + UserPromptSubmit hooks ─
+  // Only for Claude Code (the hooks config lives in .claude/settings.json).
+  if (editor === 'claude') {
+    try {
+      const a = await installAmbientHooks(projectDir, instanceId, JWT || undefined);
+      const scriptVerb = a.scripts === 'written' ? '✅ Written' : a.scripts === 'upgraded' ? `✅ Upgraded (→ ${AMBIENT_HOOK_VERSION})` : '✓  Unchanged';
+      console.log(`${scriptVerb}: .claude/hooks/ (Ambient Recall — auto-recall on session start & every prompt)`);
+      if (a.settings === 'written')      console.log(`✅ Written: .claude/settings.json (Ambient Recall hooks wired)`);
+      else if (a.settings === 'merged')  console.log(`✅ Merged: .claude/settings.json (Ambient Recall hooks wired)`);
+      else                               console.log(`✓  Ambient Recall hooks already wired in .claude/settings.json`);
+    } catch { /* non-critical — ambient hooks are a best-effort feature */ }
+  }
+
   const initSecs = ((Date.now() - initStart) / 1000).toFixed(1);
   console.log(`\n🧠 Cachly AI Brain configured for ${editor === 'claude' ? 'Claude Code' : editor}! (${initSecs}s)`);
   console.log(`   Restart your editor — the \`cachly\` MCP tools will appear.`);
@@ -3481,6 +3496,44 @@ if (process.argv[2] === 'learn-git') {
   } catch (err) {
     console.error(`\n❌  learn-git failed: ${(err as Error).message}\n`);
     process.exit(1);
+  }
+  process.exit(0);
+}
+
+// ── ambient-recall: CLI entrypoint for the Claude Code hooks ──────────────────
+// Invoked as: <hook payload JSON on stdin> | cachly ambient-recall
+// Reads the SessionStart/UserPromptSubmit payload, recalls through the §6.3
+// relevance gate (ambient-cli.ts), and prints the `hookSpecificOutput` JSON that
+// Claude Code injects as additionalContext — or nothing. This is the automatic
+// replacement for "the agent should have called smart_recall". Best-effort:
+// no JWT, no stdin, a slow brain or any error → prints nothing and exits 0 so a
+// hook can NEVER block or corrupt the agent's turn.
+if (process.argv[2] === 'ambient-recall') {
+  try {
+    if (process.stdin.isTTY) process.exit(0); // no piped payload → nothing to do
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
+    const raw = Buffer.concat(chunks).toString('utf-8');
+    if (!JWT) process.exit(0); // not authenticated → silent no-op
+
+    const out = await runAmbient(raw, {
+      timeoutMs: 3000, // §6.3 guardrail 4: never stall the prompt on a slow brain
+      // Ambient injection budget: one relevance-ranked briefing, hard-capped.
+      // smart_recall already returns its hits best-first, so the capped head is
+      // the high-signal part. Per-lesson structured candidates are a future slice.
+      gate: { topK: 1, maxTokens: 500 },
+      recall: async (query) => {
+        const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId;
+        if (!instanceId) return [];
+        const text = String((await handleTool('smart_recall', { instance_id: instanceId, query })) ?? '');
+        const miss = text.length < 80 || /No lessons found|no lessons|No matches found/i.test(text);
+        if (miss) return [];
+        return [{ id: 'ambient', summary: truncateToTokens(text, 500), confidence: 0.9, score: 0.9 }];
+      },
+    });
+    if (out) process.stdout.write(out);
+  } catch {
+    // Swallow everything — an ambient hook must never break the agent.
   }
   process.exit(0);
 }
