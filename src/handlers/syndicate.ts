@@ -48,10 +48,41 @@ async function tryOrgPredict(
     return null; // endpoint unavailable / not a member / graph disabled → degrade.
   }
   if (!res || !res.warnings || res.warnings.length === 0) return null;
-  return renderOrgPredict(ctx, res, scope);
+  return await renderOrgPredict(ctx, res, scope, apiFetch);
 }
 
-function renderOrgPredict(ctx: string, res: OrgPredictResponse, scope: string): string {
+// fetchCommonsOverlay widens an org prediction with public Knowledge-Commons
+// hits (scope="org+commons"). Bounded to 3 results and always graceful — a
+// commons outage never breaks the higher-signal org prediction.
+interface CommonsHit { topic: string; what_worked: string }
+async function fetchCommonsOverlay(
+  ctx: string,
+  res: OrgPredictResponse,
+  apiFetch: ApiFetch,
+): Promise<CommonsHit[]> {
+  const query = res.warnings[0]?.problem || ctx;
+  if (!query) return [];
+  try {
+    const r = await apiFetch<{ results?: Array<{ topic?: string; what_worked?: string }> }>(
+      `/api/v1/syndication/search?q=${encodeURIComponent(query)}&limit=3`,
+    );
+    const orgProblems = new Set(res.warnings.map((w) => w.problem));
+    return (r.results ?? [])
+      .filter((x): x is { topic: string; what_worked: string } =>
+        Boolean(x.topic) && Boolean(x.what_worked) && !orgProblems.has(x.topic as string))
+      .slice(0, 3)
+      .map((x) => ({ topic: x.topic, what_worked: x.what_worked.slice(0, 160) }));
+  } catch {
+    return []; // commons unavailable → org prediction stands alone (no regression).
+  }
+}
+
+async function renderOrgPredict(
+  ctx: string,
+  res: OrgPredictResponse,
+  scope: string,
+  apiFetch: ApiFetch,
+): Promise<string> {
   const lines = [`🔮 **Org Brain Predict: "${ctx}"**`, ''];
 
   for (const w of res.warnings) {
@@ -79,9 +110,15 @@ function renderOrgPredict(ctx: string, res: OrgPredictResponse, scope: string): 
   }
 
   if (scope === 'org+commons') {
-    // TODO(P3-4): overlay public MetaLesson / syndication hits here. For now
-    // org+commons behaves as org scope (the org graph is the higher-signal source).
-    lines.push('_(org+commons: public-commons overlay not yet wired — showing org graph only)_');
+    // Overlay public Knowledge-Commons hits beneath the higher-signal org graph.
+    const commons = await fetchCommonsOverlay(ctx, res, apiFetch);
+    if (commons.length > 0) {
+      lines.push('🌐 **From the public Knowledge Commons** (cross-org, lower-signal):');
+      for (const c of commons) {
+        lines.push(`   • \`${c.topic}\` — ${c.what_worked}`);
+      }
+      lines.push('');
+    }
   }
   lines.push(`💡 Heeded the warning? \`learn_from_attempts(..., tags=["prevented-by-org-graph"])\` → counts as a prevented cross-team mistake.`);
   return lines.join('\n');
