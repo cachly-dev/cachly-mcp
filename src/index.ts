@@ -706,7 +706,9 @@ import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
-import { runAmbient, truncateToTokens } from './ambient-cli.js';
+import { runAmbient, truncateToTokens, parseHookPayload, stopObservation } from './ambient-cli.js';
+import { appendLedgerEntry, readLedger } from './ambient-ledger.js';
+import { netBalance, shouldBackoff } from './ambient-recall.js';
 import { handleShareTool } from './handlers/share.js';
 import { handleVizTool } from './handlers/viz.js';
 import type { Instance } from './handlers/brain.js';
@@ -2512,7 +2514,7 @@ if (process.argv[2] === 'init') {
     try {
       const a = await installAmbientHooks(projectDir, instanceId, JWT || undefined);
       const scriptVerb = a.scripts === 'written' ? '✅ Written' : a.scripts === 'upgraded' ? `✅ Upgraded (→ ${AMBIENT_HOOK_VERSION})` : '✓  Unchanged';
-      console.log(`${scriptVerb}: .claude/hooks/ (Ambient Recall — auto-recall on session start & every prompt)`);
+      console.log(`${scriptVerb}: .claude/hooks/ (Ambient Recall — session briefing, per-prompt recall, file briefing, auto-learn)`);
       if (a.settings === 'written')      console.log(`✅ Written: .claude/settings.json (Ambient Recall hooks wired)`);
       else if (a.settings === 'merged')  console.log(`✅ Merged: .claude/settings.json (Ambient Recall hooks wired)`);
       else                               console.log(`✓  Ambient Recall hooks already wired in .claude/settings.json`);
@@ -3502,12 +3504,14 @@ if (process.argv[2] === 'learn-git') {
 
 // ── ambient-recall: CLI entrypoint for the Claude Code hooks ──────────────────
 // Invoked as: <hook payload JSON on stdin> | cachly ambient-recall
-// Reads the SessionStart/UserPromptSubmit payload, recalls through the §6.3
-// relevance gate (ambient-cli.ts), and prints the `hookSpecificOutput` JSON that
-// Claude Code injects as additionalContext — or nothing. This is the automatic
-// replacement for "the agent should have called smart_recall". Best-effort:
-// no JWT, no stdin, a slow brain or any error → prints nothing and exits 0 so a
-// hook can NEVER block or corrupt the agent's turn.
+// SessionStart/UserPromptSubmit/PreToolUse payloads recall through the §6.3
+// relevance gate (ambient-cli.ts) and print the `hookSpecificOutput` JSON that
+// Claude Code injects as additionalContext — or nothing. Stop payloads instead
+// feed a fix-signal observation to auto_learn_session (the automatic
+// `learn_from_attempts`). Injections are booked into the net-token ledger
+// (§6.2) and auto-backoff kicks in when the recent window is net-negative.
+// Best-effort: no JWT, no stdin, a slow brain or any error → prints nothing and
+// exits 0 so a hook can NEVER block or corrupt the agent's turn.
 if (process.argv[2] === 'ambient-recall') {
   try {
     if (process.stdin.isTTY) process.exit(0); // no piped payload → nothing to do
@@ -3515,6 +3519,17 @@ if (process.argv[2] === 'ambient-recall') {
     for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
     const raw = Buffer.concat(chunks).toString('utf-8');
     if (!JWT) process.exit(0); // not authenticated → silent no-op
+    const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId;
+
+    // Stop event → auto-learn, never inject (roadmap §6.1 PostToolUse/Stop row).
+    const stopPayload = parseHookPayload(raw);
+    if (stopPayload?.hook_event_name === 'Stop') {
+      const obs = stopObservation(stopPayload);
+      if (obs && instanceId) {
+        await handleTool('auto_learn_session', { instance_id: instanceId, observations: [obs] });
+      }
+      process.exit(0);
+    }
 
     const out = await runAmbient(raw, {
       timeoutMs: 3000, // §6.3 guardrail 4: never stall the prompt on a slow brain
@@ -3522,8 +3537,11 @@ if (process.argv[2] === 'ambient-recall') {
       // smart_recall already returns its hits best-first, so the capped head is
       // the high-signal part. Per-lesson structured candidates are a future slice.
       gate: { topK: 1, maxTokens: 500 },
+      backoff: async () => shouldBackoff(await readLedger()),
+      onInject: (tokens, event) => {
+        void appendLedgerEntry({ ts: new Date().toISOString(), event, injected: tokens, prevented: 0 });
+      },
       recall: async (query) => {
-        const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId;
         if (!instanceId) return [];
         const text = String((await handleTool('smart_recall', { instance_id: instanceId, query })) ?? '');
         const miss = text.length < 80 || /No lessons found|no lessons|No matches found/i.test(text);
@@ -3535,6 +3553,53 @@ if (process.argv[2] === 'ambient-recall') {
   } catch {
     // Swallow everything — an ambient hook must never break the agent.
   }
+  process.exit(0);
+}
+
+// ── ambient-credit: agent-reported prevented-token credit (§6.2) ──────────────
+// Invoked as: cachly ambient-credit <tokens> [note…] — the injected context's
+// footer invites the agent to call this when a recalled lesson changed its path.
+// This is the client-side signal that makes the net ledger (and auto-backoff)
+// meaningful before the server-side dashboard exists. Silent + exit 0 always.
+if (process.argv[2] === 'ambient-credit') {
+  try {
+    const tokens = Math.round(Number(process.argv[3]));
+    if (Number.isFinite(tokens) && tokens > 0) {
+      // Cap a single credit: self-reported savings should never let one
+      // enthusiastic claim mask weeks of negative balance.
+      const capped = Math.min(tokens, 20_000);
+      const note = process.argv.slice(4).join(' ').slice(0, 200) || undefined;
+      await appendLedgerEntry({ ts: new Date().toISOString(), event: 'credit', injected: 0, prevented: capped, note });
+      console.log(`✅ ambient credit recorded: ${capped} tokens${note ? ` (${note})` : ''}`);
+    } else {
+      console.error('Usage: npx @cachly-dev/mcp-server@latest ambient-credit <tokens-saved> [note]');
+    }
+  } catch { /* telemetry — never fail loudly */ }
+  process.exit(0);
+}
+
+// ── ambient-stats: the honest net-token readout (§6.2) ────────────────────────
+// Shows injected vs prevented and the NET — even when it is negative — plus
+// whether auto-backoff is currently pausing injection.
+if (process.argv[2] === 'ambient-stats') {
+  const entries = await readLedger();
+  const bal = netBalance(entries);
+  const backing = shouldBackoff(entries);
+  const recent = entries.slice(-5);
+  console.log('\n🧠 Ambient Recall — net-token ledger\n');
+  console.log(`   Turns recorded:   ${entries.length}`);
+  console.log(`   Injected tokens:  ${bal.injected}`);
+  console.log(`   Prevented tokens: ${bal.prevented} (agent-reported via ambient-credit)`);
+  console.log(`   NET:              ${bal.net >= 0 ? '+' : ''}${bal.net} tokens`);
+  console.log(`   Auto-backoff:     ${backing ? '🔴 ACTIVE — recent window is net-negative, injection paused' : '🟢 inactive'}`);
+  if (recent.length > 0) {
+    console.log('\n   Last entries:');
+    for (const e of recent) {
+      const what = e.prevented > 0 ? `+${e.prevented} prevented` : `-${e.injected} injected`;
+      console.log(`   • ${e.ts.slice(0, 19)} ${e.event}: ${what}${e.note ? ` (${e.note})` : ''}`);
+    }
+  }
+  console.log('');
   process.exit(0);
 }
 
@@ -3608,7 +3673,7 @@ if (!JWT) {
 //   • Editor as an MCP stdio server (non-TTY)  → ONE stderr hint, then KEEP RUNNING
 //     so tools/list works and the first tool call starts the browser sign-in.
 // Skip entirely for CLI subcommands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'autosetup', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'bench', 'tool-specs', 'openapi'];
+const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'autosetup', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'bench', 'tool-specs', 'openapi', 'ambient-credit', 'ambient-stats'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
   const runningInTerminal = !process.argv[2] && process.stdout.isTTY === true && _isMain;
   if (runningInTerminal) {

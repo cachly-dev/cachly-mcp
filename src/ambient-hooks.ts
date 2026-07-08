@@ -21,7 +21,7 @@ import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
 /** Bumped whenever a hook script changes so installers can upgrade old hooks. */
-export const AMBIENT_HOOK_VERSION = 'v1';
+export const AMBIENT_HOOK_VERSION = 'v2';
 
 /**
  * The CLI subcommand the hooks pipe their payload to. It reads the hook JSON on
@@ -31,7 +31,7 @@ export const AMBIENT_HOOK_VERSION = 'v1';
  */
 export const AMBIENT_CLI_SUBCOMMAND = 'ambient-recall';
 
-export type AmbientHookEvent = 'SessionStart' | 'UserPromptSubmit';
+export type AmbientHookEvent = 'SessionStart' | 'UserPromptSubmit' | 'PreToolUse' | 'Stop';
 
 export interface AmbientHookOptions {
   instanceId: string;
@@ -83,25 +83,75 @@ export function buildUserPromptSubmitHook(opts: AmbientHookOptions): string {
   return buildHook('UserPromptSubmit', opts);
 }
 
-export interface AmbientHookPaths {
-  sessionStart: string;
-  userPromptSubmit: string;
+/**
+ * PreToolUse hook (Ausbau) — file-open briefing. Fires before Edit/Write-class
+ * tools (settings matcher `Edit|Write|MultiEdit`); the CLI recalls file-scoped
+ * lessons and injects them as additionalContext — the automatic "prüf mal, ob's
+ * zu dieser Datei Lessons gibt" (roadmap §6.1).
+ */
+export function buildPreToolUseHook(opts: AmbientHookOptions): string {
+  return buildHook('PreToolUse', opts);
 }
 
 /**
- * Build the `.claude/settings.json` `hooks` fragment that wires both scripts.
+ * Stop hook (Ausbau) — auto-learn. After a turn whose final message carries a
+ * clear fix signal, the CLI feeds one observation to auto_learn_session — the
+ * automatic replacement for the forgotten `learn_from_attempts` call.
+ */
+export function buildStopHook(opts: AmbientHookOptions): string {
+  return buildHook('Stop', opts);
+}
+
+export interface AmbientHookPaths {
+  sessionStart: string;
+  userPromptSubmit: string;
+  /** Ausbau hooks — optional so MVP-era (v1) callers keep working. */
+  preToolUse?: string;
+  stop?: string;
+}
+
+export interface HookCommand {
+  type: 'command';
+  command: string;
+  /** Per-hook timeout in seconds (Claude Code hooks config). */
+  timeout?: number;
+}
+export interface HookMatcherGroup {
+  /** Tool matcher — only meaningful for PreToolUse/PostToolUse. */
+  matcher?: string;
+  hooks: HookCommand[];
+}
+
+// Per-event latency budgets (seconds). The CLI self-limits recall to 3s; these
+// are the outer safety net so a wedged npx can never stall a turn for long.
+const EVENT_TIMEOUTS: Record<string, number> = {
+  SessionStart: 30,
+  UserPromptSubmit: 10,
+  PreToolUse: 10,
+  Stop: 60, // auto-learn may do a real write; Stop is not latency-critical
+};
+
+/** Matcher for the PreToolUse briefing: only file-mutating tools. */
+export const PRE_TOOL_USE_MATCHER = 'Edit|Write|MultiEdit|NotebookEdit';
+
+/**
+ * Build the `.claude/settings.json` `hooks` fragment that wires the scripts.
  * The caller merges this into the user's existing settings (never overwrites).
  * Shape matches Claude Code's hooks config: an array of matcher groups, each
- * with a list of `{ type: "command", command }` entries.
+ * with a list of `{ type: "command", command, timeout }` entries.
  */
-export function buildAmbientSettingsHooks(paths: AmbientHookPaths): {
-  SessionStart: Array<{ hooks: Array<{ type: 'command'; command: string }> }>;
-  UserPromptSubmit: Array<{ hooks: Array<{ type: 'command'; command: string }> }>;
-} {
-  return {
-    SessionStart: [{ hooks: [{ type: 'command', command: paths.sessionStart }] }],
-    UserPromptSubmit: [{ hooks: [{ type: 'command', command: paths.userPromptSubmit }] }],
+export function buildAmbientSettingsHooks(paths: AmbientHookPaths): Record<string, HookMatcherGroup[]> {
+  const entry = (event: AmbientHookEvent, command: string, matcher?: string): HookMatcherGroup => ({
+    ...(matcher ? { matcher } : {}),
+    hooks: [{ type: 'command', command, timeout: EVENT_TIMEOUTS[event] }],
+  });
+  const frag: Record<string, HookMatcherGroup[]> = {
+    SessionStart: [entry('SessionStart', paths.sessionStart)],
+    UserPromptSubmit: [entry('UserPromptSubmit', paths.userPromptSubmit)],
   };
+  if (paths.preToolUse) frag.PreToolUse = [entry('PreToolUse', paths.preToolUse, PRE_TOOL_USE_MATCHER)];
+  if (paths.stop) frag.Stop = [entry('Stop', paths.stop)];
+  return frag;
 }
 
 // ── Installer ────────────────────────────────────────────────────────────────
@@ -114,34 +164,51 @@ export function buildAmbientSettingsHooks(paths: AmbientHookPaths): {
 // Never throws — returns a status the caller can log.
 
 const HOOK_DIR = '.claude/hooks';
-const SESSION_START_SCRIPT = 'cachly-ambient-session-start.sh';
-const PROMPT_SUBMIT_SCRIPT = 'cachly-ambient-prompt-submit.sh';
 const SETTINGS_FILE = '.claude/settings.json';
+/** Script filename per event — shared marker `cachly-ambient-` drives upgrades. */
+const SCRIPT_NAMES: Record<AmbientHookEvent, string> = {
+  SessionStart: 'cachly-ambient-session-start.sh',
+  UserPromptSubmit: 'cachly-ambient-prompt-submit.sh',
+  PreToolUse: 'cachly-ambient-pre-tool.sh',
+  Stop: 'cachly-ambient-stop.sh',
+};
+const AMBIENT_SCRIPT_MARKER = '.claude/hooks/cachly-ambient-';
 
 export interface AmbientInstallResult {
   sessionStartPath: string;
   promptSubmitPath: string;
+  preToolUsePath: string;
+  stopPath: string;
   scripts: 'written' | 'upgraded' | 'unchanged';
   settings: 'written' | 'merged' | 'unchanged';
 }
 
 interface HookCommandEntry {
-  hooks?: Array<{ type?: string; command?: string }>;
+  matcher?: string;
+  hooks?: Array<{ type?: string; command?: string; timeout?: number }>;
 }
 interface ClaudeSettings {
   hooks?: Record<string, HookCommandEntry[]>;
   [k: string]: unknown;
 }
 
-/** True when some matcher group in `groups` already wires exactly `command`. */
-function hasHookCommand(groups: HookCommandEntry[] | undefined, command: string): boolean {
-  return (groups ?? []).some((g) => (g.hooks ?? []).some((h) => h.command === command));
+/** True when this matcher group only wires cachly-ambient scripts. */
+function isAmbientGroup(g: HookCommandEntry, currentPaths: Set<string>): boolean {
+  const hooks = g.hooks ?? [];
+  return (
+    hooks.length > 0 &&
+    hooks.every((h) => {
+      const cmd = h.command ?? '';
+      return cmd.includes(AMBIENT_SCRIPT_MARKER) || currentPaths.has(cmd);
+    })
+  );
 }
 
 /**
- * Merge our SessionStart + UserPromptSubmit entries into an existing settings
- * object without disturbing anything else. Returns the new object and whether it
- * changed. Pure — unit-tested.
+ * Merge our hook entries into an existing settings object without disturbing
+ * anything else. Idempotent AND upgrade-safe: existing cachly-ambient groups
+ * (from any prior version/paths) are replaced by the current fragment rather
+ * than accumulated; foreign groups are always preserved. Pure — unit-tested.
  */
 export function mergeAmbientSettings(
   existing: ClaudeSettings,
@@ -149,21 +216,20 @@ export function mergeAmbientSettings(
 ): { settings: ClaudeSettings; changed: boolean } {
   const next: ClaudeSettings = { ...existing, hooks: { ...(existing.hooks ?? {}) } };
   const hooks = next.hooks!;
-  let changed = false;
+  const fragment = buildAmbientSettingsHooks(paths);
+  const currentPaths = new Set(
+    [paths.sessionStart, paths.userPromptSubmit, paths.preToolUse, paths.stop].filter(
+      (p): p is string => !!p,
+    ),
+  );
 
-  const ensure = (event: 'SessionStart' | 'UserPromptSubmit', command: string) => {
-    const groups = Array.isArray(hooks[event]) ? [...hooks[event]] : [];
-    if (hasHookCommand(groups, command)) {
-      hooks[event] = groups;
-      return;
-    }
-    groups.push({ hooks: [{ type: 'command', command }] });
-    hooks[event] = groups;
-    changed = true;
-  };
-
-  ensure('SessionStart', paths.sessionStart);
-  ensure('UserPromptSubmit', paths.userPromptSubmit);
+  for (const [event, ourGroups] of Object.entries(fragment)) {
+    const foreign = (Array.isArray(hooks[event]) ? hooks[event] : []).filter(
+      (g) => !isAmbientGroup(g, currentPaths),
+    );
+    hooks[event] = [...foreign, ...ourGroups];
+  }
+  const changed = JSON.stringify(next) !== JSON.stringify(existing);
   return { settings: next, changed };
 }
 
@@ -178,33 +244,39 @@ export async function installAmbientHooks(
   apiKey?: string,
 ): Promise<AmbientInstallResult> {
   const hookDir = resolve(projectDir, HOOK_DIR);
-  const sessionStartPath = resolve(hookDir, SESSION_START_SCRIPT);
-  const promptSubmitPath = resolve(hookDir, PROMPT_SUBMIT_SCRIPT);
   await mkdir(hookDir, { recursive: true });
 
   const opts: AmbientHookOptions = { instanceId, apiKey };
-  const sessionScript = buildSessionStartHook(opts);
-  const promptScript = buildUserPromptSubmitHook(opts);
+  const events: AmbientHookEvent[] = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Stop'];
+  const scriptFor: Record<AmbientHookEvent, string> = {
+    SessionStart: buildSessionStartHook(opts),
+    UserPromptSubmit: buildUserPromptSubmitHook(opts),
+    PreToolUse: buildPreToolUseHook(opts),
+    Stop: buildStopHook(opts),
+  };
+  const pathFor = (e: AmbientHookEvent) => resolve(hookDir, SCRIPT_NAMES[e]);
 
   const readIf = async (p: string): Promise<string> => {
     try { return await readFile(p, 'utf-8'); } catch { return ''; }
   };
-  const prevSession = await readIf(sessionStartPath);
-  const prevPrompt = await readIf(promptSubmitPath);
 
-  let scripts: AmbientInstallResult['scripts'];
-  if (!prevSession && !prevPrompt) scripts = 'written';
-  else if (prevSession === sessionScript && prevPrompt === promptScript) scripts = 'unchanged';
-  else scripts = 'upgraded';
+  let anyExisting = false;
+  let allCurrent = true;
+  for (const e of events) {
+    const prev = await readIf(pathFor(e));
+    if (prev) anyExisting = true;
+    if (prev !== scriptFor[e] + '\n') allCurrent = false;
+  }
+  const scripts: AmbientInstallResult['scripts'] = allCurrent ? 'unchanged' : anyExisting ? 'upgraded' : 'written';
 
   if (scripts !== 'unchanged') {
-    await writeFile(sessionStartPath, sessionScript + '\n', 'utf-8');
-    await writeFile(promptSubmitPath, promptScript + '\n', 'utf-8');
-    await chmod(sessionStartPath, 0o755).catch(() => {});
-    await chmod(promptSubmitPath, 0o755).catch(() => {});
+    for (const e of events) {
+      await writeFile(pathFor(e), scriptFor[e] + '\n', 'utf-8');
+      await chmod(pathFor(e), 0o755).catch(() => {});
+    }
   }
 
-  // Merge the settings fragment.
+  // Merge the settings fragment (upgrade-safe: prior ambient groups replaced).
   const settingsPath = resolve(projectDir, SETTINGS_FILE);
   const settingsExisted = existsSync(settingsPath);
   let existingSettings: ClaudeSettings = {};
@@ -213,8 +285,10 @@ export async function installAmbientHooks(
     catch { existingSettings = {}; } // corrupt/empty file → start fresh (still non-destructive to hooks we add)
   }
   const { settings, changed } = mergeAmbientSettings(existingSettings, {
-    sessionStart: sessionStartPath,
-    userPromptSubmit: promptSubmitPath,
+    sessionStart: pathFor('SessionStart'),
+    userPromptSubmit: pathFor('UserPromptSubmit'),
+    preToolUse: pathFor('PreToolUse'),
+    stop: pathFor('Stop'),
   });
   let settingsStatus: AmbientInstallResult['settings'];
   if (!settingsExisted) settingsStatus = 'written';
@@ -225,5 +299,12 @@ export async function installAmbientHooks(
     await writeFile(settingsPath, JSON.stringify(settings, null, 2) + '\n', 'utf-8');
   }
 
-  return { sessionStartPath, promptSubmitPath, scripts, settings: settingsStatus };
+  return {
+    sessionStartPath: pathFor('SessionStart'),
+    promptSubmitPath: pathFor('UserPromptSubmit'),
+    preToolUsePath: pathFor('PreToolUse'),
+    stopPath: pathFor('Stop'),
+    scripts,
+    settings: settingsStatus,
+  };
 }

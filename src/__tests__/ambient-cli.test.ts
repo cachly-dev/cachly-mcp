@@ -2,10 +2,12 @@ import { describe, it, expect } from 'vitest';
 import {
   parseHookPayload,
   recallQueryFor,
+  stopObservation,
   truncateToTokens,
   formatContextBlock,
   buildHookOutput,
   runAmbient,
+  CREDIT_FOOTER,
   type HookPayload,
 } from '../ambient-cli.js';
 import type { LessonCandidate } from '../ambient-recall.js';
@@ -50,6 +52,50 @@ describe('recallQueryFor', () => {
   });
   it('defaults an unlabeled event to UserPromptSubmit semantics', () => {
     expect(recallQueryFor({ prompt: 'refactor the auth provider redirect loop' })).toContain('redirect loop');
+  });
+
+  it('builds a file-scoped query for PreToolUse on file-mutating tools', () => {
+    const q = recallQueryFor({
+      hook_event_name: 'PreToolUse',
+      tool_name: 'Edit',
+      tool_input: { file_path: '/repo/api/internal/handler/auth.go' },
+    });
+    expect(q).toContain('/repo/api/internal/handler/auth.go');
+  });
+
+  it('skips PreToolUse for non-file tools and missing file_path', () => {
+    expect(recallQueryFor({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: {} })).toBeNull();
+    expect(recallQueryFor({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: {} })).toBeNull();
+  });
+
+  it('never recalls on Stop', () => {
+    expect(recallQueryFor({ hook_event_name: 'Stop', last_assistant_message: 'fixed the bug in x' })).toBeNull();
+  });
+});
+
+describe('stopObservation (auto-learn fix signal)', () => {
+  const fixMsg =
+    'The root cause was the RefreshErrorGuard wrapping the whole app; the redirect loop is now fixed. ' +
+    'I scoped the guard to protected routes only and verified the public landing no longer bounces to Keycloak.';
+
+  it('extracts a success observation from a clear fix message', () => {
+    const obs = stopObservation({ hook_event_name: 'Stop', last_assistant_message: fixMsg });
+    expect(obs).not.toBeNull();
+    expect(obs!.outcome).toBe('success');
+    expect(obs!.action.length).toBeLessThanOrEqual(200);
+    expect(obs!.details).toContain('root cause');
+  });
+
+  it('returns null for short or signal-free messages (no brain spam)', () => {
+    expect(stopObservation({ hook_event_name: 'Stop', last_assistant_message: 'Done.' })).toBeNull();
+    expect(
+      stopObservation({
+        hook_event_name: 'Stop',
+        last_assistant_message:
+          'Here is a summary of the files in the repository and what each module does, as requested. The layout follows the standard structure.',
+      }),
+    ).toBeNull();
+    expect(stopObservation({ hook_event_name: 'Stop' })).toBeNull();
   });
 });
 
@@ -159,6 +205,64 @@ describe('runAmbient (end-to-end, injected recall)', () => {
     const out = await runAmbient(
       JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'refactor the migration runner logic' }),
       { recall: slow, timeoutMs: 5 },
+    );
+    expect(out).toBe('');
+  });
+
+  it('skips recall entirely while auto-backoff is active (§6.3 guardrail 3)', async () => {
+    let recalled = false;
+    const out = await runAmbient(
+      JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'debug the failing deploy pipeline' }),
+      { recall: async () => { recalled = true; return [lesson()]; }, backoff: () => true },
+    );
+    expect(out).toBe('');
+    expect(recalled).toBe(false);
+  });
+
+  it('a crashing backoff probe does not disable recall', async () => {
+    const out = await runAmbient(
+      JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'debug the failing deploy pipeline' }),
+      { recall: okRecall, backoff: () => { throw new Error('ledger broken'); } },
+    );
+    expect(out).not.toBe('');
+  });
+
+  it('books injected tokens via onInject, including the credit footer cost', async () => {
+    let booked = 0;
+    let event = '';
+    const out = await runAmbient(
+      JSON.stringify({ hook_event_name: 'UserPromptSubmit', prompt: 'fix the race in the cache invalidation' }),
+      { recall: okRecall, onInject: (t, e) => { booked = t; event = e; } },
+    );
+    const ctx = JSON.parse(out).hookSpecificOutput.additionalContext as string;
+    expect(ctx).toContain(CREDIT_FOOTER);
+    expect(event).toBe('UserPromptSubmit');
+    expect(booked).toBeGreaterThanOrEqual(Math.ceil(ctx.trim().length / 4) - 1);
+  });
+
+  it('injects file-scoped context on PreToolUse (with footer), no footer on SessionStart', async () => {
+    const pre = await runAmbient(
+      JSON.stringify({
+        hook_event_name: 'PreToolUse',
+        tool_name: 'Write',
+        tool_input: { file_path: '/repo/web/components/auth-provider.tsx' },
+      }),
+      { recall: okRecall },
+    );
+    expect(JSON.parse(pre).hookSpecificOutput.hookEventName).toBe('PreToolUse');
+    expect(JSON.parse(pre).hookSpecificOutput.additionalContext).toContain(CREDIT_FOOTER);
+
+    const session = await runAmbient(
+      JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup' }),
+      { recall: async () => [lesson({ summary: 'Line one\nLine two briefing' })] },
+    );
+    expect(JSON.parse(session).hookSpecificOutput.additionalContext).not.toContain(CREDIT_FOOTER);
+  });
+
+  it('emits nothing for Stop payloads (learning is the CLI wiring, not injection)', async () => {
+    const out = await runAmbient(
+      JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'fixed everything, root cause found' }),
+      { recall: okRecall },
     );
     expect(out).toBe('');
   });

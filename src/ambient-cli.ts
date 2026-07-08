@@ -29,6 +29,11 @@ export interface HookPayload {
   prompt?: string;
   /** Present on SessionStart — 'startup' | 'resume' | 'clear' | 'compact'. */
   source?: string;
+  /** Present on PreToolUse — the tool about to run and its input. */
+  tool_name?: string;
+  tool_input?: { file_path?: string; [k: string]: unknown };
+  /** Present on Stop — what the assistant just said (auto-learn signal). */
+  last_assistant_message?: string;
   cwd?: string;
 }
 
@@ -45,12 +50,18 @@ export function parseHookPayload(raw: string): HookPayload | null {
   }
 }
 
+// PreToolUse fires for every tool; only file-mutating tools carry a wrong-path
+// risk worth a recall (roadmap §6.1: file-open briefing on Edit/Write).
+const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
+
 /**
  * The query to recall on for a payload, or null when recall should be skipped
  * before any brain call:
  *   • UserPromptSubmit → the prompt, unless it is trivial (§6.3 guardrail 2).
  *   • SessionStart     → a fixed briefing query (there is no user prompt yet);
  *     skipped on 'compact'/'clear' resumes where a mid-session briefing is noise.
+ *   • PreToolUse       → a file-scoped query for Edit/Write-class tools only.
+ *   • Stop             → never recalls (it learns instead — see stopObservation).
  */
 export function recallQueryFor(payload: HookPayload): string | null {
   const event = payload.hook_event_name ?? 'UserPromptSubmit';
@@ -58,9 +69,46 @@ export function recallQueryFor(payload: HookPayload): string | null {
     if (payload.source === 'compact' || payload.source === 'clear') return null;
     return 'session start: recent lessons, active pitfalls, and known failure modes for this project';
   }
+  if (event === 'PreToolUse') {
+    if (payload.tool_name && !FILE_TOOLS.has(payload.tool_name)) return null;
+    const filePath = payload.tool_input?.file_path;
+    if (typeof filePath !== 'string' || !filePath.trim()) return null;
+    return `known pitfalls, past bugs and lessons for file ${filePath.trim()}`;
+  }
+  if (event === 'Stop') return null;
   const prompt = (payload.prompt ?? '').trim();
   if (!prompt || isTrivialPrompt(prompt)) return null;
   return prompt;
+}
+
+export interface StopObservation {
+  action: string;
+  outcome: 'success';
+  details: string;
+  severity: 'minor';
+}
+
+// Conservative fix-signal: only turns whose final message clearly reports a
+// resolved problem become auto-lessons. Anything looser floods the brain with
+// junk on every turn-end — the exact noise §6.4 warns about.
+const FIX_SIGNAL_RE =
+  /\b(fixed|resolved|behoben|gefixt|root cause|the bug was|der fehler (lag|war)|ursache (war|gefunden)|now passes|tests? (are|is|sind) (green|grün)|deployed successfully)\b/i;
+
+/**
+ * Derive an auto-learn observation from a Stop payload, or null when the turn
+ * carries no clear fix signal. Pure — the caller feeds it to auto_learn_session.
+ */
+export function stopObservation(payload: HookPayload): StopObservation | null {
+  const msg = (payload.last_assistant_message ?? '').trim();
+  if (msg.length < 80) return null; // too short to describe a real fix
+  if (!FIX_SIGNAL_RE.test(msg)) return null;
+  const firstLine = msg.split('\n').find((l) => l.trim().length > 0)?.trim() ?? msg;
+  return {
+    action: firstLine.slice(0, 200),
+    outcome: 'success',
+    details: msg.slice(0, 500),
+    severity: 'minor',
+  };
 }
 
 /** Truncate text to fit an estimated token budget (~4 chars/token), on a word edge. */
@@ -74,18 +122,29 @@ export function truncateToTokens(text: string, maxTokens: number): string {
 }
 
 /**
+ * Tiny footer that closes the net-token loop (§6.2): the agent self-reports
+ * prevented tokens via `ambient-credit` when a recalled lesson changed its path.
+ * Kept to one short line — its own token cost is counted as injected.
+ */
+export const CREDIT_FOOTER =
+  '(If this memory just saved you from a wrong path, record it: `npx @cachly-dev/mcp-server@latest ambient-credit <tokens-saved>`)';
+
+/**
  * Render the gated lessons into a context block for the agent.
  *   • A single already-formatted briefing (multi-line summary — what smart_recall
  *     returns) is injected verbatim; it carries its own headings.
  *   • Multiple short lessons are rendered as a titled bullet list.
+ * `withCreditFooter` appends the self-report line (per-prompt events only —
+ * a SessionStart briefing is ambience, not a decision-changing recall).
  */
-export function formatContextBlock(lessons: LessonCandidate[]): string {
+export function formatContextBlock(lessons: LessonCandidate[], withCreditFooter = false): string {
   if (lessons.length === 0) return '';
-  if (lessons.length === 1 && lessons[0].summary.includes('\n')) {
-    return lessons[0].summary.trim();
-  }
-  const bullets = lessons.map((l) => `- ${l.summary.trim()}`).join('\n');
-  return `🧠 Relevant memory from your cachly brain (auto-recalled):\n${bullets}`;
+  const body =
+    lessons.length === 1 && lessons[0].summary.includes('\n')
+      ? lessons[0].summary.trim()
+      : `🧠 Relevant memory from your cachly brain (auto-recalled):\n` +
+        lessons.map((l) => `- ${l.summary.trim()}`).join('\n');
+  return withCreditFooter ? `${body}\n${CREDIT_FOOTER}` : body;
 }
 
 /**
@@ -110,6 +169,13 @@ export interface AmbientDeps {
   gate?: Partial<GateOptions>;
   /** Hard latency budget for the whole recall step (ms). Default 3000. */
   timeoutMs?: number;
+  /**
+   * Auto-backoff probe (§6.3 guardrail 3): return true when the recent ledger
+   * window is net-negative — recall is then skipped BEFORE any brain call.
+   */
+  backoff?: () => boolean | Promise<boolean>;
+  /** Called with the estimated injected tokens whenever context is emitted. */
+  onInject?: (tokens: number, event: string) => void;
 }
 
 /** Resolve a promise to a fallback if it does not settle within `ms`. */
@@ -138,6 +204,14 @@ export async function runAmbient(raw: string, deps: AmbientDeps): Promise<string
   const query = recallQueryFor(payload);
   if (query === null) return ''; // trivial / non-recallable event → skip before any brain call
 
+  // Auto-backoff (§6.3 guardrail 3): when the recent net balance is red, stop
+  // paying — checked after trivial-skip but before any brain call.
+  try {
+    if (deps.backoff && (await deps.backoff())) return '';
+  } catch {
+    // a broken backoff probe must not disable recall
+  }
+
   let candidates: LessonCandidate[] = [];
   try {
     candidates = await withTimeout(deps.recall(query, event), deps.timeoutMs ?? 3000, []);
@@ -146,11 +220,20 @@ export async function runAmbient(raw: string, deps: AmbientDeps): Promise<string
   }
   if (!Array.isArray(candidates) || candidates.length === 0) return '';
 
-  // SessionStart has no user prompt, so its trivial-skip is meaningless; pass the
-  // recall query itself so selectInjectable's non-trivial branch runs the gate.
-  const gateInput = event === 'SessionStart' ? query : (payload.prompt ?? query);
+  // SessionStart/PreToolUse have no user prompt, so their trivial-skip is
+  // meaningless; pass the recall query itself so the gate's non-trivial branch runs.
+  const gateInput = event === 'UserPromptSubmit' ? (payload.prompt ?? query) : query;
   const decision = selectInjectable(gateInput, candidates, deps.gate);
   if (!decision.inject) return '';
 
-  return buildHookOutput(event, formatContextBlock(decision.selected));
+  // Credit footer only where a recall can change a decision mid-flight.
+  const withFooter = event === 'UserPromptSubmit' || event === 'PreToolUse';
+  const context = formatContextBlock(decision.selected, withFooter);
+  const injectedTokens = estimateTokens(context); // includes the footer's own cost
+  try {
+    deps.onInject?.(injectedTokens, event);
+  } catch {
+    // ledger is telemetry — never block the injection over it
+  }
+  return buildHookOutput(event, context);
 }
