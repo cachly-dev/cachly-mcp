@@ -1204,9 +1204,22 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   }
 }
 
+// Pushed to every MCP host at connect time (initialize response). This is the
+// "SessionStart-equivalent" for harnesses without a per-prompt hook — Cursor,
+// Windsurf, Cline, Copilot agent-mode all surface `instructions`. It's a one-time
+// nudge (not per-prompt recall), so it stays short and behavior-focused.
+const CACHLY_MCP_INSTRUCTIONS = `This project has a Cachly AI Brain — persistent, cross-session memory of past fixes, decisions, and gotchas for THIS codebase. Use it proactively; it makes you faster and stops you repeating known mistakes.
+
+- BEFORE a non-trivial task: call smart_recall with a short description of what you're about to do. If it returns lessons, apply them before researching from scratch.
+- WHEN debugging an error: call causal_trace with the exact error first — a known fix may already exist.
+- AFTER a fix, deploy, or discovery: call learn_from_attempts so the knowledge persists.
+- BEFORE a risky op (deploy, migration, dependency bump): call brain_predict.
+
+The Brain instance id comes from the CACHLY_BRAIN_INSTANCE_ID environment variable.`;
+
 const server = new Server(
   { name: 'cachly-mcp', version: CURRENT_VERSION },
-  { capabilities: { tools: {} } }
+  { capabilities: { tools: {} }, instructions: CACHLY_MCP_INSTRUCTIONS }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -1510,34 +1523,54 @@ ${CLAUDE_MD_MARKER_END}`;
 }
 
 
+// Cursor loads rules from .cursor/rules/*.mdc with YAML frontmatter. alwaysApply
+// makes the block active in every request (the closest Cursor gets to a
+// SessionStart briefing). The frontmatter sits OUTSIDE the brain markers so
+// idempotent marker-replacement leaves it intact.
+const CURSOR_MDC_FRONTMATTER =
+  '---\n' +
+  'description: Cachly AI Brain — persistent memory protocol (recall before tasks, learn after fixes)\n' +
+  'alwaysApply: true\n' +
+  '---\n\n';
+
 /**
- * Schreibt das Brain-Protokoll in alle relevanten Instruction-Dateien:
- * - CLAUDE.md
- * - AGENTS.md
- * - .github/copilot-instructions.md
- * Idempotent, Marker-basiert.
+ * Schreibt das Brain-Protokoll in alle relevanten Instruction-/Rules-Dateien:
+ * - CLAUDE.md                        (Claude Code)
+ * - AGENTS.md                        (Codex / generic agents)
+ * - .github/copilot-instructions.md  (GitHub Copilot)
+ * - .cursor/rules/cachly.mdc         (Cursor — frontmatter + alwaysApply)
+ * - .windsurfrules                   (Windsurf / Cascade)
+ * - .clinerules                      (Cline)
+ * Idempotent, Marker-basiert. Cross-Harness Tier A (siehe make_cachly_great_again.md §6.7).
  */
 export async function writeInstructions(projectDir: string, instanceId: string): Promise<Record<string, 'written'|'updated'|'appended'>> {
   const { writeFile, appendFile, readFile, mkdir } = await import('node:fs/promises');
   const { existsSync } = await import('node:fs');
   const { resolve, dirname } = await import('node:path');
 
-  const files = [
-    resolve(projectDir, 'CLAUDE.md'),
-    resolve(projectDir, 'AGENTS.md'),
-    resolve(projectDir, '.github', 'copilot-instructions.md'),
+  // `prefix` is written only when the file is created fresh (Cursor .mdc needs it);
+  // on marker-update/append the prefix is left untouched.
+  const files: Array<{ path: string; prefix?: string }> = [
+    { path: resolve(projectDir, 'CLAUDE.md') },
+    { path: resolve(projectDir, 'AGENTS.md') },
+    { path: resolve(projectDir, '.github', 'copilot-instructions.md') },
+    { path: resolve(projectDir, '.cursor', 'rules', 'cachly.mdc'), prefix: CURSOR_MDC_FRONTMATTER },
+    { path: resolve(projectDir, '.windsurfrules') },
+    { path: resolve(projectDir, '.clinerules') },
   ];
   const block = '\n' + buildClaudeMdBlock(instanceId) + '\n';
   const results: Record<string, 'written'|'updated'|'appended'> = {};
 
-  for (const file of files) {
+  for (const { path: file, prefix } of files) {
     await mkdir(dirname(file), { recursive: true });
     if (existsSync(file)) {
       const existing = await readFile(file, 'utf-8');
       if (existing.includes(CLAUDE_MD_MARKER_START)) {
-        // Idempotent update: replace existing block
+        // Idempotent update: replace existing block ([\s\S] must keep its
+        // backslashes so it matches any char — a bare [\s\S] in the template
+        // literal collapses to [sS] and the replace silently no-ops).
         const updated = existing.replace(
-          new RegExp(`${CLAUDE_MD_MARKER_START}[\s\S]*?${CLAUDE_MD_MARKER_END}`),
+          new RegExp(`${CLAUDE_MD_MARKER_START}[\\s\\S]*?${CLAUDE_MD_MARKER_END}`),
           buildClaudeMdBlock(instanceId)
         );
         await writeFile(file, updated, 'utf-8');
@@ -1548,7 +1581,7 @@ export async function writeInstructions(projectDir: string, instanceId: string):
       results[file] = 'appended';
       continue;
     }
-    await writeFile(file, block.trimStart(), 'utf-8');
+    await writeFile(file, (prefix ?? '') + block.trimStart(), 'utf-8');
     results[file] = 'written';
   }
   return results;
