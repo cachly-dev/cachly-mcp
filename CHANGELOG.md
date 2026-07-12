@@ -7,6 +7,17 @@
 
 ---
 
+## [0.10.118] – 2026-07-12 — *"Registry-canonical mcpName"*
+
+### Fixed
+- `mcpName` in package.json now matches the official MCP Registry entry
+  (`io.github.cachly-dev/mcp-server`). The registry validates npm package
+  ownership against this field — the mismatch (plus a >100-char description,
+  fixed separately) had frozen the public registry listing at 0.5.13 since
+  April. No functional changes.
+
+---
+
 ## [0.10.117] – 2026-07-03 — *"TCO extraction — 126 tools"*
 
 ### Removed

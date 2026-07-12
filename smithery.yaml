@@ -1,5 +1,5 @@
 name: cachly AI Brain
-version: 0.10.117
+version: 0.10.118
 description: >
   Persistent AI memory for Claude Code, Cursor, Copilot, Windsurf, Cline & Zed.
   Your AI remembers every lesson, fix, and architecture decision — forever.
