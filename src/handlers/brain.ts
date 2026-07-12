@@ -1061,6 +1061,7 @@ export async function handleBrainTool(
       // Exclude archived lessons — they are kept for audit but must not surface in recall.
       const lessonMatches = kwMatches.filter(m => m.key.startsWith('cachly:lesson:best:'));
       let crossAuthorThisCall = 0;
+      let successRecallsThisCall = 0;
       for (const m of lessonMatches.slice(0, 5)) {
         const existing = await redis.get(m.key).catch(() => null);
         if (existing) {
@@ -1091,6 +1092,8 @@ export async function handleBrainTool(
               ckgUpdateEdge(redis, authPersonId, 'collaborates', reqPersonId, true).catch(() => {});
             }
 
+            if (lesson.outcome === 'success') successRecallsThisCall++;
+
             // Surface banner for proven successes (recall_count >= 1 means it's been validated)
             if (lesson.outcome === 'success' && (lesson.recall_count ?? 0) >= 1) {
               savedHere.push({
@@ -1107,8 +1110,11 @@ export async function handleBrainTool(
       }
 
       // Metric 1 (time-to-first-recall): stamp the first time recall returned a
-      // proven lesson. SET NX so only the first successful recall wins.
-      if (savedHere.length > 0) {
+      // successful lesson. SET NX so only the first successful recall wins.
+      // Deliberately NOT gated on savedHere: savedHere requires a pre-existing
+      // recall_count >= 1, which would delay the stamp until the SECOND recall
+      // and inflate every TTFR percentile derived from it.
+      if (successRecallsThisCall > 0) {
         redis.set(`cachly:stats:first_recall_at:${instance_id}`, new Date().toISOString(), 'EX', 365 * 86400, 'NX').catch(() => {});
       }
 

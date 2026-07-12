@@ -707,7 +707,7 @@ import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
 import { runAmbient, truncateToTokens, parseHookPayload, stopObservation } from './ambient-cli.js';
-import { appendLedgerEntry, readLedger } from './ambient-ledger.js';
+import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
 import { netBalance, shouldBackoff } from './ambient-recall.js';
 import { handleShareTool } from './handlers/share.js';
 import { handleVizTool } from './handlers/viz.js';
@@ -764,6 +764,27 @@ function sendFunnelEvent(event: FunnelEventName, extra?: Record<string, unknown>
     }),
     signal: AbortSignal.timeout(3000),
   }).catch(() => {/* fire-and-forget */});
+}
+
+// Mirrors one ambient net-token ledger entry to the API (Phase 4 v2: the
+// org-wide dashboard aggregates these per team). Best-effort fire-and-forget —
+// the local JSONL ledger stays authoritative; this never throws and never
+// blocks a hook. Returns the fetch promise so short-lived CLI paths can flush
+// (bounded) before process.exit kills the socket.
+function reportAmbientLedgerEvent(
+  instanceId: string | undefined,
+  entry: { ts: string; event: string; injected: number; prevented: number; note?: string },
+): Promise<void> {
+  if (!instanceId || !JWT || process.env.CACHLY_NO_TELEMETRY === '1') return Promise.resolve();
+  return fetch(`${API_URL}/api/v1/instances/${instanceId}/ambient-events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${JWT}` },
+    body: JSON.stringify({ events: [entry] }),
+    signal: AbortSignal.timeout(3000),
+  }).then(
+    () => undefined,
+    () => undefined,
+  );
 }
 
 async function sendAnonymousTelemetry(toolName: string): Promise<void> {
@@ -3564,6 +3585,7 @@ if (process.argv[2] === 'ambient-recall') {
       process.exit(0);
     }
 
+    let reported: Promise<void> | undefined;
     const out = await runAmbient(raw, {
       timeoutMs: 3000, // §6.3 guardrail 4: never stall the prompt on a slow brain
       // Ambient injection budget: one relevance-ranked briefing, hard-capped.
@@ -3572,7 +3594,9 @@ if (process.argv[2] === 'ambient-recall') {
       gate: { topK: 1, maxTokens: 500 },
       backoff: async () => shouldBackoff(await readLedger()),
       onInject: (tokens, event) => {
-        void appendLedgerEntry({ ts: new Date().toISOString(), event, injected: tokens, prevented: 0 });
+        const entry = { ts: new Date().toISOString(), event, injected: tokens, prevented: 0 };
+        void appendLedgerEntry(entry);
+        reported = reportAmbientLedgerEvent(instanceId, entry); // org dashboard mirror
       },
       recall: async (query) => {
         if (!instanceId) return [];
@@ -3583,6 +3607,9 @@ if (process.argv[2] === 'ambient-recall') {
       },
     });
     if (out) process.stdout.write(out);
+    // Bounded flush so the dashboard mirror survives process.exit — never more
+    // than 500ms on top of a turn that already injected.
+    if (reported) await Promise.race([reported, new Promise((r) => setTimeout(r, 500))]);
   } catch {
     // Swallow everything — an ambient hook must never break the agent.
   }
@@ -3602,7 +3629,9 @@ if (process.argv[2] === 'ambient-credit') {
       // enthusiastic claim mask weeks of negative balance.
       const capped = Math.min(tokens, 20_000);
       const note = process.argv.slice(4).join(' ').slice(0, 200) || undefined;
-      await appendLedgerEntry({ ts: new Date().toISOString(), event: 'credit', injected: 0, prevented: capped, note });
+      const entry = { ts: new Date().toISOString(), event: 'credit', injected: 0, prevented: capped, note };
+      await appendLedgerEntry(entry);
+      await reportAmbientLedgerEvent(process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId, entry); // org dashboard mirror
       console.log(`✅ ambient credit recorded: ${capped} tokens${note ? ` (${note})` : ''}`);
     } else {
       console.error('Usage: npx @cachly-dev/mcp-server@latest ambient-credit <tokens-saved> [note]');
@@ -3634,6 +3663,36 @@ if (process.argv[2] === 'ambient-stats') {
   }
   console.log('');
   process.exit(0);
+}
+
+// ── doctor: one-command setup diagnosis ───────────────────────────────────────
+// Walks the whole activation chain — runtime → credential → API → auth →
+// instance → hooks → ledger — and prints one ✅/⚠️/❌ report with a concrete
+// next step per finding. Exit 1 only on hard failures (warnings stay 0).
+if (process.argv[2] === 'doctor') {
+  const {
+    checkNodeVersion,
+    checkCredential,
+    checkApiReachable,
+    checkAuthAccepted,
+    checkInstance,
+    inspectAmbientHooks,
+    checkHooks,
+    checkLedger,
+    renderDoctorReport,
+    doctorExitCode,
+  } = await import('./doctor.js');
+  const checks = [
+    checkNodeVersion(),
+    checkCredential(JWT),
+    await checkApiReachable(API_URL),
+    await checkAuthAccepted(API_URL, JWT),
+    checkInstance(process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId),
+    checkHooks(inspectAmbientHooks(process.cwd())),
+    checkLedger(await readLedger(), defaultLedgerPath()),
+  ];
+  console.log(renderDoctorReport(checks));
+  process.exit(doctorExitCode(checks));
 }
 
 // ── cls-ingest: CLI entrypoint for the git post-commit hook ───────────────────
@@ -3706,7 +3765,7 @@ if (!JWT) {
 //   • Editor as an MCP stdio server (non-TTY)  → ONE stderr hint, then KEEP RUNNING
 //     so tools/list works and the first tool call starts the browser sign-in.
 // Skip entirely for CLI subcommands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'autosetup', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'bench', 'tool-specs', 'openapi', 'ambient-credit', 'ambient-stats'];
+const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'autosetup', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'bench', 'tool-specs', 'openapi', 'ambient-credit', 'ambient-stats', 'doctor'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
   const runningInTerminal = !process.argv[2] && process.stdout.isTTY === true && _isMain;
   if (runningInTerminal) {

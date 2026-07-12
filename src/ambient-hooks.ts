@@ -20,8 +20,15 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 
-/** Bumped whenever a hook script changes so installers can upgrade old hooks. */
-export const AMBIENT_HOOK_VERSION = 'v2';
+/**
+ * Bumped whenever a hook script changes so installers can upgrade old hooks.
+ * v3: hooks became Node scripts (.mjs) invoked as `node "<path>"` — the
+ * cross-platform shape from the Claude Code hooks guide. The v1/v2 POSIX shell
+ * scripts silently never ran on native Windows (no /bin/sh); Node is already a
+ * hard requirement of this package, so the hook now runs identically on
+ * Windows, macOS and Linux.
+ */
+export const AMBIENT_HOOK_VERSION = 'v3';
 
 /**
  * The CLI subcommand the hooks pipe their payload to. It reads the hook JSON on
@@ -47,21 +54,35 @@ export interface AmbientHookOptions {
 
 const DEFAULT_CLI = `npx @cachly-dev/mcp-server@latest ${AMBIENT_CLI_SUBCOMMAND}`;
 
+/** Escape a value for embedding inside a single-quoted JS string literal. */
+function jsString(s: string): string {
+  return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
 function buildHook(event: AmbientHookEvent, opts: AmbientHookOptions): string {
   const cli = opts.cliCommand ?? DEFAULT_CLI;
   return [
-    `#!/bin/sh`,
-    `# cachly Ambient Recall — ${event} ${AMBIENT_HOOK_VERSION}`,
-    `# Pushes relevant memory into context automatically. Never blocks the agent:`,
-    `# any failure exits 0 with no output (graceful degrade).`,
-    `export CACHLY_BRAIN_INSTANCE_ID="${opts.instanceId}"`,
-    ...(opts.apiKey ? [`export CACHLY_JWT="${opts.apiKey}"`] : []),
-    `export CACHLY_HOOK_EVENT="${event}"`,
-    // Claude Code delivers the hook payload as JSON on stdin; pipe it verbatim to
-    // the CLI (no shell re-parsing of prompt content). The CLI enforces its own
-    // recall timeout and prints the hookSpecificOutput JSON, or nothing.
-    `cat | ${cli} 2>/dev/null || true`,
-    `exit 0`,
+    `#!/usr/bin/env node`,
+    `// cachly Ambient Recall — ${event} ${AMBIENT_HOOK_VERSION}`,
+    `// Pushes relevant memory into context automatically. Cross-platform Node hook`,
+    `// (no shell script — runs identically on Windows/macOS/Linux). Never blocks`,
+    `// the agent: every failure path exits 0 with no output (graceful degrade).`,
+    `import { spawn } from 'node:child_process';`,
+    `process.env.CACHLY_BRAIN_INSTANCE_ID = '${jsString(opts.instanceId)}';`,
+    ...(opts.apiKey ? [`process.env.CACHLY_JWT = '${jsString(opts.apiKey)}';`] : []),
+    `process.env.CACHLY_HOOK_EVENT = '${jsString(event)}';`,
+    `try {`,
+    // Claude Code delivers the hook payload as JSON on stdin; stdio 'inherit'
+    // hands it verbatim to the CLI (no re-parsing of prompt content), and the
+    // CLI's hookSpecificOutput JSON flows straight back to Claude Code on
+    // stdout. shell:true resolves npx/npx.cmd on every platform; stderr is
+    // discarded so a noisy npm can never corrupt the hook protocol.
+    `  const child = spawn('${jsString(cli)}', { shell: true, stdio: ['inherit', 'inherit', 'ignore'] });`,
+    `  child.on('error', () => process.exit(0));`,
+    `  child.on('close', () => process.exit(0));`,
+    `} catch {`,
+    `  process.exit(0);`,
+    `}`,
   ].join('\n');
 }
 
@@ -141,9 +162,12 @@ export const PRE_TOOL_USE_MATCHER = 'Edit|Write|MultiEdit|NotebookEdit';
  * with a list of `{ type: "command", command, timeout }` entries.
  */
 export function buildAmbientSettingsHooks(paths: AmbientHookPaths): Record<string, HookMatcherGroup[]> {
-  const entry = (event: AmbientHookEvent, command: string, matcher?: string): HookMatcherGroup => ({
+  // v3: the command is `node "<script>"` — a plain string that both /bin/sh
+  // (macOS/Linux, Windows+Git-Bash) and PowerShell (native Windows fallback)
+  // execute identically, so one settings shape covers every platform.
+  const entry = (event: AmbientHookEvent, scriptPath: string, matcher?: string): HookMatcherGroup => ({
     ...(matcher ? { matcher } : {}),
-    hooks: [{ type: 'command', command, timeout: EVENT_TIMEOUTS[event] }],
+    hooks: [{ type: 'command', command: `node "${scriptPath}"`, timeout: EVENT_TIMEOUTS[event] }],
   });
   const frag: Record<string, HookMatcherGroup[]> = {
     SessionStart: [entry('SessionStart', paths.sessionStart)],
@@ -167,10 +191,10 @@ const HOOK_DIR = '.claude/hooks';
 const SETTINGS_FILE = '.claude/settings.json';
 /** Script filename per event — shared marker `cachly-ambient-` drives upgrades. */
 const SCRIPT_NAMES: Record<AmbientHookEvent, string> = {
-  SessionStart: 'cachly-ambient-session-start.sh',
-  UserPromptSubmit: 'cachly-ambient-prompt-submit.sh',
-  PreToolUse: 'cachly-ambient-pre-tool.sh',
-  Stop: 'cachly-ambient-stop.sh',
+  SessionStart: 'cachly-ambient-session-start.mjs',
+  UserPromptSubmit: 'cachly-ambient-prompt-submit.mjs',
+  PreToolUse: 'cachly-ambient-pre-tool.mjs',
+  Stop: 'cachly-ambient-stop.mjs',
 };
 const AMBIENT_SCRIPT_MARKER = '.claude/hooks/cachly-ambient-';
 
@@ -199,7 +223,13 @@ function isAmbientGroup(g: HookCommandEntry, currentPaths: Set<string>): boolean
     hooks.length > 0 &&
     hooks.every((h) => {
       const cmd = h.command ?? '';
-      return cmd.includes(AMBIENT_SCRIPT_MARKER) || currentPaths.has(cmd);
+      // Matches v1/v2 entries (bare script path), v3 entries (`node "<path>"`),
+      // and marker-less test/custom paths passed as the current fragment.
+      return (
+        cmd.includes(AMBIENT_SCRIPT_MARKER) ||
+        currentPaths.has(cmd) ||
+        [...currentPaths].some((p) => cmd.includes(`"${p}"`))
+      );
     })
   );
 }
@@ -233,6 +263,18 @@ export function mergeAmbientSettings(
   return { settings: next, changed };
 }
 
+export interface AmbientInstallOptions {
+  /**
+   * Write `"$CLAUDE_PROJECT_DIR"/.claude/hooks/…` commands into settings.json
+   * instead of absolute paths. Use for hooks that are COMMITTED to a repo
+   * (dogfooding/team setups): the settings stay valid on every checkout
+   * location. Claude Code sets $CLAUDE_PROJECT_DIR when running hooks.
+   * NOTE: never pass an apiKey together with portable — committed scripts
+   * must not embed credentials; the CLI falls back to the env's CACHLY_JWT.
+   */
+  portable?: boolean;
+}
+
 /**
  * Install/upgrade the Ambient Recall hooks in `projectDir`. Best-effort:
  * a filesystem error surfaces as a thrown error only for the top-level caller,
@@ -242,6 +284,7 @@ export async function installAmbientHooks(
   projectDir: string,
   instanceId: string,
   apiKey?: string,
+  options: AmbientInstallOptions = {},
 ): Promise<AmbientInstallResult> {
   const hookDir = resolve(projectDir, HOOK_DIR);
   await mkdir(hookDir, { recursive: true });
@@ -284,11 +327,18 @@ export async function installAmbientHooks(
     try { existingSettings = JSON.parse(await readFile(settingsPath, 'utf-8')) as ClaudeSettings; }
     catch { existingSettings = {}; } // corrupt/empty file → start fresh (still non-destructive to hooks we add)
   }
+  // Portable installs (committed hooks) reference $CLAUDE_PROJECT_DIR so the
+  // settings work at any checkout location; local installs use absolute paths.
+  // These are SCRIPT PATHS — buildAmbientSettingsHooks wraps them as
+  // `node "<path>"`, so the portable var sits inside the double quotes and is
+  // expanded by the shell at hook time.
+  const commandFor = (e: AmbientHookEvent) =>
+    options.portable ? `$CLAUDE_PROJECT_DIR/${HOOK_DIR}/${SCRIPT_NAMES[e]}` : pathFor(e);
   const { settings, changed } = mergeAmbientSettings(existingSettings, {
-    sessionStart: pathFor('SessionStart'),
-    userPromptSubmit: pathFor('UserPromptSubmit'),
-    preToolUse: pathFor('PreToolUse'),
-    stop: pathFor('Stop'),
+    sessionStart: commandFor('SessionStart'),
+    userPromptSubmit: commandFor('UserPromptSubmit'),
+    preToolUse: commandFor('PreToolUse'),
+    stop: commandFor('Stop'),
   });
   let settingsStatus: AmbientInstallResult['settings'];
   if (!settingsExisted) settingsStatus = 'written';

@@ -49,9 +49,16 @@ export function estimateTokens(text: string): number {
 // Pure conversational openers with no engineering payload.
 const TRIVIAL_RE = /^(hi|hello|hey|thanks|thank you|ok|okay|yes|no|yep|nope|ty|lol|danke|hallo|servus)\b/i;
 // Signals that a prompt is about code/ops, where a wrong path is expensive and a
-// relevant lesson can pay for itself.
+// relevant lesson can pay for itself. Calibrated against the golden vectors in
+// docs/spec/ambient-gate-vectors.json (ambient-gate-vectors.test.ts): the v1
+// list false-skipped short real requests like "curl returns 403 via the proxy"
+// or "rename the Settings page to Preferences" (substantive-recall 0.67), so
+// v2 adds engineering verbs, infra nouns, HTTP status codes and German
+// question words. Stems with \w* also match inflections ("migration",
+// "updated", "evicted"). Substantive-recall on the vector set: 1.0, with
+// trivial-precision unchanged at 1.0.
 const CODEY_RE =
-  /[/\\._{}()<>;=]|\b(fix|bug|error|deploy|migrat|test|build|refactor|auth|api|db|schema|race|crash|fail|revert|rollback|why|how|debug|config|hook|token|cache)\b/i;
+  /[/\\._{}()<>;=]|\b\d{3}\b|\b(fix|bug|error|deploy|migrat\w*|test\w*|build|refactor|auth|api|db|schema|race|crash|fail\w*|revert|rollback|why|how|debug|config|hook|token|cache|add|creat\w*|implement\w*|updat\w*|remov\w*|delet\w*|renam\w*|install\w*|upgrad\w*|write|script|component|page|button|css|style\w*|log\w*|pod\w*|node\w*|docker|k8s|kubernetes|proxy|curl|http\w*|readme|lint\w*|latenc\w*|latenz|timeout\w*|evict\w*|warum|wieso|weshalb)\b/i;
 
 /**
  * A trivial prompt has ~zero expected wrong-path savings (§6.3 guardrail 2):
