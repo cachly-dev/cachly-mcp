@@ -708,6 +708,7 @@ import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } fr
 import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
 import { runAmbient, truncateToTokens, parseHookPayload, stopObservation } from './ambient-cli.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
+import { detectEditor as detectEditorImpl } from './editor.js';
 import { netBalance, shouldBackoff } from './ambient-recall.js';
 import { handleShareTool } from './handlers/share.js';
 import { handleVizTool } from './handlers/viz.js';
@@ -724,12 +725,10 @@ let _telemetryPingSent = false;
 // Fires once per process on the first successful Brain tool call — key activation metric
 let _firstCallSuccessSent = false;
 
+// Host detection lives in editor.ts (pure + unit-tested). Kept as a thin
+// wrapper so the many call sites here stay unchanged.
 function detectEditor(): string {
-  return process.env.CURSOR_TRACE_ID ? 'cursor'
-    : process.env.WINDSURF_SESSION_ID ? 'windsurf'
-    : process.env.GITHUB_COPILOT_WORKSPACE ? 'copilot'
-    : process.env.CLAUDE_CODE_ENTRYPOINT ? 'claude'
-    : 'unknown';
+  return detectEditorImpl();
 }
 
 /** Derive an anonymous, non-reversible fingerprint from the JWT sub claim. */
