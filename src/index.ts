@@ -763,6 +763,7 @@ import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
 import { runAmbient, truncateToTokens, parseHookPayload, stopObservation } from './ambient-cli.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
+import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
 import { netBalance, shouldBackoff } from './ambient-recall.js';
 import { handleShareTool } from './handlers/share.js';
 import { handleVizTool } from './handlers/viz.js';
@@ -1006,7 +1007,12 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   if (brainResult !== null) {
     if (!_firstCallSuccessSent && JWT) {
       _firstCallSuccessSent = true;
-      sendFunnelEvent('first_call_success', { tool: name, instance_id: args.instance_id ?? _defaultInstanceId ?? '' });
+      // Persistent guard: ambient hooks spawn a fresh process per prompt, so the
+      // in-memory flag alone re-sent "first call" on every hook invocation.
+      if (!milestoneSent('first_call_success')) {
+        markMilestoneSent('first_call_success');
+        sendFunnelEvent('first_call_success', { tool: name, instance_id: args.instance_id ?? _defaultInstanceId ?? '' });
+      }
     }
     // Per-tool telemetry — fires after every successful brain tool call.
     // api_key carries the cky_live_... token so the backend can resolve tenant + increment counters.
@@ -1107,7 +1113,12 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   if (contextResult !== null) {
     if (!_firstCallSuccessSent && JWT) {
       _firstCallSuccessSent = true;
-      sendFunnelEvent('first_call_success', { tool: name, instance_id: args.instance_id ?? _defaultInstanceId ?? '' });
+      // Persistent guard: ambient hooks spawn a fresh process per prompt, so the
+      // in-memory flag alone re-sent "first call" on every hook invocation.
+      if (!milestoneSent('first_call_success')) {
+        markMilestoneSent('first_call_success');
+        sendFunnelEvent('first_call_success', { tool: name, instance_id: args.instance_id ?? _defaultInstanceId ?? '' });
+      }
     }
     return contextResult;
   }
