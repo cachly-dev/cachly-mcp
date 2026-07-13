@@ -516,6 +516,60 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
     return 'pending';
   } catch { return 'pending'; }
 }
+
+/**
+ * Mutex wrapper so the background poller (below) and a user-triggered tool call
+ * never poll the same device code concurrently — a double poll can race the
+ * one-time JWT→API-key exchange.
+ */
+async function pollDeviceFlowGuarded(flow: DeviceFlowState): Promise<'pending' | 'expired' | 'done'> {
+  if (flow.polling) return 'pending'; // another poll owns this tick
+  flow.polling = true;
+  try {
+    return await pollDeviceFlow(flow);
+  } finally {
+    flow.polling = false;
+  }
+}
+
+/**
+ * Once the device code is issued, poll in the BACKGROUND on the flow's interval
+ * so browser sign-in self-completes. Without this, the flow only advanced when
+ * the user manually triggered ANOTHER tool call — the #1 onboarding drop-off
+ * (report: device flow 36→1 = 3%). Now the user signs in and their Brain
+ * activates on its own; their next natural request just works instead of
+ * showing "still waiting". Bounded by the flow deadline, timer unref'd so it
+ * never keeps the process alive, fully fail-safe (never throws). `poll` and
+ * `isCurrent` are injectable for testing.
+ */
+export function startBackgroundDevicePoll(
+  flow: DeviceFlowState,
+  poll: (f: DeviceFlowState) => Promise<'pending' | 'expired' | 'done'> = pollDeviceFlowGuarded,
+  isCurrent: (f: DeviceFlowState) => boolean = (f) => _deviceFlow === f,
+  schedule: (fn: () => void, ms: number) => void = defaultUnrefTimeout,
+): void {
+  const tick = async () => {
+    if (!isCurrent(flow)) return; // superseded or already completed → stop
+    let status: 'pending' | 'expired' | 'done' = 'pending';
+    try {
+      status = await poll(flow);
+    } catch {
+      /* keep polling — a transient network error must not abort sign-in */
+    }
+    if (status === 'done') return; // poll already set JWT + persisted the key
+    if (status === 'expired') {
+      if (isCurrent(flow)) _deviceFlow = null;
+      return;
+    }
+    if (isCurrent(flow)) schedule(tick, flow.pollInterval);
+  };
+  schedule(tick, flow.pollInterval);
+}
+
+function defaultUnrefTimeout(fn: () => void, ms: number): void {
+  const t = setTimeout(fn, ms);
+  if (typeof (t as { unref?: () => void }).unref === 'function') (t as { unref: () => void }).unref();
+}
 // ── Embeddings (imported from embeddings.ts) ────────────────────────────────
 import { setEmbedJwt } from './embeddings.js';
 
@@ -873,7 +927,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     // 1st call: start device flow, return code + URL
     // 2nd+ calls: poll for token; once authenticated, proceed transparently
     if (_deviceFlow) {
-      const result = await pollDeviceFlow(_deviceFlow);
+      const result = await pollDeviceFlowGuarded(_deviceFlow);
       if (result === 'done') {
         // Auth complete — re-enter handleTool with now-valid JWT
         return handleTool(name, args);
@@ -883,14 +937,14 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         _deviceFlow = null;
         return '⌛ **Authentication timed out.** Please call any tool again to restart the sign-in flow.';
       }
-      // Still pending
+      // Still pending — the background poller will complete sign-in on its own.
       return [
-        '⏳ **Waiting for authentication...**',
+        '⏳ **Signing you in…**',
         '',
-        `Sign in at: **${_deviceFlow.verifyUrl}**`,
-        `Enter code: **${_deviceFlow.userCode}**`,
+        `Finish in your browser: **${_deviceFlow.verifyUrl}**`,
+        `Code: **${_deviceFlow.userCode}**`,
         '',
-        'Once you complete sign-in in your browser, call this tool again and it will proceed automatically.',
+        'This completes automatically once you sign in — no need to come back here.',
       ].join('\n');
     }
 
@@ -901,6 +955,9 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       sendFunnelEvent('device_flow_started', { tool: name });
       // Try to open the browser automatically — fire-and-forget, never block
       openInBrowser(flow.verifyUrl);
+      // Poll in the background so sign-in self-completes — the user no longer
+      // has to trigger another tool call to drive the flow (the #1 drop-off).
+      startBackgroundDevicePoll(flow);
       return [
         '🧠 **cachly AI Brain — sign in to activate** (browser opening...)',
         '',
@@ -908,7 +965,8 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         '',
         `Code: **${flow.userCode}** (pre-filled if browser opened automatically)`,
         '',
-        'After sign-in: call **any tool again** — your Brain activates instantly.',
+        'That’s it — your Brain activates automatically the moment you finish',
+        'signing in. Just keep working; your next request arrives brain-powered.',
         '',
         '✨ Free forever · No credit card · 126 MCP tools · GDPR · EU servers',
       ].join('\n');
