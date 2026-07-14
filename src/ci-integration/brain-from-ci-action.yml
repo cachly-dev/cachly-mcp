@@ -34,6 +34,11 @@ jobs:
     # job-level `if` expressions. push-ci-outcome.mjs exits 0 cleanly when
     # CACHLY_JWT / CACHLY_BRAIN_INSTANCE_ID are missing (e.g. on forks).
     steps:
+      # ⚠️  Self-hosted runners: replace this sparse checkout with a FULL
+      # `actions/checkout@v4` (no `with:`). Sparse-checkout state persists in
+      # the runner's shared _work directory and later jobs on the same runner
+      # can silently get near-empty trees from a "successful" checkout.
+      # On ubuntu-latest (fresh VM per job) sparse is safe and faster.
       - name: Checkout ci-integration helper
         uses: actions/checkout@v4
         with:

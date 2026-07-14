@@ -266,7 +266,7 @@ npx @cachly-dev/mcp-server@latest learn-git # Auto-learn lessons from recent git
 ```
 
 > **Tip — auto-learn on every merged PR:** run `learn-git` in CI via the
-> [cachly-brain-setup GitHub Action](https://github.com/cachly-dev/cachly/tree/main/sdk/github-action)
+> [cachly-brain-setup GitHub Action](https://github.com/cachly-dev/cachly-action)
 > with `mode: learn`. Each merged PR teaches your Brain automatically.
 
 ---
@@ -282,6 +282,10 @@ known cause. Ready-to-paste templates live in
   outcome to your Brain. Requires `CACHLY_JWT` + `CACHLY_BRAIN_INSTANCE_ID` secrets.
 - **GitLab CI** — copy [`brain-from-ci-gitlab.yml`](./src/ci-integration/brain-from-ci-gitlab.yml)
   into your pipeline: two `.post` jobs (`on_success` / `on_failure`) with `allow_failure: true`.
+  Want more than outcome pushes? The full GitLab template
+  [`cachly.gitlab-ci.yml`](https://github.com/cachly-dev/cachly-action/blob/main/templates/cachly.gitlab-ci.yml)
+  adds hidden jobs for `learn` / `scan` / `confirm` — pull it in with
+  `include: remote:` (it is an includable template, not a CI/CD Catalog component).
 - **Anything else** — [`push-ci-outcome.mjs`](./src/ci-integration/push-ci-outcome.mjs) is a
   standalone Node.js helper with zero dependencies. It always exits 0 — your CI never
   fails because of a Brain push.
@@ -291,7 +295,7 @@ MCP tool — bulk-ingests past outcomes the same way `brain_from_git` ingests co
 
 ---
 
-## MCP Tools (140 total)
+## MCP Tools (126 total)
 
 The full tool catalog is generated from `sdk/mcp/src/tools.ts`. Cross-surface
 coverage is tracked in [`../../docs/generated/surface-parity.md`](../../docs/generated/surface-parity.md),
@@ -551,7 +555,7 @@ keep talking to your backend on every editor launch. All data stays in your infr
 | Feature | Tool | What it does |
 |---|---|---|
 | Autonomous hygiene | `brain_hygiene` | Sweeps stale lessons, flags provisional, archives orphans |
-| PR risk scan | `brain_plan` + `cachly-action scan` | Predicts CI failures before they run, posts PR comment |
+| PR risk scan | `cachly-action` `scan` / `predict` modes | Matches PR title, body and changed files against Brain lessons via the `/scan` API — posts a PR comment with risk score before CI runs |
 | Multi-agent arbitration | `brain_conflicts` · `brain_resolve_conflict` | Detects + resolves conflicting lessons across agents |
 | Plans dashboard | `brain_plan` | Persistent plans in the UI with step tracking and brain-viz overlay |
 | Privacy federation | `brain_contribute_signal` · `brain_import_meta` | Share patterns without sharing data — k-anonymous global commons |
