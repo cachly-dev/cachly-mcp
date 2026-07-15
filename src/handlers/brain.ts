@@ -15,8 +15,15 @@ import { rerankByQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.115';
+const MCP_VERSION = '0.10.119';
 const WHATS_NEW: Record<string, string[]> = {
+  '0.10.119': [
+    `🔍 **Explainable briefings — provenance in every warning**`,
+    `  📎 \`/briefing\` warnings now carry \`outcome\`, \`author\`, \`learned_at\` and \`matched_on\` (the context tokens that triggered the warning) — editors can show WHY a fix hint fired, not just what it claims.`,
+    `  🧰 VS Code 0.12.0 uses this: severity + confidence in the toast, full lesson card with provenance, "Not helpful" per-file suppression, reviewable CLS auto-learns.`,
+    `  🧹 CI docs now describe exactly what ships: scan mode uses the REST \`/scan\` endpoint, the GitLab template covers learn/scan/confirm.`,
+    `  📊 126 MCP tools`,
+  ],
   '0.10.115': [
     `🔧 **\`brain_get_pref\` + \`brain_set_pref\` — persistent Brain preferences**`,
     `  📖 \`brain_get_pref\` reads back any stored preference (omit key to list all).`,
