@@ -683,7 +683,14 @@ async function getConnection(instance_id: string): Promise<Redis> {
     retryStrategy: () => null,  // fail fast, no reconnect loops in MCP context
   });
 
-  const evict = () => pool.delete(instance_id);
+  // Drop the client from the pool AND close its socket on error/end, so a
+  // mid-session Redis drop doesn't leak sockets across reconnects. disconnect()
+  // is idempotent and safe to call from these handlers. The next tool call
+  // rebuilds the connection (self-healing).
+  const evict = () => {
+    pool.delete(instance_id);
+    client.disconnect();
+  };
   client.on('error', evict);
   client.on('end', evict);
 
@@ -1429,6 +1436,22 @@ process.on('unhandledRejection', (reason) => {
   // Write to stderr only (stdout is the JSON-RPC channel)
   process.stderr.write(`[cachly-mcp] unhandledRejection: ${msg}\n`);
 });
+
+// Symmetric net for synchronous/async *exceptions* thrown outside a try/catch
+// (a timer or stream callback, the background device poller, ioredis internals).
+// Without this the process exits hard and the editor reports "Connection is
+// closed" mid-session. Log to stderr and stay alive — never exit here.
+process.on('uncaughtException', (err) => {
+  process.stderr.write(`[cachly-mcp] uncaughtException: ${(err as Error)?.stack ?? String(err)}\n`);
+});
+
+// The single most common stdio-MCP killer: the editor closes the read side of
+// our stdout pipe (window closed, server restart, client reconnect) and the
+// next JSON-RPC write throws EPIPE — an async stream error that would otherwise
+// crash the process. Swallow stream errors on both stdio ends so a client that
+// closes its pipe can never take the server down with it.
+process.stdout.on('error', () => {});
+process.stdin.on('error', () => {});
 
 // ── CLI helpers ───────────────────────────────────────────────────────────────
 

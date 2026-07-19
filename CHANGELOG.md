@@ -7,6 +7,23 @@
 
 ---
 
+## [0.10.120] – 2026-07-19 — *"Survive a closing pipe"*
+
+### Fixed
+- **The stdio server no longer dies mid-session with "Connection is closed."**
+  There was a `process.on('unhandledRejection')` net but **no**
+  `uncaughtException` handler, so a stray throw outside a try/catch — most often
+  an **EPIPE** when the editor closes the read side of our stdout pipe (window
+  closed, client reconnect) — hard-killed the process and the editor reported a
+  dropped connection. Added a symmetric `uncaughtException` handler (logs to
+  stderr, never exits) plus `error` listeners on `process.stdout`/`process.stdin`
+  so a client that closes its pipe can't take the server down with it.
+- **Redis sockets no longer leak across mid-session drops.** A pool client
+  evicted on `error`/`end` is now also `disconnect()`ed; the next tool call
+  rebuilds the connection.
+
+---
+
 ## [0.10.118] – 2026-07-12 — *"Registry-canonical mcpName"*
 
 ### Fixed
