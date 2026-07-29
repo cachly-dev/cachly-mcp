@@ -1784,3 +1784,38 @@ describe('Phase 3: service/system nodes + brain_service_map', () => {
     expect(out).not.toContain('infra:secret');
   });
 });
+
+describe('auto_learn_session — first-class writes', () => {
+  let redis: MockRedis;
+  const getConn = async () => redis as unknown as Redis;
+  beforeEach(() => { redis = new MockRedis(); });
+
+  it('writes the best key, appends to topic history, and stamps a confidence', async () => {
+    const out = (await handleBrainTool('auto_learn_session', {
+      instance_id: 'i1',
+      observations: [
+        { action: 'raised redis pool max_retries', outcome: 'success', details: 'connection timeouts under load', topic: 'fix:redis-timeout' },
+      ],
+    }, getConn, noopApiFetch))!;
+    expect(out).toContain('stored');
+
+    const best = await redis.get('cachly:lesson:best:fix:redis-timeout');
+    expect(best).toBeTruthy();
+    const lesson = JSON.parse(best!);
+    expect(lesson.auto_learned).toBe(true);
+    expect(lesson.confidence).toBe(1.0);
+
+    // Previously auto-learn wrote ONLY the best key; now it is first-class:
+    // the topic history exists (audit + consolidation source).
+    const history = await redis.lrange('cachly:lessons:fix:redis-timeout', 0, -1);
+    expect(history.length).toBe(1);
+  });
+
+  it('still refuses to downgrade an existing success with a later failure', async () => {
+    await handleBrainTool('auto_learn_session', { instance_id: 'i1', observations: [{ action: 'a', outcome: 'success', topic: 'auto:x' }] }, getConn, noopApiFetch);
+    const out = (await handleBrainTool('auto_learn_session', { instance_id: 'i1', observations: [{ action: 'a', outcome: 'failure', topic: 'auto:x' }] }, getConn, noopApiFetch))!;
+    expect(out).toMatch(/skipped/i);
+    const best = JSON.parse((await redis.get('cachly:lesson:best:auto:x'))!);
+    expect(best.outcome).toBe('success');
+  });
+});

@@ -2794,12 +2794,43 @@ export async function handleBrainTool(
           context: obs.details,
           severity: obs.severity ?? 'minor',
           ts: new Date().toISOString(),
+          // Give auto-learned lessons the same baseline confidence field the
+          // quality rerank / decay logic expect, so they are ranked like any
+          // other lesson instead of being treated as signal-less.
+          confidence: 1.0,
           recall_count: 0,
           auto_learned: true,
           version: 2,
         };
+        const lessonStr = JSON.stringify(lesson);
 
-        await redis.set(key, JSON.stringify(lesson));
+        await redis.set(key, lessonStr);
+
+        // Make auto-learned lessons FIRST-CLASS, not just a bare best-key pointer:
+        // append to the topic history (audit + consolidation source) and register
+        // the concept in the Causal Knowledge Graph so causal_trace / brain_predict
+        // / memory_consolidate can see them. Mirrors the learn_from_attempts path;
+        // best-effort so a graph hiccup never fails the learn.
+        const listKey = `cachly:lessons:${topic}`;
+        await redis.rpush(listKey, lessonStr);
+        await redis.ltrim(listKey, -100, -1);
+        await redis.expire(listKey, 90 * 86400);
+        try {
+          const domain = topic.split(':')[0] ?? 'auto';
+          const conceptId = ckgSlug(topic);
+          await ckgUpsertNode(redis, conceptId, domain, domain);
+          // A successful action that resolved a described problem becomes
+          // causal-traceable via a `fixes` edge.
+          if (obs.outcome === 'success' || obs.outcome === 'partial') {
+            const problemConcept = obs.details ? extractProblemConcept(obs.details) : null;
+            if (problemConcept) {
+              const problemId = ckgSlug(`problem:${problemConcept}`);
+              await ckgUpsertNode(redis, problemId, 'problem', 'problem');
+              await ckgUpdateEdge(redis, conceptId, 'fixes', problemId, obs.outcome === 'success', obs.outcome === 'partial');
+            }
+          }
+        } catch { /* CKG is best-effort */ }
+
         stored.push(`${obs.outcome === 'success' ? '✅' : obs.outcome === 'partial' ? '⚠️' : '❌'} \`${topic}\``);
       }
 
