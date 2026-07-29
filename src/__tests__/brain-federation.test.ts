@@ -13,11 +13,14 @@ import { handleFedbrainTool } from '../handlers/fedbrain.js';
 
 class MiniRedis {
   store = new Map<string, string>();
+  lists = new Map<string, string[]>();
 
   async get(key: string) { return this.store.get(key) ?? null; }
   async set(key: string, value: string, ..._rest: unknown[]) { this.store.set(key, value); return 'OK' as const; }
   async mget(...keys: string[]) { return keys.map(k => this.store.get(k) ?? null); }
-  async lrange(_key: string, _start: number, _stop: number) { return []; }
+  async lrange(key: string, _start: number, _stop: number) { return this.lists.get(key) ?? []; }
+  async rpush(key: string, ...vals: string[]) { const a = this.lists.get(key) ?? []; a.push(...vals); this.lists.set(key, a); return a.length; }
+  async ltrim(_key: string, _start: number, _stop: number) { return 'OK' as const; }
   async sadd(_key: string, ..._members: string[]) { return 1; }
   scanStream(_opts: { match: string; count?: number }): EventEmitter {
     const em = new EventEmitter();
@@ -157,5 +160,43 @@ describe('brain_import_meta', () => {
     const failFetch = (async () => { throw new Error('API down'); }) as unknown as Parameters<typeof handleFedbrainTool>[3];
     const result = await callTool(redis, 'brain_import_meta', {}, failFetch);
     expect(result).toContain('❌');
+  });
+});
+
+// ── fedbrain_confirm ─────────────────────────────────────────────────────────
+// Regression guard for #227: confirmations must hit the id-scoped commons route
+// POST /api/v1/syndication/:id/confirm. The earlier bug POSTed to
+// /api/v1/syndication/confirm (no id), which 404s, so cross-org confirmations
+// silently never propagated and always fell to the local queue.
+describe('fedbrain_confirm', () => {
+  let redis: MiniRedis;
+  beforeEach(() => { redis = new MiniRedis(); });
+
+  it('requires the lesson id from fedbrain_search', async () => {
+    const calls: string[] = [];
+    const spy = (async (path: string) => { calls.push(path); return {}; }) as unknown as Parameters<typeof handleFedbrainTool>[3];
+    const result = await callTool(redis, 'fedbrain_confirm', { topic: 't', outcome: 'worked' }, spy);
+    expect(result).toMatch(/needs the lesson/i);
+    expect(calls).toHaveLength(0); // no propagation without an id
+  });
+
+  it('propagates to the id-scoped commons endpoint, not /syndication/confirm', async () => {
+    const calls: Array<{ path: string; method?: string }> = [];
+    const spy = (async (path: string, init?: { method?: string }) => {
+      calls.push({ path, method: init?.method }); return {};
+    }) as unknown as Parameters<typeof handleFedbrainTool>[3];
+    // id-only (no topic) keeps the CKG edge path out of this endpoint assertion.
+    const result = await callTool(redis, 'fedbrain_confirm', { id: 'abc 123', outcome: 'worked' }, spy);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].path).toBe('/api/v1/syndication/abc%20123/confirm'); // id encoded IN the path
+    expect(calls[0].method).toBe('POST');
+    expect(result).toContain('propagated');
+  });
+
+  it('queues the confirmation locally when the commons API is unavailable', async () => {
+    const spy = (async () => { throw new Error('offline'); }) as unknown as Parameters<typeof handleFedbrainTool>[3];
+    const result = await callTool(redis, 'fedbrain_confirm', { id: 'x1', outcome: 'worked' }, spy);
+    expect(result).toMatch(/Queued locally/i);
+    expect(redis.lists.get('cachly:fedbrain:pending_confirms')).toHaveLength(1);
   });
 });
