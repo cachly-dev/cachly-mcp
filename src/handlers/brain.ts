@@ -11,7 +11,7 @@ import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
 import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
          indexVocab as _indexVocab } from '../search.js';
-import { rerankByQuality } from '../rerank.js';
+import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
@@ -1295,6 +1295,20 @@ export async function handleBrainTool(
             r.contextBoost = true;
           }
         }
+      }
+
+      // Apply lesson quality to the NON-keyword-only paths. Keyword & hybrid
+      // entries already carry quality from the Layer-1.5 BM25 rerank
+      // (rerankByQuality above), so re-multiplying them would double-count. But a
+      // proven, senior-reviewed, high-severity success found ONLY via embeddings
+      // (matchType 'semantic') or the causal graph (matchType 'ckg') previously
+      // got zero quality lift — it ranked purely on similarity/edge-confidence.
+      // Weight just those two so a trustworthy lesson isn't buried behind a
+      // shallow-but-similar one.
+      for (const r of hybridMap.values()) {
+        if (r.matchType !== 'semantic' && r.matchType !== 'ckg') continue;
+        const lq = extractLessonQuality({ key: r.key, content: r.content });
+        if (lq) r.hybridScore *= qualityMultiplier(lq);
       }
 
       // Filter private lessons (recall_best_solution only) + enforce team scopes:
