@@ -511,37 +511,50 @@ export async function handleFedbrainTool(
         lines.push(`${icon}${goldBadge} **\`${r.topic}\`** [ctx: ${ctxPct}%]`);
         if (r.what_worked) lines.push(`  ✅ ${r.what_worked.slice(0, 150)}`);
         if (r.what_failed) lines.push(`  ❌ ${r.what_failed.slice(0, 80)}`);
-        lines.push(`  _${r.confirm_count} confirm${r.confirm_count !== 1 ? 's' : ''}  |  \`${r.id.slice(0, 12)}\`_`, '');
+        lines.push(`  _${r.confirm_count} confirm${r.confirm_count !== 1 ? 's' : ''}  |  id: \`${r.id}\`_`, '');
       }
       if (localDomains.size > 0) {
         const topDomains = [...localDomains.entries()].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([d, n]) => `\`${d}\`(${n})`).join(', ');
         lines.push(`🎯 Your context: ${topDomains}`);
       }
-      lines.push(`💡 Confirm: \`fedbrain_confirm(topic="<topic>", outcome="worked")\``);
+      lines.push(`💡 Confirm a result: \`fedbrain_confirm(id="<id>", topic="<topic>", outcome="worked")\``);
       return lines.join('\n');
     }
 
     // ── Layer 6: FedBrain — fedbrain_confirm ─────────────────────────────────
     case 'fedbrain_confirm': {
-      const { instance_id, topic, outcome } = args as {
-        instance_id: string; topic: string; outcome: 'worked' | 'partially_worked' | 'did_not_work';
+      // The commons confirm endpoint keys on the syndicated lesson id
+      // (POST /api/v1/syndication/:id/confirm). `id` comes from fedbrain_search
+      // results; `topic` is kept for the LOCAL CKG confidence edge and display.
+      const { instance_id, id, topic, outcome } = args as {
+        instance_id: string; id?: string; topic?: string;
+        outcome: 'worked' | 'partially_worked' | 'did_not_work';
       };
+      if (!id) {
+        return [
+          `❌ **FedBrain Confirm** needs the lesson \`id\` from \`fedbrain_search\` results.`,
+          `Run \`fedbrain_search(query="...")\`, copy the id shown next to a result,`,
+          `then: \`fedbrain_confirm(id="<id>", topic="<topic>", outcome="worked")\`.`,
+        ].join('\n');
+      }
       const redis = await getConnection(instance_id);
       const ts = new Date().toISOString();
 
-      const confirmEntry = JSON.stringify({ topic, outcome, ts });
+      const confirmEntry = JSON.stringify({ id, topic, outcome, ts });
       await redis.rpush('cachly:fedbrain:confirmations', confirmEntry);
       await redis.ltrim('cachly:fedbrain:confirmations', -200, -1);
 
-      // Update local CKG confidence
+      // Update local CKG confidence (only when we know which topic this maps to).
       const worked = outcome === 'worked';
       const partial = outcome === 'partially_worked';
-      await ckgUpdateEdge(redis, ckgSlug(topic), 'fixes', ckgSlug(`syndicated:${topic}`), worked, partial);
+      if (topic) {
+        await ckgUpdateEdge(redis, ckgSlug(topic), 'fixes', ckgSlug(`syndicated:${topic}`), worked, partial);
+      }
 
-      // Propagate to global commons
+      // Propagate to global commons — id in the PATH, body ignored server-side.
       let propResult: string;
       try {
-        await apiFetch('/api/v1/syndication/confirm', { method: 'POST', body: JSON.stringify({ topic, outcome }) });
+        await apiFetch(`/api/v1/syndication/${encodeURIComponent(id)}/confirm`, { method: 'POST' });
         propResult = `✅ Confirmation propagated to global commons`;
       } catch {
         await redis.rpush('cachly:fedbrain:pending_confirms', confirmEntry);
@@ -550,10 +563,13 @@ export async function handleFedbrainTool(
       }
 
       const icon = worked ? '✅' : partial ? '⚠️' : '❌';
+      const label = topic ?? id;
       return [
-        `${icon} **FedBrain Confirm: "${topic}"** → ${outcome}`, '',
+        `${icon} **FedBrain Confirm: "${label}"** → ${outcome}`, '',
         propResult, '',
-        `🕸️ CKG confidence ${worked || partial ? 'boosted' : 'reduced'} for \`${ckgSlug(topic)}\``,
+        topic
+          ? `🕸️ CKG confidence ${worked || partial ? 'boosted' : 'reduced'} for \`${ckgSlug(topic)}\``
+          : `🕸️ Local CKG unchanged (pass \`topic\` to also update your own confidence graph)`,
         `💡 Your confirmation helps other brains worldwide.`,
         `📊 Status: \`fedbrain_status(instance_id="...")\``,
       ].join('\n');
@@ -611,7 +627,7 @@ export async function handleFedbrainTool(
       lines.push('', '---',
         `**Contribute:** \`fedbrain_contribute(lesson_key="fix:...")\``,
         `**Search:** \`fedbrain_search(query="...")\``,
-        `**Confirm:** \`fedbrain_confirm(topic="...", outcome="worked")\``,
+        `**Confirm:** \`fedbrain_confirm(id="...", topic="...", outcome="worked")\``,
       );
       return lines.join('\n');
     }

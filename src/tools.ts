@@ -2260,14 +2260,21 @@ const TOOLS = [
       type: 'object',
       properties: {
         instance_id: { type: 'string', description: 'Brain instance ID' },
-        topic: { type: 'string', description: 'Topic of the lesson to confirm' },
+        id: {
+          type: 'string',
+          description: 'Syndicated lesson id to confirm (shown next to each fedbrain_search result)',
+        },
+        topic: {
+          type: 'string',
+          description: 'Optional topic of the lesson — also updates your local CKG confidence for it',
+        },
         outcome: {
           type: 'string',
           enum: ['worked', 'partially_worked', 'did_not_work'],
           description: 'Did the lesson work for you?',
         },
       },
-      required: ['instance_id', 'topic', 'outcome'],
+      required: ['instance_id', 'id', 'outcome'],
     },
   },
   {
