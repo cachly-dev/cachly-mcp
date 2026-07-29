@@ -421,6 +421,34 @@ interface RecallGate {
 
 const _recallGateCache = new Map<string, { gate: RecallGate; expiresAt: number }>();
 
+// ── Recall quota: ONE unit per recall CALL ───────────────────────────────────
+// The gate above reads a monthly counter that this function writes. It counts
+// calls, not lessons.
+//
+// It used to be derived from the sum of every lesson's recall_count, and a
+// single smart_recall bumps up to five of those — so a free user burned their
+// 500 in about a hundred real calls and the number kept climbing past the cap.
+// The API's REST recall endpoint counts itself; this is the MCP side of the
+// same counter, and without it the cap would simply never be reached here.
+const RECALL_QUOTA_TTL_SECONDS = 70 * 24 * 60 * 60;
+
+function recallQuotaKey(now: Date = new Date()): string {
+  // UTC month, matching the API's t.UTC().Format("2006-01"). Month-scoping in
+  // the key is what makes the quota reset with no cron and no baseline.
+  return `cachly:quota:recalls:${now.toISOString().slice(0, 7)}`;
+}
+
+async function bumpRecallQuota(redis: Redis): Promise<void> {
+  try {
+    const key = recallQuotaKey();
+    const n = await redis.incr(key);
+    if (n === 1) await redis.expire(key, RECALL_QUOTA_TTL_SECONDS);
+  } catch {
+    // Accounting must never fail a recall. Under-counting costs us a little
+    // revenue; a thrown error costs the user the answer they asked for.
+  }
+}
+
 async function getRecallGate(instanceId: string, apiFetch: ApiFetch): Promise<RecallGate> {
   const cached = _recallGateCache.get(instanceId);
   if (cached && cached.expiresAt > Date.now()) return cached.gate;
@@ -934,6 +962,10 @@ export async function handleBrainTool(
         };
         await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
 
+        // A targeted lookup is a recall too, and costs the same one quota unit
+        // as a broad smart_recall — the user asked the brain a question either way.
+        void bumpRecallQuota(redis);
+
         // Track estimated time saved (30m minor · 60m major · 240m critical)
         const savedMins = lesson.severity === 'critical' ? 240 : lesson.severity === 'major' ? 60 : 30;
         redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
@@ -1061,6 +1093,9 @@ export async function handleBrainTool(
       // ── Layer 1.5: Quality-aware rerank — proven success lessons outrank
       // text-similar failed attempts (the moat; see src/rerank.ts + Cachly-Bench). ──
       const kwMatches = rerankByQuality(rawMatches);
+
+      // One quota unit for this call, regardless of how many lessons it surfaced.
+      void bumpRecallQuota(redis);
 
       // Increment recall_count on matched lessons (fire-and-forget) + collect "Brain saved you here" signal.
       type RecalledLesson = { topic: string; severity: string; recall_count: number; savedMins: number; ts?: string; author?: string };
