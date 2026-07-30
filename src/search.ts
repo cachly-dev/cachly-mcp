@@ -1537,6 +1537,12 @@ function extractTimestamp(content: string): number | undefined {
 }
 
 /** Recency multiplier: 1.0 for now, 0.5 after half-life days, exponential decay. */
+// The GENTLE, ranking-only age curve — deliberately NOT the sharp staleness
+// curve in confidence.ts (calculateConfidence). Ranking must nudge, not punish:
+// a 7-day half-life bounded to [0.5,1.5] keeps a still-relevant older lesson in
+// contention. This is bench-tuned; swapping in the sharp confidence curve here
+// regressed every Cachly-Bench floor and was reverted (PR #228). If you touch
+// this, run `npm run bench:gate` — the rerank.test.ts guard alone is too loose.
 function recencyBoost(timestampMs: number | undefined): number {
   if (!timestampMs) return 1.0; // no timestamp → neutral
   const ageDays = (Date.now() - timestampMs) / (1000 * 60 * 60 * 24);

@@ -6,6 +6,18 @@ export const CONFIDENCE_STALE_DAYS = Number(process.env.CACHLY_CONFIDENCE_STALE_
 export const CONFIDENCE_WARN_VALUE  = 0.7;
 export const CONFIDENCE_STALE_VALUE = 0.5;
 
+// ── One of THREE deliberately-different age/decay curves. Do NOT unify them. ──
+// This one (SHARP: 0.7@5d, 0.5@10d) is a user-facing *staleness warning* — it
+// drives the recall_best_solution freshness badge and brain_predict, where the
+// point is to shout "verify before applying" once a lesson is old.
+//   • Ranking uses a SEPARATE, gentle curve — search.ts `recencyBoost`
+//     (0.5^(age/7)+0.5, range [0.5,1.5]). It is bench-tuned. Feeding THIS sharp
+//     curve into the recall rerank regressed every Cachly-Bench floor (home P@1
+//     92→77%) and was reverted — see PR #228. Relevant lessons are often days
+//     /weeks old; penalising age hard in ranking buries the right answer.
+//   • The knowledge_decay *report* uses a THIRD, points-based curve
+//     (advanced.ts) that also folds in recall_count + outcome.
+// Three purposes, three curves — that divergence is intentional, not a bug.
 /** Calculate current confidence for a lesson based on how long since last verified. */
 export function calculateConfidence(lesson: { verified_at?: string; ts: string; recall_count?: number }): number {
   const ref = lesson.verified_at ?? lesson.ts;

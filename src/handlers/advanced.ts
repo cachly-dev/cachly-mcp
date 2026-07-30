@@ -469,6 +469,13 @@ export async function handleAdvancedTool(
           const age_days = Math.floor(ageMs / 86400000);
           const recalls = l.recall_count ?? 0;
 
+          // The THIRD deliberately-different decay curve (see confidence.ts /
+          // search.ts recencyBoost). This one is a *report-only* health score on
+          // a 0–100 scale that also folds in recall_count and outcome — it is not
+          // a ranking signal and not the freshness badge. Kept separate on
+          // purpose; do not "unify" the three (a single curve regresses either
+          // the Cachly-Bench ranking floors — see PR #228 — or these reports).
+          //
           // Confidence formula:
           // base = 100 → decays by 1pt/day after 7 days, floored at 5
           // boost: +5 per recall, capped at +50
