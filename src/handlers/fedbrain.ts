@@ -1416,6 +1416,8 @@ export async function handleFedbrainTool(
         dominant_outcome: string;
         avg_confidence: number;
         signal_count: number;
+        /** Distinct-Contributor-Zahl (KAI-96); aeltere Server liefern sie nicht. */
+        contributor_count?: number;
         derived_at: string;
       };
 
@@ -1454,7 +1456,12 @@ export async function handleFedbrainTool(
           await redis.set(localKey, JSON.stringify({
             topic: `meta:${m.topic_category}`,
             outcome: m.dominant_outcome,
-            what_worked: `Meta-pattern from ${m.signal_count} independent orgs`,
+            // "independent orgs" only became an honest claim once the API
+            // started counting DISTINCT contributors (KAI-96). Older servers
+            // omit the field — then say what we actually know: signal rows.
+            what_worked: m.contributor_count != null
+              ? `Meta-pattern from ${m.contributor_count} independent orgs`
+              : `Meta-pattern from ${m.signal_count} signals`,
             what_failed: '',
             recall_count: 0,
             ts: m.derived_at,
