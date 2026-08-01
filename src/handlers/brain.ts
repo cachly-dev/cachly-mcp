@@ -1409,6 +1409,14 @@ export async function handleBrainTool(
                 : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
               const preview = r.content.slice(0, 300).replace(/\n/g, ' ');
               lines.push(`  **${label}** _(${scorePart})_`);
+              // Lesbares Brain (docs/produkt/team-puls.md P1): plain-language layer
+              // stored at lesson:human:<topic> — display-only, ranking untouched.
+              if (r.key.startsWith('cachly:lesson:best:')) {
+                const hRaw = (await redis.get(r.key.replace('lesson:best:', 'lesson:human:')).catch(() => null))
+                  ?? (await redis.get(r.key.replace('cachly:lesson:best:', 'lesson:human:')).catch(() => null));
+                const h = hRaw ? safeJsonParse<{ title?: string; summary?: string }>(hRaw, {}) : {};
+                if (h.title) lines.push(`  📖 **${h.title}** — ${h.summary ?? ''}`);
+              }
               lines.push(`  > ${preview}${r.content.length > 300 ? '…' : ''}\n`);
             }
           }
@@ -1433,6 +1441,13 @@ export async function handleBrainTool(
               : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
             const preview = r.content.slice(0, 400).replace(/\n/g, ' ');
             lines.push(`**${label}**${authorBadge}${contextBadge} _(${scorePart})_`);
+            // Lesbares Brain (docs/produkt/team-puls.md P1): plain-language layer.
+            if (r.key.startsWith('cachly:lesson:best:')) {
+              const hRaw = (await redis.get(r.key.replace('lesson:best:', 'lesson:human:')).catch(() => null))
+                ?? (await redis.get(r.key.replace('cachly:lesson:best:', 'lesson:human:')).catch(() => null));
+              const h = hRaw ? safeJsonParse<{ title?: string; summary?: string }>(hRaw, {}) : {};
+              if (h.title) lines.push(`📖 **${h.title}** — ${h.summary ?? ''}`);
+            }
             lines.push(`> ${preview}${r.content.length > 400 ? '…' : ''}\n`);
           }
         }
