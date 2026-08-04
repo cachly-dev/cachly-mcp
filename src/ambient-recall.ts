@@ -154,3 +154,185 @@ export function shouldBackoff(records: TurnRecord[], windowN = 20, minTurns = 8)
   if (recent.length < minTurns) return false;
   return netBalance(recent).net < 0;
 }
+
+// ── Timing, Dedupe und Ruhe-Budget (Enabler für antizipativen Recall) ────────
+//
+// Der Gate oben entscheidet, WAS relevant genug ist. Er entscheidet aber nicht,
+// WANN gepusht werden darf — und genau daran scheitert proaktive Erinnerung in
+// der Praxis: dieselbe Lektion in jedem zweiten Turn ist kein Hinweis mehr,
+// sondern Lärm, und Lärm wird abgeschaltet. Drei Regeln schließen die Lücke:
+//
+//   1. Dedupe        — dieselbe Lektion nicht erneut innerhalb einer Abklingzeit
+//   2. Ruhe-Budget   — höchstens N Einwürfe je gleitendem Fenster, dazu eine
+//                      Mindestruhe direkt nach einem Einwurf
+//   3. Auslösemoment — die Schwelle richtet sich nach dem Risiko des Prompts:
+//                      vor irreversiblen Schritten früher warnen, im Geplauder
+//                      strenger schweigen
+//
+// Alles rein und ohne Abhängigkeiten, damit es vollständig testbar bleibt.
+
+/** Wie riskant ist der Moment — bestimmt, wie eifrig erinnert werden darf. */
+export type PromptRisk = 'high' | 'normal' | 'low';
+
+// Schritte, die man nicht zurücknehmen kann: hier ist eine verpasste Lektion
+// teuer, ein überflüssiger Hinweis dagegen billig.
+const RISKY_RE =
+  /\b(deploy\w*|migrat\w*|rollback|revert|drop\s+(table|database|schema)|truncate|rm\s+-rf|force[- ]push|prune|restore|rotat\w*|secret\w*|credential\w*|production|prod|live|kunde\w*|customer\w*|delete|loesch\w*|lösch\w*)\b/i;
+// Reine Bestätigungen/Fortsetzungen: hier beginnt keine neue Arbeit.
+const CONTINUATION_RE =
+  /^(ok(ay)?|ja|nein|weiter|passt|danke|thanks|go|los|mach|jup|yes|no|sure|next)\b[\s.!]*$/i;
+
+/**
+ * Risikoeinschätzung des Auslösemoments. Sie verschiebt die Schwellen, statt
+ * eine zweite, konkurrierende Entscheidung zu treffen — eine Stellschraube
+ * weniger, und der Gate bleibt die einzige Wahrheit über Relevanz.
+ */
+export function promptRisk(prompt: string): PromptRisk {
+  const p = prompt.trim();
+  if (CONTINUATION_RE.test(p)) return 'low';
+  if (RISKY_RE.test(p)) return 'high';
+  return 'normal';
+}
+
+/** Schwellen-Anpassung je Risiko (klein gehalten und bewusst begründet). */
+export function gateForRisk(risk: PromptRisk, base: GateOptions = DEFAULT_GATE): GateOptions {
+  if (risk === 'high') {
+    // Vor irreversiblen Schritten darf eine etwas schwächere Übereinstimmung
+    // reichen — die vermiedene Katastrophe ist jeden Token wert.
+    return { ...base, minScore: Math.max(0, base.minScore - 0.07), topK: base.topK, maxTokens: base.maxTokens + 120 };
+  }
+  if (risk === 'low') {
+    // Im Geplauder muss es sehr deutlich sein, sonst lieber schweigen.
+    return { ...base, minScore: Math.min(1, base.minScore + 0.1), topK: 1, maxTokens: Math.min(base.maxTokens, 120) };
+  }
+  return { ...base };
+}
+
+export interface TimingOptions {
+  /** Dieselbe Lektion frühestens nach so vielen Turns erneut. */
+  repeatCooldownTurns: number;
+  /** Höchstzahl Einwürfe im gleitenden Fenster. */
+  maxInjectionsPerWindow: number;
+  /** Größe des gleitenden Fensters in Turns. */
+  windowTurns: number;
+  /** Mindestruhe unmittelbar nach einem Einwurf (in Turns). */
+  minSilenceTurns: number;
+}
+
+// Ein Einwurf pro ~3 Turns im Schnitt: oft genug, um zu helfen, selten genug,
+// dass er auffällt, wenn er kommt.
+export const DEFAULT_TIMING: TimingOptions = {
+  repeatCooldownTurns: 12,
+  maxInjectionsPerWindow: 3,
+  windowTurns: 10,
+  minSilenceTurns: 1,
+};
+
+/** Gedächtnis über die letzten Einwürfe — vom Aufrufer gehalten und übergeben. */
+export interface RecallMemory {
+  /** Aktueller Turn-Zähler (monoton steigend). */
+  turn: number;
+  /** Lektions-ID → Turn des letzten Einwurfs. */
+  lastInjectedTurn: Record<string, number>;
+  /** Turns, in denen etwas eingeworfen wurde (aufsteigend). */
+  injectionTurns: number[];
+}
+
+export function emptyMemory(): RecallMemory {
+  return { turn: 0, lastInjectedTurn: {}, injectionTurns: [] };
+}
+
+export type TimingReason = 'quiet-budget' | 'silence-window' | 'all-duplicates';
+
+export interface RecallDecision extends GateDecision {
+  risk: PromptRisk;
+  /** Kandidaten, die nur wegen der Abklingzeit entfielen (Diagnose/Telemetrie). */
+  suppressedDuplicates: string[];
+  timingReason?: TimingReason;
+}
+
+/**
+ * Die vollständige Entscheidung: Relevanz (Gate) UND Zeitpunkt (Timing).
+ *
+ * Reihenfolge ist Absicht: erst die billigen Ausschlüsse (Ruhe, Budget), dann
+ * Dedupe, erst zuletzt der teure Relevanz-Gate — so kostet ein unterdrückter
+ * Turn praktisch nichts.
+ *
+ * Die Funktion ist seiteneffektfrei; `commitInjection` schreibt das Gedächtnis
+ * fort, damit Aufrufer selbst entscheiden, ob ein Vorschlag wirklich gezeigt
+ * wurde (z. B. bei abgebrochenem Turn).
+ */
+export function decideRecall(
+  prompt: string,
+  candidates: LessonCandidate[],
+  memory: RecallMemory,
+  gateOverrides: Partial<GateOptions> = {},
+  timingOverrides: Partial<TimingOptions> = {},
+): RecallDecision {
+  const t = { ...DEFAULT_TIMING, ...timingOverrides };
+  const risk = promptRisk(prompt);
+  const none = (reason: GateReason, timingReason?: TimingReason): RecallDecision => ({
+    inject: false, reason, selected: [], tokens: 0, risk,
+    suppressedDuplicates: [], timingReason,
+  });
+
+  if (isTrivialPrompt(prompt)) return none('trivial-skip');
+
+  // Mindestruhe nach dem letzten Einwurf.
+  const last = memory.injectionTurns[memory.injectionTurns.length - 1];
+  if (last !== undefined && memory.turn - last < t.minSilenceTurns) {
+    return none('no-candidate-passed-gate', 'silence-window');
+  }
+  // Ruhe-Budget im gleitenden Fenster.
+  const inWindow = memory.injectionTurns.filter((n) => memory.turn - n < t.windowTurns).length;
+  if (inWindow >= t.maxInjectionsPerWindow) {
+    return none('no-candidate-passed-gate', 'quiet-budget');
+  }
+
+  // Dedupe: was gerade erst gesagt wurde, wird nicht wiederholt.
+  const suppressedDuplicates: string[] = [];
+  const fresh = candidates.filter((c) => {
+    const seen = memory.lastInjectedTurn[c.id];
+    if (seen !== undefined && memory.turn - seen < t.repeatCooldownTurns) {
+      suppressedDuplicates.push(c.id);
+      return false;
+    }
+    return true;
+  });
+  if (candidates.length > 0 && fresh.length === 0) {
+    return { ...none('no-candidate-passed-gate', 'all-duplicates'), suppressedDuplicates };
+  }
+
+  const gate = selectInjectable(prompt, fresh, { ...gateForRisk(risk), ...gateOverrides });
+  return { ...gate, risk, suppressedDuplicates };
+}
+
+/**
+ * Schreibt das Gedächtnis nach einem TATSÄCHLICH gezeigten Einwurf fort.
+ * Der Turn-Zähler wird immer erhöht — auch ohne Einwurf, sonst laufen
+ * Abklingzeit und Fenster nicht weiter.
+ */
+export function commitInjection(
+  memory: RecallMemory,
+  decision: RecallDecision,
+  timingOverrides: Partial<TimingOptions> = {},
+): RecallMemory {
+  const t = { ...DEFAULT_TIMING, ...timingOverrides };
+  const next: RecallMemory = {
+    turn: memory.turn + 1,
+    lastInjectedTurn: { ...memory.lastInjectedTurn },
+    injectionTurns: [...memory.injectionTurns],
+  };
+  if (decision.inject) {
+    for (const c of decision.selected) next.lastInjectedTurn[c.id] = memory.turn;
+    next.injectionTurns.push(memory.turn);
+  }
+  // Nach Ablauf der Fenster sind Eintraege bedeutungslos — sonst waechst das
+  // Gedaechtnis in langen Sitzungen unbegrenzt mit.
+  const horizon = memory.turn - Math.max(t.windowTurns, t.repeatCooldownTurns);
+  next.injectionTurns = next.injectionTurns.filter((n) => n >= horizon);
+  for (const [id, turn] of Object.entries(next.lastInjectedTurn)) {
+    if (turn < horizon) delete next.lastInjectedTurn[id];
+  }
+  return next;
+}
