@@ -15,6 +15,10 @@
 //     stalls the user's prompt.
 
 import {
+  decideRecall,
+  commitInjection,
+  emptyMemory,
+  type RecallMemory,
   isTrivialPrompt,
   selectInjectable,
   estimateTokens,
@@ -130,6 +134,37 @@ export const CREDIT_FOOTER =
   '(If this memory just saved you from a wrong path, record it: `npx @cachly-dev/mcp-server@latest ambient-credit <tokens-saved>`)';
 
 /**
+ * Der Beleg: WANN es gelernt wurde und WORAN.
+ *
+ * Ohne Beleg ist proaktive Erinnerung eine Behauptung — und Behauptungen einer
+ * Maschine prueft niemand nach, man glaubt sie oder ignoriert sie. Mit Datum
+ * und Datei wird daraus eine nachpruefbare Aussage: "am 24.07., in
+ * infra/backup.sh — ging damals schief". Genau das macht den Unterschied
+ * zwischen einem Hinweis, dem man folgt, und einem, den man wegklickt.
+ *
+ * Bewusst kurz gehalten (eine Zeile, hoechstens zwei Dateien): der Beleg wird
+ * bei JEDER Erinnerung mitgezahlt und darf das Token-Budget nicht sprengen.
+ */
+export function formatProvenance(l: LessonCandidate): string {
+  const teile: string[] = [];
+  if (l.learnedAt) {
+    const d = new Date(l.learnedAt);
+    if (!Number.isNaN(d.getTime())) {
+      teile.push(
+        `am ${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.`,
+      );
+    }
+  }
+  if (l.files?.length) {
+    const f = l.files.slice(0, 2).join(", ");
+    teile.push(`in ${f}${l.files.length > 2 ? ` (+${l.files.length - 2})` : ""}`);
+  }
+  if (l.outcome === "failure") teile.push("ging damals schief");
+  else if (l.outcome === "success") teile.push("so ging es damals gut aus");
+  return teile.length ? `  ↳ ${teile.join(" · ")}` : "";
+}
+
+/**
  * Render the gated lessons into a context block for the agent.
  *   • A single already-formatted briefing (multi-line summary — what smart_recall
  *     returns) is injected verbatim; it carries its own headings.
@@ -143,7 +178,12 @@ export function formatContextBlock(lessons: LessonCandidate[], withCreditFooter 
     lessons.length === 1 && lessons[0].summary.includes('\n')
       ? lessons[0].summary.trim()
       : `🧠 Relevant memory from your cachly brain (auto-recalled):\n` +
-        lessons.map((l) => `- ${l.summary.trim()}`).join('\n');
+        lessons
+          .map((l) => {
+            const beleg = formatProvenance(l);
+            return `- ${l.summary.trim()}` + (beleg ? '\n' + beleg : '');
+          })
+          .join('\n');
   return withCreditFooter ? `${body}\n${CREDIT_FOOTER}` : body;
 }
 
@@ -163,6 +203,9 @@ export function buildHookOutput(event: string, additionalContext: string): strin
 }
 
 export interface AmbientDeps {
+  /** Optionales Trigger-Gedaechtnis (Dedupe + Ruhe-Budget). Fehlt es, bleibt das Verhalten zustandslos. */
+  loadMemory?: () => RecallMemory | null | undefined;
+  saveMemory?: (m: RecallMemory) => void;
   /** Fetch candidate lessons for a query. Should already be scoped to the brain. */
   recall: (query: string, event: string) => Promise<LessonCandidate[]>;
   /** Overrides for the relevance gate. */
@@ -223,7 +266,26 @@ export async function runAmbient(raw: string, deps: AmbientDeps): Promise<string
   // SessionStart/PreToolUse have no user prompt, so their trivial-skip is
   // meaningless; pass the recall query itself so the gate's non-trivial branch runs.
   const gateInput = event === 'UserPromptSubmit' ? (payload.prompt ?? query) : query;
-  const decision = selectInjectable(gateInput, candidates, deps.gate);
+  // Antizipation braucht Timing, nicht nur Relevanz: dieselbe Lektion in jedem
+  // zweiten Turn ist kein Hinweis mehr, sondern Laerm. `decideRecall` bringt
+  // Dedupe, Ruhe-Budget und einen risikoabhaengigen Ausloesemoment mit; ohne
+  // Gedaechtnis-Deps bleibt das Verhalten exakt wie bisher (reiner Gate).
+  const memory: RecallMemory = deps.loadMemory?.() ?? emptyMemory();
+  const decision = deps.loadMemory
+    ? decideRecall(gateInput, candidates, memory, deps.gate)
+    : {
+        ...selectInjectable(gateInput, candidates, deps.gate),
+        risk: 'normal' as const,
+        suppressedDuplicates: [] as string[],
+      };
+
+  if (deps.saveMemory) {
+    try {
+      deps.saveMemory(commitInjection(memory, decision));
+    } catch {
+      // Gedaechtnis ist Komfort, kein Muss — ein Schreibfehler darf den Turn nie stoppen
+    }
+  }
   if (!decision.inject) return '';
 
   // Credit footer only where a recall can change a decision mid-flight.

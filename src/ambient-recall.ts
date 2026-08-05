@@ -19,6 +19,12 @@ export interface LessonCandidate {
   /** Semantic similarity of the lesson to the current prompt, [0,1]. */
   score: number;
   severity?: 'critical' | 'major' | 'minor';
+  /** Wann die Lektion gelernt wurde (ISO) — Grundlage des Belegs. */
+  learnedAt?: string;
+  /** Dateien, an denen sie entstand — der konkreteste Beleg. */
+  files?: string[];
+  /** Wie es damals ausging. */
+  outcome?: "success" | "failure" | "partial";
 }
 
 export interface GateOptions {
