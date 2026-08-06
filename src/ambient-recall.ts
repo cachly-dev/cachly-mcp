@@ -10,6 +10,8 @@
 // This module is pure and dependency-free so it is exhaustively unit-tested; the
 // hook scripts + telemetry layer build on top of it.
 
+import { createHash } from 'node:crypto';
+
 export interface LessonCandidate {
   id: string;
   /** The text that would be injected into context. */
@@ -46,6 +48,16 @@ export const DEFAULT_GATE: GateOptions = {
   topK: 3,
   maxTokens: 240,
 };
+
+/**
+ * Derives a content-based candidate ID from a summary string. Enables
+ * ID-based deduplication to suppress "the same advice" while allowing
+ * "different advice" through. See PR #241.
+ */
+export function candidateIdFor(summary: string): string {
+  const hash = createHash('sha256').update(summary).digest('hex');
+  return hash.slice(0, 16);
+}
 
 /** Rough token estimate (~4 chars/token) — good enough for a per-turn budget. */
 export function estimateTokens(text: string): number {

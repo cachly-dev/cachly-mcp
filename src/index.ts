@@ -771,7 +771,7 @@ import { runAmbient, truncateToTokens, parseHookPayload, stopObservation } from 
 import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
-import { netBalance, shouldBackoff } from './ambient-recall.js';
+import { candidateIdFor, netBalance, shouldBackoff } from './ambient-recall.js';
 import { handleShareTool } from './handlers/share.js';
 import { handleVizTool } from './handlers/viz.js';
 import type { Instance } from './handlers/brain.js';
@@ -3694,7 +3694,8 @@ if (process.argv[2] === 'ambient-recall') {
         const text = String((await handleTool('smart_recall', { instance_id: instanceId, query })) ?? '');
         const miss = text.length < 80 || /No lessons found|no lessons|No matches found/i.test(text);
         if (miss) return [];
-        return [{ id: 'ambient', summary: truncateToTokens(text, 500), confidence: 0.9, score: 0.9 }];
+        const summary = truncateToTokens(text, 500);
+        return [{ id: candidateIdFor(summary), summary, confidence: 0.9, score: 0.9 }];
       },
     });
     if (out) process.stdout.write(out);
