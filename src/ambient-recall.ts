@@ -298,7 +298,7 @@ export function decideRecall(
 
   // Mindestruhe nach dem letzten Einwurf.
   const last = memory.injectionTurns[memory.injectionTurns.length - 1];
-  if (last !== undefined && memory.turn - last < t.minSilenceTurns) {
+  if (last !== undefined && memory.turn - last <= t.minSilenceTurns) {
     return none('no-candidate-passed-gate', 'silence-window');
   }
   // Ruhe-Budget im gleitenden Fenster.

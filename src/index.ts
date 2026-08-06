@@ -769,6 +769,7 @@ import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } fr
 import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
 import { runAmbient, truncateToTokens, parseHookPayload, stopObservation } from './ambient-cli.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
+import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
 import { candidateIdFor, netBalance, shouldBackoff } from './ambient-recall.js';
@@ -3683,6 +3684,8 @@ if (process.argv[2] === 'ambient-recall') {
       // smart_recall already returns its hits best-first, so the capped head is
       // the high-signal part. Per-lesson structured candidates are a future slice.
       gate: { topK: 1, maxTokens: 500 },
+      loadMemory: () => loadAmbientMemory(),
+      saveMemory: (m) => saveAmbientMemory(m),
       backoff: async () => shouldBackoff(await readLedger()),
       onInject: (tokens, event) => {
         const entry = { ts: new Date().toISOString(), event, injected: tokens, prevented: 0 };

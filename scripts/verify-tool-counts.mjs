@@ -10,6 +10,8 @@ const catalog = loadToolCatalog();
 const expected = catalog.total_tools;
 
 const trackedSurfaces = [
+  'CACHLY_CAPABILITY_MATRIX.md',
+  'README.md',
   'sdk/mcp/package.json',
   'sdk/mcp/server.json',
   'sdk/mcp/smithery.yaml',
@@ -58,6 +60,8 @@ const stalePatterns = [
   /\b30-tool\s+MCP\s+server\b/gi,
   /\bAll\s+30\s+Brain\s+tools\b/gi,
   /\bAll\s+30\s+MCP\s+Tools\b/g,
+  /\b140\s+tools\b/gi,
+  /\b140\s+MCP\s+tools\b/gi,
 ];
 
 const failures = [];

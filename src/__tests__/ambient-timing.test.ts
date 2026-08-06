@@ -57,6 +57,7 @@ describe('decideRecall — Dedupe', () => {
     const first = decideRecall(PROMPT, [cand()], mem);
     expect(first.inject).toBe(true);
     mem = commitInjection(mem, first);
+    mem = { ...mem, turn: mem.turn + 1 }; // Mindestruhe abwarten
 
     const second = decideRecall(PROMPT, [cand()], mem);
     expect(second.inject).toBe(false);
