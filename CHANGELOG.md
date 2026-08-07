@@ -7,6 +7,18 @@
 
 ---
 
+## [0.10.122] – 2026-08-07 — *"One factory, one seam, proven twice"*
+
+### Changed
+- **Ambient production deps come from a single factory.** `index.ts` now wires
+  `buildAmbientDeps()` — the exact factory the acceptance tests exercise —
+  instead of an inline copy of the dependency wiring. A seam regression test
+  proves the CLI and the tests share the same code path across two consecutive
+  turns (process restarts included), closing the gap where both halves were
+  correct in isolation but never proven together. (#254)
+
+---
+
 ## [0.10.121] – 2026-08-07 — *"Ambient recall learns when to stay quiet"*
 
 Everything merged since 0.10.120 ships in this release — publishing had been
