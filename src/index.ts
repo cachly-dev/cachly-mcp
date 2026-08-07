@@ -767,12 +767,13 @@ import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
-import { runAmbient, truncateToTokens, parseHookPayload, stopObservation } from './ambient-cli.js';
+import { runAmbient, parseHookPayload, stopObservation } from './ambient-cli.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
 import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
+import { buildAmbientDeps } from './ambient-deps.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
-import { candidateIdFor, netBalance, shouldBackoff } from './ambient-recall.js';
+import { netBalance, shouldBackoff } from './ambient-recall.js';
 import { handleShareTool } from './handlers/share.js';
 import { handleVizTool } from './handlers/viz.js';
 import type { Instance } from './handlers/brain.js';
@@ -3678,12 +3679,9 @@ if (process.argv[2] === 'ambient-recall') {
     }
 
     let reported: Promise<void> | undefined;
-    const out = await runAmbient(raw, {
-      timeoutMs: 3000, // §6.3 guardrail 4: never stall the prompt on a slow brain
-      // Ambient injection budget: one relevance-ranked briefing, hard-capped.
-      // smart_recall already returns its hits best-first, so the capped head is
-      // the high-signal part. Per-lesson structured candidates are a future slice.
-      gate: { topK: 1, maxTokens: 500 },
+    const out = await runAmbient(raw, buildAmbientDeps({
+      instanceId,
+      smartRecall: async (query) => String((await handleTool('smart_recall', { instance_id: instanceId, query })) ?? ''),
       loadMemory: () => loadAmbientMemory(),
       saveMemory: (m) => saveAmbientMemory(m),
       backoff: async () => shouldBackoff(await readLedger()),
@@ -3692,15 +3690,7 @@ if (process.argv[2] === 'ambient-recall') {
         void appendLedgerEntry(entry);
         reported = reportAmbientLedgerEvent(instanceId, entry); // org dashboard mirror
       },
-      recall: async (query) => {
-        if (!instanceId) return [];
-        const text = String((await handleTool('smart_recall', { instance_id: instanceId, query })) ?? '');
-        const miss = text.length < 80 || /No lessons found|no lessons|No matches found/i.test(text);
-        if (miss) return [];
-        const summary = truncateToTokens(text, 500);
-        return [{ id: candidateIdFor(summary), summary, confidence: 0.9, score: 0.9 }];
-      },
-    });
+    }));
     if (out) process.stdout.write(out);
     // Bounded flush so the dashboard mirror survives process.exit — never more
     // than 500ms on top of a turn that already injected.
