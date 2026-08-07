@@ -7,6 +7,52 @@
 
 ---
 
+## [0.10.121] – 2026-08-07 — *"Ambient recall learns when to stay quiet"*
+
+Everything merged since 0.10.120 ships in this release — publishing had been
+blocked since 2026-07-19 by a version drift the manifest guard (correctly)
+refused: package.json was bumped to 0.10.120 without server.json / glama.json /
+smithery.yaml. This release re-syncs all four manifests.
+
+### Added
+- **The ambient-recall silence economy is now ACTIVE in production hooks.**
+  The timing primitives from the enabler — per-lesson dedupe (12-turn
+  cooldown), a quiet budget (max 3 injections per 10 turns + minimum silence
+  right after an injection), and risk-aware trigger thresholds (earlier before
+  irreversible steps, stricter in pure continuations) — are wired into the
+  `ambient-recall` CLI, and the trigger memory now survives short-lived hook
+  processes via `~/.cachly/ambient-memory.json` (write-then-rename,
+  corruption-tolerant, 64KB cap, every failure swallowed). (#239, #242, #246)
+- **Content-derived candidate ids** (sha256 of the summary): "the same advice"
+  dedupes, "different advice" gets through — closes the constant-id trap where
+  active dedupe would have silenced recall entirely. (#243)
+- **Provenance under every recalled lesson** — when it was learned, in which
+  files, and how it turned out — so a recall is a checkable claim, not an
+  assertion. (#242)
+- `smart_recall` surfaces the human-readable brain layer (`lesson:human:*`).
+- Federation: k-anonymity counts contributors instead of signals; public
+  cohort benchmarks. (#236)
+- LLM layer: boosters for own upstreams, feedback loop, per-call recall
+  quota. (#230)
+- `auto_learn_session` lessons are first-class (history + CKG + confidence)
+  (#231); lesson quality now also applies to semantic-only and CKG-only
+  recall hits. (#232)
+
+### Fixed
+- **Min-silence off-by-one:** an injection in turn N now actually silences
+  turn N+1 — with the old comparison, `minSilenceTurns: 1` had zero effect
+  across process boundaries. (#246)
+- `fedbrain_confirm` hits the real confirm endpoint (#227), pinned by
+  test. (#229)
+
+### Docs
+- Tool counts in root docs are generated and CI-guarded (126 tools, stale
+  "140" claims caught by the sharpened guard). (#244)
+- The three intentionally-different age/decay curves are pinned against
+  future "unification". (#233)
+
+---
+
 ## [0.10.120] – 2026-07-19 — *"Survive a closing pipe"*
 
 ### Fixed
