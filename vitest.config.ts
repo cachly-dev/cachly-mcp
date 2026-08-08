@@ -10,5 +10,18 @@ export default defineConfig({
       // Compiled dist/ files are identical to src/ — run tests only from source
       '**/dist/**',
     ],
+    // Flake-Klasse E fix: Increase testTimeout to prevent flakes under parallel load.
+    // Empirical evidence: timeouts in brain-flow.test.ts, onboarding-bench.test.ts,
+    // and corpus-sample-test under concurrent web build. See .agent/cachly/tasks/SDK-004.md
+    testTimeout: 20000,
+    hookTimeout: 20000,
+    isolate: true,
+    poolOptions: {
+      threads: {
+        maxWorkers: 1,
+        singleThread: false,
+        isolateWorkerModules: true,
+      },
+    },
   },
 });
