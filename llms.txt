@@ -32,7 +32,7 @@ Claude Code, Cursor, Windsurf, VS Code, GitHub Copilot, Cline, Zed, Continue.dev
 4. Editor closes → session summary saved, git log analyzed, ambient lessons extracted
 5. Next session → AI arrives pre-briefed
 
-## Tool catalog (89 tools)
+## Tool catalog (126 tools)
 
 ### Session & Memory
 - session_start: Single-call session briefing — last summary, open failures, recent lessons, brain health
@@ -145,7 +145,7 @@ Claude Code, Cursor, Windsurf, VS Code, GitHub Copilot, Cline, Zed, Continue.dev
 - Speed: 900 MB + Dragonfly engine, €79/month
 - Business: 7 GB, €199/month
 
-All plans: German servers, GDPR-compliant, 99.9% SLA.
+All plans: German servers, GDPR-compliant.
 
 ## Links
 

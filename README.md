@@ -22,7 +22,7 @@
     <img src="https://img.shields.io/badge/GDPR-EU%20servers-green" alt="GDPR: EU servers" />
   </a>
   &nbsp;
-  <img src="https://img.shields.io/badge/140%20MCP%20tools-violet" alt="126 MCP tools" />
+  <img src="https://img.shields.io/badge/126%20MCP%20tools-violet" alt="126 MCP tools" />
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
 </p>
@@ -145,7 +145,8 @@ arrives pre-briefed — every session, automatically.
 > ```
 
 **Our agreement with you:** Free forever tier. GDPR, EU servers. No model lock-in —
-leave anytime and take your data. No code content is ever stored.
+leave anytime and take your data. Code excerpts are stored only if you call
+`index_project` yourself — and only on your own EU instance.
 
 ---
 
@@ -384,8 +385,11 @@ Yes — that's the point. `team_learn` / `team_recall`, or
 `npx @cachly-dev/mcp-server@latest invite teammate@example.com`.
 
 **Is my code sent to cachly servers?**
-No code content is stored. cachly stores lesson text, commit messages, session
-summaries, and key-value context. All data on EU servers, GDPR-compliant.
+Only if you call `index_project` yourself: it stores a short excerpt (up to
+`summary_chars`, default 1200 characters) per indexed file, on your own EU
+instance. Every other tool stores lesson text, commit messages, session
+summaries, and key-value context — no source code. All data on EU servers,
+GDPR-compliant.
 
 **What is `causal_trace` and why is it unique?**
 Given any error, it walks the Causal Knowledge Graph to find root cause, intermediate
@@ -535,7 +539,7 @@ keep talking to your backend on every editor launch. All data stays in your infr
 | **Speed** | 900 MB + Dragonfly | €79/mo | AI-heavy workloads |
 | **Business** | 7 GB | €199/mo | Scale-ups |
 
-✅ All plans: **EU servers · GDPR-compliant · 99.9% SLA · No credit card for Free**
+✅ All plans: **EU servers · GDPR-compliant · No credit card for Free**
 
 ---
 
@@ -546,7 +550,7 @@ keep talking to your backend on every editor launch. All data stays in your infr
 | `CACHLY_JWT` | — | API token (set by wizard automatically) |
 | `CACHLY_BRAIN_INSTANCE_ID` | — | Default instance UUID (optional — auto-resolved) |
 | `CACHLY_API_URL` | `https://api.cachly.dev` | Override for self-hosted |
-| `CACHLY_NO_TELEMETRY` | unset | Set to `1` to disable anonymous usage pings |
+| `CACHLY_NO_TELEMETRY` | unset | Set to `1` to disable usage pings (these include your API token and up to 80 characters of `smart_recall` queries) |
 
 ---
 
@@ -572,7 +576,7 @@ straight into your editor — your lessons follow you across all of them.
 | **[`@cachly-dev/mcp-server`](https://www.npmjs.com/package/@cachly-dev/mcp-server)** | ← you are here · works with Claude, Cursor, Copilot, Windsurf, Cline, Zed |
 | **[Cachly Brain for VS Code](https://marketplace.visualstudio.com/items?itemName=cachly-dev.cachly-brain)** | One-click memory in the editor — status bar, lessons view, ambient learning. No terminal needed. |
 | **[Cachly Brain for JetBrains](https://plugins.jetbrains.com/plugin/32059-cachly-brain)** | Same brain for IntelliJ / PyCharm / GoLand / WebStorm / Rider — status bar, brain health, lessons view. |
-| **[`@cachly-dev/openclaw`](https://www.npmjs.com/package/@cachly-dev/openclaw)** | Cut LLM costs 60–90% in JS/TS apps |
+| **[`@cachly-dev/openclaw`](https://www.npmjs.com/package/@cachly-dev/openclaw)** | Cut LLM costs with semantic caching in JS/TS apps |
 | **[cachly-dev/cachly-action](https://github.com/cachly-dev/cachly-action)** | GitHub Action: auto-setup, PR risk scan, auto-learn from merged PRs, weekly hygiene |
 
 - 🌐 [cachly.dev](https://cachly.dev) — Dashboard & free signup
