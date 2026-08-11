@@ -32,7 +32,7 @@ Claude Code, Cursor, Windsurf, VS Code, GitHub Copilot, Cline, Zed, Continue.dev
 4. Editor closes → session summary saved, git log analyzed, ambient lessons extracted
 5. Next session → AI arrives pre-briefed
 
-## Tool catalog (126 tools)
+## Tool catalog (122 tools)
 
 ### Session & Memory
 - session_start: Single-call session briefing — last summary, open failures, recent lessons, brain health
