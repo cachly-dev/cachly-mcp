@@ -1,6 +1,7 @@
 import type { Redis } from 'ioredis';
 import { safeJsonParse } from '../utils.js';
 import { STARTER_CORPUS, STARTER_CORPUS_SIZE } from '../starter-corpus.js';
+import { cachlyUrl } from '../cachly-url.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -145,7 +146,7 @@ export async function handleShareTool(
           body: JSON.stringify({ title, description, visibility, lessons }),
         });
         shareId = result.share_id ?? null;
-        if (shareId) shareUrl = `https://cachly.dev/brain/share/${shareId}`;
+        if (shareId) shareUrl = cachlyUrl(`/brain/share/${shareId}`, 'brain-share');
       } catch (e) {
         // API endpoint may not be live yet — store locally and return JSON
         const err = (e as Error).message ?? '';
@@ -476,7 +477,7 @@ export async function handleShareTool(
             `**In the meantime:**`,
             `  • Share your Brain: \`brain_share(instance_id="...", visibility="public")\``,
             `  • Import by ID:    \`brain_import(instance_id="...", share_id="<id>")\``,
-            `  • Community index: https://cachly.dev/brains`,
+            `  • Community index: ${cachlyUrl('/brains', 'brain-discover')}`,
           ].join('\n');
         }
         return `❌ brain_discover failed: ${msg}`;
@@ -511,7 +512,7 @@ export async function handleShareTool(
         );
       }
 
-      lines.push(`_Browse more at https://cachly.dev/brains_`);
+      lines.push(`_Browse more at ${cachlyUrl('/brains', 'brain-discover')}_`);
       return lines.filter(l => l !== '   ').join('\n');
     }
 

@@ -114,7 +114,15 @@ describe('GROW-002: die Nahtstelle — der Hinweis haengt wirklich im Briefing',
   });
 
   it('der demo-Ausgang traegt ein Quellenkennzeichen, sonst zaehlt ihn niemand', () => {
+    // ANGEPASST DURCH GROW-011: geprueft wird nicht mehr die woertliche
+    // Zeichenkette 'utm_source=cli-demo'. GROW-011 hat alle 38 Adressen auf die
+    // gemeinsame Funktion cachlyUrl umgestellt, die das Kennzeichen zentral
+    // anhaengt — die Zeichenkette steht seither in cachly-url.ts, nicht mehr an
+    // der Fundstelle. Die ABSICHT bleibt und wird schaerfer geprueft als zuvor:
+    // der Vorschau-Link des demo-Befehls muss die Quelle 'demo' fuehren. Eine
+    // Zusicherung, die ein Refactoring bricht ohne dass sich Verhalten aendert,
+    // wird angepasst — nicht der Code verbogen.
     const src = readFileSync(new URL('../index.ts', import.meta.url), 'utf8');
-    expect(src).toContain('utm_source=cli-demo');
+    expect(src).toMatch(/cachlyUrl\([^\n]*preview[^\n]*['"]demo['"]/);
   });
 });

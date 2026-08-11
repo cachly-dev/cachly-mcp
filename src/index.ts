@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { jwtExpiryMs, checkJwt, handleApiError, diagnoseAuth, planAuthHeal,
          readClientCredentialsFromEnv, buildClientCredentialsBody, clientCredentialsTokenUrl } from './auth.js';
+import { cachlyUrl } from './cachly-url.js';
 import type { FunnelEventName, DashboardMetrics } from './telemetry-types.js';
 import { notify } from './notifier.js';
 import { fileURLToPath } from 'node:url';
@@ -386,7 +387,7 @@ async function startDeviceFlow(): Promise<DeviceFlowState | null> {
         verification_uri: string; interval: number;
       };
       // Append the user_code so the web page (cachly.dev/device?code=…) auto-submits.
-      const base = data.verification_uri || 'https://cachly.dev/device';
+      const base = data.verification_uri || cachlyUrl('/device', 'ambient-signin');
       const verifyUrl = `${base}${base.includes('?') ? '&' : '?'}code=${encodeURIComponent(data.user_code)}`;
       return {
         deviceCode: data.device_code,
@@ -631,17 +632,17 @@ async function getConnection(instance_id: string): Promise<Redis> {
       hint = `⏳ Brain instance "${inst.name}" is still starting up.\n\nFirst-time provisioning typically takes 1–3 minutes. Please retry in a moment — the instance will be ready soon.`;
     } else if (inst.status === 'failed') {
       hint = `❌ Brain instance "${inst.name}" failed to start.\n\n` +
-        `Our system will retry automatically. Check status at: https://cachly.dev/instances\n` +
+        `Our system will retry automatically. Check status at: ${cachlyUrl('/instances', 'instance-error')}\n` +
         `If this persists, contact support@cachly.dev.`;
     } else if (inst.status === 'suspended') {
       hint = `⏸ Brain instance "${inst.name}" is suspended (billing issue).\n\n` +
-        `Update your payment method at: https://cachly.dev/billing`;
+        `Update your payment method at: ${cachlyUrl('/billing', 'upgrade')}`;
     } else if (inst.status === 'pending_payment') {
       hint = `💳 Brain instance "${inst.name}" is waiting for payment.\n\n` +
-        `Complete your checkout at: https://cachly.dev/instances`;
+        `Complete your checkout at: ${cachlyUrl('/instances', 'upgrade')}`;
     } else {
       hint = `Brain instance "${inst.name}" is not reachable (status: ${inst.status}).\n\n` +
-        `• View your instance at: https://cachly.dev/instances\n` +
+        `• View your instance at: ${cachlyUrl('/instances', 'instance-error')}\n` +
         `• Run \`get_api_status\` for a full diagnostic.`;
     }
     throw new McpError(ErrorCode.InvalidRequest, hint);
@@ -892,7 +893,7 @@ const PREMIUM_PITCH: Record<string, string> = {
   global_recall: 'Team Brain — recall across your entire organization.',
 };
 
-const UPGRADE_URL_FG = 'https://cachly.dev/billing';
+const UPGRADE_URL_FG = cachlyUrl('/billing', 'upgrade');
 
 interface TierInfo { tier: string; isFree: boolean }
 const _tierCache = new Map<string, { info: TierInfo; expiresAt: number }>();
@@ -991,7 +992,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       '   npx @cachly-dev/mcp-server@latest autopilot',
       '   ```',
       '',
-      'Or get your API key at: https://cachly.dev/setup-ai',
+      `Or get your API key at: ${cachlyUrl('/setup-ai', 'ambient-signin')}`,
       '',
       '✨ Free tier includes: 1 Brain instance, persistent memory, semantic search.',
     ].join('\n');
@@ -1207,7 +1208,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
           `  💓 Health:   ${healthStatus}`,
           `  🔑 Auth:     ❌ CACHLY_JWT not set`,
           ``,
-          `💡 Get your API token at https://cachly.dev/instances → Settings → API Token`,
+          `💡 Get your API token at ${cachlyUrl('/instances', 'api-status')} → Settings → API Token`,
         ].join('\n');
       }
 
@@ -1242,7 +1243,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         const listRes = await apiFetch<{ data: Instance[] }>('/api/v1/instances');
         const instances = listRes.data ?? [];
         if (instances.length === 0) {
-          instanceInfo = '\n\n🧠 **Brain Instances:** none — create one at https://cachly.dev/instances';
+          instanceInfo = `\n\n🧠 **Brain Instances:** none — create one at ${cachlyUrl('/instances', 'api-status')}`;
         } else {
           const lines: string[] = ['\n\n🧠 **Brain Instances:**'];
           for (const inst of instances) {
@@ -1842,7 +1843,7 @@ if (process.argv[2] === 'invite') {
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json() as { code?: string; url?: string; referral_count?: number };
-    const referralUrl = data.url ?? `https://cachly.dev/r/${data.code}`;
+    const referralUrl = data.url ?? cachlyUrl(`/r/${data.code}`, 'invite');
     const count = data.referral_count ?? 0;
 
     const slackMsg = `Hey, I've been using cachly to give my AI persistent memory across sessions — no more re-explaining my stack every morning.\n\nYou get a free Brain: ${referralUrl}`;
@@ -1971,7 +1972,7 @@ if (process.argv[2] === 'join') {
       }
     } catch (e) {
       console.log(`\n  ⚠️  Could not start sign-in: ${(e as Error).message}`);
-      console.log(`   Set CACHLY_JWT manually from https://cachly.dev/setup-ai\n`);
+      console.log(`   Set CACHLY_JWT manually from ${cachlyUrl('/setup-ai', 'join')}\n`);
       process.exit(1);
     }
   }
@@ -2154,7 +2155,7 @@ if (process.argv[2] === 'bench') {
     console.log('  \x1b[1m→ Give your AI this recall quality on your own work (free, 1–5 min):\x1b[0m');
     console.log('  \x1b[32m$ npx @cachly-dev/mcp-server@latest autopilot\x1b[0m');
     console.log('  \x1b[90m  Signs in, configures every editor, bootstraps from your git history.\x1b[0m');
-    console.log('  \x1b[90m  Or create your Brain at: \x1b[36mhttps://cachly.dev/setup-ai\x1b[0m');
+    console.log(`  \x1b[90m  Or create your Brain at: \x1b[36m${cachlyUrl('/setup-ai', 'bench')}\x1b[0m`);
     console.log('');
   } catch (e) {
     console.error(`\n❌ bench failed: ${(e as Error).message}\n`);
@@ -2319,7 +2320,7 @@ if (process.argv[2] === 'demo') {
     authors: String(authors.size),
     hours: String(hoursWasted),
   });
-  const previewURL = `https://cachly.dev/preview?${previewParams.toString()}&ref=demo&utm_source=cli-demo&utm_medium=cli&utm_campaign=cli-demo`;
+  const previewURL = cachlyUrl(`/preview?${previewParams.toString()}`, 'demo');
 
   console.log('  \x1b[1mMake this permanent (free, 1–5 minutes):\x1b[0m');
   console.log('  \x1b[32m$ npx @cachly-dev/mcp-server@latest autopilot\x1b[0m');
@@ -2387,7 +2388,7 @@ if (process.argv[2] === 'share') {
     console.log('');
 
     // Tweet text
-    const shareUrl = 'https://cachly.dev?ref=share&utm_source=x&utm_medium=social&utm_campaign=cli-share';
+    const shareUrl = cachlyUrl('/', 'share');
     const tweet = `🧠 My AI coding assistant now has persistent memory.\n\n${lessons} lessons stored · ${recalls} recalls · ${level}\n\nFix a bug once → AI remembers forever. Across Claude Code, Cursor, Windsurf, Copilot.\n\n${shareUrl}\n\n#AIMemory #ClaudeCode #Cursor #DeveloperTools`;
 
     console.log('  \x1b[1m📋 Share on Twitter/X (copy this):\x1b[0m');
@@ -2451,7 +2452,7 @@ if (process.argv[2] === 'publish') {
     if (!shareRes.ok) throw new Error(`HTTP ${shareRes.status}`);
     const share = await shareRes.json() as { share_id?: string };
     const shareId = share.share_id ?? 'unavailable';
-    const shareUrl = `https://cachly.dev/brain/share/${shareId}`;
+    const shareUrl = cachlyUrl(`/brain/share/${shareId}`, 'publish');
 
     console.log('');
     console.log('┌─────────────────────────────────────────────────────────────┐');
@@ -2526,7 +2527,7 @@ if (process.argv[2] === 'badge') {
   }
 
   const badgeUrl   = `${API_URL}/api/v1/badge/${instanceId}`;
-  const targetUrl  = 'https://cachly.dev';
+  const targetUrl  = cachlyUrl('/', 'badge');
   const markdown   = `[![cachly Brain](${badgeUrl})](${targetUrl})`;
   const htmlBadge  = `<a href="${targetUrl}"><img src="${badgeUrl}" alt="cachly Brain" /></a>`;
 
@@ -2630,7 +2631,7 @@ if (process.argv[2] === 'init') {
   if (!instanceId || !apiKey) {
     console.error('\nUsage: npx @cachly-dev/mcp-server@latest init --instance-id <uuid> --api-key <cky_live_...> [--editor claude|cursor|windsurf|copilot|continue] [--project-dir /path] [--api-url https://your-self-hosted-backend]\n');
     console.error('First time? Run the zero-config wizard (signs you in, auto-provisions): npx @cachly-dev/mcp-server@latest autopilot\n');
-    console.error('Get your credentials from: https://cachly.dev/setup-ai\n');
+    console.error(`Get your credentials from: ${cachlyUrl('/setup-ai', 'init')}\n`);
     process.exit(1);
   }
 
@@ -2812,9 +2813,9 @@ if (process.argv[2] === 'health') {
       const expMs = payload.exp ? payload.exp * 1000 : null;
       const minsLeft = expMs ? Math.floor((expMs - Date.now()) / 60_000) : null;
       if (expMs && expMs < Date.now()) {
-        fail(`JWT expired ${Math.abs(minsLeft!)} minute(s) ago — get a new one: https://cachly.dev/setup-ai`);
+        fail(`JWT expired ${Math.abs(minsLeft!)} minute(s) ago — get a new one: ${cachlyUrl('/setup-ai', 'health')}`);
       } else if (minsLeft !== null && minsLeft < 30) {
-        warn(`JWT expires in ${minsLeft} minute(s) — refresh soon at https://cachly.dev/setup-ai`);
+        warn(`JWT expires in ${minsLeft} minute(s) — refresh soon at ${cachlyUrl('/setup-ai', 'health')}`);
       } else {
         ok(`JWT valid${minsLeft !== null ? ` (expires in ${Math.floor(minsLeft / 60)}h ${minsLeft % 60}m)` : ''}`);
       }
@@ -3003,6 +3004,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   const { createInterface } = await import('node:readline');
 
   const setupStartMs = Date.now();
+  const cliSource = _isAutopilotCli ? 'autopilot' : 'setup';
   // Self-hosting: `setup --api-url https://cachly.mycorp.internal` points the whole
   // wizard (auth, provisioning, config writes) at a private backend.
   const _apiUrlIdx = process.argv.indexOf('--api-url');
@@ -3153,7 +3155,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     } else {
       // Device flow unavailable — web fallback with automatic browser open
       sendFunnelEvent('device_flow_failed', { reason: 'device_flow_unavailable' });
-      const signupUrl = 'https://cachly.dev/setup-ai';
+      const signupUrl = cachlyUrl('/setup-ai', cliSource);
       console.log('   ⚠️  Could not start automatic sign-in. Opening browser for web sign-in...\n');
       console.log(`   URL: \x1b[36m${signupUrl}\x1b[0m`);
       console.log('   1. Sign up / log in at the URL above');
@@ -3215,8 +3217,8 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     const msg = (e as Error).message;
     console.error(`\n\nFailed to fetch instances: ${msg}`);
     if (msg.includes('401')) {
-      console.error('Token rejected. Get a valid token at https://cachly.dev/setup-ai\n');
-      openInBrowser('https://cachly.dev/setup-ai');
+      console.error(`Token rejected. Get a valid token at ${cachlyUrl('/setup-ai', cliSource)}\n`);
+      openInBrowser(cachlyUrl('/setup-ai', cliSource));
     }
     rl.close(); process.exit(1);
   }
@@ -3259,8 +3261,8 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     }
 
     if (instances.length === 0) {
-      console.error('\nCould not create an instance automatically. Opening https://cachly.dev/instances …\n');
-      openInBrowser('https://cachly.dev/instances');
+      console.error(`\nCould not create an instance automatically. Opening ${cachlyUrl('/instances', cliSource)} …\n`);
+      openInBrowser(cachlyUrl('/instances', cliSource));
       rl.close(); process.exit(1);
     }
   }
@@ -3473,7 +3475,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   console.log(`\n🎉  Your AI just got a permanent brain.`);
   console.log(`   Restart your editor — from this session on, it arrives pre-briefed.\n`);
   console.log(`   No more re-explaining your stack. No repeated mistakes.\n`);
-  console.log(`   Dashboard: https://cachly.dev/instances/${instance.id}`);
+  console.log(`   Dashboard: ${cachlyUrl(`/instances/${instance.id}`, cliSource)}`);
   console.log(`\n   📛 Add a live badge to your README:`);
   console.log(`      npx @cachly-dev/mcp-server@latest badge\n`);
 
@@ -3567,7 +3569,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     for (const f of configWriteFailures) console.log(`     • ${f.file} — ${f.reason}`);
     console.log('\n   Fix the permissions above and re-run, or configure manually:');
     console.log(`     CACHLY_JWT=${token.slice(0, 12)}… CACHLY_BRAIN_INSTANCE_ID=${instance.id}`);
-    console.log(`   Docs: https://cachly.dev/docs/mcp\n`);
+    console.log(`   Docs: ${cachlyUrl('/docs/mcp', cliSource)}\n`);
     rl.close();
     await new Promise(r => setTimeout(r, 300));
     process.exit(1);
@@ -3884,6 +3886,8 @@ if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
   if (runningInTerminal) {
     // A human ran `npx @cachly-dev/mcp-server` directly with no credentials.
     // Show them how to set up, then exit cleanly.
+    const bannerSetupUrl = cachlyUrl('/setup-ai', 'first-run');
+    const bannerSetupLine = `║    👉  ${bannerSetupUrl}`.padEnd(66) + '║\n';
     const banner =
       '\n' +
       '╔══════════════════════════════════════════════════════════════════╗\n' +
@@ -3892,7 +3896,7 @@ if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
       '║                                                                  ║\n' +
       '║  CACHLY_JWT is not set. Get your free credentials at:           ║\n' +
       '║                                                                  ║\n' +
-      '║    👉  https://cachly.dev/setup-ai                              ║\n' +
+      bannerSetupLine +
       '║                                                                  ║\n' +
       '║  Then run the one-command setup wizard:                         ║\n' +
       '║                                                                  ║\n' +
@@ -3921,12 +3925,12 @@ if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
     if (minsLeft <= 0) {
       process.stderr.write(
         `\n⚠️  cachly: CACHLY_JWT expired ${Math.abs(minsLeft)} minute(s) ago.\n` +
-        `   All tool calls will fail. Get a fresh token at https://cachly.dev/setup-ai\n\n`,
+        `   All tool calls will fail. Get a fresh token at ${cachlyUrl('/setup-ai', 'jwt-expiry')}\n\n`,
       );
     } else if (minsLeft < 60) {
       process.stderr.write(
         `\n⚠️  cachly: CACHLY_JWT expires in ${minsLeft} minute(s).\n` +
-        `   Refresh it soon at https://cachly.dev/setup-ai to avoid interruptions.\n\n`,
+        `   Refresh it soon at ${cachlyUrl('/setup-ai', 'jwt-expiry')} to avoid interruptions.\n\n`,
       );
     }
   }

@@ -14,6 +14,7 @@ import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 import { upgradeNudge } from '../upgrade-nudge.js';
+import { cachlyUrl } from '../cachly-url.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
 const MCP_VERSION = '0.10.119';
@@ -411,7 +412,7 @@ export const BRAIN_TOOL_NAMES = new Set([
 // DEPTH gate (hide the tail), never an access wall: the #1 result is always
 // returned. Usage/limit come from the same authoritative numbers as the Brain
 // Health bar (GET /instances/:id/memory), cached briefly to avoid per-call latency.
-const UPGRADE_URL = 'https://cachly.dev/billing';
+const UPGRADE_URL = cachlyUrl('/billing', 'upgrade');
 
 interface RecallGate {
   reached: boolean; // true only when the tier has a finite limit AND it's been hit

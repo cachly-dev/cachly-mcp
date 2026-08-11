@@ -1,4 +1,5 @@
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
+import { cachlyUrl } from './cachly-url.js';
 
 export function jwtExpiryMs(token: string): number | null {
   try {
@@ -44,7 +45,7 @@ export function isLongLivedApiKey(token: string): boolean {
 // Refresh a token this close to expiry (or already expired) the moment we touch it.
 export const NEAR_EXPIRY_MS = 10 * 60 * 1000; // 10 minutes
 
-const SETUP_URL = 'https://cachly.dev/setup-ai';
+const SETUP_URL = cachlyUrl('/setup-ai', 'auth-diagnosis');
 
 /**
  * Diagnose the current credential without making any network call. Pure +

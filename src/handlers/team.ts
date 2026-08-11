@@ -5,6 +5,7 @@ import { calculateConfidence, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_VALUE,
          CONFIDENCE_WARN_DAYS, CONFIDENCE_STALE_DAYS } from '../confidence.js';
 import type { Instance } from './brain.js';
 import { safeJsonParse } from '../utils.js';
+import { cachlyUrl } from '../cachly-url.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -1526,7 +1527,7 @@ export async function handleTeamTool(
 
       const copilotInstructions = `# cachly AI Brain — ${project_description}
 
-> AI memory system powered by [cachly.dev](https://cachly.dev). Works with GitHub Copilot, Claude Code, Cursor, Windsurf, Continue.dev, and any MCP-compatible editor.
+> AI memory system powered by [cachly.dev](${cachlyUrl('/', 'team-readme')}). Works with GitHub Copilot, Claude Code, Cursor, Windsurf, Continue.dev, and any MCP-compatible editor.
 
 ---
 

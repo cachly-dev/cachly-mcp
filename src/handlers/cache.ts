@@ -8,6 +8,7 @@ import { computeEmbedding, hasEmbedProvider, embedProviderHint } from '../embedd
 import { detectNamespace } from '../namespace.js';
 import { simpleHash } from '../confidence.js';
 import { scanKeys } from '../utils.js';
+import { cachlyUrl } from '../cachly-url.js';
 
 interface SemanticSearchResponse {
   found: boolean; id?: string; similarity?: number; prompt?: string;
@@ -219,7 +220,7 @@ export async function handleCacheTool(
                 `     (Assumes avg $0.002/call saved per cache hit)`,
                 ``,
                 `  🚀 Next: route LLM calls through cachly to start accumulating hits.`,
-                `     Docs: https://cachly.dev/docs/semantic`,
+                `     Docs: ${cachlyUrl('/docs/semantic', 'cache-stats')}`,
               );
             } else {
               const wow = data.savings?.week_over_week_pct;
@@ -298,7 +299,7 @@ export async function handleCacheTool(
         return (
           `❌ Semantic search is only available on Speed and Business tiers.\n\n` +
           `Your instance "${inst.name}" is on the **${inst.tier.toUpperCase()}** tier.\n` +
-          `Upgrade at https://cachly.dev/instances/${instance_id}`
+          `Upgrade at ${cachlyUrl(`/instances/${instance_id}`, 'upgrade')}`
         );
       }
 

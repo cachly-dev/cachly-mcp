@@ -11,6 +11,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
 import { netBalance, shouldBackoff, type TurnRecord } from './ambient-recall.js';
+import { cachlyUrl } from './cachly-url.js';
 
 export type DoctorStatus = 'ok' | 'warn' | 'fail';
 
@@ -74,7 +75,7 @@ export async function checkApiReachable(apiUrl: string, fetchFn: FetchLike = fet
       name: 'API',
       status: 'fail',
       detail: `${apiUrl}/health returned HTTP ${res.status}`,
-      hint: 'The API answered but is unhealthy — check https://cachly.dev/status or your CACHLY_API_URL.',
+      hint: `The API answered but is unhealthy — check ${cachlyUrl('/status', 'doctor')} or your CACHLY_API_URL.`,
     };
   } catch {
     return {
