@@ -978,7 +978,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         'That’s it — your Brain activates automatically the moment you finish',
         'signing in. Just keep working; your next request arrives brain-powered.',
         '',
-        '✨ Free forever · No credit card · 126 MCP tools · GDPR · EU servers',
+        '✨ Free forever · No credit card · 122 MCP tools · GDPR · EU servers',
       ].join('\n');
     }
 
@@ -1298,9 +1298,18 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     }
 
     default:
-      return `⚠️ Unknown tool: ${name}`;
+      throw new UnknownToolError(`Unknown tool: ${name}`);
   }
 }
+
+/**
+ * Thrown by handleTool for a tool name that matches none of the delegated
+ * handlers and none of the explicit switch cases. Caught by the top-level
+ * request handler and turned into an `isError` result — never a silent
+ * success — so a client can no longer mistake a missing handler for a
+ * completed call.
+ */
+class UnknownToolError extends Error {}
 
 // Pushed to every MCP host at connect time (initialize response). This is the
 // "SessionStart-equivalent" for harnesses without a per-prompt hook — Cursor,
@@ -1411,6 +1420,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const text = await handleTool(name, (args ?? {}) as Record<string, unknown>);
     return { content: [{ type: 'text', text }] };
   } catch (err) {
+    if (err instanceof UnknownToolError) {
+      return { content: [{ type: 'text', text: err.message }], isError: true };
+    }
     if (err instanceof McpError) throw err;
     const msg = (err as Error).message ?? String(err);
     notify('cachly', 'tool_error', { tool: name, error: msg }).catch(() => undefined);
@@ -2568,7 +2580,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
-  console.log('  \x1b[90mFree forever · GDPR · German servers · 126 MCP tools\x1b[0m');
+  console.log('  \x1b[90mFree forever · GDPR · German servers · 122 MCP tools\x1b[0m');
   console.log('');
   process.exit(0);
 }

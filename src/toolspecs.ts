@@ -1,7 +1,7 @@
 /**
  * Agent-framework tool-spec exporter.
  *
- * cachly exposes 126 MCP tools. MCP-native clients (Claude Code, Cursor,
+ * cachly exposes 122 MCP tools. MCP-native clients (Claude Code, Cursor,
  * Windsurf, Copilot) speak MCP directly. But the wider agent ecosystem —
  * OpenAI Assistants / function calling, the Anthropic Messages API, LangChain,
  * CrewAI, AutoGen — each want the SAME tool definitions in their own dialect.
