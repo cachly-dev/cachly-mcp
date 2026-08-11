@@ -13,6 +13,7 @@ import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
          indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
+import { upgradeNudge } from '../upgrade-nudge.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
 const MCP_VERSION = '0.10.119';
@@ -1613,6 +1614,12 @@ export async function handleBrainTool(
         const timeStr = h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
         lines.push(`⏱️ **Brain saved you ~${timeStr} total** (time not re-researching known fixes)`, '');
       }
+
+      // Upgrade nudge — surfaces the free-tier quota BEFORE the wall, once
+      // per session and right next to the value it just proved.
+      const recallGate = await getRecallGate(instance_id, apiFetch);
+      const nudge = upgradeNudge({ used: recallGate.used, limit: recallGate.limit, savedMins: timeSavedMins });
+      if (nudge) lines.push(nudge, '');
 
       // ── Welcome-back digest (gap ≥ 7 days) ──────────────────────────────────
       // When the user has been away a week or more, lead with a short "what

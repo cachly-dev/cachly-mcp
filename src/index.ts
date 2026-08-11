@@ -2307,7 +2307,7 @@ if (process.argv[2] === 'demo') {
     authors: String(authors.size),
     hours: String(hoursWasted),
   });
-  const previewURL = `https://cachly.dev/preview?${previewParams.toString()}`;
+  const previewURL = `https://cachly.dev/preview?${previewParams.toString()}&ref=demo&utm_source=cli-demo&utm_medium=cli&utm_campaign=cli-demo`;
 
   console.log('  \x1b[1mMake this permanent (free, 1–5 minutes):\x1b[0m');
   console.log('  \x1b[32m$ npx @cachly-dev/mcp-server@latest autopilot\x1b[0m');
