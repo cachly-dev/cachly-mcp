@@ -2571,6 +2571,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest demo\x1b[0m     ← Try it first (no account)');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest setup\x1b[0m    ← Interactive setup (pick editors)');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest health\x1b[0m   ← Check everything works');
+  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest doctor\x1b[0m   ← Diagnose a broken or missing install');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest digest\x1b[0m   ← Weekly Brain summary');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest share\x1b[0m    ← Share your Brain stats');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest badge\x1b[0m    ← README badge for your Brain');
@@ -3523,6 +3524,21 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     else if (r === 'upgraded')  console.log(`\n✅  CLS git hook upgraded to ${CLS_HOOK_VERSION}.`);
     else if (r === 'appended')  console.log(`\n✅  CLS git hook appended to existing post-commit.`);
   } catch { /* non-critical */ }
+
+  // ── Ambient Recall Phase 4: auto-install SessionStart + UserPromptSubmit hooks ─
+  // Only for Claude Code (the hooks config lives in .claude/settings.json). Without
+  // this call, setup/autosetup/autopilot never install the hooks that make the
+  // Brain speak up on its own — only `init` did (the bug POL-034 fixes).
+  if (editorsToSetup.includes('claude')) {
+    try {
+      const a = await installAmbientHooks(process.cwd(), instance.id, token || undefined);
+      const scriptVerb = a.scripts === 'written' ? '✅  Written' : a.scripts === 'upgraded' ? `✅  Upgraded (→ ${AMBIENT_HOOK_VERSION})` : '✓  Unchanged';
+      console.log(`${scriptVerb}: .claude/hooks/ (Ambient Recall — session briefing, per-prompt recall, file briefing, auto-learn)`);
+      if (a.settings === 'written')      console.log(`✅  Written: .claude/settings.json (Ambient Recall hooks wired)`);
+      else if (a.settings === 'merged')  console.log(`✅  Merged: .claude/settings.json (Ambient Recall hooks wired)`);
+      else                               console.log(`✓  Ambient Recall hooks already wired in .claude/settings.json`);
+    } catch { /* non-critical — ambient hooks are a best-effort feature */ }
+  }
 
   // Setup reached the end — close the funnel. Report config-write outcome so the
   // weekly funnel can spot permission/path problems blocking activation.

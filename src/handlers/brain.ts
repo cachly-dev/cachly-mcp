@@ -3731,7 +3731,7 @@ export async function handleBrainTool(
               cachly: {
                 command: 'npx',
                 args: ['@cachly-dev/mcp-server@latest'],
-                env: { CACHLY_INSTANCE_ID: instance_id },
+                env: { CACHLY_JWT: '<cky_live_...>', CACHLY_BRAIN_INSTANCE_ID: instance_id },
               },
             },
           }, null, 2),
@@ -3746,7 +3746,7 @@ export async function handleBrainTool(
               cachly: {
                 command: 'npx',
                 args: ['@cachly-dev/mcp-server@latest'],
-                env: { CACHLY_INSTANCE_ID: instance_id },
+                env: { CACHLY_JWT: '<cky_live_...>', CACHLY_BRAIN_INSTANCE_ID: instance_id },
               },
             },
           }, null, 2),
@@ -3761,7 +3761,7 @@ export async function handleBrainTool(
               cachly: {
                 command: 'npx',
                 args: ['@cachly-dev/mcp-server@latest'],
-                env: { CACHLY_INSTANCE_ID: instance_id },
+                env: { CACHLY_JWT: '<cky_live_...>', CACHLY_BRAIN_INSTANCE_ID: instance_id },
               },
             },
           }, null, 2),
@@ -3777,7 +3777,7 @@ export async function handleBrainTool(
                 type: 'stdio',
                 command: 'npx',
                 args: ['@cachly-dev/mcp-server@latest'],
-                env: { CACHLY_INSTANCE_ID: instance_id },
+                env: { CACHLY_JWT: '<cky_live_...>', CACHLY_BRAIN_INSTANCE_ID: instance_id },
               },
             },
           }, null, 2),
@@ -3792,7 +3792,7 @@ export async function handleBrainTool(
               cachly: {
                 command: 'npx',
                 args: ['@cachly-dev/mcp-server@latest'],
-                env: { CACHLY_INSTANCE_ID: instance_id },
+                env: { CACHLY_JWT: '<cky_live_...>', CACHLY_BRAIN_INSTANCE_ID: instance_id },
               },
             },
           }, null, 2),
@@ -3806,7 +3806,7 @@ export async function handleBrainTool(
             context_servers: {
               cachly: {
                 command: { path: 'npx', args: ['@cachly-dev/mcp-server@latest'] },
-                env: { CACHLY_INSTANCE_ID: instance_id },
+                env: { CACHLY_JWT: '<cky_live_...>', CACHLY_BRAIN_INSTANCE_ID: instance_id },
               },
             },
           }, null, 2),
@@ -3821,7 +3821,7 @@ export async function handleBrainTool(
               {
                 name: 'cachly',
                 command: 'npx @cachly-dev/mcp-server@latest',
-                env: { CACHLY_INSTANCE_ID: instance_id },
+                env: { CACHLY_JWT: '<cky_live_...>', CACHLY_BRAIN_INSTANCE_ID: instance_id },
               },
             ],
           }, null, 2),
@@ -3834,6 +3834,8 @@ export async function handleBrainTool(
         `> _"Bring your own model, keep your brain."_`,
         ``,
         `**Your Brain ID:** \`${instance_id}\``,
+        ``,
+        `Replace \`<cky_live_...>\` below with your own API key (get one at https://cachly.dev/setup-ai) — the Brain ID alone does not authenticate you.`,
         ``,
         `This Brain ID is model-agnostic. Every lesson you've learned, every Memory Crystal you've distilled,`,
         `and every prediction from your Causal Knowledge Graph is accessible from **any MCP-compatible AI client**.`,

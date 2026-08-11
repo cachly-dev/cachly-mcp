@@ -16,6 +16,7 @@
 
 import { appendFile, readFile, rename, writeFile } from 'node:fs/promises';
 import { mkdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import type { TurnRecord } from './ambient-recall.js';
 
@@ -30,8 +31,7 @@ export interface LedgerEntry extends TurnRecord {
 
 /** Default ledger location; overridable for tests via explicit path args. */
 export function defaultLedgerPath(): string {
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? '.';
-  return resolve(home, '.cachly', 'ambient-ledger.jsonl');
+  return resolve(homedir(), '.cachly', 'ambient-ledger.jsonl');
 }
 
 /** One JSONL line for an entry. Pure. */

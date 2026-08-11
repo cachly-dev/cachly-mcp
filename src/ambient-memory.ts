@@ -1,4 +1,5 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { emptyMemory, type RecallMemory } from './ambient-recall.js';
 
@@ -6,8 +7,7 @@ const MEMORY_FILE_NAME = 'ambient-memory.json';
 const MAX_MEMORY_BYTES = 64 * 1024;
 
 function defaultAmbientMemoryDir(): string {
-  const home = process.env.HOME ?? process.env.USERPROFILE ?? '.';
-  return resolve(home, '.cachly');
+  return resolve(homedir(), '.cachly');
 }
 
 function isFiniteNumberRecord(value: unknown): value is Record<string, number> {

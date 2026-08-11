@@ -467,11 +467,17 @@ export async function handleFedbrainTool(
       // Search global commons
       type SynResult = { id: string; topic: string; category: string; outcome: string; what_worked: string; what_failed?: string; severity: string; confirm_count: number; created_at: string; domain_fingerprint?: string };
       let results: SynResult[] = [];
+      // Set when the commons API call fails — the results below come from this
+      // single machine's local lessons, not from the confirmed global network.
+      // The reply must say so; printing them as unlabeled commons hits would
+      // dress a network outage up as confirmed world knowledge.
+      let usedLocalFallback = false;
       try {
         const params = new URLSearchParams({ q: query, limit: String(Math.min((limit as number) * 2, 50)) });
         const res = await apiFetch<{ results: SynResult[]; count: number }>(`/api/v1/syndication/search?${params}`);
         results = res.results ?? [];
       } catch {
+        usedLocalFallback = true;
         // Fallback: search local lessons
         const lessonKeys: string[] = [];
         const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
@@ -489,8 +495,12 @@ export async function handleFedbrainTool(
         }
       }
 
+      const fallbackNotice = usedLocalFallback
+        ? ` — ⚠️ Commons unreachable, local fallback (this machine only, not confirmed by the network)`
+        : '';
+
       if (results.length === 0) {
-        return [`🌐 **FedBrain Search: "${query}"**`, '', `No results. Contribute: \`fedbrain_contribute(lesson_key="fix:...")\``].join('\n');
+        return [`🌐 **FedBrain Search: "${query}"**${fallbackNotice}`, '', `No results. Contribute: \`fedbrain_contribute(lesson_key="fix:...")\``].join('\n');
       }
 
       // Context-weighted ranking
@@ -500,13 +510,15 @@ export async function handleFedbrainTool(
         const contextScore = localDomains.size > 0 ? overlap / Math.max(1, localDomains.size + rDomains.length) : 0;
         const confirmedScore = Math.min(1, r.confirm_count / 10);
         const weightedScore = (contextScore * 0.4) + (confirmedScore * 0.4) + (r.outcome === 'success' ? 0.2 : 0);
-        return { ...r, weightedScore, isGoldStandard: r.confirm_count >= 10 };
+        // A fallback result never earned network confirmations — it cannot be a
+        // Gold Standard no matter what confirm_count says.
+        return { ...r, weightedScore, isGoldStandard: !usedLocalFallback && r.confirm_count >= 10 };
       }).sort((a, b) => b.weightedScore - a.weightedScore).slice(0, limit as number);
 
-      const lines = [`🌐 **FedBrain Search: "${query}"** — ${ranked.length} result${ranked.length !== 1 ? 's' : ''} (context-weighted)\n`];
+      const lines = [`🌐 **FedBrain Search: "${query}"** — ${ranked.length} result${ranked.length !== 1 ? 's' : ''} (context-weighted)${fallbackNotice}\n`];
       for (const r of ranked) {
         const icon = r.outcome === 'success' ? '✅' : r.outcome === 'failure' ? '❌' : '⚠️';
-        const goldBadge = r.isGoldStandard ? ' 🏆 _Gold Standard_' : r.confirm_count >= 3 ? ` ✓${r.confirm_count}` : '';
+        const goldBadge = r.isGoldStandard ? ' 🏆 _Gold Standard_' : (!usedLocalFallback && r.confirm_count >= 3) ? ` ✓${r.confirm_count}` : '';
         const ctxPct = Math.round(r.weightedScore * 100);
         lines.push(`${icon}${goldBadge} **\`${r.topic}\`** [ctx: ${ctxPct}%]`);
         if (r.what_worked) lines.push(`  ✅ ${r.what_worked.slice(0, 150)}`);
