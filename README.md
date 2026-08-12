@@ -22,7 +22,7 @@
     <img src="https://img.shields.io/badge/GDPR-EU%20servers-green" alt="GDPR: EU servers" />
   </a>
   &nbsp;
-  <img src="https://img.shields.io/badge/122%20MCP%20tools-violet" alt="122 MCP tools" />
+  <img src="https://img.shields.io/badge/126_MCP_tools-violet" alt="122 MCP tools" />
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
 </p>
@@ -296,7 +296,7 @@ MCP tool — bulk-ingests past outcomes the same way `brain_from_git` ingests co
 
 ---
 
-## MCP Tools (122 total)
+## MCP Tools (126 total)
 
 The full tool catalog is generated from `sdk/mcp/src/tools.ts`. Cross-surface
 coverage is tracked in [`../../docs/generated/surface-parity.md`](../../docs/generated/surface-parity.md),
@@ -578,6 +578,13 @@ straight into your editor — your lessons follow you across all of them.
 | **[Cachly Brain for JetBrains](https://plugins.jetbrains.com/plugin/32059-cachly-brain)** | Same brain for IntelliJ / PyCharm / GoLand / WebStorm / Rider — status bar, brain health, lessons view. |
 | **[`@cachly-dev/openclaw`](https://www.npmjs.com/package/@cachly-dev/openclaw)** | Cut LLM costs with semantic caching in JS/TS apps |
 | **[cachly-dev/cachly-action](https://github.com/cachly-dev/cachly-action)** | GitHub Action: auto-setup, PR risk scan, auto-learn from merged PRs, weekly hygiene |
+
+Prefer a visual view over the terminal? The VS Code companion extension shows the
+same Brain, live, in the editor:
+
+![The Lessons view inside the Cachly Brain VS Code extension, listing six stored lessons](https://cachly.dev/screenshots/vscode/shot3-lesson-card.png)
+
+*The Lessons view in the VS Code companion extension — the same lessons this server stores, browsable without leaving the editor.*
 
 - 🌐 [cachly.dev](https://cachly.dev) — Dashboard & free signup
 - 📖 [Docs](https://cachly.dev/docs/ai-memory) — Full documentation
