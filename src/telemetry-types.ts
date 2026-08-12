@@ -38,6 +38,10 @@ export type FunnelEventName =
   | 'brain_seed_starter'
   // Monetization
   | 'premium_gate_hit'
+  // Eine Kostprobe wurde verbraucht: das gesperrte Werkzeug lief echt durch.
+  // Gegenstueck zu premium_gate_hit — erst das Verhaeltnis der beiden zeigt,
+  // ob aus Erleben Interesse wird.
+  | 'premium_taste_used'
   // Open-ended for future extension
   | (string & Record<never, never>);
 

@@ -774,6 +774,12 @@ import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
 import { buildAmbientDeps } from './ambient-deps.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
+import {
+  kostprobeUebrig,
+  kostprobeVerbrauchen,
+  kostprobeHinweis,
+  schrankeNachKostproben,
+} from './kostprobe.js';
 import { netBalance, shouldBackoff } from './ambient-recall.js';
 import { handleShareTool } from './handlers/share.js';
 import { handleVizTool } from './handlers/viz.js';
@@ -913,20 +919,40 @@ async function getTierInfo(instanceId: string): Promise<TierInfo> {
   }
 }
 
-/** Returns an upgrade teaser if a free-tier caller reached for a premium tool, else null. */
-async function featureGate(name: string, instanceId: string | undefined): Promise<string | null> {
+/**
+ * Entscheidet, was mit einem gesperrten Werkzeug auf der Gratis-Stufe
+ * passiert. Drei Ausgänge:
+ *
+ *   null        → durchlassen (kein Premium-Werkzeug, oder bezahlte Stufe,
+ *                 oder es sind noch Kostproben übrig)
+ *   {sperre}    → Text zurückgeben, Werkzeug NICHT ausführen
+ *   {kostprobe} → durchlassen UND nach dem Ergebnis einen Hinweis anhängen
+ *
+ * Warum überhaupt Kostproben: Gemessen am 11.08.2026 ist `premium_gate_hit`
+ * 36-mal gefeuert — von einer einzigen Person, dem Entwickler selbst, über
+ * fünf Wochen. Er hat nicht aufgerüstet. Die Schranke gab eine
+ * Verkaufsansage, nie eine Kostprobe; man vermisst nicht, was man nie hatte.
+ * Einzelheiten in kostprobe.ts.
+ */
+async function featureGate(
+  name: string,
+  instanceId: string | undefined,
+): Promise<{ sperre: string } | { kostprobe: string } | null> {
   if (!PREMIUM_TOOLS.has(name) || !instanceId) return null;
   const { isFree } = await getTierInfo(instanceId);
   if (!isFree) return null;
+
   const pitch = PREMIUM_PITCH[name] ?? 'A Premium intelligence feature.';
-  return [
-    `🔒 **\`${name}\` is a Premium feature**`,
-    ``,
-    `${pitch}`,
-    ``,
-    `Your Free Brain keeps full keyword + causal-graph recall, learning, and sessions — forever.`,
-    `Unlock the deeper layer (causal tracing · predictive risk · Team Brain) → ${UPGRADE_URL_FG}`,
-  ].join('\n');
+
+  if (kostprobeUebrig(name)) {
+    // Durchlassen und danach kurz sagen, was das war. Der Zähler wird erst
+    // HIER erhöht, also nur wenn wirklich ausgeführt wird — ein abgebrochener
+    // Aufruf darf keine Kostprobe kosten.
+    const verbraucht = kostprobeVerbrauchen(name);
+    return { kostprobe: kostprobeHinweis(name, verbraucht, UPGRADE_URL_FG) };
+  }
+
+  return { sperre: schrankeNachKostproben(name, pitch, UPGRADE_URL_FG) };
 }
 
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
@@ -1004,12 +1030,19 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     if (defaultId) args = { ...args, instance_id: defaultId };
   }
 
-  // Feature-Gate: free tier reaching for a Premium tool gets the upgrade pitch
-  // at the moment of need (the magic moment of basic recall stays untouched).
-  const gateMsg = await featureGate(name, args.instance_id as string | undefined);
-  if (gateMsg !== null) {
-    sendFunnelEvent('premium_gate_hit', { tool: name, instance_id: (args.instance_id as string) ?? '' });
-    return gateMsg;
+  // Feature-Gate mit Kostprobe: die ersten Läufe eines Premium-Werkzeugs
+  // laufen auf der Gratis-Stufe echt durch, erst danach kommt die Schranke.
+  // Der Hinweis wird an das ECHTE Ergebnis angehängt, nicht davorgesetzt —
+  // wirken soll die Antwort, nicht der Text.
+  const gate = await featureGate(name, args.instance_id as string | undefined);
+  let kostprobeHinweisText = '';
+  if (gate !== null) {
+    if ('sperre' in gate) {
+      sendFunnelEvent('premium_gate_hit', { tool: name, instance_id: (args.instance_id as string) ?? '' });
+      return gate.sperre;
+    }
+    kostprobeHinweisText = gate.kostprobe;
+    sendFunnelEvent('premium_taste_used', { tool: name, instance_id: (args.instance_id as string) ?? '' });
   }
 
   // Delegate brain tools (learn, recall, session, etc.)
@@ -1140,15 +1173,23 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   const cacheResult = await handleCacheTool(name, args, getConnection, apiFetch);
   if (cacheResult !== null) return cacheResult;
 
+  // Der Kostproben-Hinweis wird NUR hier angehaengt — an den drei Handlern,
+  // die die gesperrten Werkzeuge bedienen: team.ts (team_*, global_*),
+  // advanced.ts (causal_trace) und syndicate.ts (brain_predict und die
+  // uebrigen Vorhersagen). Er kommt ans ENDE, hinter das echte Ergebnis:
+  // wirken soll die Antwort, nicht der Text. Bei allen anderen Werkzeugen ist
+  // kostprobeHinweisText leer und die Zeile aendert nichts.
+  const mitHinweis = (r: string): string => (kostprobeHinweisText ? r + kostprobeHinweisText : r);
+
   // Delegate team/brain advanced tools
   const teamResult = await handleTeamTool(name, args, getConnection, apiFetch);
-  if (teamResult !== null) return teamResult;
+  if (teamResult !== null) return mitHinweis(teamResult);
 
   const roadmapResult = await handleRoadmapTool(name, args, getConnection, apiFetch);
   if (roadmapResult !== null) return roadmapResult;
 
   const advancedResult = await handleAdvancedTool(name, args, getConnection, apiFetch);
-  if (advancedResult !== null) return advancedResult;
+  if (advancedResult !== null) return mitHinweis(advancedResult);
 
   const syndicateResult = await handleSyndicateTool(name, args, getConnection, apiFetch);
   if (syndicateResult !== null) {
@@ -1158,7 +1199,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
       sendFunnelEvent('brain_predict', telemetryExtra);
     }
-    return syndicateResult;
+    return mitHinweis(syndicateResult);
   }
 
   const shareResult = await handleShareTool(name, args, getConnection, apiFetch);
