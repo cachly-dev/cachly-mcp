@@ -766,6 +766,7 @@ import { handleRoadmapTool } from './handlers/roadmap.js';
 import { handleAdvancedTool } from './handlers/advanced.js';
 import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
+import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-proof.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
 import { runAmbient, parseHookPayload, stopObservation } from './ambient-cli.js';
@@ -800,6 +801,22 @@ let _firstCallSuccessSent = false;
 // wrapper so the many call sites here stay unchanged.
 function detectEditor(): string {
   return detectEditorImpl();
+}
+
+/**
+ * Pulls topic + preview snippet out of a `smart_recall` result's top hit
+ * (format: `**💡 <topic>** ... \n> <preview>`). Returns `null` on any
+ * mismatch — the seed-path proof is a bonus, never invented.
+ */
+function extractTopHit(text: string): { topic: string; what: string } | null {
+  if (!text) return null;
+  const topicMatch = text.match(/\*\*💡\s+([^*]+)\*\*/);
+  const whatMatch = text.match(/^>\s+(.+)$/m);
+  if (!topicMatch || !whatMatch) return null;
+  const topic = topicMatch[1]!.trim();
+  const what = whatMatch[1]!.trim();
+  if (!topic || !what) return null;
+  return { topic, what };
 }
 
 /** Derive an anonymous, non-reversible fingerprint from the JWT sub claim. */
@@ -3421,9 +3438,14 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
         repo_path: cwd,
         limit: 100,
       });
-      const match = gitResult.match(/(\d+) lesson/);
-      gitLessonCount = match ? parseInt(match[1], 10) : 0;
-      console.log(` ✓  ${match ? match[1] + ' lessons' : 'done'} extracted from git history`);
+      const ingestedMatch = gitResult.match(/Ingested: \*\*(\d+)\*\*/);
+      gitLessonCount = ingestedMatch ? parseInt(ingestedMatch[1], 10) : 0;
+      console.log(` ✓  ${gitLessonCount} lesson${gitLessonCount === 1 ? '' : 's'} extracted from git history`);
+      const gitProofBlock = extractFirstRecallProof(gitResult);
+      if (gitProofBlock) {
+        console.log('');
+        console.log(gitProofBlock);
+      }
     } catch (e) {
       console.log(` (skipped: ${(e as Error).message.slice(0, 80)})`);
     }
@@ -3440,6 +3462,20 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     try {
       await handleTool('brain_seed_starter', { instance_id: instance.id });
       console.log(' ✓');
+      // Bonus, never a blocker: run one real recall against the corpus we just
+      // seeded and show the top hit, so the seed path gets a proof too — not
+      // just the weaker '✓' it used to leave the user with.
+      try {
+        const seedRecallText = await handleTool('smart_recall', {
+          instance_id: instance.id,
+          query: 'docker build slow',
+        });
+        const seedHit = extractTopHit(seedRecallText);
+        if (seedHit) {
+          console.log('');
+          console.log(renderFirstRecallProof(seedHit.topic, seedHit.what));
+        }
+      } catch { /* proof is a bonus, never blocks setup */ }
     } catch (e) {
       console.log(` (skipped: ${(e as Error).message.slice(0, 60)})`);
     }
