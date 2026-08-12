@@ -419,9 +419,31 @@ interface RecallGate {
   limit: number; // -1 = unlimited
   used: number;
   goodwillMessage?: string; // set the month a free user is gifted +250 recalls
+  /**
+   * One plain sentence from the API for the human behind this instance —
+   * e.g. "your dev trial runs until 18 Aug". Shown ONCE per process in
+   * session_start.
+   *
+   * Why this exists: until now the only text that reliably reached a user was
+   * an ERROR. The 402 goodwill message got through because we were denying
+   * them something. A working account could not be told anything at all, and
+   * most accounts have no email address on file.
+   */
+  notice?: string;
 }
 
 const _recallGateCache = new Map<string, { gate: RecallGate; expiresAt: number }>();
+
+/**
+ * Instances whose notice has already been shown in this process.
+ *
+ * Once per PROCESS, not once per call: the MCP server lives for the length of
+ * the editor session, so this is exactly "once per session". Without it the
+ * notice would repeat on every session_start — and with Ambient Recall that is
+ * every prompt. That is the nagging the upgrade nudge was built to avoid, and
+ * a line that appears every time stops being read within a day.
+ */
+const _noticeGezeigt = new Set<string>();
 
 // ── Recall quota: ONE unit per recall CALL ───────────────────────────────────
 // The gate above reads a monthly counter that this function writes. It counts
@@ -459,6 +481,7 @@ async function getRecallGate(instanceId: string, apiFetch: ApiFetch): Promise<Re
       total_recall_count?: number;
       recall_limit?: number;
       goodwill_message?: string;
+      notice?: string;
     }>(`/api/v1/instances/${instanceId}/memory`);
     const limit = mem?.recall_limit ?? -1;
     const used = mem?.total_recall_count ?? 0;
@@ -467,6 +490,7 @@ async function getRecallGate(instanceId: string, apiFetch: ApiFetch): Promise<Re
       limit,
       used,
       goodwillMessage: mem?.goodwill_message,
+      notice: mem?.notice,
     };
     _recallGateCache.set(instanceId, { gate, expiresAt: Date.now() + 60_000 });
     return gate;
@@ -1621,6 +1645,19 @@ export async function handleBrainTool(
       const recallGate = await getRecallGate(instance_id, apiFetch);
       const nudge = upgradeNudge({ used: recallGate.used, limit: recallGate.limit, savedMins: timeSavedMins });
       if (nudge) lines.push(nudge, '');
+
+      // Notice from the API — the only channel that reaches a WORKING account.
+      // Everything else we can say today requires denying the user something
+      // first (the 402 goodwill text arrived because it was an error), and most
+      // accounts have no email address on file.
+      //
+      // Once per process, so once per editor session. Repeating it would put it
+      // in front of the user on every prompt via Ambient Recall, and a line
+      // that appears every time stops being read within a day.
+      if (recallGate.notice && !_noticeGezeigt.has(instance_id)) {
+        _noticeGezeigt.add(instance_id);
+        lines.push(recallGate.notice, '');
+      }
 
       // ── Welcome-back digest (gap ≥ 7 days) ──────────────────────────────────
       // When the user has been away a week or more, lead with a short "what
