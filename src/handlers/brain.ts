@@ -24,7 +24,7 @@ const WHATS_NEW: Record<string, string[]> = {
     `  📎 \`/briefing\` warnings now carry \`outcome\`, \`author\`, \`learned_at\` and \`matched_on\` (the context tokens that triggered the warning) — editors can show WHY a fix hint fired, not just what it claims.`,
     `  🧰 VS Code 0.12.0 uses this: severity + confidence in the toast, full lesson card with provenance, "Not helpful" per-file suppression, reviewable CLS auto-learns.`,
     `  🧹 CI docs now describe exactly what ships: scan mode uses the REST \`/scan\` endpoint, the GitLab template covers learn/scan/confirm.`,
-    `  📊 126 MCP tools`,
+    `  📊 122 MCP tools`,
   ],
   '0.10.115': [
     `🔧 **\`brain_get_pref\` + \`brain_set_pref\` — persistent Brain preferences**`,
