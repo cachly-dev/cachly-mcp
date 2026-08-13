@@ -19,7 +19,7 @@ ${line}
 
   ${c.bold}One command sets everything up:${c.reset}
 
-  ${c.cyan}npx @cachly-dev/mcp-server@latest setup${c.reset}
+  ${c.cyan}npx @cachly-dev/mcp-server@latest autopilot${c.reset}
 
   Signs you in → detects your editors → writes all MCP configs
   automatically → adds Brain rules to CLAUDE.md.

@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import type { Redis } from 'ioredis';
 import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
          CONFIDENCE_WARN_VALUE, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_DAYS } from '../confidence.js';
@@ -17,14 +18,42 @@ import { upgradeNudge } from '../upgrade-nudge.js';
 import { cachlyUrl } from '../cachly-url.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
-const MCP_VERSION = '0.10.119';
+// Resolve the package version at runtime from package.json so the session briefing
+// `version` field always matches the published npm version. A hardcoded constant
+// silently drifted (0.10.119 vs published 0.10.122), making new-feature adoption
+// impossible to track. Paths cover both prod (dist/handlers/brain.js → ../../../) and
+// dev (src/handlers/brain.ts → ../../../). Falls back to a literal if resolution fails.
+const CURRENT_VERSION: string = (() => {
+  try {
+    const req = createRequire(import.meta.url);
+    for (const rel of ['../../../package.json', '../../package.json']) {
+      try {
+        const pkg = req(rel) as { name?: string; version?: string };
+        if (pkg.name === '@cachly-dev/mcp-server' && pkg.version) return pkg.version;
+      } catch { /* try next candidate */ }
+    }
+  } catch { /* fall through to literal */ }
+  return '0.10.100';
+})();
+
+// Resolve the total MCP tools count at runtime from generated capabilities.
+// This count is shown in session_start's What's-New briefing for the current version.
+// Falls back silently per CONTRACT: better to skip the count than show a wrong number.
+const getTotalMcpTools = (): number | null => {
+  try {
+    const req = createRequire(import.meta.url);
+    const caps = req('../../../CACHLY_CAPABILITIES.json') as { mcp?: { total_tools?: number } };
+    return caps.mcp?.total_tools ?? null;
+  } catch { /* fail silently */ }
+  return null;
+};
+
 const WHATS_NEW: Record<string, string[]> = {
   '0.10.119': [
     `🔍 **Explainable briefings — provenance in every warning**`,
     `  📎 \`/briefing\` warnings now carry \`outcome\`, \`author\`, \`learned_at\` and \`matched_on\` (the context tokens that triggered the warning) — editors can show WHY a fix hint fired, not just what it claims.`,
     `  🧰 VS Code 0.12.0 uses this: severity + confidence in the toast, full lesson card with provenance, "Not helpful" per-file suppression, reviewable CLS auto-learns.`,
     `  🧹 CI docs now describe exactly what ships: scan mode uses the REST \`/scan\` endpoint, the GitLab template covers learn/scan/confirm.`,
-    `  📊 122 MCP tools`,
   ],
   '0.10.115': [
     `🔧 **\`brain_get_pref\` + \`brain_set_pref\` — persistent Brain preferences**`,
@@ -342,7 +371,7 @@ const WHATS_NEW: Record<string, string[]> = {
     `✅ Build: 0 errors, 0 warnings · 379 tests green`,
   ],
   '0.10.57': [
-    `🆕 **What's new in v${MCP_VERSION}:**`,
+    `🆕 **What's new in v${CURRENT_VERSION}:**`,
     `  🔧 **Critical fix** — corrected the npm bin/main entry path (\`dist/src/index.js\`); 0.10.50–0.10.52 shipped a broken entry point`,
     `  🔧 Version hygiene — synced package.json, server.json, lockfile, MCP_VERSION; \`latest\` now points forward again`,
     `  ✅ Accurate tool count (95) across README, server.json, CLI banners`,
@@ -1688,10 +1717,17 @@ export async function handleBrainTool(
       // ── What's New (shown once per version update) ──────────────────────────
       try {
         const seenVersion = await redis.get('cachly:mcp:version:last_seen');
-        if (seenVersion !== MCP_VERSION) {
-          await redis.set('cachly:mcp:version:last_seen', MCP_VERSION, 'EX', 365 * 86400);
-          const changelog = WHATS_NEW[MCP_VERSION];
-          if (changelog) { lines.push(...changelog, ''); }
+        if (seenVersion !== CURRENT_VERSION) {
+          await redis.set('cachly:mcp:version:last_seen', CURRENT_VERSION, 'EX', 365 * 86400);
+          const changelog = WHATS_NEW[CURRENT_VERSION];
+          if (changelog) {
+            lines.push(...changelog, '');
+            // For current version, append dynamic tool count if available
+            const toolCount = getTotalMcpTools();
+            if (toolCount) {
+              lines.push(`📊 ${toolCount} MCP tools`, '');
+            }
+          }
         }
       } catch { /* non-critical */ }
 
