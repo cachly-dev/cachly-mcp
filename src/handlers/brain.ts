@@ -2647,34 +2647,12 @@ export async function handleBrainTool(
           await redis.expire(key, 90 * 86400);
           autoLearned.push(topic);
         }
-
-        // Also store a lesson per changed file area if files were changed
-        if (files_changed.length > 0) {
-          const areas = [...new Set(files_changed.map(f => f.split('/').slice(0, 2).join('/')))].slice(0, 3);
-          for (const area of areas) {
-            const slug = area.replace(/[^a-z0-9]/gi, '-').toLowerCase().replace(/-+/g, '-').slice(0, 30);
-            const topic = `auto:changed:${slug}`;
-            const key = `cachly:lesson:best:${topic}`;
-            const lesson = {
-              topic,
-              outcome: 'success',
-              what_worked: `Files changed in ${area}: ${files_changed.filter(f => f.startsWith(area.split('/')[0])).slice(0, 5).join(', ')}`,
-              context: summary.slice(0, 200),
-              severity: 'minor',
-              ts: now.toISOString(),
-              recall_count: 0,
-              auto_learned: true,
-              version: 2,
-            };
-            await redis.set(key, JSON.stringify(lesson));
-            await redis.expire(key, 90 * 86400);
-            autoLearned.push(topic);
-          }
-        }
       } catch { /* auto-learn errors must never break session_end */ }
 
       // ── 🌿 Ambient Git Learning ────────────────────────────────────────────────
       // Read git commits since session start → auto-learn each meaningful commit.
+      // The commit BODY (%b) carries the reasoning — what was measured, what the
+      // cause was, what trap it avoided. The subject (%s) alone is just a heading.
       const ambientLearned: string[] = [];
       if (workspace_path) {
         try {
@@ -2683,15 +2661,62 @@ export async function handleBrainTool(
             ? (() => { try { return (JSON.parse(currentRaw) as { started?: string }).started ?? ''; } catch { return ''; } })()
             : '';
           const sinceArg = sessionStartTs ? `--since="${sessionStartTs}"` : '--since="1 hour ago"';
+          // '|||ENDE' terminates one commit's record. A commit body can contain
+          // blank lines and newlines of its own, so splitting the raw output on
+          // '\n' would tear a single multi-line body apart into several fake
+          // "commits" — splitting on the marker keeps each body intact.
           const gitOut = execSync(
-            `git -C "${workspace_path}" log ${sinceArg} --oneline --format="%H|||%s|||%ai"`,
+            `git -C "${workspace_path}" log ${sinceArg} --oneline --format="%H|||%s|||%b|||%ai|||ENDE"`,
             { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
           ).trim();
           if (gitOut) {
             const commitActionRe = /\b(fix|add|remove|refactor|migrate|update|resolve|implement|improve|optimize|configure|create|delete|disable|enable|debug|patch|upgrade|build|rewrite|deploy|feat|chore|docs|test|perf|ci)\b/i;
-            for (const line of gitOut.split('\n').slice(0, 10)) {
-              const [hash, msg, dateStr] = line.split('|||');
+            const commitBlocks = gitOut.split('|||ENDE').map(b => b.trim()).filter(Boolean);
+            for (const block of commitBlocks.slice(0, 10)) {
+              const [hash, msg, rawBody, dateStr] = block.split('|||');
+
+              // Files touched together in one commit are recorded as co-occurs
+              // edges between file nodes in the graph ("who touches A usually
+              // touches B") — that is independent of whether the commit message
+              // itself is lesson-worthy, so it runs for every recent commit.
+              if (hash) {
+                try {
+                  // '--root' matters for a repo's very first commit: without it,
+                  // diff-tree has no parent to compare against and silently
+                  // reports zero changed files for that commit.
+                  const nameOut = execSync(
+                    `git -C "${workspace_path}" diff-tree --no-commit-id --name-only -r --root "${hash}"`,
+                    { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+                  ).trim();
+                  // Pairing is quadratic, so the cap decides the cost — and this
+                  // runs inside session_end, which must stay quick. At 12 files
+                  // that is 66 pairs; at 25 it would be 300, times up to ten
+                  // commits. Each file node is upserted ONCE up front instead of
+                  // once per pair: with 12 files that is 12 upserts rather than
+                  // 132, and it turns ~530 round-trips into ~144.
+                  const CO_OCCUR_MAX_FILES = 12;
+                  const changedFiles = nameOut
+                    ? nameOut.split('\n').map(f => f.trim()).filter(Boolean).slice(0, CO_OCCUR_MAX_FILES)
+                    : [];
+                  const fileIds: string[] = [];
+                  for (const f of changedFiles) fileIds.push(await ckgUpsertFileNode(redis, f));
+                  for (let i = 0; i < fileIds.length; i++) {
+                    for (let j = i + 1; j < fileIds.length; j++) {
+                      await ckgUpdateEdge(redis, fileIds[i]!, 'co-occurs', fileIds[j]!, true);
+                      await ckgUpdateEdge(redis, fileIds[j]!, 'co-occurs', fileIds[i]!, true);
+                    }
+                  }
+                } catch { /* file co-occurrence is best-effort */ }
+              }
+
               if (!msg || !commitActionRe.test(msg)) continue;
+
+              // A heading alone is not a lesson. Without a substantial body —
+              // the why, the measurement, the trap — nothing gets stored: better
+              // no entry than one that fills space and says nothing.
+              const body = (rawBody ?? '').trim();
+              if (body.length < 120) continue;
+
               const slug = msg
                 .toLowerCase().replace(/^(fix|feat|chore|docs|test|ci|perf|refactor|build|revert)[:(\s]/i, '')
                 .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40);
@@ -2703,7 +2728,7 @@ export async function handleBrainTool(
               const commitLesson = {
                 topic,
                 outcome: 'success' as const,
-                what_worked: msg.slice(0, 200),
+                what_worked: `${msg}\n\n${body.slice(0, 1200)}`,
                 context: `Auto-learned from git commit ${(hash ?? '').slice(0, 7)} at ${dateStr ?? ''} in ${workspace_path}`,
                 severity: 'minor' as const,
                 ts: now.toISOString(),
