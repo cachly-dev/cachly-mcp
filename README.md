@@ -145,8 +145,10 @@ arrives pre-briefed — every session, automatically.
 > ```
 
 **Our agreement with you:** Free forever tier. GDPR, EU servers. No model lock-in —
-leave anytime and take your data. Code excerpts are stored only if you call
-`index_project` yourself — and only on your own EU instance.
+leave anytime and take your data: `npx @cachly-dev/mcp-server@latest export` writes
+every lesson to `lessons.md` (to read) and `lessons.jsonl` (to reuse). Code excerpts
+are stored only if you call `index_project` yourself — and only on your own EU
+instance.
 
 ---
 
@@ -351,7 +353,7 @@ and pinned OpenAPI/OpenAI/Anthropic/LangChain projections live in
 | Tool | What it does |
 |------|-------------|
 | **`brain_seed_starter`** | Seed 16 universal lessons so your **first** `smart_recall` hits — auto-runs on a fresh repo |
-| **`brain_share`** | Export a Brain snapshot as a shareable link (public or unlisted) |
+| **`brain_share`** | Publish a Brain snapshot as a shareable link (public or unlisted) — a link to show off, not your data. For that, run `npx @cachly-dev/mcp-server export` |
 | **`brain_import`** | Import any shared Brain into yours — `topic_prefix`, `min_confidence`, `dry_run` |
 | `brain_share_list` / `brain_unshare` | List your shares · revoke a share (link goes dead) |
 | **`brain_discover`** | Search the Brain marketplace for ready-made knowledge bases |

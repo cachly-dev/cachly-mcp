@@ -779,6 +779,7 @@ import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledg
 import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
 import { buildAmbientDeps } from './ambient-deps.js';
 import { resolveApiKey, saveApiKey, type CredentialsHomeOptions } from './credentials.js';
+import { buildLessonsMarkdown, buildLessonsJsonl, type ExportLesson } from './brain-export.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
 import {
@@ -1917,6 +1918,87 @@ if (process.argv[2] === 'digest') {
     console.log('');
   } catch (e) {
     console.log(`\n❌ Could not fetch digest: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+// ── CLI: cachly export ────────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest export [--out DIR] [--format md|jsonl|both]
+// Writes your own Brain's lessons to disk: lessons.md to read, lessons.jsonl to
+// reuse. "No model lock-in — leave anytime and take your data," made real.
+
+if (process.argv[2] === 'export') {
+  const { writeFile, mkdir } = await import('node:fs/promises');
+  const { resolve } = await import('node:path');
+  const argv = process.argv.slice(3);
+  const flag = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
+
+  const format = flag('format') ?? 'both';
+  if (format !== 'md' && format !== 'jsonl' && format !== 'both') {
+    console.log(`\n❌ Unknown --format "${format}" — use md, jsonl, or both.\n`);
+    process.exit(1);
+  }
+  const outDir = resolve(flag('out') ?? '.');
+
+  const apiKey = JWT || resolveApiKey() || '';
+  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+
+  if (!apiKey || !instanceId) {
+    console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
+    process.exit(1);
+  }
+
+  process.stdout.write('\n📤 Exporting your Brain...\n\n');
+
+  try {
+    const memRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/memory`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!memRes.ok) throw new Error(`memory HTTP ${memRes.status}`);
+    const mem = await memRes.json() as {
+      top_lessons?: Array<{
+        topic: string; outcome?: string; severity?: string; tags?: string[];
+        what_worked?: string; ts?: string; author?: string; recall_count?: number;
+      }>;
+    };
+
+    const lessons: ExportLesson[] = (mem.top_lessons ?? []).map((l) => ({
+      topic: l.topic,
+      outcome: l.outcome,
+      severity: l.severity,
+      tags: l.tags,
+      whatWorked: l.what_worked,
+      ts: l.ts,
+      author: l.author,
+      recallCount: l.recall_count,
+    }));
+
+    if (lessons.length === 0) {
+      console.log('   No lessons in this Brain yet — nothing to export.\n');
+      process.exit(0);
+    }
+
+    await mkdir(outDir, { recursive: true });
+    const written: string[] = [];
+    if (format === 'md' || format === 'both') {
+      const mdPath = resolve(outDir, 'lessons.md');
+      await writeFile(mdPath, buildLessonsMarkdown(lessons), 'utf-8');
+      written.push(`${lessons.length} lesson${lessons.length === 1 ? '' : 's'} → ${mdPath}`);
+    }
+    if (format === 'jsonl' || format === 'both') {
+      const jsonlPath = resolve(outDir, 'lessons.jsonl');
+      await writeFile(jsonlPath, buildLessonsJsonl(lessons), 'utf-8');
+      written.push(`${lessons.length} lesson${lessons.length === 1 ? '' : 's'} → ${jsonlPath}`);
+    }
+
+    console.log('✅ Export complete:');
+    for (const line of written) console.log(`   ${line}`);
+    console.log('');
+  } catch (e) {
+    console.log(`\n❌ Could not export your Brain: ${(e as Error).message}\n`);
     process.exit(1);
   }
   process.exit(0);
