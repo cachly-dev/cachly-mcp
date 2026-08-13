@@ -64,7 +64,7 @@ import { Redis } from 'ioredis';
 // Mutable so the `setup`/`init` CLI can honor a `--api-url` flag for self-hosting.
 // Reassigned (if at all) before any network call is made.
 let API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
-let JWT = process.env.CACHLY_JWT ?? '';
+let JWT = resolveApiKey() ?? '';
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
 
 // Resolve the package version at runtime from package.json so the telemetry
@@ -221,9 +221,11 @@ async function persistApiKeyToConfig(apiKey: string): Promise<void> {
       existing.env ??= {};
       existing.env['CACHLY_JWT'] = apiKey;
     } else {
+      const freshEnv: Record<string, string> = {};
+      freshEnv['CACHLY_JWT'] = apiKey;
       cfg.mcpServers['cachly'] = {
         command: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'],
-        env: { CACHLY_JWT: apiKey },
+        env: freshEnv,
       };
     }
     await mkdir(dirname(claudePath), { recursive: true });
@@ -776,7 +778,7 @@ import { runAmbient, parseHookPayload, stopObservation } from './ambient-cli.js'
 import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
 import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
 import { buildAmbientDeps } from './ambient-deps.js';
-import { resolveApiKey, saveApiKey } from './credentials.js';
+import { resolveApiKey, saveApiKey, type CredentialsHomeOptions } from './credentials.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
 import {
@@ -1547,14 +1549,28 @@ export const CLAUDE_MD_MARKER_END   = '<!-- cachly-brain-end -->';
 
 const DEFAULT_API_URL = 'https://api.cachly.dev';
 
-// Build the env block written into an editor's MCP config. Self-hosting is
-// first-class: if the operator runs setup/init against their own backend
-// (CACHLY_API_URL set to a non-default URL), that URL is baked into the config so
-// the editor-launched server talks to the self-hosted instance — not api.cachly.dev.
-// For the default cloud backend we OMIT CACHLY_API_URL to keep configs clean (the
-// binary already defaults to it).
-export function buildServerEnv(apiKey: string, instanceId: string): Record<string, string> {
-  const env: Record<string, string> = { CACHLY_JWT: apiKey, CACHLY_BRAIN_INSTANCE_ID: instanceId };
+/**
+ * Builds the `env` block written into an editor's MCP config. Self-hosting is
+ * first-class: if the operator runs setup/init against their own backend
+ * (CACHLY_API_URL set to a non-default URL), that URL is baked into the config
+ * so the editor-launched server talks to the self-hosted instance — not
+ * api.cachly.dev. For the default cloud backend we OMIT CACHLY_API_URL to keep
+ * configs clean (the binary already defaults to it).
+ *
+ * GROW-033: the API key itself is OMITTED by default, so every PROJECT config
+ * this feeds (`.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, …) is safe
+ * to commit. The running server resolves its key at start time via
+ * `resolveApiKey` instead (env, then the home credentials file). Pass
+ * `{ includeApiKey: true }` only for the one config that never leaves the
+ * user's machine: the global `~/.claude/mcp.json`.
+ */
+export function buildServerEnv(
+  apiKey: string,
+  instanceId: string,
+  opts: { includeApiKey?: boolean } = {},
+): Record<string, string> {
+  const env: Record<string, string> = { CACHLY_BRAIN_INSTANCE_ID: instanceId };
+  if (opts.includeApiKey) env.CACHLY_JWT = apiKey;
   if (API_URL && API_URL !== DEFAULT_API_URL) env.CACHLY_API_URL = API_URL;
   return env;
 }
@@ -1595,14 +1611,25 @@ export function buildMcpConfig(apiKey: string, instanceId: string, editor: strin
   }, null, 2);
 }
 
-// mergeMcpConfig reads an existing config file (if any), merges the cachly entry,
-// and returns the updated JSON string — preserving all other MCP servers and settings.
+/**
+ * Reads an existing editor config file (if any), merges in the cachly entry,
+ * and returns the updated JSON string — preserving all other MCP servers and
+ * settings.
+ *
+ * BESTANDSSCHUTZ (GROW-033): before GROW-033 this file could carry the API
+ * key in `env.CACHLY_JWT` as plaintext. If a legacy install still has that
+ * Altbestand value in the file being merged, it is uebernommen into the home
+ * credentials store via `saveApiKey` (the same store `resolveApiKey` already
+ * reads) before the merged config below is built — so the project file stops
+ * carrying the secret without anyone losing access.
+ */
 export async function mergeMcpConfig(
   configPath: string,
   apiKey: string,
   instanceId: string,
   editor: string,
   fsOps: { readFile: (p: string, enc: BufferEncoding) => Promise<string>; existsSync: (p: string) => boolean },
+  credOpts: CredentialsHomeOptions = {},
 ): Promise<string> {
   const cachlyEntry = {
     command: 'npx',
@@ -1628,6 +1655,12 @@ export async function mergeMcpConfig(
     // Merge into experimental.modelContextProtocolServers array — replace cachly entry if present
     const exp = (existing['experimental'] ?? {}) as Record<string, unknown>;
     const servers = (exp['modelContextProtocolServers'] ?? []) as Array<Record<string, unknown>>;
+    let legacyKey: string | undefined;
+    for (const s of servers) {
+      const env = (s['env'] ?? {}) as Record<string, string>;
+      if (env['CACHLY_JWT']) { legacyKey = env['CACHLY_JWT']; break; }
+    }
+    if (legacyKey) saveApiKey(legacyKey, credOpts);
     const filtered = servers.filter((s) => {
       const env = (s['env'] ?? {}) as Record<string, string>;
       return !env['CACHLY_JWT'] && !env['CACHLY_BRAIN_INSTANCE_ID'];
@@ -1640,6 +1673,9 @@ export async function mergeMcpConfig(
   if (editor === 'zed') {
     // Merge only context_servers.cachly — preserve all other Zed settings
     const cs = (existing['context_servers'] ?? {}) as Record<string, unknown>;
+    const previousCachly = cs['cachly'] as { command?: { env?: Record<string, string> } } | undefined;
+    const legacyKey = previousCachly?.command?.env?.['CACHLY_JWT'];
+    if (legacyKey) saveApiKey(legacyKey, credOpts);
     cs['cachly'] = { command: { path: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'], env: cachlyEntry.env }, settings: {} };
     existing['context_servers'] = cs;
     return JSON.stringify(existing, null, 2);
@@ -1647,6 +1683,9 @@ export async function mergeMcpConfig(
 
   // Standard mcpServers format (Claude Code, Cursor, Windsurf, Copilot, Cline)
   const servers = (existing['mcpServers'] ?? {}) as Record<string, unknown>;
+  const previousCachly = servers['cachly'] as { env?: Record<string, string> } | undefined;
+  const legacyKey = previousCachly?.env?.['CACHLY_JWT'];
+  if (legacyKey) saveApiKey(legacyKey, credOpts);
   servers['cachly'] = cachlyEntry;
   existing['mcpServers'] = servers;
   return JSON.stringify(existing, null, 2);
@@ -2703,6 +2742,7 @@ if (process.argv[2] === 'init') {
   const { existsSync: exInit } = await import('node:fs');
   const configExisted = exInit(configPath);
   const prevConfig = configExisted ? await readFile(configPath, 'utf-8').catch(() => '') : '';
+  saveApiKey(apiKey);
   const merged = await mergeMcpConfig(configPath, apiKey, instanceId, editor, { readFile, existsSync: exInit });
   // Idempotent: only write when the content actually changes.
   if (merged !== prevConfig) {
@@ -3376,6 +3416,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   // always claiming "Brain is ready" even when a config never got written.
   const configWriteFailures: Array<{ file: string; reason: string }> = [];
   let configWriteSuccesses = 0;
+  saveApiKey(token);
   for (const editor of editorsToSetup) {
     const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
     const configPath = resolve(cwd, configFile);
@@ -3410,7 +3451,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     globalConfig.mcpServers['cachly'] = {
       command: 'npx',
       args: ['-y', '@cachly-dev/mcp-server@latest'],
-      env: buildServerEnv(token, instance.id),
+      env: buildServerEnv(token, instance.id, { includeApiKey: true }),
     };
     await writeFile(globalClaudePath, JSON.stringify(globalConfig, null, 2), 'utf-8');
     console.log(`✅ Written: ~/.claude/mcp.json  (global — works in every project)`);
