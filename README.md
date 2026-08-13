@@ -278,9 +278,10 @@ Every CI run is a lesson: a red→green transition is a proven fix, a green→re
 known cause. Ready-to-paste templates live in
 [`src/ci-integration/`](./src/ci-integration/):
 
-- **GitHub Actions** — copy [`brain-from-ci-action.yml`](./src/ci-integration/brain-from-ci-action.yml)
+- **GitHub Actions** — copy [`brain-from-ci-action.yml`](../github-action/templates/brain-from-ci-action.yml)
   into `.github/workflows/`. It triggers on `workflow_run` (completed) and pushes the
-  outcome to your Brain. Requires `CACHLY_JWT` + `CACHLY_BRAIN_INSTANCE_ID` secrets.
+  outcome to your Brain. Requires `CACHLY_API_KEY` + `CACHLY_BRAIN_INSTANCE_ID` secrets
+  (`CACHLY_JWT` still works as a fallback).
 - **GitLab CI** — copy [`brain-from-ci-gitlab.yml`](./src/ci-integration/brain-from-ci-gitlab.yml)
   into your pipeline: two `.post` jobs (`on_success` / `on_failure`) with `allow_failure: true`.
   Want more than outcome pushes? The full GitLab template

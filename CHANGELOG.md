@@ -141,7 +141,7 @@ smithery.yaml. This release re-syncs all four manifests.
 - **`cache_stats` ROI-Projektor** — when no hits exist yet (day 1 of rollout), shows a projection calculator: "5/10/20 devs × 50 LLM calls/day × 25% hit-rate → $X/month". ROI is visible before accumulating a single hit.
 - **`cache_org_stats`** — new tool showing aggregated shared-namespace stats for an org. Convention: `org:{org_id}:sem:*`. Zero API changes — works with existing Redis.
 - **`org_id` on `cache_set`/`cache_get`** — optional parameter. When set, `cache_set` mirrors writes to the org namespace; `cache_get` falls back to org namespace on miss. Fully backwards-compatible.
-- **`src/ci-integration/brain-from-ci-action.yml`** — copy-pasteable GitHub Actions workflow. Triggers on `workflow_run` (completed), maps conclusion to `job_status`, POSTs to `POST /api/v1/instances/:id/ci-outcome`. Brain self-calibrates confidence on every CI run. Requires `CACHLY_JWT` + `CACHLY_BRAIN_INSTANCE_ID` secrets.
+- **`src/ci-integration/brain-from-ci-action.yml`** (moved to `sdk/github-action/templates/brain-from-ci-action.yml` in GROW-022) — copy-pasteable GitHub Actions workflow. Triggers on `workflow_run` (completed), maps conclusion to `job_status`, POSTs to `POST /api/v1/instances/:id/ci-outcome`. Brain self-calibrates confidence on every CI run. Requires `CACHLY_JWT` + `CACHLY_BRAIN_INSTANCE_ID` secrets.
 - **`src/ci-integration/push-ci-outcome.mjs`** — standalone Node.js helper (no MCP dep). Always exits 0 — CI never fails because of Brain push errors.
 
 ---

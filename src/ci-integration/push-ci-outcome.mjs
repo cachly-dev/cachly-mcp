@@ -5,8 +5,11 @@
  * Posts a CI outcome to the cachly Brain so it can self-calibrate
  * confidence on its knowledge-graph edges.
  *
+ * Env vars (one of these required for auth):
+ *   CACHLY_API_KEY               – cachly API key (cky_live_...), preferred: long-lived, rotatable
+ *   CACHLY_JWT                   – Keycloak access token, fallback: short-lived, used if no API key is set
+ *
  * Env vars (required):
- *   CACHLY_JWT                  – Keycloak access token
  *   CACHLY_BRAIN_INSTANCE_ID    – Brain instance UUID
  *
  * Env vars (set by the workflow):
@@ -18,14 +21,16 @@
  */
 
 const API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
+const API_KEY = process.env.CACHLY_API_KEY ?? '';
 const JWT = process.env.CACHLY_JWT ?? '';
+const AUTH_TOKEN = API_KEY || JWT;
 const INSTANCE_ID = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
 const JOB_NAME = process.env.JOB_NAME ?? 'unknown';
 const JOB_STATUS = (process.env.JOB_STATUS ?? 'unknown').toLowerCase();
 const PREV_STATUS = (process.env.PREV_STATUS ?? '').toLowerCase();
 
-if (!JWT || !INSTANCE_ID) {
-  console.warn('[cachly-ci] Missing CACHLY_JWT or CACHLY_BRAIN_INSTANCE_ID — skipping Brain push.');
+if (!AUTH_TOKEN || !INSTANCE_ID) {
+  console.warn('[cachly-ci] Missing CACHLY_API_KEY (or CACHLY_JWT fallback) or CACHLY_BRAIN_INSTANCE_ID — skipping Brain push.');
   process.exit(0);
 }
 
@@ -52,7 +57,7 @@ try {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${JWT}`,
+      'Authorization': `Bearer ${AUTH_TOKEN}`,
     },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(10_000),
