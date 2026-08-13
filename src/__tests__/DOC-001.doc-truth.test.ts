@@ -1,13 +1,24 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 
 const root = (p: string) => new URL(`../../../../${p}`, import.meta.url);
 const read = (p: string) => readFileSync(root(p), 'utf8');
 
-describe('DOC-001: root docs carry generated truth, and the guard watches them', () => {
-  const caps = JSON.parse(read('CACHLY_CAPABILITIES.json')) as {
-    mcp: { total_tools: number };
-  };
+// Four levels up is the MONOREPO root. In the npm mirror (cachly-mcp) the
+// package itself is the repo root, so this URL points OUTSIDE the checkout
+// and every read() ENOENTs — that broke `npm test` in the mirror's publish
+// workflow five times in a row on 2026-08-12/13. The docs under test are
+// monorepo-only, so the whole suite is skipped where that root is absent.
+const inMonorepo = existsSync(root('CACHLY_CAPABILITIES.json'));
+
+describe.skipIf(!inMonorepo)('DOC-001: root docs carry generated truth, and the guard watches them', () => {
+  // Guarded: describe callbacks run at collection time even when skipped,
+  // so an unconditional read() here would still ENOENT in the mirror.
+  const caps = inMonorepo
+    ? (JSON.parse(read('CACHLY_CAPABILITIES.json')) as {
+        mcp: { total_tools: number };
+      })
+    : { mcp: { total_tools: 0 } };
 
   it('capability matrix states the generated tool count, not a stale one', () => {
     const matrix = read('CACHLY_CAPABILITY_MATRIX.md');
