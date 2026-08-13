@@ -77,27 +77,18 @@ export async function handleAdvancedTool(
         if (age > staleMs && recalls === 0) stale.push(k);
       }
 
-      // Merge duplicates by prefix: keep the success/highest-severity one
-      let merged = 0;
+      // Consolidation NEVER deletes a lesson.
+      //
+      // Until 2026-08-13 this block merged "duplicates by prefix": it grouped
+      // every lesson by the segment before the first ':' and deleted all but
+      // one per group. A single real run on a 626-lesson brain deleted 529 of
+      // them — every `cachly:*` lesson counted as a duplicate of every other.
+      //
+      // The counts below stay (they are a report), the deletes are gone. Stale
+      // entries still get a 30-day expiry — that is a deadline a recall lifts
+      // again, not a deletion.
+      const merged = 0;
       if (!dry_run) {
-        for (const [, keys] of topicGroups) {
-          if (keys.length < 2) continue;
-          const bySuccess = keys.filter(k => lessons.get(k)?.outcome === 'success');
-          const winner = bySuccess[0] ?? keys[0];
-          for (const k of keys) {
-            if (k !== winner) { await redis.del(k); merged++; }
-          }
-        }
-        // Resolve contradictions: keep success, delete failure for same topic
-        for (const { keys } of contradictions) {
-          const success = keys.find(k => lessons.get(k)?.outcome === 'success');
-          if (success) {
-            for (const k of keys) {
-              if (k !== success) { await redis.del(k); }
-            }
-          }
-        }
-        // Flag stale entries with a TTL of 30 days (not deleted, just expiring)
         for (const k of stale) {
           await redis.expire(k, 86400 * 30);
         }
@@ -112,13 +103,12 @@ export async function handleAdvancedTool(
         ...contradictions.slice(0, 5).map(c => `  → \`${c.topic}\`: ${c.keys.length} conflicting entries (kept: success)`),
         contradictions.length > 5 ? `  … and ${contradictions.length - 5} more` : '',
         ``,
-        `♻️ **Duplicate clusters:** ${Array.from(topicGroups.values()).filter(v => v.length > 1).length}` +
-          (merged > 0 ? ` → ${merged} entries merged` : ''),
+        `♻️ **Duplicate clusters (counted, never deleted):** ${Array.from(topicGroups.values()).filter(v => v.length > 1).length}`,
         ``,
         `🕰️ **Stale entries (${stale_days}d, 0 recalls):** ${stale.length}` +
           (stale.length > 0 && !dry_run ? ` → set to expire in 30 days` : ''),
         ``,
-        `📊 **After:** ${dry_run ? lessonKeys.length : lessonKeys.length - merged} lessons`,
+        `📊 **After:** ${lessonKeys.length - merged} lessons`,
         ``,
         dry_run
           ? `💡 Re-run without dry_run=true to apply changes.`
