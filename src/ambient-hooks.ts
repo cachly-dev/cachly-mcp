@@ -27,8 +27,13 @@ import { resolve } from 'node:path';
  * scripts silently never ran on native Windows (no /bin/sh); Node is already a
  * hard requirement of this package, so the hook now runs identically on
  * Windows, macOS and Linux.
+ * v4 (GROW-015): the script no longer embeds the caller's key as a string
+ * literal. It resolves CACHLY_JWT at run time from the environment instead,
+ * so a `.claude/hooks/` script that gets committed to a repo never leaks a
+ * secret. Bumping the version replaces old v1-v3 scripts (which DID embed
+ * the key) the next time setup/autopilot runs.
  */
-export const AMBIENT_HOOK_VERSION = 'v3';
+export const AMBIENT_HOOK_VERSION = 'v4';
 
 /**
  * The CLI subcommand the hooks pipe their payload to. It reads the hook JSON on
@@ -42,7 +47,11 @@ export type AmbientHookEvent = 'SessionStart' | 'UserPromptSubmit' | 'PreToolUse
 
 export interface AmbientHookOptions {
   instanceId: string;
-  /** Optional cky_… / JWT embedded so the CLI can authenticate. */
+  /**
+   * Accepted for backward compatibility but never embedded in the generated
+   * script (GROW-015): the hook resolves its key at run time from
+   * CACHLY_JWT/CACHLY_API_KEY in the environment instead.
+   */
   apiKey?: string;
   /**
    * Command that resolves the ambient-recall CLI. Defaults to the published
@@ -69,7 +78,11 @@ function buildHook(event: AmbientHookEvent, opts: AmbientHookOptions): string {
     `// the agent: every failure path exits 0 with no output (graceful degrade).`,
     `import { spawn } from 'node:child_process';`,
     `process.env.CACHLY_BRAIN_INSTANCE_ID = '${jsString(opts.instanceId)}';`,
-    ...(opts.apiKey ? [`process.env.CACHLY_JWT = '${jsString(opts.apiKey)}';`] : []),
+    // GROW-015: never embed the caller's key as a string literal here — read
+    // it at run time instead, so a committed .claude/hooks/ script can never
+    // leak a secret. Only the key's origin changed: same events, same
+    // output, same 3s budget, errors still swallowed.
+    `if (!process.env.CACHLY_JWT && process.env.CACHLY_API_KEY) process.env.CACHLY_JWT = process.env.CACHLY_API_KEY;`,
     `process.env.CACHLY_HOOK_EVENT = '${jsString(event)}';`,
     `try {`,
     // Claude Code delivers the hook payload as JSON on stdin; stdio 'inherit'

@@ -474,6 +474,9 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
       // keep the token. Without this, JWT is lost on restart and brain_recall_count
       // is never incremented (telemetry has no api_key → no tenant resolution).
       void persistApiKeyToConfig(apiKey);
+      // GROW-015: also persist to ~/.cachly/credentials.json — the source the
+      // ambient hooks (bare OS processes, no MCP-config env) resolve at run time.
+      saveApiKey(apiKey);
       // Auto-provision: find or create the user's brain instance. resolveDefaultInstanceId
       // now lists existing instances and auto-provisions when the account has none,
       // so a single call covers both paths (and self-heals on every later tool call
@@ -773,6 +776,7 @@ import { runAmbient, parseHookPayload, stopObservation } from './ambient-cli.js'
 import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
 import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
 import { buildAmbientDeps } from './ambient-deps.js';
+import { resolveApiKey, saveApiKey } from './credentials.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
 import {
@@ -2731,7 +2735,7 @@ if (process.argv[2] === 'init') {
   // Only for Claude Code (the hooks config lives in .claude/settings.json).
   if (editor === 'claude') {
     try {
-      const a = await installAmbientHooks(projectDir, instanceId, JWT || undefined);
+      const a = await installAmbientHooks(projectDir, instanceId);
       const scriptVerb = a.scripts === 'written' ? '✅ Written' : a.scripts === 'upgraded' ? `✅ Upgraded (→ ${AMBIENT_HOOK_VERSION})` : '✓  Unchanged';
       console.log(`${scriptVerb}: .claude/hooks/ (Ambient Recall — session briefing, per-prompt recall, file briefing, auto-learn)`);
       if (a.settings === 'written')      console.log(`✅ Written: .claude/settings.json (Ambient Recall hooks wired)`);
@@ -3610,7 +3614,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   // Brain speak up on its own — only `init` did (the bug POL-034 fixes).
   if (editorsToSetup.includes('claude')) {
     try {
-      const a = await installAmbientHooks(process.cwd(), instance.id, token || undefined);
+      const a = await installAmbientHooks(process.cwd(), instance.id);
       const scriptVerb = a.scripts === 'written' ? '✅  Written' : a.scripts === 'upgraded' ? `✅  Upgraded (→ ${AMBIENT_HOOK_VERSION})` : '✓  Unchanged';
       console.log(`${scriptVerb}: .claude/hooks/ (Ambient Recall — session briefing, per-prompt recall, file briefing, auto-learn)`);
       if (a.settings === 'written')      console.log(`✅  Written: .claude/settings.json (Ambient Recall hooks wired)`);
@@ -3772,7 +3776,14 @@ if (process.argv[2] === 'ambient-recall') {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
     const raw = Buffer.concat(chunks).toString('utf-8');
-    if (!JWT) process.exit(0); // not authenticated → silent no-op
+    // GROW-015: hooks run as bare OS processes and never see the MCP config's
+    // env, so JWT is usually still empty here — resolve it the same way every
+    // ambient/CLI caller does (env, then ~/.cachly, then a legacy .mcp.json).
+    if (!JWT) JWT = resolveApiKey() ?? '';
+    if (!JWT) {
+      console.error('cachly ambient-recall: no API key found (CACHLY_JWT/CACHLY_API_KEY env, ~/.cachly/credentials.json, or .mcp.json) — recall skipped for this turn.');
+      process.exit(0);
+    }
     const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId;
 
     // Stop event → auto-learn, never inject (roadmap §6.1 PostToolUse/Stop row).

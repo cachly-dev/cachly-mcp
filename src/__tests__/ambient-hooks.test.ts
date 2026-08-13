@@ -35,11 +35,12 @@ describe('hook script builders (v3 — cross-platform Node scripts)', () => {
     expect(buildStopHook(opts)).toContain("process.env.CACHLY_HOOK_EVENT = 'Stop';");
   });
 
-  it('embed the JWT only when provided', () => {
-    expect(buildSessionStartHook(opts)).not.toContain('CACHLY_JWT');
-    expect(buildSessionStartHook({ ...opts, apiKey: 'cky_abc' })).toContain(
-      "process.env.CACHLY_JWT = 'cky_abc';",
-    );
+  it('never embeds the caller-supplied key as a literal (GROW-015) — resolved at run time instead', () => {
+    const withoutKey = buildSessionStartHook(opts);
+    const withKey = buildSessionStartHook({ ...opts, apiKey: 'cky_abc' });
+    expect(withoutKey).not.toContain('cky_abc');
+    expect(withKey).not.toContain('cky_abc');
+    expect(withKey).toContain('CACHLY_API_KEY');
   });
 
   it('spawn the CLI with inherited stdin/stdout and always exit 0 (graceful)', () => {
