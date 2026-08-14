@@ -7,26 +7,89 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..');
 const toolsPath = resolve(here, '..', 'src', 'tools.ts');
 
+/**
+ * Setzt eine TS-Zeichenkette aus ihren Teilen zusammen.
+ *
+ * Die Beschreibungen in tools.ts sind ueber mehrere Zeilen mit `+` verkettet.
+ * Hier interessiert nur der Text, nicht die Syntax — also alle einfach
+ * gequoteten Literale einsammeln und aneinanderhaengen.
+ */
+function joinStringLiterals(chunk) {
+  const parts = [];
+  const re = /'((?:[^'\\]|\\.)*)'/g;
+  let match;
+  while ((match = re.exec(chunk)) !== null) {
+    parts.push(match[1].replace(/\\'/g, "'").replace(/\\\\/g, '\\'));
+  }
+  return parts.join('').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Liest die Pflichtfelder eines Werkzeugs aus seinem inputSchema.
+ *
+ * Ein Werkzeug kann mehrere `required:`-Listen haben, wenn ein Feld selbst ein
+ * Objekt ist. Die oberste Liste ist die mit der geringsten Einrueckung — die
+ * gilt fuer den Aufruf selbst.
+ */
+function extractRequiredArgs(block) {
+  const re = /^([ \t]*)required:\s*\[([^\]]*)\]/gm;
+  let best = null;
+  let match;
+  while ((match = re.exec(block)) !== null) {
+    const indent = match[1].length;
+    if (best === null || indent < best.indent) best = { indent, body: match[2] };
+  }
+  if (!best) return [];
+  return [...best.body.matchAll(/'([^']+)'/g)].map((m) => m[1]);
+}
+
 export function loadToolCatalog() {
   const source = readFileSync(toolsPath, 'utf8');
-  const tools = [];
-  let category = 'Uncategorized';
 
-  for (const line of source.split(/\r?\n/)) {
-    const categoryMatch = line.match(/^\s*\/\/\s*─+\s*(.+?)\s*─+\s*$/);
-    if (categoryMatch) {
-      const next = categoryMatch[1].trim();
-      if (next && next !== 'Tools' && !next.startsWith('Tool definitions')) {
-        category = next;
-      }
-      continue;
-    }
-
-    const nameMatch = line.match(/\bname:\s*'([^']+)'/);
-    if (nameMatch) {
-      tools.push({ name: nameMatch[1], category });
+  // Abschnitts-Ueberschriften mit ihrer Position im Text merken, damit jedes
+  // Werkzeug spaeter der Ueberschrift zugeordnet werden kann, die ueber ihm steht.
+  const categoryMarks = [];
+  {
+    const re = /^[ \t]*\/\/[ \t]*─+[ \t]*(.+?)[ \t]*─+[ \t]*$/gm;
+    let match;
+    while ((match = re.exec(source)) !== null) {
+      const label = match[1].trim();
+      if (!label || label === 'Tools' || label.startsWith('Tool definitions')) continue;
+      categoryMarks.push({ offset: match.index, category: label });
     }
   }
+  const categoryAt = (offset) => {
+    let category = 'Uncategorized';
+    for (const mark of categoryMarks) {
+      if (mark.offset > offset) break;
+      category = mark.category;
+    }
+    return category;
+  };
+
+  // Werkzeug-Grenzen: jeder `name: '...'`-Treffer beginnt einen Block, der bis
+  // zum naechsten Treffer reicht. Felder innerhalb von inputSchema heissen
+  // `name: {` und werden davon nicht erfasst.
+  const hits = [...source.matchAll(/\bname:\s*'([^']+)'/g)];
+  const tools = hits.map((hit, i) => {
+    const start = hit.index;
+    const end = i + 1 < hits.length ? hits[i + 1].index : source.length;
+    const block = source.slice(start, end);
+
+    const descStart = block.indexOf('description:');
+    const schemaStart = block.indexOf('inputSchema:');
+    const descChunk =
+      descStart === -1
+        ? ''
+        : block.slice(descStart + 'description:'.length, schemaStart === -1 ? undefined : schemaStart);
+
+    return {
+      name: hit[1],
+      category: categoryAt(start),
+      description: joinStringLiterals(descChunk),
+      args: extractRequiredArgs(schemaStart === -1 ? '' : block.slice(schemaStart)),
+    };
+  });
 
   const names = tools.map((tool) => tool.name);
   const duplicateNames = names.filter((name, i) => names.indexOf(name) !== i);

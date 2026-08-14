@@ -928,7 +928,7 @@ const TOOLS = [
   {
     name: 'brain_portability',
     description:
-      'W9 — Model-Neutrality as Feature. Proves "Bring your own model, keep your brain." ' +
+      'Bring your own model, keep your brain: the same memory in every AI editor. ' +
       'Returns your Brain ID plus ready-to-paste MCP config snippets for every compatible AI client: ' +
       'Claude Code, Cursor, Windsurf, GitHub Copilot (VS Code), Cline, Zed, Continue. ' +
       'All 7 clients connect to the same Brain — same lessons, crystals, predictions, and team data. ' +
