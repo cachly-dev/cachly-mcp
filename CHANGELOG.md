@@ -7,6 +7,85 @@
 
 ---
 
+## [0.10.123] – 2026-08-14 — *"Everything merged since 0.10.122 finally ships"*
+
+Twenty-five commits landed on `main` between 2026-08-07 and 2026-08-14 without a
+release, so every user ran the 0.10.122 build while `package.json` in the repo
+already said 0.10.122 too — a version check reported "current" for a server that
+was seven days behind. This release closes that gap; no code change of its own.
+
+### Removed
+- **Four dead MCP tools are gone** (POL-033): the advertised tool count drops
+  from 126 to 122 and is now derived from `src/tools.ts` in CI, so the manifests
+  cannot drift from reality again. A handler guard fails loudly instead of
+  returning an empty result for an unroutable tool. (#306)
+
+### Added
+- **`export` makes the portability promise true again** (GROW-014). The README
+  said "leave anytime and take your data" while no command did that:
+  `brain_export_md` was removed with POL-033 and `brain_share` (a share link)
+  was wrongly listed as an export.
+  `npx @cachly-dev/mcp-server export` now writes `lessons.md` to read and
+  `lessons.jsonl` to reuse. With no key, or when the server returns nothing, it
+  says so in plain words instead of writing an empty file. (#360)
+- **The README leads with the anchor from the landing page** — "ChatGPT and
+  Claude remember your conversations. cachly remembers your codebase." — rather
+  than the older amnesia framing.
+- **`session_end` learns from the commit body, not just the subject** (GROW-038).
+  The reasoning — what was measured, what the cause was — lives in the body; the
+  subject alone is a heading. In the same change the old
+  `auto:changed:<area>` writer was removed: one lesson per touched directory is
+  not knowledge, it is competition for knowledge.
+- **Key fallback chain instead of silent failure** (GROW-015): environment →
+  `~/.cachly` → legacy `.mcp.json`. A missing key used to end as an empty result
+  with no message.
+- **The first recall proof reaches the human** (GROW-013) instead of being
+  discarded, and **every path from the CLI to the website is countable**
+  (GROW-011).
+- **CI outcome loop** (GROW-022): `brain_from_ci` can be attached to any CI, not
+  only the built-in one.
+- **Locked tools run for real three times** (trial instead of a sales notice), so
+  the value is visible before the paywall.
+
+### Changed
+- **No plaintext key in project MCP configs** (GROW-033). Existing keys are moved
+  to the home store on first run; the ambient hook scripts resolve the key at
+  runtime (GROW-015).
+- **Version and tool count come from generated truth** (GROW-016, #325), and the
+  What's-New block shows current features again.
+- **One truth for the AI-readable page** (GROW-012) instead of two that had
+  drifted apart.
+- **The upgrade hint moved into the session briefing** (GROW-002) instead of
+  appearing on every recall, and it no longer promises "without limits".
+- **Six truth breaks repaired in the developer messaging** (RES-017): source
+  storage, telemetry, the 99.9 % SLA claim, the German price table, the
+  benchmark opponent, the tool numbers.
+
+### Fixed
+- **Five CLI commands called a URL the server does not have.** `digest`, `demo`,
+  `share`, `init` and `setup` all requested
+  `/api/v1/instances/{id}/brain/stats`, while the server routes
+  `/instances/:id/brain-stats` — a slash where a hyphen belongs. Every one of
+  those calls was a 404 that ended in a `catch`, so the commands showed nothing
+  instead of saying anything. Two of them are the commands a new user runs
+  first. A test now reads every `/api/v1/instances/…` URL out of `index.ts` and
+  requires a matching route in `routes.go`, so a client string and a server
+  route cannot drift apart again (GROW-042).
+- **The tool-count guard kept a hand-written list of *old* numbers** and
+  therefore missed `126`. The README carried it in two places — a badge URL and
+  a heading — visible to everyone who opened the package on npm. The guard now
+  flags *any* number next to "tools"/"total" that is not the generated one, and
+  found three more on the first run: `140-tool` in the capability matrix,
+  `120-tool` in `index.ts`, `126-tool` in the public docs page.
+- **Four silent errors in the MCP server** (POL-034). (#306)
+- **The CKG edge loop cost 1,200 Redis calls per commit** — batched.
+- **Test stability under parallel load** (SDK-004): single worker thread,
+  raised test and hook timeouts.
+- The DOC-001 test skips itself in the npm mirror instead of crashing (#350),
+  and one test no longer fails on its own precondition.
+
+---
+
 ## [0.10.122] – 2026-08-07 — *"One factory, one seam, proven twice"*
 
 ### Changed

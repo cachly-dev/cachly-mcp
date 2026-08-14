@@ -1836,7 +1836,7 @@ if (process.argv[2] === 'digest') {
 
   try {
     // Fetch current stats
-    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain/stats`, {
+    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain-stats`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8000),
     });
@@ -2533,7 +2533,7 @@ if (process.argv[2] === 'share') {
   process.stdout.write('\n🧠 Fetching your Brain stats...\n');
 
   try {
-    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain/stats`, {
+    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain-stats`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8000),
     });
@@ -2612,7 +2612,7 @@ if (process.argv[2] === 'publish') {
 
   try {
     // Fetch stats for the card
-    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain/stats`, {
+    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain-stats`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8000),
     });
@@ -2665,7 +2665,7 @@ if (process.argv[2] === 'publish') {
 }
 
 // ── CLI: cachly tool-specs / openapi ───────────────────────────────────────────
-// Emit the 120-tool surface in any agent framework's dialect, derived from the
+// Emit the 122-tool surface in any agent framework's dialect, derived from the
 // single TOOLS source of truth. Lets OpenAI Assistants, the Anthropic Messages
 // API, LangChain, CrewAI and AutoGen wrap cachly without hand-written glue.
 //   npx @cachly-dev/mcp-server tool-specs --format=openai   > cachly.openai.json
@@ -2895,7 +2895,7 @@ if (process.argv[2] === 'status') {
 
   try {
     const [statsRes, referralRes] = await Promise.all([
-      fetch(`${API_URL}/api/v1/instances/${instanceId}/brain/stats`, {
+      fetch(`${API_URL}/api/v1/instances/${instanceId}/brain-stats`, {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal: AbortSignal.timeout(8000),
       }),
@@ -3612,7 +3612,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   // Fetch brain health from the API to show the user what their agent will see.
   process.stdout.write('\n⏳ Fetching your Brain health preview...');
   try {
-    const brainRes = await fetch(`${API_URL}/api/v1/instances/${instance.id}/brain/stats`, {
+    const brainRes = await fetch(`${API_URL}/api/v1/instances/${instance.id}/brain-stats`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(6000),
     });

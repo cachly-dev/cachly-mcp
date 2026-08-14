@@ -64,6 +64,45 @@ const stalePatterns = [
   /\b140\s+MCP\s+tools\b/gi,
 ];
 
+/**
+ * Die Liste oben ist eine Liste ALTER Zahlen — von Hand gepflegt, also selbst
+ * eine zweite Wahrheit. Genau daran ist sie am 14.08.2026 gescheitert: 126
+ * stand nicht drin, und deshalb trug sdk/mcp/README.md an zwei Stellen "126"
+ * weiter, waehrend das Produkt 122 Werkzeuge hatte — sichtbar fuer jeden, der
+ * das Paket auf npm aufmachte. Die Pruefung war gruen.
+ *
+ * Zwei Luecken zugleich: die Liste kannte 126 nicht, UND die Schreibweisen
+ * "126_MCP_tools" (in einer Badge-URL) und "(126 total)" (in einer
+ * Ueberschrift) trafen ohnehin keinen der Ausdruecke.
+ *
+ * Deshalb dreht die Pruefung hier die Frage um. Sie sucht nicht mehr bekannte
+ * falsche Zahlen, sondern JEDE Zahl, die neben "tools" oder "total" steht —
+ * und laesst nur die durch, die aus der generierten Wahrheit stammt. Eine
+ * neue falsche Zahl ist damit automatisch mitgeprueft, ohne dass jemand die
+ * Liste pflegt.
+ */
+const ZAHL_BEI_WERKZEUGEN = [
+  // "126 MCP tools", "126 tools", "126_MCP_tools" (Badge-URL, Unterstriche)
+  /\b(\d{2,4})[\s_-]+(?:MCP[\s_-]+)?tools?\b/gi,
+  // "126-tool MCP server"
+  /\b(\d{2,4})-tool\s+MCP\s+server\b/gi,
+  // "MCP Tools (126 total)"
+  /\btools?\s*\((\d{2,4})\s+total\)/gi,
+];
+
+/** Findet Zahlen neben "tools", die nicht die erwartete sind. */
+function falscheWerkzeugZahlen(text, erwartet) {
+  const treffer = [];
+  for (const muster of ZAHL_BEI_WERKZEUGEN) {
+    muster.lastIndex = 0;
+    let m;
+    while ((m = muster.exec(text)) !== null) {
+      if (Number(m[1]) !== erwartet) treffer.push(m[0].trim());
+    }
+  }
+  return [...new Set(treffer)];
+}
+
 const failures = [];
 
 function* walkFiles(absDir) {
@@ -97,6 +136,10 @@ for (const rel of trackedSurfaces) {
     pattern.lastIndex = 0;
     const match = pattern.exec(text);
     if (match) failures.push(`${rel}: stale count phrase "${match[0]}"`);
+  }
+
+  for (const treffer of falscheWerkzeugZahlen(text, expected)) {
+    failures.push(`${rel}: sagt "${treffer}", die generierte Wahrheit sind ${expected} Werkzeuge`);
   }
 
   const expectedPhrase = `${expected} MCP tools`;

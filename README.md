@@ -1,9 +1,11 @@
 # 🧠 cachly AI Brain — MCP Server
 
-> ### Your AI is brilliant for one session. Then it forgets you.
-> Every morning you re-explain your architecture, your deploy process, the bug you
-> already fixed last week. **cachly gives your AI — and your whole team — a permanent,
-> shared brain that gets smarter with every commit.**
+> ### ChatGPT and Claude remember your conversations.
+> ### cachly remembers your codebase.
+>
+> The bug you fixed. Why you chose Postgres. The deploy step that always breaks — and
+> everything your teammates learned. **It stays when someone leaves the team, and it
+> comes along when you switch assistants.**
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@cachly-dev/mcp-server">
@@ -22,7 +24,7 @@
     <img src="https://img.shields.io/badge/GDPR-EU%20servers-green" alt="GDPR: EU servers" />
   </a>
   &nbsp;
-  <img src="https://img.shields.io/badge/126_MCP_tools-violet" alt="122 MCP tools" />
+  <img src="https://img.shields.io/badge/122_MCP_tools-violet" alt="122 MCP tools" />
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
 </p>
@@ -299,7 +301,7 @@ MCP tool — bulk-ingests past outcomes the same way `brain_from_git` ingests co
 
 ---
 
-## MCP Tools (126 total)
+## MCP Tools (122 total)
 
 The full tool catalog is generated from `sdk/mcp/src/tools.ts`. Cross-surface
 coverage is tracked in [`../../docs/generated/surface-parity.md`](../../docs/generated/surface-parity.md),
