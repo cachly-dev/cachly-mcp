@@ -1836,20 +1836,20 @@ if (process.argv[2] === 'digest') {
 
   try {
     // Fetch current stats
-    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain-stats`, {
+    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/memory`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8000),
     });
     if (!statsRes.ok) throw new Error(`stats HTTP ${statsRes.status}`);
     const stats = await statsRes.json() as {
-      lesson_count?: number; context_count?: number; quality_score?: number;
+      lesson_count?: number; context_count?: number; iq_boost_pct?: number;
       total_recall_count?: number; top_lessons?: Array<{ topic: string; recall_count: number; what_worked: string }>;
       team_authors?: string[];
     };
 
     const lessons      = stats.lesson_count ?? 0;
     const recalls      = stats.total_recall_count ?? 0;
-    const score        = Math.round((stats.quality_score ?? 0) * 100);
+    const score        = Math.round(stats.iq_boost_pct ?? 0);
     const topLessons   = (stats.top_lessons ?? []).slice(0, 5);
     const teamAuthors  = stats.team_authors ?? [];
     const tokensSaved  = recalls * 1200;
@@ -2533,7 +2533,7 @@ if (process.argv[2] === 'share') {
   process.stdout.write('\n🧠 Fetching your Brain stats...\n');
 
   try {
-    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain-stats`, {
+    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/memory`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8000),
     });
@@ -2541,12 +2541,12 @@ if (process.argv[2] === 'share') {
     if (!statsRes.ok) throw new Error(`HTTP ${statsRes.status}`);
     const stats = await statsRes.json() as {
       lesson_count?: number; context_count?: number;
-      quality_score?: number; total_recall_count?: number;
+      iq_boost_pct?: number; total_recall_count?: number;
     };
 
     const lessons  = stats.lesson_count ?? 0;
     const recalls  = stats.total_recall_count ?? 0;
-    const score    = Math.round((stats.quality_score ?? 0) * 100);
+    const score    = Math.round(stats.iq_boost_pct ?? 0);
     const tokensSaved = recalls * 1200;
     const costSaved = (tokensSaved * 0.000003).toFixed(2);
 
@@ -2612,7 +2612,7 @@ if (process.argv[2] === 'publish') {
 
   try {
     // Fetch stats for the card
-    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/brain-stats`, {
+    const statsRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/memory`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(8000),
     });
@@ -2895,7 +2895,7 @@ if (process.argv[2] === 'status') {
 
   try {
     const [statsRes, referralRes] = await Promise.all([
-      fetch(`${API_URL}/api/v1/instances/${instanceId}/brain-stats`, {
+      fetch(`${API_URL}/api/v1/instances/${instanceId}/memory`, {
         headers: { Authorization: `Bearer ${apiKey}` },
         signal: AbortSignal.timeout(8000),
       }),
@@ -2908,7 +2908,7 @@ if (process.argv[2] === 'status') {
     if (!statsRes.ok) throw new Error(`stats HTTP ${statsRes.status}`);
     const stats = await statsRes.json() as {
       lesson_count?: number; total_recall_count?: number;
-      quality_score?: number; team_authors?: string[];
+      iq_boost_pct?: number; team_authors?: string[];
     };
     const referral = referralRes.ok
       ? await referralRes.json() as { url?: string; referral_count?: number }
@@ -2916,7 +2916,7 @@ if (process.argv[2] === 'status') {
 
     const lessons = stats.lesson_count ?? 0;
     const recalls = stats.total_recall_count ?? 0;
-    const score   = Math.round((stats.quality_score ?? 0) * 100);
+    const score   = Math.round(stats.iq_boost_pct ?? 0);
     const team    = stats.team_authors ?? [];
     const refCount = referral?.referral_count ?? 0;
     const refUrl   = referral?.url ?? '';
@@ -3612,18 +3612,18 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   // Fetch brain health from the API to show the user what their agent will see.
   process.stdout.write('\n⏳ Fetching your Brain health preview...');
   try {
-    const brainRes = await fetch(`${API_URL}/api/v1/instances/${instance.id}/brain-stats`, {
+    const brainRes = await fetch(`${API_URL}/api/v1/instances/${instance.id}/memory`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(6000),
     });
     if (brainRes.ok) {
       const brainData = await brainRes.json() as {
         lesson_count?: number; context_count?: number;
-        open_failures?: number; quality_score?: number;
+        iq_boost_pct?: number;
       };
       const lessons = brainData.lesson_count ?? 0;
       const contexts = brainData.context_count ?? 0;
-      const score = brainData.quality_score ?? 0;
+      const score = Math.round(brainData.iq_boost_pct ?? 0);
       const level = lessons === 0 ? 'Intern 🌱' :
         lessons < 10  ? 'Junior Dev 🔧' :
         lessons < 30  ? 'Mid Dev ⚡' :
@@ -3634,7 +3634,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
       console.log(`│  🧠  Brain Health Report                            │`);
       console.log('├──────────────────────────────────────────────────────┤');
       console.log(`│  Lessons stored    : ${String(lessons).padEnd(6)} │  Level: ${level.padEnd(20)}│`);
-      console.log(`│  Context entries   : ${String(contexts).padEnd(6)} │  Quality score: ${String(Math.round(score * 100)).padEnd(3)}%       │`);
+      console.log(`│  Context entries   : ${String(contexts).padEnd(6)} │  Quality score: ${String(score).padEnd(3)}%       │`);
       if (lessons === 0) {
         console.log('├──────────────────────────────────────────────────────┤');
         console.log('│  Your Brain is empty and ready to learn.            │');

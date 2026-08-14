@@ -7,6 +7,34 @@
 
 ---
 
+## [0.10.124] – 2026-08-14 — *"The commands reached the server. Then they showed zeros."*
+
+0.10.123 fixed the URL five CLI commands called. They stopped 404-ing and
+started printing — zeros. `digest` reported 0 lessons against a Brain holding
+450. The address was right; the source was not.
+
+### Fixed
+- **`digest`, `demo`, `share`, `init` and `setup` read their numbers from the
+  wrong endpoint.** `/instances/:id/brain-stats` serves search telemetry; it
+  never fills `lesson_count`, `total_recall_count`, `top_lessons` or
+  `team_authors` — those fields exist on the response type and are left at
+  their zero values. The numbers live on `/instances/:id/memory`. Measured
+  after the change on a real Brain: 450 lessons, 475 recalls, 4 contributors,
+  top lessons listed.
+- **`quality_score` is not a field any of those endpoints sends.** All five
+  commands read it and multiplied it by 100, so the quality score was
+  permanently `0 %`. The field is `iq_boost_pct`, and it is already a
+  percentage — the multiplication is gone with it. `setup` multiplied a second
+  time and would have shown `10000 %`.
+- **`open_failures` was declared and never sent, and never used.** Removed.
+- The GROW-042 guard now also checks the **fields**, not just the address:
+  every key the CLI destructures from `/memory` must exist as a `json:` tag on
+  `MemoryStatsResponse`. A missing key in JSON is `undefined`, and `?? 0` turns
+  that into a zero — which is why this looked like an empty Brain instead of a
+  bug for as long as it did.
+
+---
+
 ## [0.10.123] – 2026-08-14 — *"Everything merged since 0.10.122 finally ships"*
 
 Twenty-five commits landed on `main` between 2026-08-07 and 2026-08-14 without a

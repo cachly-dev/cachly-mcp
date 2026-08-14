@@ -66,6 +66,63 @@ describe.skipIf(!imMonorepo)('GROW-042: jede CLI-Adresse existiert im Server', (
     expect(cli).not.toContain('/brain/stats');
   });
 
+  /**
+   * Zweite Haelfte derselben Fehlerklasse: die Adresse kann stimmen und die
+   * FELDER trotzdem nicht existieren.
+   *
+   * Nach der Reparatur der Adresse zeigte `digest` weiter ueberall Nullen. Der
+   * Grund: /instances/:id/brain-stats liefert Such-Telemetrie, keine
+   * Lektionen — lesson_count, total_recall_count und top_lessons wurden in dem
+   * Handler NIE gefuellt. Die Zahlen stehen in /instances/:id/memory. Und
+   * quality_score gibt es in KEINEM der beiden; das Feld heisst iq_boost_pct.
+   *
+   * Ein fehlendes Feld in JSON ist `undefined`, und `?? 0` macht daraus eine
+   * Null. Deshalb sah es nach einem leeren Brain aus statt nach einem Fehler.
+   */
+  const MEMORY_STRUCT = 'MemoryStatsResponse';
+
+  it('jedes Feld, das die CLI aus /memory liest, gibt es auch in der Antwort', () => {
+    const api = read('api/internal/handler/instance_handler.go');
+    const structAnfang = api.indexOf(`type ${MEMORY_STRUCT} struct {`);
+    expect(structAnfang).toBeGreaterThan(-1);
+    const structText = api.slice(structAnfang, api.indexOf('\n}', structAnfang));
+    const vorhandene = new Set(
+      [...structText.matchAll(/json:"([a-z0-9_]+)/g)].map((m) => m[1]),
+    );
+
+    // Alle Typ-Angaben direkt hinter einem /memory-Aufruf einsammeln.
+    // Verschachtelte Blöcke (z. B. top_lessons: Array<{ topic; … }>) fliegen
+    // vorher raus — deren Felder gehoeren zu einem anderen Typ, nicht zur
+    // Antwort selbst. Ohne das meldete der Test faelschlich topic/severity/tags.
+    const ohneVerschachtelung = (s: string) => {
+      let vorher: string;
+      let jetzt = s;
+      do {
+        vorher = jetzt;
+        jetzt = jetzt.replace(/\{[^{}]*\}/g, '');
+      } while (jetzt !== vorher);
+      return jetzt;
+    };
+    const gelesen = new Set<string>();
+    for (const m of cli.matchAll(/\/api\/v1\/instances\/\$\{[^}]+\}\/memory[\s\S]{0,900}?as \{([\s\S]*?)\};/g)) {
+      for (const f of ohneVerschachtelung(m[1]).matchAll(/([a-z0-9_]+)\?:/g)) gelesen.add(f[1]);
+    }
+
+    expect(gelesen.size).toBeGreaterThan(3);
+    const fehlend = [...gelesen].filter((f) => !vorhandene.has(f));
+    expect(fehlend, `Felder ohne Entsprechung in ${MEMORY_STRUCT}`).toEqual([]);
+  });
+
+  it('sagt Nein: quality_score gibt es in der Antwort nicht', () => {
+    // Gegenprobe zum Test darueber. Waere quality_score doch ein Feld der
+    // Antwort, haette die Pruefung oben nie anschlagen koennen.
+    const api = read('api/internal/handler/instance_handler.go');
+    const structAnfang = api.indexOf(`type ${MEMORY_STRUCT} struct {`);
+    const structText = api.slice(structAnfang, api.indexOf('\n}', structAnfang));
+    expect(structText).not.toContain('json:"quality_score"');
+    expect(structText).toContain('json:"iq_boost_pct"');
+  });
+
   it('sagt Nein: eine erfundene Adresse wuerde nicht in routes.go stehen', () => {
     // Gegenprobe. Ohne sie waere nicht belegt, dass toContain hier ueberhaupt
     // etwas ausschliessen KANN — am 13.08. meldeten zwei Gegenproben
