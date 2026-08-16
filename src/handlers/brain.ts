@@ -7,6 +7,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration,
          ckgUpsertServiceNode } from '../ckg.js';
 import { safeJsonParse, scanKeys } from '../utils.js';
+import { lessonPreviewLines, type PreviewLesson } from '../lesson-preview.js';
 import type { CKGEdge, CKGNode, PersonNode, ServiceNode } from '../ckg.js';
 import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
@@ -1568,6 +1569,10 @@ export async function handleBrainTool(
         topic: string; outcome: string; what_worked: string; what_failed?: string;
         ts: string; verified_at?: string; severity?: string; recall_count?: number;
         tags?: string[]; confidence?: number; audit_trail?: unknown[];
+        // Read, not just stored: these two carry the short, runnable facts a
+        // reader usually needs (see lesson-preview.ts for the incident that
+        // proved a 100-character prose preview is not enough).
+        commands?: string[]; file_paths?: string[];
       };
       const lessons: Lesson[] = [];
       if (lessonKeys.length > 0) {
@@ -1922,7 +1927,8 @@ export async function handleBrainTool(
             const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
             const rc  = l.recall_count ?? 0;
             const why = l.pinned === true ? 'pinned' : `recalled ${rc}×`;
-            lines.push(`  🏆${sev} \`${l.topic}\` _(${why})_ — ${l.what_worked.slice(0, 100)}`);
+            const body = lessonPreviewLines(l as PreviewLesson);
+            lines.push(`  🏆${sev} \`${l.topic}\` _(${why})_ — ${body[0] ?? ''}`, ...body.slice(1));
           }
           lines.push('');
         }
@@ -2008,7 +2014,8 @@ export async function handleBrainTool(
         for (const l of focusLessons.slice(0, 4)) {
           const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
           const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
-          lines.push(`  ${emoji}${sev} \`${l.topic}\` — ${l.what_worked.slice(0, 100)}`);
+          const body = lessonPreviewLines(l as PreviewLesson);
+          lines.push(`  ${emoji}${sev} \`${l.topic}\` — ${body[0] ?? ''}`, ...body.slice(1));
         }
         lines.push('');
       }
@@ -2034,7 +2041,8 @@ export async function handleBrainTool(
             const trust  = (nAuthors >= 2 && rc >= 5) || rc >= 10 ? ' 🏆'
               : nAuthors >= 2 || rc >= 5 ? ' ✅' : '';
             const rct   = rc > 1 ? ` _(${rc}× recalled)_` : '';
-            lines.push(`  ${emoji}${sev}${trust} \`${l.topic}\`${rct} — ${l.what_worked.slice(0, 100)}`);
+            const body = lessonPreviewLines(l as PreviewLesson);
+            lines.push(`  ${emoji}${sev}${trust} \`${l.topic}\`${rct} — ${body[0] ?? ''}`, ...body.slice(1));
           }
           lines.push('');
         }
@@ -2045,7 +2053,8 @@ export async function handleBrainTool(
           for (const l of remaining) {
             const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
             const sev   = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
-            lines.push(`  ${emoji}${sev} \`${l.topic}\` — ${l.what_worked.slice(0, 100)}`);
+            const body = lessonPreviewLines(l as PreviewLesson);
+            lines.push(`  ${emoji}${sev} \`${l.topic}\` — ${body[0] ?? ''}`, ...body.slice(1));
           }
           lines.push('');
         }
