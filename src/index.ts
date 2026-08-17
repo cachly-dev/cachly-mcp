@@ -1417,12 +1417,49 @@ const CACHLY_MCP_INSTRUCTIONS = `This project has a Cachly AI Brain — persiste
 
 The Brain instance id comes from the CACHLY_BRAIN_INSTANCE_ID environment variable.`;
 
+/**
+ * Baut einen frischen MCP-Server mit allen Handlern.
+ *
+ * ─── WARUM DAS EINE FABRIK IST UND KEINE KONSTANTE ──────────────────────────
+ *
+ * Im HTTP-Betrieb braucht JEDE Anfrage ihren eigenen Server samt Transport.
+ * Bis zum 17.08.2026 gab es genau einen, beim Start erzeugt und fuer alles
+ * wiederverwendet — und ein MCP-Server laesst sich nur EINMAL initialisieren.
+ *
+ * Die Folge war unauffaellig und teuer: Der erste initialize nach dem Start
+ * antwortete mit 200, jeder weitere mit 500 und LEEREM Rumpf. Nachgestellt:
+ *
+ *     Aufruf 1: HTTP 200
+ *     Aufruf 2: HTTP 500
+ *     Aufruf 3: HTTP 500
+ *
+ * Nach jedem Ausrollen war der Endpunkt also fuer genau eine Anfrage gesund.
+ * Glama und Smithery haben ihren einen Treffer gelandet und die Antwort
+ * eingefroren — beide zeigen bis heute 80 Werkzeuge, obwohl es 122 sind. Kein
+ * Log, keine Fehlermeldung, kein roter Alarm. Der Endpunkt galt als "up",
+ * weil /health antwortete.
+ *
+ * Der Aufbau ist billig: ein "new Server" und zwei Handler. TOOLS ist eine
+ * Konstante des Moduls, es wird nichts kopiert.
+ */
+function makeServer(): Server {
+  const s = new Server(
+    { name: 'cachly-mcp', version: CURRENT_VERSION },
+    { capabilities: { tools: {} }, instructions: CACHLY_MCP_INSTRUCTIONS }
+  );
+  s.setRequestHandler(ListToolsRequestSchema, listToolsHandler);
+  s.setRequestHandler(CallToolRequestSchema, callToolHandler);
+  return s;
+}
+
+const listToolsHandler = async () => ({ tools: TOOLS });
+
 const server = new Server(
   { name: 'cachly-mcp', version: CURRENT_VERSION },
   { capabilities: { tools: {} }, instructions: CACHLY_MCP_INSTRUCTIONS }
 );
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
+server.setRequestHandler(ListToolsRequestSchema, listToolsHandler);
 
 // ── Auto-session management ───────────────────────────────────────────────────
 // Transparently starts a Brain session on the first tool call of a process
@@ -1490,7 +1527,7 @@ async function autoEndSession(): Promise<void> {
   } catch { /* non-fatal */ }
 }
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+const callToolHandler = async (request: { params: { name: string; arguments?: unknown } }) => {
   const { name, arguments: args } = request.params;
 
   // Auto-start brain session on first tool call that has an instance_id.
@@ -1521,7 +1558,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     notify('cachly', 'tool_error', { tool: name, error: msg }).catch(() => undefined);
     throw new McpError(ErrorCode.InternalError, msg);
   }
-});
+};
+
+server.setRequestHandler(CallToolRequestSchema, callToolHandler);
 
 // Graceful shutdown – close all Redis connections + auto-end brain session
 process.on('SIGTERM', async () => {
@@ -4204,8 +4243,6 @@ if (httpPort) {
   // ── HTTP mode (Streamable HTTP transport) ───────────────────────────────
   // Used for Smithery URL deployment: PORT=3000 node dist/src/index.js
   const { createServer } = await import('node:http');
-  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-  await server.connect(transport);
   const httpServer = createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${httpPort}`);
     if (url.pathname === '/health') {
@@ -4221,7 +4258,33 @@ if (httpPort) {
       return;
     }
     if (url.pathname === '/mcp' || url.pathname === '/') {
-      transport.handleRequest(req, res);
+      // JEDE Anfrage bekommt einen eigenen Server samt Transport.
+      //
+      // Vorher gab es genau einen, beim Start erzeugt. Ein MCP-Server laesst
+      // sich aber nur EINMAL initialisieren — der erste Aufruf nach dem Start
+      // ging durch, jeder weitere endete mit 500 und leerem Rumpf. Siehe die
+      // Begruendung bei makeServer().
+      void (async () => {
+        const s = makeServer();
+        const t = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+        // Aufraeumen, sobald die Antwort durch ist — sonst haelt jede Anfrage
+        // ihren Server fest und der Speicher waechst mit jedem Aufruf.
+        res.on('close', () => {
+          t.close().catch(() => undefined);
+          s.close().catch(() => undefined);
+        });
+        try {
+          await s.connect(t);
+          await t.handleRequest(req, res);
+        } catch (err) {
+          // Ein Fehler ohne Text war genau das Problem, das hier behoben wird.
+          process.stderr.write(`cachly-mcp HTTP: ${(err as Error).message}\n`);
+          if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: (err as Error).message }));
+          }
+        }
+      })();
       return;
     }
     res.writeHead(404);
