@@ -7,7 +7,36 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration,
          ckgUpsertServiceNode } from '../ckg.js';
 import { safeJsonParse, scanKeys } from '../utils.js';
-import { lessonPreviewLines, type PreviewLesson } from '../lesson-preview.js';
+import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
+
+/**
+ * Preview for one smart_recall hit.
+ *
+ * WHY THIS EXISTS: the previous version sliced `r.content` — the RAW JSON of the
+ * stored record — at 300/400 characters. So the budget was spent on syntax:
+ *
+ *   > {"topic":"node4:einrichtung-contabo-und-fallen","outcome":"success","sev…
+ *
+ * Roughly the first 80 characters carry no information at all, the reader gets
+ * field names instead of facts, and `commands` / `what_failed` never appear
+ * because they sit far past the cut. smart_recall is the call this project
+ * mandates BEFORE EVERY TASK — it is the worst possible place for that.
+ *
+ * A lesson is now rendered as a lesson: trimmed prose, its warning when the
+ * lesson is critical, and its commands/paths. Anything that is not a lesson
+ * (context entries, indexes) keeps a raw preview — but trimmed at a word
+ * boundary and with an honest cut marker.
+ */
+export function recallVorschau(key: string, content: string, maxChars: number): string[] {
+  if (key.includes('lesson:best:')) {
+    const l = safeJsonParse<PreviewLesson & { what_worked?: string }>(content, {} as PreviewLesson);
+    if (l && typeof l === 'object' && (l.what_worked || l.what_failed || l.commands?.length)) {
+      return lessonPreviewLines(l, { maxChars, indent: '  ' });
+    }
+  }
+  const roh = trimTo(content, maxChars);
+  return roh ? [roh] : [];
+}
 import type { CKGEdge, CKGNode, PersonNode, ServiceNode } from '../ckg.js';
 import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
@@ -1463,7 +1492,7 @@ export async function handleBrainTool(
                 : r.matchType === 'semantic'
                 ? `sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🎯 semantic`
                 : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
-              const preview = r.content.slice(0, 300).replace(/\n/g, ' ');
+              const vorschau = recallVorschau(r.key, r.content, 300);
               lines.push(`  **${label}** _(${scorePart})_`);
               // Lesbares Brain (docs/produkt/team-puls.md P1): plain-language layer
               // stored at lesson:human:<topic> — display-only, ranking untouched.
@@ -1473,7 +1502,8 @@ export async function handleBrainTool(
                 const h = hRaw ? safeJsonParse<{ title?: string; summary?: string }>(hRaw, {}) : {};
                 if (h.title) lines.push(`  📖 **${h.title}** — ${h.summary ?? ''}`);
               }
-              lines.push(`  > ${preview}${r.content.length > 300 ? '…' : ''}\n`);
+              for (const z of vorschau) lines.push(`  > ${z}`);
+              lines.push('');
             }
           }
           const matched = [...grouped.keys()];
@@ -1495,7 +1525,7 @@ export async function handleBrainTool(
               : r.matchType === 'semantic'
               ? `sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🎯 semantic`
               : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
-            const preview = r.content.slice(0, 400).replace(/\n/g, ' ');
+            const vorschau = recallVorschau(r.key, r.content, 400);
             lines.push(`**${label}**${authorBadge}${contextBadge} _(${scorePart})_`);
             // Lesbares Brain (docs/produkt/team-puls.md P1): plain-language layer.
             if (r.key.startsWith('cachly:lesson:best:')) {
@@ -1504,7 +1534,8 @@ export async function handleBrainTool(
               const h = hRaw ? safeJsonParse<{ title?: string; summary?: string }>(hRaw, {}) : {};
               if (h.title) lines.push(`📖 **${h.title}** — ${h.summary ?? ''}`);
             }
-            lines.push(`> ${preview}${r.content.length > 400 ? '…' : ''}\n`);
+            for (const z of vorschau) lines.push(`> ${z}`);
+            lines.push('');
           }
         }
 
