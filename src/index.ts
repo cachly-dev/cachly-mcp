@@ -593,6 +593,29 @@ export { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp,
 /** Reuse Redis connections across tool calls (keyed by instance_id). */
 const pool = new Map<string, Redis>();
 
+/**
+ * Reconnect exactly ONCE, then give up.
+ *
+ * The old policy was `retryStrategy: () => null` — fail fast, never reconnect.
+ * Measured cost of that policy (2026-08-16, one working session): the FIRST
+ * brain call after every idle stretch died with "Connection is closed", the
+ * retyped second call worked. Five times in one day, every time the same
+ * shape. Cause: the pooled socket goes half-open while idle (NAT/LB drops the
+ * TCP session silently); the next command writes into a dead pipe, and with
+ * reconnects disabled the error goes straight to the user instead of into one
+ * quick reconnect.
+ *
+ * One retry after 200 ms heals exactly that case. Anything beyond one attempt
+ * still fails fast — the "no reconnect loops in MCP context" concern the old
+ * policy protected stays protected: a genuinely down instance costs one extra
+ * 200 ms attempt, not a loop.
+ *
+ * Exported for the test that pins this behaviour down.
+ */
+export function reconnectOnce(times: number): number | null {
+  return times <= 1 ? 200 : null;
+}
+
 async function getConnection(instance_id: string): Promise<Redis> {
   if (!instance_id) {
     // With auto-provisioning, this only happens when the API was briefly
@@ -686,7 +709,11 @@ async function getConnection(instance_id: string): Promise<Redis> {
     lazyConnect: true,
     enableReadyCheck: true,
     connectTimeout: 8000,
-    retryStrategy: () => null,  // fail fast, no reconnect loops in MCP context
+    retryStrategy: reconnectOnce,
+    // One in-flight command survives exactly one reconnect (see reconnectOnce).
+    maxRetriesPerRequest: 1,
+    // Detect half-open sockets while idle instead of at the next command.
+    keepAlive: 15000,
   });
 
   // Drop the client from the pool AND close its socket on error/end, so a
