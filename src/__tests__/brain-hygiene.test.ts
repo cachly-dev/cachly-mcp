@@ -26,6 +26,14 @@ class MiniRedis {
   async mget(...keys: string[]): Promise<(string | null)[]> {
     return keys.map(k => this.store.get(k) ?? null);
   }
+  // Echtes Redis kann `set` direkt, nicht nur in der Pipeline. Die Attrappe
+  // konnte es bis zum 17.08.2026 nicht — was nichts kaputtmachte, solange
+  // niemand es benutzte, und sieben Tests umwarf, als brain_hygiene anfing,
+  // die neu gerechnete Zeitersparnis zu schreiben.
+  async set(key: string, value: string): Promise<'OK'> {
+    this.store.set(key, value);
+    return 'OK';
+  }
   pipeline() {
     const ops: Array<() => void> = [];
     return {
@@ -252,5 +260,65 @@ describe('brain_hygiene', () => {
     seed(redis, freshLesson('deploy:k8s'));
     const result = await runHygiene({ dry_run: true });
     expect(result).toMatch(/scanned \*\*2\*\* lessons/);
+  });
+
+  // ── Regel 4: Startvorrat entwerten ────────────────────────────────────────
+  //
+  // Der Fall stammt aus einem echten Panel vom 17.08.2026: 475 Lektionen, und
+  // die Wertschaetzung kam praktisch komplett aus dem mitgelieferten
+  // Startvorrat.
+  describe('Startvorrat entwerten (Regel 4)', () => {
+    function starterLesson(topic: string, recallCount: number) {
+      return { ...freshLesson(topic, 'success', recallCount), source: 'starter' };
+    }
+
+    it('setzt die Zaehler des Startvorrats auf 0 und laesst eigene unberuehrt', async () => {
+      seed(redis, starterLesson('docker:layer-cache', 973));
+      seed(redis, starterLesson('cache:stampede', 971));
+      seed(redis, freshLesson('node1:portkollision', 'success', 7));
+
+      await runHygiene({ dry_run: false });
+
+      const starter = JSON.parse(redis.store.get('cachly:lesson:best:docker:layer-cache')!);
+      expect(starter.recall_count).toBe(0);
+      const eigen = JSON.parse(redis.store.get('cachly:lesson:best:node1:portkollision')!);
+      expect(eigen.recall_count).toBe(7);
+    });
+
+    it('rechnet die Zeitersparnis allein aus den eigenen Lektionen', async () => {
+      // 973 + 971 Starter-Abrufe = 58.320 Minuten nach alter Rechnung.
+      seed(redis, starterLesson('docker:layer-cache', 973));
+      seed(redis, starterLesson('cache:stampede', 971));
+      // Eigene: 7 Abrufe × 60 min (major) = 420 Minuten. Mehr ist es nicht.
+      seed(redis, { ...freshLesson('node1:portkollision', 'success', 7), severity: 'major' });
+      redis.store.set(`cachly:stats:time_saved_mins:${INSTANCE}`, '77790');
+
+      const result = await runHygiene({ dry_run: false });
+
+      expect(redis.store.get(`cachly:stats:time_saved_mins:${INSTANCE}`)).toBe('420');
+      // Die Korrektur wird BENANNT, nicht still vorgenommen.
+      expect(result).toContain('Zeitersparnis neu gerechnet');
+    });
+
+    it('aendert im Probelauf nichts', async () => {
+      seed(redis, starterLesson('docker:layer-cache', 973));
+      redis.store.set(`cachly:stats:time_saved_mins:${INSTANCE}`, '77790');
+
+      await runHygiene({ dry_run: true });
+
+      expect(redis.store.get(`cachly:stats:time_saved_mins:${INSTANCE}`)).toBe('77790');
+      const starter = JSON.parse(redis.store.get('cachly:lesson:best:docker:layer-cache')!);
+      expect(starter.recall_count).toBe(973);
+    });
+
+    it('meldet nichts, wenn es keinen Startvorrat gibt', async () => {
+      seed(redis, { ...freshLesson('node1:portkollision', 'success', 7), severity: 'major' });
+      redis.store.set(`cachly:stats:time_saved_mins:${INSTANCE}`, '420');
+
+      const result = await runHygiene({ dry_run: false });
+
+      expect(result).toContain('| Startvorrat entwertet (Zähler auf 0) | 0 |');
+      expect(result).not.toContain('Zeitersparnis neu gerechnet');
+    });
   });
 });

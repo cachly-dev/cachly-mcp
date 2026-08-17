@@ -5,6 +5,7 @@ import { calculateConfidence, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_VALUE,
          CONFIDENCE_WARN_DAYS, CONFIDENCE_STALE_DAYS } from '../confidence.js';
 import type { Instance } from './brain.js';
 import { safeJsonParse } from '../utils.js';
+import { ersparteMinuten, istStarterLektion, fmtStunden } from '../wertbeitrag.js';
 import { cachlyUrl } from '../cachly-url.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
@@ -1105,6 +1106,45 @@ export async function handleTeamTool(
         }
       }
 
+      // ── Regel 4: Startvorrat entwerten und Zeitersparnis neu rechnen ──────
+      //
+      // ANLASS (17.08.2026): Ein Brain mit 475 Lektionen zeigte 54 Tage
+      // eingesparte Entwicklerzeit und 97.237,50 € Gegenwert. Nachgerechnet kam
+      // praktisch alles aus dem mitgelieferten Startvorrat — `docker:layer-cache`
+      // bei 973 Abrufen, `cache:stampede` bei 971, dahinter neun weitere bei je
+      // rund 208. Die echten Lektionen standen bei zwei bis fünf.
+      //
+      // Ab jetzt zählen Starter-Abrufe nicht mehr mit (wertbeitrag.ts). Das
+      // stoppt aber nur das Weiterwachsen; die aufgelaufenen Zähler bleiben und
+      // tragen die Zahl weiter. Deshalb hier zweierlei:
+      //
+      //  1. Starter-Zähler auf 0. Sie sind keine Leistung dieses Teams.
+      //  2. time_saved_mins NEU BERECHNEN statt zu korrigieren. Die alte Summe
+      //     ist nicht rekonstruierbar (sie wurde im Juli schon einmal
+      //     zurückgesetzt und geht nicht mit der Summe der Einzelzähler auf).
+      //     Etwas davon abzuziehen ergäbe eine Zahl, die genauso erfunden wäre
+      //     wie die alte — nur unauffälliger. Neu gerechnet ist sie prüfbar:
+      //     Summe über alle NICHT-Starter-Lektionen aus Abrufzahl mal Staffel.
+      let starterZurueckgesetzt = 0;
+      let minutenNeu = 0;
+      const minutenAlt = parseFloat((await redis.get(`cachly:stats:time_saved_mins:${instance_id}`)) ?? '0') || 0;
+
+      for (const lesson of lessons) {
+        if (istStarterLektion(lesson)) {
+          if ((lesson.recall_count ?? 0) > 0) {
+            starterZurueckgesetzt++;
+            const bisher = updates.get(lesson._key) ?? lesson;
+            updates.set(lesson._key, { ...bisher, recall_count: 0 });
+          }
+          continue;
+        }
+        minutenNeu += (lesson.recall_count ?? 0) * ersparteMinuten(lesson);
+      }
+
+      if (!dry_run) {
+        await redis.set(`cachly:stats:time_saved_mins:${instance_id}`, String(minutenNeu)).catch(() => {});
+      }
+
       // ── Flush updates ─────────────────────────────────────────────────────
       if (!dry_run && updates.size > 0) {
         const pipeline = redis.pipeline();
@@ -1126,8 +1166,19 @@ export async function handleTeamTool(
         `| Flagged provisional (confidence < ${provisional_threshold}) | ${provisionalKeys.length} |`,
         `| Archived (stale + low-recall + age > ${archive_days}d) | ${archivedKeys.length} |`,
         `| Contradictions auto-resolved | ${conflictResolutions.length} |`,
+        `| Startvorrat entwertet (Zähler auf 0) | ${starterZurueckgesetzt} |`,
         '',
       ];
+
+      if (Math.round(minutenAlt) !== Math.round(minutenNeu)) {
+        // Die Zahl beim Namen nennen, nicht nur still korrigieren. Wer morgen
+        // eine kleinere Ersparnis im Panel sieht, soll hier lesen koennen warum.
+        lines.push(
+          `**⏱️ Zeitersparnis neu gerechnet:** ${fmtStunden(minutenAlt)} → **${fmtStunden(minutenNeu)}**`,
+          `_Nur noch eigene Lektionen. Der mitgelieferte Startvorrat zählt nicht mehr — er ist Allgemeinwissen, kein gelerntes._`,
+          '',
+        );
+      }
 
       if (provisionalKeys.length > 0) {
         lines.push(`**⚠️ Provisional (verify or re-learn):**`);

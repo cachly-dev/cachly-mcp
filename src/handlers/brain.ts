@@ -7,6 +7,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration,
          ckgUpsertServiceNode } from '../ckg.js';
 import { safeJsonParse, scanKeys } from '../utils.js';
+import { ersparteMinuten, istStarterLektion } from '../wertbeitrag.js';
 import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
 
 /**
@@ -1051,9 +1052,12 @@ export async function handleBrainTool(
         // as a broad smart_recall — the user asked the brain a question either way.
         void bumpRecallQuota(redis);
 
-        // Track estimated time saved (30m minor · 60m major · 240m critical)
-        const savedMins = lesson.severity === 'critical' ? 240 : lesson.severity === 'major' ? 60 : 30;
-        redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
+        // Track estimated time saved (30m minor · 60m major · 240m critical).
+        // Starter-Lektionen zaehlen 0 — siehe wertbeitrag.ts.
+        const savedMins = ersparteMinuten(lesson);
+        if (savedMins > 0) {
+          redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
+        }
 
         const sevEmoji = lesson.severity === 'critical' ? '🔴' : lesson.severity === 'major' ? '🟡' : lesson.severity ? '🟢' : '';
         const auditSummary = (lesson.audit_trail ?? []).length > 1
@@ -1199,9 +1203,11 @@ export async function handleBrainTool(
             const recalledAt = new Date().toISOString();
             const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, verified_at: recalledAt, last_recalled_at: recalledAt };
             redis.set(m.key, JSON.stringify(updated)).catch(() => {});
-            const sev = lesson.severity as string;
-            const savedMins = sev === 'critical' ? 240 : sev === 'major' ? 60 : 30;
-            redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
+            // Starter-Lektionen zaehlen 0 — siehe wertbeitrag.ts.
+            const savedMins = ersparteMinuten(lesson);
+            if (savedMins > 0) {
+              redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
+            }
 
             // Metric 3 (team-knowledge-reuse): a recall of a lesson authored by
             // someone OTHER than the requester is cross-author reuse — the value
@@ -1221,11 +1227,16 @@ export async function handleBrainTool(
 
             if (lesson.outcome === 'success') successRecallsThisCall++;
 
-            // Surface banner for proven successes (recall_count >= 1 means it's been validated)
-            if (lesson.outcome === 'success' && (lesson.recall_count ?? 0) >= 1) {
+            // Surface banner for proven successes (recall_count >= 1 means it's been validated).
+            //
+            // Der Startvorrat kommt hier NICHT ins Banner. "Brain saved you ~8h
+            // here — docker:layer-cache" ist keine Leistung des Gedaechtnisses,
+            // sondern mitgeliefertes Allgemeinwissen. Genau dieses Banner hat
+            // die Zahl im Panel jahrelang glaubwuerdig aussehen lassen.
+            if (lesson.outcome === 'success' && (lesson.recall_count ?? 0) >= 1 && !istStarterLektion(lesson)) {
               savedHere.push({
                 topic: m.key.replace('cachly:lesson:best:', ''),
-                severity: sev ?? 'major',
+                severity: (lesson.severity as string) ?? 'major',
                 recall_count: (lesson.recall_count ?? 0) + 1,
                 savedMins,
                 ts: lesson.ts,
@@ -1948,7 +1959,13 @@ export async function handleBrainTool(
       {
         type LessonPin = typeof lessons[0] & { pinned?: boolean };
         const CRYSTALLIZE_RECALLS = 5;
+        // Der Startvorrat wird nie zum Gesetz. Eine mitgelieferte Lektion sammelt
+        // Abrufe, weil sie zu allem ein bisschen passt — nicht, weil sie sich
+        // bewaehrt hat. Gemessen am 17.08.2026: Die fuenf obersten "Gesetze"
+        // eines Brains mit 475 Lektionen waren alle aus dem Startvorrat, und die
+        // echten Lektionen standen darunter bei zwei bis fuenf Abrufen.
         const laws = (lessons as LessonPin[])
+          .filter(l => !istStarterLektion(l))
           .filter(l => l.outcome === 'success' && (l.pinned === true || (l.recall_count ?? 0) >= CRYSTALLIZE_RECALLS))
           .sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0))
           .slice(0, 5);
@@ -2054,7 +2071,10 @@ export async function handleBrainTool(
       // Top lessons — sorted by recall_count desc (most-used = most proven value).
       // If focus is set, focus-matched lessons already shown above; show remaining here.
       if (lessons.length > 0) {
-        const byRecall = [...lessons].sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0));
+        // Auch hier ohne Startvorrat: "Most valuable" soll zeigen, was DIESES
+        // Team gelernt hat, nicht was mitgeliefert wurde.
+        const byRecall = [...lessons].filter(l => !istStarterLektion(l))
+          .sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0));
         const topRecalled = byRecall.filter(l => (l.recall_count ?? 0) > 0).slice(0, 3);
         const remaining   = (focusLessons.length > 0 ? lessons.filter(l => !focusLessons.includes(l)) : lessons)
           .filter(l => !topRecalled.includes(l))
