@@ -54,6 +54,9 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import {
   CallToolRequestSchema,
   ErrorCode,
+  ListPromptsRequestSchema,
+  ListResourceTemplatesRequestSchema,
+  ListResourcesRequestSchema,
   ListToolsRequestSchema,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -1442,24 +1445,77 @@ The Brain instance id comes from the CACHLY_BRAIN_INSTANCE_ID environment variab
  * Der Aufbau ist billig: ein "new Server" und zwei Handler. TOOLS ist eine
  * Konstante des Moduls, es wird nichts kopiert.
  */
-function makeServer(): Server {
-  const s = new Server(
-    { name: 'cachly-mcp', version: CURRENT_VERSION },
-    { capabilities: { tools: {} }, instructions: CACHLY_MCP_INSTRUCTIONS }
-  );
-  s.setRequestHandler(ListToolsRequestSchema, listToolsHandler);
-  s.setRequestHandler(CallToolRequestSchema, callToolHandler);
-  return s;
-}
+/**
+ * Was dieser Server kann. Werkzeuge sind der Kern; Ressourcen und Prompts
+ * fuehren wir mit LEEREN Listen.
+ *
+ * ─── WARUM LEER UND NICHT WEGGELASSEN (18.08.2026) ──────────────────────────
+ *
+ * Genau genommen war das Weglassen richtig: Wer eine Faehigkeit nicht
+ * ankuendigt, darf auf `resources/list` mit -32601 "Method not found"
+ * antworten, und das ist die vorgesehene Antwort.
+ *
+ * Nur liest sie niemand so. Im Scan-Protokoll von Smithery stand:
+ *
+ *   [scan] Capabilities found: 122 tools. Warning: Failed to list resources:
+ *   MCP error -32601: Method not found; Failed to list prompts: ...
+ *
+ * Ein Pruefer, der "Failed" protokolliert, faellt nicht auf die Feinheit
+ * herein, dass unser Nein das korrekte Nein war. Aus einer sauberen Antwort
+ * wird eine Warnzeile im Bericht — und Warnzeilen kosten Noten in den
+ * Verzeichnissen, ohne dass irgendwo etwas kaputt ist.
+ *
+ * Eine leere Liste sagt dasselbe wie der Fehler ("hier gibt es nichts"), aber
+ * in einer Form, die jeder Aufrufer richtig versteht. Das ist keine
+ * Beschoenigung: Wir behaupten nicht, Ressourcen zu haben, wir liefern
+ * nachpruefbar null Stueck.
+ */
+const CAPABILITIES = { tools: {}, resources: {}, prompts: {} } as const;
 
 const listToolsHandler = async () => ({ tools: TOOLS });
 
+// Bewusst Funktionsdeklarationen statt const: makeServer() steht weiter oben
+// als callToolHandler, und Deklarationen werden hochgezogen. So gibt es EINE
+// Stelle je Handler, nicht eine pro Server-Aufbau.
+async function listResourcesHandler() {
+  return { resources: [] };
+}
+async function listResourceTemplatesHandler() {
+  return { resourceTemplates: [] };
+}
+async function listPromptsHandler() {
+  return { prompts: [] };
+}
+
+/** Haengt alle Handler an einen Server. Beide Betriebsarten teilen sich diese
+ *  eine Liste — sonst kennt der HTTP-Server bald etwas, das der stdio-Server
+ *  nicht kennt, und niemand merkt es. */
+function registriereHandler(s: Server): void {
+  s.setRequestHandler(ListToolsRequestSchema, listToolsHandler);
+  s.setRequestHandler(CallToolRequestSchema, callToolHandler);
+  s.setRequestHandler(ListResourcesRequestSchema, listResourcesHandler);
+  s.setRequestHandler(ListResourceTemplatesRequestSchema, listResourceTemplatesHandler);
+  s.setRequestHandler(ListPromptsRequestSchema, listPromptsHandler);
+}
+
+function makeServer(): Server {
+  const s = new Server(
+    { name: 'cachly-mcp', version: CURRENT_VERSION },
+    { capabilities: CAPABILITIES, instructions: CACHLY_MCP_INSTRUCTIONS }
+  );
+  registriereHandler(s);
+  return s;
+}
+
 const server = new Server(
   { name: 'cachly-mcp', version: CURRENT_VERSION },
-  { capabilities: { tools: {} }, instructions: CACHLY_MCP_INSTRUCTIONS }
+  { capabilities: CAPABILITIES, instructions: CACHLY_MCP_INSTRUCTIONS }
 );
 
 server.setRequestHandler(ListToolsRequestSchema, listToolsHandler);
+server.setRequestHandler(ListResourcesRequestSchema, listResourcesHandler);
+server.setRequestHandler(ListResourceTemplatesRequestSchema, listResourceTemplatesHandler);
+server.setRequestHandler(ListPromptsRequestSchema, listPromptsHandler);
 
 // ── Auto-session management ───────────────────────────────────────────────────
 // Transparently starts a Brain session on the first tool call of a process
