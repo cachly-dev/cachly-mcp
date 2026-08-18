@@ -47,6 +47,8 @@ import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rer
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 import { upgradeNudge } from '../upgrade-nudge.js';
 import { recallTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
+import { vorspannHinweis } from '../vorspann.js';
+import { autorAbzeichen, fremdanteil } from '../autor-abzeichen.js';
 import { cachlyUrl } from '../cachly-url.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
@@ -1017,6 +1019,13 @@ export async function handleBrainTool(
           : '',
         ...templateWarnings,
         ...iWasWrongWarning,
+        // GROW-044: Die 100-Zeichen-Regel wird geprueft, nicht geglaubt.
+        // Das Briefing der naechsten Sitzung zeigt je Lektion rund 100
+        // Zeichen; am 16.08.2026 stand die gesuchte Adresse an Zeichen 323,
+        // die Lektion war eingeblendet und der Fehler passierte trotzdem.
+        // Hinweis statt Ablehnung: es gibt Lektionen ohne harte Zahl, und eine
+        // abgelehnte Lektion ist immer schlechter als eine unscharfe.
+        vorspannHinweis(what_worked) ?? '',
       ].filter(l => l !== '').join('\n');
     }
 
@@ -2593,10 +2602,23 @@ export async function handleBrainTool(
         const rc = l.recall_count ?? 0;
         const rcStr = rc > 0 ? ` (✓ recalled ${rc}×)` : '';
         const snippet = l.what_worked.slice(0, 110);
-        summaryLines.push(`${sevIcon} ${sevLabel}\`${l.topic}\` — ${snippet}${rcStr}`);
+        // GROW-045: `author` wurde bisher nur entgegengenommen, nie benutzt —
+        // obwohl die Werkzeug-Spezifikation "used for team lesson filtering"
+        // verspricht. Dieselbe Regel wie in smart_recall, jetzt aus EINEM Modul.
+        const autor = autorAbzeichen((l as { author?: string }).author, author);
+        summaryLines.push(`${sevIcon} ${sevLabel}\`${l.topic}\` — ${snippet}${rcStr}${autor}`);
       }
 
       summaryLines.push('');
+      // Die Zahl, die nur ein GETEILTES Gedaechtnis liefert. Ist sie null,
+      // wird nichts gesagt: "0 von Teamkollegen" ist keine Nachricht.
+      const fremde = fremdanteil(selected as { author?: string }[], author);
+      if (fremde > 0) {
+        summaryLines.push(
+          `👥 ${fremde} of these ${fremde === 1 ? 'was' : 'were'} written by a teammate — the value only a shared brain delivers.`,
+          '',
+        );
+      }
       if (needsRanking) {
         summaryLines.push(`💡 Showing top ${shown} of ${total} lessons · \`session_start\` for full briefing`);
       } else {
