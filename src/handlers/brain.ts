@@ -46,6 +46,7 @@ import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 import { upgradeNudge } from '../upgrade-nudge.js';
+import { recallTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
 import { cachlyUrl } from '../cachly-url.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
@@ -467,11 +468,15 @@ export const BRAIN_TOOL_NAMES = new Set([
 
 // ── Free-tier Teaser-Gate ──────────────────────────────────────────────────
 // When a Free-tier Brain crosses its recall limit, smart_recall still delivers
-// the top hits — the magic moment is sacred — but withholds the long tail
-// behind an upgrade teaser ("🔒 N more relevant lessons available"). This is a
+// the top hit — the magic moment is sacred — but withholds the long tail
+// behind an upgrade teaser ("🔒 N further relevant lessons withheld"). This is a
 // DEPTH gate (hide the tail), never an access wall: the #1 result is always
 // returned. Usage/limit come from the same authoritative numbers as the Brain
 // Health bar (GET /instances/:id/memory), cached briefly to avoid per-call latency.
+//
+// Diese Zusage stand von 2026-07 bis 2026-08-18 NUR hier im Kommentar, waehrend
+// der Zweig `visibleCount = gateActive ? 0 : 8` null Treffer zurueckgab. Seither
+// ist sie eine Funktion mit Gegenprobe: ../recall-tiefe.ts (GROW-043).
 const UPGRADE_URL = cachlyUrl('/billing', 'upgrade');
 
 interface RecallGate {
@@ -1421,12 +1426,13 @@ export async function handleBrainTool(
 
       // ── Teaser-Gate: free tier over its recall limit hides the long tail ──────
       const recallGate = await getRecallGate(instance_id, apiFetch);
-      // Hard gate: once a free user is over their (monthly, goodwill-adjusted)
-      // recall limit, the long tail is fully withheld until they upgrade or the
-      // month resets. We still show the single highest-value proven lesson below
-      // as a teaser so the tool isn't dead and the value is obvious.
+      // Depth gate: once a free user is over their (monthly, goodwill-adjusted)
+      // recall limit, the LONG TAIL is withheld — never the top hit. The rule
+      // lives in recall-tiefe.ts with tests (GROW-043), because it used to live
+      // only in a comment while the branch said `? 0 :` and returned nothing.
       const gateActive = recallGate.reached;
-      const visibleCount = gateActive ? 0 : 8;
+      const tiefe = recallTiefe({ ueberLimit: gateActive, gesamt: hybridResults.length, volleTiefe: TIEFE_VOLL });
+      const visibleCount = tiefe.sichtbar;
 
       // ── Build output ──────────────────────────────────────────────────────────
       const lines: string[] = [`🧠 **Smart Recall** for: _"${query}"_\n`];
@@ -1485,7 +1491,8 @@ export async function handleBrainTool(
         // Group by sub-query for multi-topic queries
         if (subQueries.length > 1) {
           const grouped = new Map<string, HybridResult[]>();
-          for (const r of hybridResults.slice(0, gateActive ? 0 : 12)) {
+          const tiefeMehrthemig = recallTiefe({ ueberLimit: gateActive, gesamt: hybridResults.length, volleTiefe: TIEFE_VOLL_MEHRTHEMIG });
+          for (const r of hybridResults.slice(0, tiefeMehrthemig.sichtbar)) {
             const sq = r.subQuery ?? query;
             if (!grouped.has(sq)) grouped.set(sq, []);
             grouped.get(sq)!.push(r);
@@ -1550,12 +1557,14 @@ export async function handleBrainTool(
           }
         }
 
-        // ── Hard gate footer: over the recall limit, the tail is withheld ──────
-        if (gateActive) {
-          const withheld = Math.max(0, hybridResults.length - visibleCount);
+        // ── Depth-gate footer: the top hit stayed, the tail is withheld ────────
+        // Only speak when something was actually held back — announcing
+        // "0 lessons withheld" would sell a wall that isn't there.
+        if (gateActive && tiefe.zurueckgehalten > 0) {
+          const withheld = tiefe.zurueckgehalten;
           lines.push(
             `🔒 **Free recall limit reached** (${recallGate.used}/${recallGate.limit} this month). ` +
-              `${withheld} relevant lesson${withheld !== 1 ? 's' : ''} withheld. ` +
+              `Showing your top match; ${withheld} further relevant lesson${withheld !== 1 ? 's are' : ' is'} withheld. ` +
               `Your limit resets next month, or unlock your full Brain now → ${UPGRADE_URL}\n`,
           );
         }
