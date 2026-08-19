@@ -107,3 +107,61 @@ describe('vorspannHinweis', () => {
     expect(prosa).not.toMatch(/Zeichen \d+ /);
   });
 });
+
+/**
+ * NACHTRAG 19.08.2026 — die Zahl steht vorn, ihre Wirkung nicht.
+ *
+ * GEMESSEN an einer selbst geschriebenen Lektion. Die ersten 100 Zeichen:
+ *
+ *   "109 Testdateien lesen Quelltext, 102 OHNE Kommentar-Filter, 13 davon
+ *    GRUEN weil"
+ *
+ * Drei Zahlen, alle drei da — und genau bei "weil" ist Schluss. Die alte
+ * Pruefung war zufrieden. Das Briefing zeigt aber Zahlen ohne Bedeutung: wer
+ * das liest, weiss nicht, ob 13 gut oder schlecht ist.
+ *
+ * Diese Abnahme wurde nach dem gemessenen Fall geschrieben und faehrt deshalb
+ * die kaputte Fassung ausdruecklich als Gegenprobe mit.
+ */
+describe('Vorspann: endet er mitten im Satz?', () => {
+  const ECHTER_FALL =
+    'GEMESSEN 19.08.2026: 109 Testdateien lesen Quelltext, 102 OHNE Kommentar-Filter, 13 davon GRUEN weil die gesuchte Zusage nur im Kommentar stand.';
+
+  it('der echte Fall wird als abgeschnitten erkannt', () => {
+    const b = pruefeVorspann(ECHTER_FALL);
+    expect(b.traegtTatsache).toBe(true);
+    expect(b.abgeschnitten).toBe(true);
+  });
+
+  it('und er bekommt einen Hinweis, obwohl die Zahlen vorn stehen', () => {
+    const h = vorspannHinweis(ECHTER_FALL);
+    expect(h).toBeTruthy();
+    expect(h).toContain('mitten im Satz');
+  });
+
+  it('derselbe Inhalt mit abgeschlossenem Satz bekommt KEINEN Hinweis', () => {
+    const besser =
+      '13 von 109 Waechtern waren gruen, ohne etwas zu pruefen. Sie fanden die gesuchte Zusage im Kommentar.';
+    expect(pruefeVorspann(besser).abgeschnitten).toBe(false);
+    expect(vorspannHinweis(besser)).toBeNull();
+  });
+
+  it('ein Punkt in einer Adresse beendet keinen Satz', () => {
+    // 10.8.0.7 enthaelt drei Punkte — keiner davon schliesst einen Gedanken ab.
+    const adresse =
+      'WHISPER LAEUFT AUF node-4 UNTER 10.8.0.7:3095 MIT large-v3 und antwortet dort zuverlaessig auf jede Anfrage ohne';
+    expect(pruefeVorspann(adresse).abgeschnitten).toBe(true);
+  });
+
+  it('ein kurzer Text gilt nie als abgeschnitten', () => {
+    // Kuerzer als der Vorspann heisst: da steht alles, was es gibt.
+    expect(pruefeVorspann('Port 3201 war doppelt belegt').abgeschnitten).toBe(false);
+  });
+
+  it('Gegenprobe: die Erkennung darf nicht einfach immer wahr sein', () => {
+    const lang =
+      'Der Deploy haengt an einer Netzwerkabhaengigkeit. Der Build zog die Schrift bei jedem Lauf aus dem Netz und fiel dreimal aus.';
+    expect(lang.length).toBeGreaterThan(100);
+    expect(pruefeVorspann(lang).abgeschnitten).toBe(false);
+  });
+});

@@ -63,6 +63,55 @@ export interface VorspannBefund {
   tatsacheStehtSpaeter: boolean;
   /** Position der ersten harten Tatsache im ganzen Text, oder -1. */
   ersteTatsacheBei: number;
+  /**
+   * Endet der Vorspann MITTEN im Satz?
+   *
+   * GEMESSEN am 19.08.2026 an einer selbst geschriebenen Lektion. Ihre ersten
+   * 100 Zeichen lauteten:
+   *
+   *   "109 Testdateien lesen Quelltext, 102 OHNE Kommentar-Filter, 13 davon
+   *    GRUEN weil"
+   *
+   * Drei Zahlen, alle drei da — und genau bei "weil" ist Schluss. Das Briefing
+   * zeigt also die Zahlen, aber nicht, WOFUER sie stehen. Wer das liest, weiss
+   * nicht, ob 13 gut oder schlecht ist.
+   *
+   * Die Tatsachen-Pruefung allein war zufrieden, und zu Recht — die Zahlen
+   * stehen ja vorn. Was fehlte, war ihre Wirkung, und die passt fast immer in
+   * denselben Satz: "13 Waechter waren gruen, ohne etwas zu pruefen" sind 47
+   * Zeichen und vollstaendig.
+   */
+  abgeschnitten: boolean;
+}
+
+/**
+ * Steht im Vorspann ein abgeschlossener Gedanke?
+ *
+ * Mechanisch, nicht inhaltlich: gesucht wird ein Satzende (Punkt, Semikolon,
+ * Ausrufe- oder Fragezeichen) innerhalb der ersten 100 Zeichen. Findet sich
+ * keines, endet der Vorspann mitten im Satz.
+ *
+ * Absichtlich KEINE Bedeutungspruefung. Ein Waechter, der raet, ob ein Satz
+ * "vollstaendig genug" ist, schlaegt bei jeder zweiten Lektion falschen Alarm
+ * — und ein Waechter, der zu oft Nein sagt, wird abgeschaltet. Ein fehlendes
+ * Satzzeichen ist dagegen eine Tatsache.
+ *
+ * Ein Text, der insgesamt kuerzer ist als der Vorspann, gilt NICHT als
+ * abgeschnitten: dort steht alles, was es gibt.
+ */
+function endetMittenImSatz(text: string): boolean {
+  if (text.length <= VORSPANN_ZEICHEN) return false;
+  const vorspann = text.slice(0, VORSPANN_ZEICHEN);
+  // Zwei Feinheiten, beide am echten Fall gelernt:
+  //
+  // 1. Ein Punkt in "10.8.0.7" oder "v1.2" beendet keinen Satz — deshalb muss
+  //    auf das Satzzeichen ein Leerzeichen oder das Textende folgen.
+  // 2. Der DOPPELPUNKT zaehlt NICHT. Er leitet ein, er schliesst nicht ab.
+  //    Genau daran scheiterte die erste Fassung: "GEMESSEN 19.08.2026: 109
+  //    Testdateien ... 13 davon GRUEN weil" galt als abgeschlossen, weil der
+  //    Doppelpunkt nach dem Datum mitzaehlte. Der Satz endet dort aber nicht,
+  //    er faengt an.
+  return !/[.;!?](?:\s|$)/.test(vorspann);
 }
 
 /** Frueheste Fundstelle irgendeines harten Musters, oder -1. */
@@ -94,6 +143,7 @@ export function pruefeVorspann(whatWorked: string | null | undefined): VorspannB
     gefunden,
     tatsacheStehtSpaeter: gefunden.length === 0 && ersteTatsacheBei >= VORSPANN_ZEICHEN,
     ersteTatsacheBei,
+    abgeschnitten: endetMittenImSatz(text),
   };
 }
 
@@ -106,8 +156,25 @@ export function pruefeVorspann(whatWorked: string | null | undefined): VorspannB
  */
 export function vorspannHinweis(whatWorked: string | null | undefined): string | null {
   const b = pruefeVorspann(whatWorked);
-  if (b.traegtTatsache) return null;
   if (!b.vorspann.trim()) return null;
+
+  /*
+   * Die Zahl ist da, aber der Satz ist es nicht.
+   *
+   * Dieser Fall kam am 19.08.2026 dazu und ist der feinere: die alte Pruefung
+   * war zufrieden, weil drei Zahlen in den ersten 100 Zeichen standen — und
+   * genau bei "weil" war Schluss. Zahlen ohne ihre Wirkung sind im Briefing
+   * kein Wissen, sondern ein Raetsel.
+   */
+  if (b.traegtTatsache && b.abgeschnitten) {
+    return (
+      `📏 **Der Vorspann endet mitten im Satz** — die Zahl steht vorn, ihre Wirkung nicht. ` +
+      `Das Briefing der nächsten Sitzung bricht bei ${VORSPANN_ZEICHEN} Zeichen ab und zeigt dann ` +
+      `eine Zahl ohne Bedeutung. Ein abgeschlossener Satz in den ersten ${VORSPANN_ZEICHEN} Zeichen ` +
+      `genügt: nicht „13 davon grün weil", sondern „13 Wächter waren grün, ohne etwas zu prüfen."`
+    );
+  }
+  if (b.traegtTatsache) return null;
 
   if (b.tatsacheStehtSpaeter) {
     return (
