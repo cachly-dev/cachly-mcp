@@ -185,3 +185,54 @@ describe('GROW-047 · gezaehlt wird an der einen Stelle', () => {
     expect(tokenDerAntwort('abcd')).toBe(1);
   });
 });
+
+/**
+ * NACHTRAG 19.08.2026 — die Schaetzung steht UNTER der Messung, nie darueber.
+ *
+ * Heinrich zur alten Fassung: "Ich tue mich schwer mit den 1200 h. Das haette
+ * vielleicht frueher zugetroffen, zu Entwicklungszeiten ohne AI, aber
+ * heutzutage nicht mehr. Die erscheint laecherlich hoch."
+ *
+ * Sie war es auch: die Annahme dahinter (30 bis 240 Minuten Recherche je
+ * Lektion) ist der Preis von VOR den Assistenten, und sie stand fett und ganz
+ * oben — waehrend die einzige Zahl ohne Annahme gar nicht vorkam.
+ *
+ * Diese Abnahme haelt die Reihenfolge fest. Sie prueft den Quelltext, weil das
+ * Zusammenbauen der Ausgabe eine Datenbank braucht — was hier zaehlt, ist die
+ * REIHENFOLGE im Array, und die steht im Code.
+ */
+describe('GROW-047 - gemessen zuerst, geschaetzt darunter', () => {
+  const handler = lies('../handlers/brain.ts');
+
+  it('die gemessene Liefermenge steht VOR der geschaetzten Zeitersparnis', () => {
+    const gemessen = handler.indexOf('Aus dem Brain geliefert');
+    const geschaetzt = handler.indexOf('nicht neu recherchiert');
+    expect(gemessen, 'der gemessene Block muss im Handler stehen').toBeGreaterThan(0);
+    expect(geschaetzt, 'die Schaetzung muss im Handler stehen').toBeGreaterThan(0);
+    expect(geschaetzt, 'die Schaetzung darf erst NACH der Messung kommen').toBeGreaterThan(gemessen);
+  });
+
+  it('die Schaetzung nennt ihre Annahme im selben Satz', () => {
+    const i = handler.indexOf('nicht neu recherchiert');
+    const satz = handler.slice(i, i + 260);
+    expect(satz).toContain('30');
+    expect(satz).toContain('nicht gemessen');
+  });
+
+  it('sie steht klein, nicht fett — kein doppeltes Sternchen davor', () => {
+    const i = handler.indexOf('nicht neu recherchiert');
+    const davor = handler.slice(Math.max(0, i - 120), i);
+    expect(davor).not.toMatch(/\*\*\$\{timeSavedHuman\}\*\*/);
+  });
+
+  /**
+   * GEGENPROBE: die alte Fassung muss hier durchfallen. Sonst prueft dieser
+   * Waechter die Reihenfolge nur zufaellig richtig herum.
+   */
+  it('Gegenprobe: die alte Reihenfolge waere rot', () => {
+    const alt = ['`---`', 'total saved not re-researching', 'Aus dem Brain geliefert'].join('\n');
+    const gemessen = alt.indexOf('Aus dem Brain geliefert');
+    const geschaetzt = alt.indexOf('total saved not re-researching');
+    expect(geschaetzt).toBeLessThan(gemessen);
+  });
+});

@@ -3698,6 +3698,36 @@ export async function handleBrainTool(
       const crossAuthor = Number(crossAuthorRaw ?? 0);
       const reusePct = recallsTotal > 0 ? Math.round((crossAuthor / recallsTotal) * 100) : 0;
       const reuseTarget = reusePct >= 30 ? '🟢 above 30 % target' : recallsTotal === 0 ? '⚪ no recalls yet' : '🟡 below 30 % target';
+      /*
+       * ── Die geschaetzten Stunden stehen nicht mehr im Kundenblick ─────────
+       *
+       * "1.429,5 h total saved not re-researching known fixes" war die
+       * groesste erfundene Zahl, die wir gezeigt haben. Sie ist gerechnet:
+       * Minuten je Lektion nach Schwere, mal Abrufzahl. Der Faktor ist
+       * geraten, und die Zahl waechst mit jedem Abruf mit — auch mit einem,
+       * der nichts gefunden hat.
+       *
+       * Heinrich am 19.08.2026 zur alten Fassung: "Ich tue mich schwer mit den
+       * 1200 h. Das haette vielleicht frueher zugetroffen, zu
+       * Entwicklungszeiten ohne AI, aber heutzutage nicht mehr. Die erscheint
+       * laecherlich hoch."
+       *
+       * Genau so ist es. Die Annahme dahinter — 30 bis 240 Minuten Recherche
+       * je Lektion — ist der Preis von VOR den Assistenten. Heute findet ein
+       * Modell dasselbe in Sekunden. Die Zahl misst eine Welt, die es nicht
+       * mehr gibt.
+       *
+       * FREMDBELEG dazu (Artikel 4278052, METR-Studie): erfahrene Entwickler
+       * FUEHLTEN sich mit KI schneller und waren gemessen 19 Prozent
+       * langsamer. Selbstauskunft und Messung zeigen in entgegengesetzte
+       * Richtungen — eine geschaetzte Zeitersparnis ist die schnellste Art,
+       * Vertrauen fuer alle anderen Zahlen gleich mit zu verlieren.
+       *
+       * Sie wird nicht geloescht, sondern ZURUECKGESTUFT: sie steht weiterhin
+       * da, aber klein, mit ihrer Annahme im selben Satz, und unter der
+       * gemessenen Liefermenge. Eine erfundene Zahl ALLEIN nervt; eine
+       * gemessene daneben traegt sie.
+       */
       const timeSaved = Math.round(Number(timeSavedRaw ?? 0));
       const timeSavedHuman = timeSaved < 60 ? `${timeSaved} min` : `${(timeSaved / 60).toFixed(1)} h`;
 
@@ -3716,14 +3746,19 @@ export async function handleBrainTool(
         reusePairs.length > 0 ? `**${reusePairs.length}** distinct reuse relationship${reusePairs.length !== 1 ? 's' : ''} across the team` : '',
         ``,
         `---`,
-        `⏱️ **${timeSavedHuman}** total saved not re-researching known fixes.`,
+        // GEMESSEN zuerst, GESCHAETZT darunter — in dieser Reihenfolge, immer.
+        // Vorher stand die gerechnete Stundenzahl ganz oben und fett; die
+        // einzige Zahl ohne Annahme kam gar nicht vor.
+        `### 📦 Aus dem Brain geliefert _(gemessen, nicht gerechnet)_`,
+        lieferungInWorten(lieferung),
+        ``,
+        lieferung.abrufe > 0
+          ? `_Daneben eine **Schätzung**: ${timeSavedHuman} nicht neu recherchiert — gerechnet mit 30–240 Min. je Lektion nach Schwere, nicht gemessen. Die Zahl darüber braucht diese Annahme nicht._`
+          : `_Eine **Schätzung** von ${timeSavedHuman} „nicht neu recherchiert" wäre hier gerechnet, nicht gemessen — sie erscheint erst, wenn daneben eine gemessene Zahl steht._`,
         recallsTotal === 0
           ? `_Tip: pass \`author="your-handle"\` to \`smart_recall\` so cross-author reuse can be tracked._`
           : `_These numbers compound: every learned lesson and every teammate raises all three._`,
         ``,
-        ``,
-        `### 📦 Aus dem Brain geliefert _(gemessen, nicht gerechnet)_`,
-        lieferungInWorten(lieferung),
         `### 🔧 Werkzeug-Nutzung _(erst messen, dann zusammenlegen)_`,
         nutzungInWorten(nutzung, TOOLS.length),
         ...(nutzung.spitze.length > 0
