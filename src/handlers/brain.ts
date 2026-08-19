@@ -49,6 +49,7 @@ import { upgradeNudge } from '../upgrade-nudge.js';
 import { recallTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
 import { nutzungInWorten, nutzungsSchluessel, verdichte } from '../werkzeug-nutzung.js';
 import { inWorten as lieferungInWorten, lieferBild, lieferSchluessel, trefferSchluessel } from '../geliefert.js';
+import { COAUTHOR_PREF_KEY, autorHinweis, coautorAus, echterGitLeser, ermittleAutor, mitCoautor, nurMensch } from '../autor.js';
 import { TOOLS } from '../tools.js';
 import { vorspannHinweis } from '../vorspann.js';
 import { autorAbzeichen, fremdanteil } from '../autor-abzeichen.js';
@@ -617,6 +618,30 @@ export async function handleBrainTool(
       const redis = await getConnection(instance_id);
       const ts = new Date().toISOString();
 
+      /*
+       * ── Der Autor wird HERGELEITET, nicht erwartet ─────────────────────
+       *
+       * Gemessen am 19.08.2026: 195 von 493 Lektionen ohne Autor. `author`
+       * war ein optionales Feld, das ein Agent bei jedem Aufruf mitschicken
+       * sollte — und natuerlich vergisst. Dabei steht der Name in
+       * `git config user.name`.
+       *
+       * Ein Pflichtfeld, das man vergessen kann, ist kein Pflichtfeld.
+       */
+      const herkunft = ermittleAutor({
+        uebergeben: author,
+        umgebung: process.env.CACHLY_AUTHOR,
+        git: echterGitLeser(process.env.CACHLY_WORKSPACE ?? process.cwd()),
+      });
+      // Mitautor nur, wenn ausdruecklich eingeschaltet — Standard ist aus.
+      let coautor = '';
+      try {
+        coautor = coautorAus(await redis.get(`cachly:prefs:${COAUTHOR_PREF_KEY}:${instance_id}`));
+      } catch { /* eine Einstellung darf das Speichern nie stoppen */ }
+      const autorFeld = mitCoautor(herkunft.autor, coautor);
+      const autorTipp = autorHinweis(herkunft);
+
+
       // ── Lessons-Review workflow (P1-1) ─────────────────────────────────────
       // When the org enabled pending-mode on this (shared) brain, team-visible
       // lessons become proposals awaiting owner/admin approval instead of
@@ -626,7 +651,7 @@ export async function handleBrainTool(
         return storeLessonProposal(redis, topic, {
           topic, outcome, what_worked, what_failed, context: ctx, severity,
           file_paths, commands, tags, depends_on,
-          ...(author ? { author } : {}),
+          ...(autorFeld ? { author: autorFeld } : {}),
           ...(service ? { service } : {}),
           ...(group ? { group: String(group).toLowerCase().trim() } : {}),
           visibility, recall_count: 0, ts, confidence: 1.0, version: 3,
@@ -759,7 +784,9 @@ export async function handleBrainTool(
         commands,
         tags,
         depends_on,
-        ...(author ? { author } : {}),
+        // Auch hier der hergeleitete Name — sonst traegt die gespeicherte
+        // Lektion selbst keinen Autor, waehrend der Kausalgraph einen hat.
+        ...(autorFeld ? { author: autorFeld } : {}),
         ...(service ? { service } : {}),
         ...(group ? { group: String(group).toLowerCase().trim() } : {}),
         visibility,
@@ -866,7 +893,7 @@ export async function handleBrainTool(
                 fix_confidence: existEdge.confidence,
                 fix_trials: existEdge.trials,
                 failure_outcome: outcome,
-                reported_by: author || 'unknown',
+                reported_by: autorFeld || 'unknown',
                 what_failed: what_failed || '',
                 resolved: false,
               }), 'EX', 60 * 60 * 24 * 90);
@@ -928,18 +955,23 @@ export async function handleBrainTool(
       // ── Phase 3A: People + File nodes in knowledge graph ──────────────────────
       // Builds the "who knows what" map automatically from author + file_paths.
       // Person → authored → Concept edges power brain_who_knows queries.
-      if (author) {
+      //
+      // Seit dem 19.08.2026 steht hier autorFeld statt author: der Name wird
+      // aus git hergeleitet, wenn der Aufrufer keinen mitschickt. Vorher blieb
+      // dieser ganze Block bei zwei Fuenfteln aller Lektionen ungenutzt — und
+      // damit brain_who_knows leer.
+      if (autorFeld) {
         // Agent activity registry (Move 4): track which agents are actively
         // writing to this Brain, keyed by author, with a 1h TTL. Powers
         // brain_conflicts' "who is live" view and multi-agent arbitration.
         redis.set(
-          `cachly:agents:active:${author}`,
-          JSON.stringify({ author, last_topic: topic, last_outcome: outcome, ts: new Date().toISOString() }),
+          `cachly:agents:active:${autorFeld}`,
+          JSON.stringify({ author: autorFeld, last_topic: topic, last_outcome: outcome, ts: new Date().toISOString() }),
           'EX', 60 * 60,
         ).catch(() => {});
         try {
           const domain = topic.split(':')[0] ?? 'unknown';
-          const personId = await ckgUpsertPersonNode(redis, author, domain);
+          const personId = await ckgUpsertPersonNode(redis, nurMensch(autorFeld), domain);
           const conceptId = ckgSlug(topic);
           await ckgUpdateEdge(redis, personId, 'authored', conceptId, outcome === 'success', outcome === 'partial');
           for (const fp of file_paths.slice(0, 8)) {
@@ -964,8 +996,8 @@ export async function handleBrainTool(
           const conceptId = ckgSlug(topic);
           // concept → affects → service (outcome decides edge confidence)
           await ckgUpdateEdge(redis, conceptId, 'affects', serviceId, outcome === 'success', outcome === 'partial');
-          if (author) {
-            const personId = `person:${ckgSlug(author)}`;
+          if (autorFeld) {
+            const personId = `person:${ckgSlug(nurMensch(autorFeld))}`;
             await ckgUpdateEdge(redis, personId, 'operates', serviceId, true);
           }
           for (const fp of file_paths.slice(0, 8)) {
@@ -979,12 +1011,12 @@ export async function handleBrainTool(
       // auto-store as a team lesson so knowledge is shared without a separate
       // team_learn call. Tags gain 'team'; the lesson is attributed to the author.
       // This makes team knowledge sharing the default, not the opt-in.
-      if (author && (outcome === 'success' || outcome === 'partial')) {
+      if (autorFeld && (outcome === 'success' || outcome === 'partial')) {
         const teamLesson = {
           topic, outcome, what_worked,
           what_failed: what_failed ?? '',
           severity,
-          author,
+          author: autorFeld,
           file_paths,
           commands,
           tags: [...new Set([...tags, 'team'])],
@@ -1014,9 +1046,10 @@ export async function handleBrainTool(
         isUpdate
           ? `♻️ Updated (recall count: ${recallCount} · audit entries: ${auditTrail.length})`
           : `💡 Recall later with \`recall_best_solution(topic="${topic}")\``,
-        (author && (outcome === 'success' || outcome === 'partial'))
-          ? `👥 Auto-shared with team (by _${author}_) — visible in \`team_recall\``
+        (autorFeld && (outcome === 'success' || outcome === 'partial'))
+          ? `👥 Auto-shared with team (by _${autorFeld}_${herkunft.quelle !== 'uebergeben' ? ` · aus ${herkunft.quelle}` : ''}) — visible in \`team_recall\``
           : '',
+        autorTipp ?? '',
         depends_on.length > 0
           ? `🔗 Depends on: ${depends_on.map(d => `\`${d}\``).join(', ')} → trace with \`trace_dependency\``
           : '',

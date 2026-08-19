@@ -1431,7 +1431,16 @@ describe('Phase 3C: skill_gaps', () => {
       await handleBrainTool('learn_from_attempts', {
         instance_id: iid, topic: `infra:node${i}`, outcome: 'success',
         what_worked: `solution ${i}`,
-        // no author
+        // Ausdruecklich ohne Autor.
+        //
+        // Bis zum 19.08.2026 genuegte es, das Feld wegzulassen. Seitdem wird
+        // der Name aus `git config user.name` hergeleitet — und dieser Test
+        // lief in einem Repo, das einen hat. Er wurde rot und hat damit genau
+        // das gezeigt, was die Aenderung bezweckt: eine Lektion ohne Autor
+        // entsteht nicht mehr aus Versehen.
+        //
+        // "-" ist der ausdrueckliche Weg, anonym zu bleiben.
+        author: '-',
       }, getConn, noopApiFetch);
     }
     const out = await handleBrainTool('skill_gaps', { instance_id: iid }, getConn, noopApiFetch);
