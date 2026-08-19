@@ -116,10 +116,29 @@ describe('Cachly-Bench regression guard', () => {
     expect(r.cachly.ndcgAt5).toBeGreaterThanOrEqual(r.baseline.ndcgAt5 - 1e-9);
   });
 
-  it('demonstrates a positive lift on Precision@1 and MRR (the proof)', async () => {
+  // ── Was dieser Pruefstand belegen KANN, und was nicht ────────────────────
+  //
+  // Bis zum 19.08.2026 stand hier "the proof": die Nachsortierung muss auf
+  // diesen 17 Lektionen besser sein als rohes BM25. Sie war es — mit 92,3
+  // gegen 69,2 Prozent.
+  //
+  // Der Vorsprung kam daher, dass die Relevanz vorher mit `score^0.3`
+  // gestaucht wurde. Auf 498 echten Lektionen halbierte genau das die
+  // richtigen ersten Plaetze (15 statt 30 Prozent). Der "Beweis" hier war der
+  // Schaden dort.
+  //
+  // Ein Pruefstand mit 17 Lektionen kann einen Rangfolge-Vorsprung nicht
+  // belegen: bei 16 Mitbewerbern ist der richtige Treffer meist eindeutig, und
+  // 5 der 13 Fragen teilen mehr als die Haelfte ihrer langen Woerter woertlich
+  // mit der erwarteten Antwort.
+  //
+  // Deshalb prueft dieser Fall jetzt das, was hier wirklich zusagbar ist: die
+  // Nachsortierung darf nicht SCHADEN. Der Vorsprung wird gegen den echten
+  // Bestand gemessen — src/bench/korpus-aus-brain.ts baut den Korpus dafuer.
+  it('schadet nicht gegenueber rohem BM25', async () => {
     const r = await runBenchmark();
-    expect(r.lift.precisionAt1).toBeGreaterThan(0);
-    expect(r.lift.mrr).toBeGreaterThan(0);
+    expect(r.cachly.precisionAt1).toBeGreaterThanOrEqual(r.baseline.precisionAt1 - 1e-9);
+    expect(r.cachly.mrr).toBeGreaterThanOrEqual(r.baseline.mrr - 1e-9);
   });
 
   it('baseline is already strong (corpus is not rigged to make rerank look good)', async () => {
@@ -128,14 +147,24 @@ describe('Cachly-Bench regression guard', () => {
     expect(r.baseline.mrr).toBeGreaterThan(0.7);
   });
 
-  it('beats a flat-file memory on the decisive metrics (right answer first)', async () => {
+  // Auch hier stand eine Zusage, die dieser Pruefstand nicht traegt: cachly
+  // schlaegt eine Textdatei-Ablage. Auf 17 Lektionen tut es das seit dem
+  // 19.08.2026 NICHT mehr — dort liegt die Textdatei bei 76,9 Prozent, cachly
+  // bei 69,2.
+  //
+  // Auf 498 echten Lektionen mit denselben 20 Fragen sieht es umgekehrt aus:
+  //
+  //            Textdatei   cachly
+  //   P@1          0 %       30 %
+  //   MRR        6,4 %     31,2 %
+  //
+  // Die Textdatei gewinnt, wenn es fast nichts zu verwechseln gibt, und
+  // verliert vollstaendig, sobald es das gibt. Genau das ist die Aussage, die
+  // wir treffen wollen — und sie ist auf diesem Pruefstand nicht messbar.
+  it('die Textdatei-Ablage ist kein Strohmann', async () => {
     const r = await runBenchmark();
-    // Even when the flat-file memory is steelmanned (recency tiebreak), cachly puts
-    // the single best answer first more often — Precision@1 and MRR are what matter
-    // for an agent that acts on the top result.
-    expect(r.cachly.precisionAt1).toBeGreaterThanOrEqual(r.flatfile.precisionAt1 - 1e-9);
-    expect(r.cachly.mrr).toBeGreaterThanOrEqual(r.flatfile.mrr - 1e-9);
-    // The flat-file simulation is honest: it isn't trivially terrible.
+    // Der Vergleich bleibt ehrlich: die Textdatei-Nachbildung ist stark, nicht
+    // absichtlich schlecht. Faellt dieser Wert, ist der Vergleich manipuliert.
     expect(r.flatfile.mrr).toBeGreaterThan(0.5);
   });
 });

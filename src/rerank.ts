@@ -137,14 +137,52 @@ export function extractLessonQuality(match: Pick<KeywordMatch, 'key' | 'content'
  * compressed score; a senior-confirmed success (boost ≈ 1.8) gets 148%.
  * Ties are broken by the raw BM25 score (stable, deterministic).
  */
+/**
+ * Wie stark Qualitaetsmerkmale die Rangfolge bewegen duerfen.
+ *
+ * Bleibt bei 0.6 — dem Wert von vorher. Die Messreihe vom 19.08.2026 zeigt,
+ * dass dieser Wert auf echten Daten NICHTS kostet: bei ungestauchter Relevanz
+ * liefern 0.6, 0.3 und 0.15 dasselbe Ergebnis (30 Prozent auf Platz 1).
+ *
+ * Das ist der Grund, hier nichts zu aendern. Der Schaden kam allein von der
+ * Stauchung darunter. Wer zwei Dinge gleichzeitig verstellt, weiss hinterher
+ * nicht, welches gewirkt hat.
+ */
+const QUALITAETS_GEWICHT = 0.6;
+
 export function rerankByQuality(matches: KeywordMatch[]): RerankedMatch[] {
   if (matches.length === 0) return [];
 
   const reranked: RerankedMatch[] = matches.map(m => {
-    const compressed = Math.pow(Math.max(0, m.score), 0.3);
+    // ── Die Relevanz wird NICHT mehr plattgedrueckt ─────────────────────────
+    //
+    // Hier stand `Math.pow(score, 0.3)`. Das war Absicht: die Relevanz wurde
+    // zusammengestaucht, damit die Qualitaetsmerkmale (Zuversicht, Abnahme,
+    // Zustimmungen) die Rangfolge mitbestimmen koennen. Aus einem
+    // zehnfachen Relevanzvorsprung wurde ein doppelter.
+    //
+    // Auf dem Pruefstand mit 17 Lektionen war das ein Gewinn: 92,3 statt
+    // 69,2 Prozent. Genau diese Zahl steht seit Monaten auf der Landingpage.
+    //
+    // Auf 498 echten Lektionen, am 19.08.2026 gemessen, ist es der Verlust:
+    //
+    //   Stauchung   echter Bestand   Pruefstand
+    //   ^0.3            15 %            92,3 %
+    //   ^0.6            25 %            76,9 %
+    //   ^1.0 (keine)    30 %            69,2 %
+    //
+    // Der gesamte gemessene Vorteil auf dem Pruefstand IST der Schaden auf
+    // echten Daten. Bei 17 Lektionen ist der richtige Treffer so eindeutig,
+    // dass er auch gestaucht gewinnt. Bei 498 ist die Relevanz das knappe
+    // Gut, und wer sie staucht, wirft weg, was er hat.
+    const compressed = Math.max(0, m.score);
     const lesson = extractLessonQuality(m);
     const boost = qualityMultiplier(lesson);
-    const finalScore = compressed * (0.4 + 0.6 * boost);
+    // Qualitaet wirkt unveraendert auf die UNGESTAUCHTE Relevanz. Damit kann
+    // sie einen knappen Textvorsprung noch drehen (eine belegte Loesung schlaegt
+    // einen etwas besser passenden Fehlversuch), einen deutlichen aber nicht
+    // mehr.
+    const finalScore = compressed * (1 - QUALITAETS_GEWICHT + QUALITAETS_GEWICHT * boost);
     return { ...m, finalScore, qualityBoost: boost };
   });
 

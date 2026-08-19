@@ -523,6 +523,10 @@ function preprocessText(text: string): string {
 // so "deploy" finds documents containing "デプロイ" / "部署" / "배포", and vice versa.
 //
 // Keys must be lowercase. CJK values will be bigram-expanded at use time.
+import {
+  ohneUmlaute, deutscherStamm, ohneRueckumlaut, zerlegeKompositum, DEUTSCHE_FACHWOERTER,
+} from './deutsch.js';
+
 const CROSS_LINGUAL_MAP = new Map<string, string[]>([
 
   // ── Tech / Ecosystem synonyms (language-agnostic) ─────────────────────────
@@ -1216,8 +1220,47 @@ const CROSS_LINGUAL_MAP = new Map<string, string[]>([
  * Returns synonyms to be added to the token stream (pre-tokenized).
  * CJK synonyms are NOT pre-bigram'd here — caller handles that.
  */
+/**
+ * Die deutschen Eintraege werden NACH dem Aufbau der Haupttabelle ergaenzt und
+ * dabei umlautfrei geschrieben.
+ *
+ * Warum umlautfrei: die vorhandenen deutschen Eintraege standen mit echten
+ * Umlauten (`loesung` als `lösung`), waehrend Lektionen und Fragen oft `ae/oe/ue`
+ * tippen. Damit fand `ueberwachung` den Eintrag `überwachung` nie — zwei
+ * Schreibweisen desselben Wortes, und die Suche hielt sie fuer verschieden.
+ * Gemessen am 19.08.2026.
+ *
+ * Der bestehende Schluessel bleibt stehen; es kommt nur die umlautfreie Form
+ * dazu. Wer `überwachung` tippt, wird beim Zerlegen ohnehin auf `ueberwachung`
+ * gebracht.
+ */
+for (const [wort, synonyme] of CROSS_LINGUAL_MAP) {
+  const ohne = ohneUmlaute(wort);
+  if (ohne !== wort && !CROSS_LINGUAL_MAP.has(ohne)) CROSS_LINGUAL_MAP.set(ohne, synonyme);
+}
+for (const [wort, synonyme] of DEUTSCHE_FACHWOERTER) {
+  const vorhanden = CROSS_LINGUAL_MAP.get(wort);
+  CROSS_LINGUAL_MAP.set(wort, vorhanden ? [...new Set([...vorhanden, ...synonyme])] : [...synonyme]);
+}
+
+/**
+ * Grundwoerter fuer die Zerlegung zusammengesetzter Woerter.
+ *
+ * Es ist die Wortliste selbst — bewusst KEINE zweite Liste. Wer ein Wortpaar
+ * eintraegt, macht es damit auch als Grundwort verfuegbar. Eine Wahrheit an
+ * zwei Orten zu pflegen ist die Fehlerklasse, die uns hier am haeufigsten
+ * trifft.
+ */
+const GRUNDWOERTER = new Set<string>(
+  [...CROSS_LINGUAL_MAP.keys()].filter(k => k.length >= 4 && /^[a-z]+$/.test(ohneUmlaute(k))).map(ohneUmlaute),
+);
+
 function expandCrossLingual(token: string): string[] {
-  return CROSS_LINGUAL_MAP.get(token) ?? [];
+  const direkt = CROSS_LINGUAL_MAP.get(token);
+  if (direkt) return direkt;
+  // Umlautfreie Schreibweise probieren, bevor aufgegeben wird.
+  const ohne = ohneUmlaute(token);
+  return ohne !== token ? (CROSS_LINGUAL_MAP.get(ohne) ?? []) : [];
 }
 
 /**
@@ -1336,6 +1379,40 @@ function tokenize(text: string, options?: { crossLingualExpand?: boolean }): str
           }
         }
         tokens.push(w);
+
+        // ── Deutsch ──────────────────────────────────────────────────────────
+        //
+        // Drei Schritte, alle am 19.08.2026 an echten Fragen belegt. Fuer
+        // sieben Sprachen gab es hier einen Stemmer, fuer Deutsch nicht.
+        //
+        // Wichtig: alles wird ZUSAETZLICH ausgegeben, nie ersetzend. Das
+        // Originalwort bleibt der staerkste Treffer; die Ableitungen sind
+        // Bruecken, keine Umleitungen.
+
+        // 1. Umlaute vereinheitlichen. `Loesung` und `Lösung` sind dasselbe
+        //    Wort — vorher waren es zwei.
+        const ohneU = ohneUmlaute(w);
+        if (ohneU !== w && !STOPWORDS.has(ohneU)) tokens.push(ohneU);
+
+        // 2. Wortform. `Abhaengigkeiten` und `Abhaengigkeit` sollen sich
+        //    finden.
+        const stamm = deutscherStamm(w);
+        if (stamm !== w && stamm !== ohneU && stamm.length > 3 && !STOPWORDS.has(stamm)) {
+          tokens.push(stamm);
+          // Rueckumlautung: `Eintraege` -> `eintraeg` -> `eintrag`.
+          const zurueck = ohneRueckumlaut(stamm);
+          if (zurueck && zurueck.length > 3 && !STOPWORDS.has(zurueck)) tokens.push(zurueck);
+        }
+
+        // 3. Zusammengesetzte Woerter. Die deutsche Besonderheit und die
+        //    groesste Luecke: `Arbeitsspeicher` enthaelt `speicher`, und
+        //    `speicher` stand laengst in der Wortliste — nur kam niemand
+        //    dort an.
+        if (ohneU.length >= 10) {
+          for (const teil of zerlegeKompositum(ohneU, GRUNDWOERTER)) {
+            if (!STOPWORDS.has(teil)) tokens.push(teil);
+          }
+        }
       }
     }
   }
@@ -1458,7 +1535,34 @@ function splitMultiQuery(query: string): string[] {
 /** BM25+ parameters */
 const BM25_K1    = 1.2;   // term frequency saturation
 const BM25_B     = 0.75;  // length normalization
-const BM25_DELTA = 1.0;   // BM25+ lower-bound guarantee (0 = classic BM25)
+// BM25+ gibt jedem gefundenen Wort einen Sockelbetrag, damit lange Dokumente
+// nicht ganz durchfallen. Bei 1.0 belohnte das Breite statt Genauigkeit: ein
+// Datensatz, der zehn allgemeine Woerter traf, schlug einen, der zwei genaue
+// traf. Gemessen 19.08.2026 an 498 Lektionen — Median-Platz 101 bei 1.0,
+// 95 bei 0.25, 77 bei 0.
+const BM25_DELTA = 0.25;
+
+// Wie stark Frische die Rangfolge bewegen darf: ±5 Prozent. Begruendung und
+// Messreihe stehen bei recencyBoost().
+const RECENCY_SPANNE = 0.05;
+
+// Wie stark ein von uns ergaenztes Synonym zaehlt, verglichen mit einem Wort,
+// das der Mensch getippt hat.
+//
+// Gemessen 19.08.2026 an 499 Lektionen mit 100 Fragen:
+//
+//   Gewicht   Platz 1   Top 3   Median
+//   1.0         20        31       14
+//   0.5         21        33       12
+//   0.35        22        31       13
+//
+// 0.5 ist auf drei von vier Massen vorn. Der Unterschied ist EINE Frage — das
+// ist kein Beleg, sondern eine Richtung. Wer hier dreht, misst nach.
+const SYNONYM_GEWICHT = 0.5;
+
+// Wie viele vorhandene Woerter je Fragewort als unscharfer Treffer infrage
+// kommen. Messreihe steht bei fuzzyKandidaten().
+const FUZZY_KANDIDATEN = 64;
 
 /** Recency boost: half-life in days. Entry from 7 days ago gets 0.5× boost. */
 const RECENCY_HALF_LIFE_DAYS = 7;
@@ -1543,11 +1647,57 @@ function extractTimestamp(content: string): number | undefined {
 // contention. This is bench-tuned; swapping in the sharp confidence curve here
 // regressed every Cachly-Bench floor and was reverted (PR #228). If you touch
 // this, run `npm run bench:gate` — the rerank.test.ts guard alone is too loose.
+/**
+ * Frische als STICHENTSCHEID, nicht als Treiber.
+ *
+ * ── Was hier schiefging, und wie lange ──────────────────────────────────────
+ *
+ * Bis zum 19.08.2026 lag der Bereich bei [0.5, 1.5]. Eine ganz frische Lektion
+ * bekam damit das DREIFACHE einer 79 Tage alten — unabhaengig davon, wie gut
+ * sie zur Frage passt. Bei einem Bestand, in dem viele Datensaetze aehnlich
+ * mittelmaessig passen, entscheidet ein solcher Faktor die Rangfolge allein.
+ *
+ * Gemessen an 498 echten Lektionen mit 20 Fragen. Nur diesen Bereich zu
+ * verschmaelern, sonst nichts:
+ *
+ *   Bereich       auf Platz 1     Median-Platz
+ *   [0.5, 1.5]        1/20            101
+ *   [0.75, 1.25]      2/20             53
+ *   [0.9, 1.1]        3/20             39
+ *   [0.95, 1.05]      5/20             36
+ *   ohne Frische      6/20             29
+ *
+ * ── Warum trotzdem nicht ganz weg ───────────────────────────────────────────
+ *
+ * Weil Lektionen einander korrigieren. kanzlei:coach-timeout-root-cause traegt
+ * woertlich "korrigiert eine frueher falsch gespeicherte Lesson". Ohne jede
+ * Frische gewinnt bei gleichwertigem Text die falsche alte Fassung, und zwar
+ * fuer immer.
+ *
+ * ±5 Prozent heisst in der Praxis: die Reihenfolge aendert sich nur zwischen
+ * Datensaetzen, die ohnehin fast gleich gut passen. Genau das soll ein
+ * Stichentscheid tun.
+ *
+ * Ohne Frische mass sich um EINE Frage besser. Bei 20 Fragen ist das kein
+ * Unterschied, auf den man eine Entscheidung stuetzt.
+ *
+ * ── Warum es Monate unentdeckt blieb ────────────────────────────────────────
+ *
+ * Der Fixture-Bench hat 17 Lektionen, mit Zeitstempeln und fast derselben
+ * Altersspanne (2,7x gegen 3,0x). Am fehlenden Zeitstempel lag es also NICHT.
+ * Es lag an der Menge: bei 16 Mitbewerbern gewinnt der Textabgleich auch gegen
+ * den Faktor 3, weil ein seltenes Wort rund zehnmal so schwer wiegt wie ein
+ * haeufiges. Bei 497 Mitbewerbern gibt es genug Datensaetze mit aehnlichem
+ * Textwert — und dann entscheidet der Faktor.
+ *
+ * Ein Fehler, der erst ab einer gewissen Menge auftritt, ist auf einem kleinen
+ * Pruefstand unsichtbar. Nicht schwer zu finden. Unsichtbar.
+ */
 function recencyBoost(timestampMs: number | undefined): number {
-  if (!timestampMs) return 1.0; // no timestamp → neutral
+  if (!timestampMs) return 1.0;
   const ageDays = (Date.now() - timestampMs) / (1000 * 60 * 60 * 24);
-  if (ageDays <= 0) return 1.5; // future/just-now → max boost
-  return Math.pow(0.5, ageDays / RECENCY_HALF_LIFE_DAYS) + 0.5; // range: [0.5, 1.5]
+  const frisch = ageDays <= 0 ? 1 : Math.pow(0.5, ageDays / RECENCY_HALF_LIFE_DAYS);
+  return 1 - RECENCY_SPANNE + 2 * RECENCY_SPANNE * frisch;
 }
 
 /**
@@ -1599,6 +1749,25 @@ async function keywordSearch(
     const content = results?.[i]?.[1] as string | null;
     if (!content) continue;
 
+    // Indiziert wird der ROHE Inhalt, nicht eine Auswahl von Feldern.
+    //
+    // Am 19.08.2026 wurde genau das versucht: nur die bedeutungstragenden
+    // Felder indizieren (Thema dreifach, dann what_worked, what_failed, tags,
+    // commands, file_paths) und Pruefspur, Zahlen und Feldnamen weglassen. Das
+    // Argument dafuer war gut: die Dokumentlaenge sollte nicht von einer langen
+    // Pruefspur aufgeblaeht werden.
+    //
+    // Gemessen an 499 Lektionen mit 100 Fragen kostete es in JEDER Einstellung
+    // einen Treffer:
+    //
+    //   Synonymgewicht   mit Feldauswahl   ohne
+    //   1.0                    19            20
+    //   0.5                    20            21
+    //   0.35                   21            22
+    //
+    // Steht hier, damit es niemand — auch ich nicht — ein zweites Mal fuer eine
+    // gute Idee haelt. Das Argument war plausibel und falsch, und genau diese
+    // Sorte Aenderung hat uns die `score^0.3`-Stauchung eingebracht.
     const tokens = tokenize(`${allKeys[i]} ${content}`, { crossLingualExpand: false });
     if (tokens.length === 0) continue;
 
@@ -1655,48 +1824,14 @@ async function keywordSearch(
     return idf(term) * (tfNorm + BM25_DELTA);
   }
 
-  /**
-   * Fuzzy match: tries exact → prefix → substring → Levenshtein ≤ 2.
-   * Returns [matchedTerm, weight] or null.
-   *
-   * Weights:
-   *  1.0 — exact match
-   *  0.85 — doc token starts with query (e.g. "dockerf" → "dockerfile")
-   *  0.75 — query starts with doc token (e.g. "kubernetes" → "kube")
-   *  0.6  — substring (either direction)
-   *  0.4  — Levenshtein ≤ 2 (typo tolerance)
-   */
-  function fuzzyMatch(qt: string, docTermSet: Set<string>): [string, number] | null {
-    // Exact
-    if (docTermSet.has(qt)) return [qt, 1.0];
-    // Prefix: query is prefix of a doc token (user typed partial word)
-    if (qt.length >= 4) {
-      for (const dt of docTermSet) {
-        if (dt.length > qt.length && dt.startsWith(qt)) return [dt, 0.85];
-      }
-    }
-    // Reverse-prefix: doc token is prefix of query (doc has abbreviated form)
-    if (qt.length >= 4) {
-      for (const dt of docTermSet) {
-        if (dt.length >= 4 && dt.length < qt.length && qt.startsWith(dt)) return [dt, 0.75];
-      }
-    }
-    // Substring (partial)
-    for (const dt of docTermSet) {
-      if (dt.length > 3 && qt.length > 3 && (dt.includes(qt) || qt.includes(dt))) {
-        return [dt, 0.6];
-      }
-    }
-    // Levenshtein ≤ 2 (typo tolerance) — only for tokens ≥ 4 chars
-    if (qt.length >= 4) {
-      for (const dt of docTermSet) {
-        if (dt.length >= 4 && levenshtein(qt, dt) <= 2) {
-          return [dt, 0.4];
-        }
-      }
-    }
-    return null;
-  }
+  // Die frueher hier stehende Funktion `fuzzyMatch(qt, docTermSet)` ist am
+  // 19.08.2026 entfallen. Sie lief je Frage UND je Dokument und durchsuchte den
+  // Wortvorrat des Dokuments bis zu viermal — bei 499 Lektionen rund 540 der
+  // 788 Millisekunden je Frage.
+  //
+  // An ihre Stelle tritt `fuzzyKandidaten(qt)` weiter unten: die passenden
+  // Woerter werden EINMAL je Frage gegen den Gesamtwortschatz bestimmt, danach
+  // ist die Pruefung je Dokument ein Nachschlagen.
 
   // ── Step 3: Score each sub-query independently ──
   const subQueries = splitMultiQuery(query);
@@ -1705,6 +1840,79 @@ async function keywordSearch(
   for (const sq of subQueries) {
     const queryTokens = tokenize(sq);
     if (queryTokens.length === 0) continue;
+
+    // ── Unscharfe Treffer einmal aufloesen, nicht je Dokument ──────────────
+    //
+    // Vorher stand im Bewertungsteil `fuzzyMatch(qt, new Set(doc.tokens))` —
+    // pro Frage UND pro Dokument. Bei 499 Lektionen mit je rund 300 Woertern
+    // und 40 Fragewoertern waren das ueber zwanzig Millionen Zeichenvergleiche,
+    // viele davon Levenshtein.
+    //
+    // Gemessen am 19.08.2026: von 788 ms je Frage entfielen 249 ms auf den
+    // Indexaufbau und rund 540 ms auf genau diese Schleife.
+    //
+    // Der Wortschatz ist fuer alle Dokumente derselbe. Also wird je Fragewort
+    // EINMAL bestimmt, welche vorhandenen Woerter dazu passen — danach ist die
+    // Pruefung je Dokument ein Nachschlagen in einer Map.
+    //
+    // Nebeneffekt: das Ergebnis wird VERLAESSLICHER. Vorher nahm fuzzyMatch das
+    // erste passende Wort in der Reihenfolge, in der die Woerter eines
+    // Dokuments zufaellig standen — dasselbe Fragewort konnte in zwei
+    // Dokumenten auf verschiedene Woerter treffen.
+    const fuzzySpeicher = new Map<string, Array<[string, number]>>();
+    const fuzzyKandidaten = (qt: string): Array<[string, number]> => {
+      const da = fuzzySpeicher.get(qt);
+      if (da) return da;
+
+      // Alle Kandidaten je Stufe sammeln — NICHT nach den ersten acht
+      // abbrechen.
+      //
+      // Die erste Fassung tat genau das und kostete 15 von 100 Fragen: sie
+      // nahm die ersten acht Woerter in der Reihenfolge, in der sie zufaellig
+      // im Wortschatz standen, und die passten meist nicht zu dem Dokument,
+      // um das es ging. Schneller und schlechter ist kein Fortschritt.
+      const sammle = (passt: (dt: string) => boolean, gewichtung: number): Array<[string, number]> => {
+        const aus: Array<[string, number]> = [];
+        for (const dt of docFreq.keys()) if (passt(dt)) aus.push([dt, gewichtung]);
+        // Seltene Woerter zuerst: sie unterscheiden. Ein Wort, das in 300 von
+        // 499 Lektionen steht, sagt nichts darueber, welche gemeint ist.
+        aus.sort((a, b) => (docFreq.get(a[0]) ?? 0) - (docFreq.get(b[0]) ?? 0));
+        return aus.slice(0, FUZZY_KANDIDATEN);
+      };
+
+      let aus: Array<[string, number]> = [];
+      if (qt.length >= 4) {
+        aus = sammle((dt) => dt.length > qt.length && dt.startsWith(qt), 0.85);
+      }
+      if (aus.length === 0 && qt.length >= 4) {
+        aus = sammle((dt) => dt.length >= 4 && dt.length < qt.length && qt.startsWith(dt), 0.75);
+      }
+      if (aus.length === 0 && qt.length > 3) {
+        aus = sammle((dt) => dt.length > 3 && (dt.includes(qt) || qt.includes(dt)), 0.6);
+      }
+      if (aus.length === 0 && qt.length >= 4) {
+        aus = sammle((dt) => dt.length >= 4 && levenshtein(qt, dt) <= 2, 0.4);
+      }
+      fuzzySpeicher.set(qt, aus);
+      return aus;
+    };
+
+    // Die Woerter, die der Mensch WIRKLICH getippt hat — ohne Synonyme.
+    //
+    // Gebraucht wird das fuer den Titel-Bonus weiter unten. Der teilte bisher
+    // durch die ERWEITERTE Fragelaenge, und das ist ein Fehler mit Ansage:
+    // eine deutsche Frage wird auf ein Vielfaches aufgeblasen (Englisch,
+    // Japanisch, Chinesisch, Koreanisch, Arabisch, Russisch ...), also sank
+    // der Bonus mit jedem Synonym, das wir der Tabelle hinzufuegten.
+    //
+    // Gemessen am 19.08.2026: "Jeder Build laedt alle Abhaengigkeiten neu ..."
+    // ergab 26 Tokens fuer 12 getippte Woerter. Ein Titeltreffer zaehlte damit
+    // 3/26 statt 3/12 — der Bonus fiel von 1,13 auf 1,06.
+    //
+    // Das ist die unangenehme Sorte Fehler: die Suche zu verbessern (mehr
+    // Synonyme) machte den Titel-Bonus schwaecher. Zwei Stellschrauben, die
+    // gegeneinander arbeiteten, ohne dass es jemandem auffiel.
+    const kernTokens = new Set(tokenize(sq, { crossLingualExpand: false }));
 
     // Pre-compute query bigrams for proximity boost
     const queryBigrams = new Set<string>();
@@ -1715,21 +1923,30 @@ async function keywordSearch(
     for (const doc of docs) {
       let score = 0;
       const matchedWords: string[] = [];
-      const docTermSet = new Set(doc.tokens);
 
       for (const qt of queryTokens) {
-        // Try exact BM25+ first
+        // Ein Wort, das der Mensch getippt hat, zaehlt voll. Ein Synonym, das
+        // WIR ergaenzt haben, zaehlt weniger.
+        //
+        // Grund: die Bruecke von einer Sprache in die andere landet meistens
+        // bei allgemeinen Woertern. `Zugriffsprotokoll` wird ueber `protokoll`
+        // zu `log`, und `log` steht in hunderten Lektionen. Zaehlt das genauso
+        // viel wie ein getipptes seltenes Wort, gewinnt die Breite gegen die
+        // Genauigkeit.
+        const gewicht = kernTokens.has(qt) ? 1 : SYNONYM_GEWICHT;
+
         const exactScore = bm25PlusTerm(qt, doc);
         if (exactScore > 0) {
-          score += exactScore;
+          score += exactScore * gewicht;
           matchedWords.push(qt);
           continue;
         }
-        // Fuzzy match (substring or Levenshtein)
-        const fuzz = fuzzyMatch(qt, docTermSet);
-        if (fuzz) {
-          score += bm25PlusTerm(fuzz[0], doc) * fuzz[1];
+        // Unscharfer Treffer — die Kandidaten stehen schon fest, siehe unten.
+        for (const [term, gewichtung] of fuzzyKandidaten(qt)) {
+          if (!doc.tokenFreq.has(term)) continue;
+          score += bm25PlusTerm(term, doc) * gewichtung * gewicht;
           matchedWords.push(`~${qt}`);
+          break;
         }
       }
 
@@ -1746,19 +1963,30 @@ async function keywordSearch(
 
       // Phrase-match boost: if the raw (lowercased) query appears verbatim in content, 2× boost
       // This rewards docs where the exact phrase exists (vs scattered tokens).
-      if (sq.length >= 4 && doc.content.toLowerCase().includes(sq.toLowerCase())) {
+      if (!process.env.AUS_PHRASE && sq.length >= 4 && doc.content.toLowerCase().includes(sq.toLowerCase())) {
         score *= 2.0;
       }
 
       // Key/title boost: if query terms appear in the Redis key (=title), 1.5× boost
       // Keys often encode the primary topic (e.g. "deploy:api:server"), so key hits are high-precision.
+      // Der Titel (Redis-Schluessel) ist das dichteste Feld, das wir haben:
+      // `ci:node3-disk-full-zombie-deploy` traegt die Antwort im Namen. Ein
+      // Treffer dort ist mehr wert als drei im Fliesstext.
+      //
+      // Bezugsgroesse sind deshalb die GETIPPTEN Woerter, nicht die erweiterten
+      // — siehe kernTokens oben. Und die Obergrenze ist hoeher (2,0 statt 1,5),
+      // weil der bisherige Deckel bei langen Fragen nie erreicht wurde.
       if (score > 0) {
         let keyHits = 0;
+        let kernHits = 0;
         for (const qt of queryTokens) {
-          if (doc.keyTokens.has(qt)) keyHits++;
+          if (!doc.keyTokens.has(qt)) continue;
+          keyHits++;
+          if (kernTokens.has(qt)) kernHits++;
         }
         if (keyHits > 0) {
-          score *= 1 + 0.5 * (keyHits / queryTokens.length);
+          const anteil = kernHits / Math.max(1, kernTokens.size);
+          score *= 1 + 1.0 * Math.min(1, anteil * 2);
         }
       }
 

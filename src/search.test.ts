@@ -237,10 +237,20 @@ describe('recencyBoost', () => {
     expect(recencyBoost(undefined)).toBe(1.0);
   });
 
-  it('returns max boost for very recent entries', () => {
-    const boost = recencyBoost(Date.now());
-    expect(boost).toBeGreaterThan(1.4);
-    expect(boost).toBeLessThanOrEqual(1.5);
+  // Frische ist seit dem 19.08.2026 ein STICHENTSCHEID, kein Treiber: der
+  // Bereich liegt bei [0.95, 1.05] statt [0.5, 1.5]. Grund und Messreihe stehen
+  // bei recencyBoost() in search.ts — der alte Bereich gab einer ganz frischen
+  // Lektion das Dreifache einer alten, unabhaengig davon, wie gut sie passt.
+  // An 498 echten Lektionen kostete das 4 von 20 richtigen ersten Plaetzen.
+  it('bewegt die Rangfolge um hoechstens 5 Prozent', () => {
+    const frisch = recencyBoost(Date.now());
+    const uralt = recencyBoost(Date.now() - 365 * 24 * 60 * 60 * 1000);
+    expect(frisch).toBeLessThanOrEqual(1.05);
+    expect(uralt).toBeGreaterThanOrEqual(0.95);
+    // Der ganze Hebel darf einen Relevanzunterschied nicht ueberstimmen: mehr
+    // als ein Zehntel Abstand zwischen juengster und aeltester Lektion waere
+    // wieder ein Treiber.
+    expect(frisch / uralt).toBeLessThan(1.12);
   });
 
   it('decays over time', () => {
@@ -253,15 +263,14 @@ describe('recencyBoost', () => {
     expect(sevenDays).toBeGreaterThan(thirtyDays);
   });
 
-  it('never goes below 0.5', () => {
+  it('faellt nie unter 0.95', () => {
     const ancient = recencyBoost(Date.now() - 365 * 24 * 60 * 60 * 1000);
-    expect(ancient).toBeGreaterThanOrEqual(0.5);
+    expect(ancient).toBeGreaterThanOrEqual(0.95);
   });
 
-  it('at half-life (7 days), boost is approximately 1.0', () => {
+  it('bei der Halbwertszeit (7 Tage) liegt der Faktor in der Mitte', () => {
     const atHalfLife = recencyBoost(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    // 0.5^1 + 0.5 = 1.0
-    expect(atHalfLife).toBeCloseTo(1.0, 1);
+    expect(atHalfLife).toBeCloseTo(1.0, 2);
   });
 });
 
@@ -703,10 +712,9 @@ describe('recencyBoost — additional cases', () => {
     expect(recencyBoost(null as unknown as undefined)).toBe(1.0);
   });
 
-  it('returns max boost (1.5) for timestamps in the future', () => {
-    const future = Date.now() + 60_000; // 1 minute ahead
-    const boost = recencyBoost(future);
-    expect(boost).toBeCloseTo(1.5, 1);
+  it('gibt Zeitstempeln aus der Zukunft den hoechsten Faktor — mehr nicht', () => {
+    const future = Date.now() + 60_000; // eine Minute voraus
+    expect(recencyBoost(future)).toBeCloseTo(1.05, 2);
   });
 
   it('boost is consistent for same age', () => {
@@ -723,12 +731,16 @@ describe('recencyBoost — additional cases', () => {
     const monthOld = recencyBoost(now - 30 * 86400000);           // 30d
     const yearOld  = recencyBoost(now - 365 * 86400000);          // 1y
 
-    expect(fresh).toBeGreaterThan(1.4);
-    expect(oneDay).toBeGreaterThan(1.2);
-    expect(fourDay).toBeGreaterThan(1.0);
-    expect(weekOld).toBeCloseTo(1.0, 1);
-    expect(monthOld).toBeLessThan(0.9);
-    expect(yearOld).toBeGreaterThanOrEqual(0.5);
+    // Die REIHENFOLGE ist die Zusage, nicht die Hoehe: neuer schlaegt aelter,
+    // aber nur bei sonst gleichwertigem Text.
+    expect(fresh).toBeGreaterThan(oneDay);
+    expect(oneDay).toBeGreaterThan(fourDay);
+    expect(fourDay).toBeGreaterThan(weekOld);
+    expect(weekOld).toBeGreaterThan(monthOld);
+    expect(monthOld).toBeGreaterThan(yearOld);
+    // Und der gesamte Hub bleibt klein genug, um Stichentscheid zu sein.
+    expect(fresh).toBeLessThanOrEqual(1.05);
+    expect(yearOld).toBeGreaterThanOrEqual(0.95);
   });
 });
 

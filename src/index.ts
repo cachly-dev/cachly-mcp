@@ -811,7 +811,7 @@ import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledg
 import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
 import { buildAmbientDeps } from './ambient-deps.js';
 import { resolveApiKey, saveApiKey, type CredentialsHomeOptions } from './credentials.js';
-import { buildLessonsMarkdown, buildLessonsJsonl, type ExportLesson } from './brain-export.js';
+import { buildLessonsMarkdown, buildLessonsJsonl, vonRohLektion, type ExportLesson } from './brain-export.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
 import {
@@ -2142,28 +2142,65 @@ if (process.argv[2] === 'export') {
   process.stdout.write('\n📤 Exporting your Brain...\n\n');
 
   try {
-    const memRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/memory`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!memRes.ok) throw new Error(`memory HTTP ${memRes.status}`);
-    const mem = await memRes.json() as {
-      top_lessons?: Array<{
-        topic: string; outcome?: string; severity?: string; tags?: string[];
-        what_worked?: string; ts?: string; author?: string; recall_count?: number;
-      }>;
-    };
+    // ── Warum /export und nicht /memory ──────────────────────────────────────
+    //
+    // Bis zum 19.08.2026 stand hier /memory. Der Endpunkt ist die
+    // Dashboard-Zusammenfassung: oberste 50 Lektionen, what_worked auf 120
+    // Zeichen gekuerzt. Gemessen am 19.08.2026 an einem Brain mit 493
+    // Lektionen: der Export lieferte 50 Stueck mit mitten im Wort
+    // abgeschnittenen Saetzen — 10 Prozent, unlesbar.
+    //
+    // Bei einem Produkt, das "your memory, not the vendor's" verspricht, ist
+    // das kein Schoenheitsfehler. /export liefert alles, ungekuerzt.
+    let lessons: ExportLesson[] = [];
+    let unvollstaendig = '';
 
-    const lessons: ExportLesson[] = (mem.top_lessons ?? []).map((l) => ({
-      topic: l.topic,
-      outcome: l.outcome,
-      severity: l.severity,
-      tags: l.tags,
-      whatWorked: l.what_worked,
-      ts: l.ts,
-      author: l.author,
-      recallCount: l.recall_count,
-    }));
+    const expRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/export`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(120000), // alles lesen dauert laenger als eine Zusammenfassung
+    });
+
+    if (expRes.ok) {
+      const dump = await expRes.json() as {
+        lessons?: unknown[]; complete?: boolean; note?: string; lesson_count?: number;
+      };
+      lessons = (dump.lessons ?? [])
+        .map(vonRohLektion)
+        .filter((l): l is ExportLesson => l !== null);
+      // Der Server sagt selbst, ob er alles hatte. Diese Antwort wird
+      // weitergereicht statt geschluckt — ein abgeschnittener Export, der wie
+      // ein vollstaendiger aussieht, ist schlimmer als ein Fehler.
+      if (dump.complete === false) unvollstaendig = dump.note ?? 'the server reported an incomplete read';
+    } else if (expRes.status === 404) {
+      // Aeltere Server kennen /export noch nicht. Dann gibt es die
+      // Zusammenfassung — aber der Nutzer erfaehrt, dass er sie bekommt.
+      const memRes = await fetch(`${API_URL}/api/v1/instances/${instanceId}/memory`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!memRes.ok) throw new Error(`memory HTTP ${memRes.status}`);
+      const mem = await memRes.json() as {
+        top_lessons?: Array<{
+          topic: string; outcome?: string; severity?: string; tags?: string[];
+          what_worked?: string; ts?: string; author?: string; recall_count?: number;
+        }>;
+      };
+      lessons = (mem.top_lessons ?? []).map((l) => ({
+        topic: l.topic,
+        outcome: l.outcome,
+        severity: l.severity,
+        tags: l.tags,
+        whatWorked: l.what_worked,
+        ts: l.ts,
+        author: l.author,
+        recallCount: l.recall_count,
+      }));
+      unvollstaendig =
+        'this server has no /export endpoint yet, so this is the DASHBOARD SUMMARY: ' +
+        'at most 50 lessons, each shortened to 120 characters. Update the server for a full export.';
+    } else {
+      throw new Error(`export HTTP ${expRes.status}`);
+    }
 
     if (lessons.length === 0) {
       console.log('   No lessons in this Brain yet — nothing to export.\n');
@@ -2183,7 +2220,13 @@ if (process.argv[2] === 'export') {
       written.push(`${lessons.length} lesson${lessons.length === 1 ? '' : 's'} → ${jsonlPath}`);
     }
 
-    console.log('✅ Export complete:');
+    if (unvollstaendig) {
+      console.log('⚠️  Export INCOMPLETE — this is not your whole Brain:');
+      console.log(`   ${unvollstaendig}`);
+      console.log('');
+    } else {
+      console.log('✅ Export complete:');
+    }
     for (const line of written) console.log(`   ${line}`);
     console.log('');
   } catch (e) {

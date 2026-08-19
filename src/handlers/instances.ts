@@ -21,6 +21,30 @@ function formatInstance(inst: Instance): string {
   return `${badge} **${inst.name}** (\`${inst.id}\`) · ${inst.tier} · ${mb} · ${inst.region}`;
 }
 
+/**
+ * Baut eine Adresse aus einem Instanz-Datensatz.
+ *
+ * ── Warum diese Funktion NICHT mehr fuer get_connection_string benutzt wird ──
+ *
+ * Am 19.08.2026 gemessen: `get_connection_string` gab
+ * `redis://49.13.38.27:30114` zurueck — ohne Passwort. Der mitgelieferte
+ * "Quick test" (`redis-cli -u ... PING`) scheiterte sofort an NOAUTH. Ein
+ * Werkzeug, das eine Verbindungsadresse verspricht und eine liefert, die nicht
+ * verbindet.
+ *
+ * Die Funktion war nicht falsch. Sie bekam nur nie ein Passwort: sie wurde mit
+ * dem Datensatz aus /api/v1/instances/:id gefuettert, und der fuehrt kein
+ * Passwort — voellig richtig, das ist der allgemeine Instanz-Datensatz. Die
+ * Zugangsdaten stehen unter /api/v1/instances/:id/connection, und dort baut der
+ * Server die Adresse laengst fertig zusammen.
+ *
+ * Also gab es zwei Stellen, die wussten, wie eine Adresse aussieht — und nur
+ * eine hatte alles, was dazugehoert. Dieselbe Fehlerklasse wie beim Export am
+ * selben Tag: eine Frage aus einer Quelle bedient, die fuer eine andere gebaut
+ * wurde.
+ *
+ * Sie bleibt fuer die Anzeige in Listen, wo bewusst kein Passwort hingehoert.
+ */
 function buildConnectionString(inst: Instance): string {
   if (!inst.host) return '❌ Instance not ready yet.';
   const proto = inst.tls_enabled ? 'rediss' : 'redis';
@@ -78,8 +102,35 @@ export async function handleInstanceTool(
       if (inst.status !== 'running') {
         return `Instance is not running yet (status: ${inst.status}). Provisioning takes ~30 seconds after payment.`;
       }
-      const connStr = buildConnectionString(inst);
+      // Die Adresse kommt vom Server, nicht von hier. Er hat als einziger das
+      // Passwort (verschluesselt in der Datenbank, dort entschluesselt) und
+      // baut die Zeichenkette bereits vollstaendig zusammen.
+      let conn: { connection_string?: string; password?: string } = {};
+      let konnteNichtFragen = false;
+      try {
+        conn = await apiFetch<{ connection_string?: string; password?: string }>(
+          `/api/v1/instances/${(args as { instance_id: string }).instance_id}/connection`,
+        );
+      } catch {
+        // Aeltere oder eingeschraenkte Server. Dann bleibt nur der allgemeine
+        // Datensatz — der fuehrt kein Passwort. Das ist kein Grund
+        // abzubrechen, aber ein Grund, es dazuzuschreiben.
+        konnteNichtFragen = true;
+      }
+      const connStr = conn.connection_string || buildConnectionString(inst);
+
+      // Eine Adresse ohne Passwort ist gegen ein passwortgeschuetztes Valkey
+      // nutzlos — sie scheitert mit NOAUTH, und zwar erst beim Nutzer. Deshalb
+      // steht der Hinweis hier, ueber der Adresse, nicht in einer Fussnote.
+      const ohnePasswort = !connStr.includes('@');
+      const warnung = !ohnePasswort ? [] : konnteNichtFragen
+        ? ['⚠️  Could not read the credentials endpoint — this string has NO password and will fail with NOAUTH if the instance requires one.', '']
+        : conn.password
+          ? ['⚠️  The server returned a password but this string carries none — please report this.', '']
+          : [];
+
       return [
+        ...warnung,
         `**Connection string for ${inst.name}:**`,
         `\`\`\``,
         connStr,

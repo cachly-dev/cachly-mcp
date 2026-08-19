@@ -21,6 +21,53 @@ export interface ExportLesson {
   ts?: string;
   author?: string;
   recallCount?: number;
+
+  /**
+   * Der GESPEICHERTE Datensatz, unveraendert.
+   *
+   * Warum es das Feld gibt: bis zum 19.08.2026 zog `cachly export` seine Daten
+   * aus /memory, einer Dashboard-Zusammenfassung. Ergebnis: 50 Lektionen von
+   * 493, what_worked auf 120 Zeichen abgeschnitten. Das Format war nie das
+   * Problem — dieses Modul kann what_failed und file_paths seit jeher — die
+   * QUELLE war es.
+   *
+   * Damit sich das nicht wiederholt, traegt die JSONL-Zeile jetzt den rohen
+   * Datensatz, wenn er da ist. Wer morgen ein Feld an die Lektion haengt, muss
+   * dieses Modul nicht anfassen: es steht automatisch im Export. Ein Export,
+   * der wissen muss, welche Felder es gibt, verliert genau die, an die niemand
+   * gedacht hat.
+   */
+  raw?: Record<string, unknown>;
+}
+
+/**
+ * Macht aus einem gespeicherten Lektions-Datensatz eine ExportLesson.
+ *
+ * Die bekannten Felder werden benannt, damit das Markdown sie rendern kann.
+ * Der ganze Datensatz bleibt zusaetzlich unter `raw` erhalten, damit die
+ * JSONL-Zeile nichts verliert.
+ */
+export function vonRohLektion(roh: unknown): ExportLesson | null {
+  if (typeof roh !== 'object' || roh === null) return null;
+  const r = roh as Record<string, unknown>;
+  const topic = typeof r.topic === 'string' ? r.topic : '';
+  if (!topic) return null;
+  const text = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
+  const liste = (v: unknown): string[] | undefined =>
+    Array.isArray(v) && v.length > 0 ? v.filter((x): x is string => typeof x === 'string') : undefined;
+  return {
+    topic,
+    outcome: text(r.outcome),
+    severity: text(r.severity),
+    whatWorked: text(r.what_worked),
+    whatFailed: text(r.what_failed),
+    filePaths: liste(r.file_paths),
+    tags: liste(r.tags),
+    ts: text(r.ts),
+    author: text(r.author),
+    recallCount: typeof r.recall_count === 'number' ? r.recall_count : undefined,
+    raw: r,
+  };
 }
 
 const UNGROUPED_HEADING = 'Ungrouped';
@@ -90,7 +137,7 @@ export function buildLessonsMarkdown(lessons: ExportLesson[]): string {
  */
 export function buildLessonsJsonl(lessons: ExportLesson[]): string {
   if (lessons.length === 0) return '';
-  return lessons.map((lesson) => JSON.stringify({
+  return lessons.map((lesson) => JSON.stringify(lesson.raw ?? {
     topic: lesson.topic,
     outcome: lesson.outcome,
     severity: lesson.severity,

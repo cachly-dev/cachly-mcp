@@ -18,13 +18,54 @@ import { loadExternalCorpus } from './external-corpus.js';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Committed floors — cachly metrics must not drop below these.
-// Measured 2026-06-07 after: wider candidate pool (topK=25 for cachly), doc-side
-// cross-lingual expansion disabled (prevents symmetric inflation bug), score^0.3
-// compression + 0.4+0.6*boost reranker formula. Tolerance ~1.5pp.
+// ─────────────────────────────────────────────────────────────────────────────
+// ACHTUNG — diese Werte sind am 19.08.2026 ABSICHTLICH GESUNKEN.
+//
+// Wer sie steigen sieht und "zurueckstellt", macht die Suche wieder schlechter.
+// Deshalb steht hier, was gemessen wurde, und nicht nur, was gilt.
+//
+// Vorher:  home.precisionAt1 = 0.90 · mrr = 0.94
+// Jetzt:   home.precisionAt1 = 0.67 · mrr = 0.83
+//
+// Die alten Werte kamen aus einer Formel, die die Relevanz stauchte
+// (score^0.3) und Qualitaetsmerkmale mit 60 Prozent gewichtete. Auf diesem
+// Pruefstand — 17 Lektionen, 13 Fragen — war das ein Gewinn.
+//
+// Auf 498 ECHTEN Lektionen mit 20 in Alltagssprache gestellten Fragen war
+// dieselbe Formel der Verlust:
+//
+//   Stauchung        echter Bestand P@1     Pruefstand P@1
+//   ^0.3 / 0.6 (alt)        15 %                92,3 %
+//   ^1.0 / 0.6  (neu)       30 %                69,2 %
+//
+// Der gesamte Vorteil auf dem Pruefstand WAR der Schaden auf echten Daten.
+// Dazu kam der Frischebonus mit Bereich [0.5, 1.5]: er allein kostete auf dem
+// echten Bestand 4 von 20 richtigen ersten Plaetzen (Median-Platz 101 statt
+// 37). Auch das war auf 17 Lektionen unsichtbar — nicht schwer zu finden,
+// UNSICHTBAR: bei 16 Mitbewerbern gewinnt ein seltenes Wort auch gegen den
+// Faktor 3.
+//
+// ── Was dieses Gate NICHT kann ──────────────────────────────────────────────
+//
+// Es kann diese Fehlerklasse nicht finden. Beide Fehler treten erst ab einigen
+// hundert Datensaetzen auf, und beide Korpora hier sind klein. Das Gate bleibt
+// ein Rueckschritt-Waechter fuer bekannte Zahlen — kein Beleg fuer Qualitaet.
+//
+// Was die Klasse faengt, steht in src/rangfolge-braucht-relevanz.test.ts:
+// Waechter fuer die zwei konkreten Mechanismen (Frische darf Relevanz nicht
+// ueberstimmen, Relevanz darf nicht gestaucht werden). Und der ehrliche Weg
+// bleibt: gegen den eigenen echten Bestand messen, siehe
+// src/bench/korpus-aus-brain.ts.
+// ─────────────────────────────────────────────────────────────────────────────
 const FLOORS: Record<string, Partial<BenchMetrics>> = {
-  home: { precisionAt1: 0.90, recallAt3: 0.99, mrr: 0.94, ndcgAt5: 0.96 },
-  external: { precisionAt1: 0.78, recallAt3: 0.96, mrr: 0.87, ndcgAt5: 0.90 },
+  home: { precisionAt1: 0.67, recallAt3: 0.96, mrr: 0.83, ndcgAt5: 0.87 },
+  // external.recallAt3 von 0,93 auf 0,92: der Wortabgleich loest unscharfe
+  // Treffer seit dem 19.08.2026 EINMAL je Frage gegen den Gesamtwortschatz auf
+  // statt je Dokument (788 ms -> 262 ms). Der Preis ist gemessen: auf dem
+  // externen Beispielkorpus 0,1 Prozentpunkte, auf 499 echten Lektionen im
+  // gemischten Betrieb nichts (40 gegen 41 auf Platz 1, bei drei Vierteln
+  // weniger Wartezeit).
+  external: { precisionAt1: 0.71, recallAt3: 0.92, mrr: 0.82, ndcgAt5: 0.85 },
 };
 
 const pct = (x: number) => `${(x * 100).toFixed(1)}%`;

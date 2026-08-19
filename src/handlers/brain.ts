@@ -45,6 +45,18 @@ import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
          indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
+import {
+  VEKTOR_PRAEFIX, packe, textFuerVektor, Vektorbestand, mischeRangfolgen,
+} from '../bedeutung.js';
+
+/**
+ * Ein Vektorbestand fuer den ganzen Prozess.
+ *
+ * Er haelt rund 2 MB je 500 Lektionen im Arbeitsspeicher. Die bei jeder Frage
+ * neu zu holen waere langsamer als der Wortabgleich, den wir gerade ergaenzen —
+ * der Gewinn waere weg, bevor er anfaengt.
+ */
+const vektorbestand = new Vektorbestand();
 import { upgradeNudge } from '../upgrade-nudge.js';
 import { recallTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
 import { nutzungInWorten, nutzungsSchluessel, verdichte } from '../werkzeug-nutzung.js';
@@ -811,10 +823,33 @@ export async function handleBrainTool(
       await redis.expire(listKey, 90 * 86400);
 
       // Update best key for success/partial; for failure only update if no success exists
+      let bestGeschrieben = false;
       if (outcome === 'success' || outcome === 'partial') {
         await redis.set(`cachly:lesson:best:${topic}`, lesson);
+        bestGeschrieben = true;
       } else if (!existingRaw) {
         await redis.set(`cachly:lesson:best:${topic}`, lesson);
+        bestGeschrieben = true;
+      }
+
+      // ── Vektor fuer den Bedeutungsabgleich ─────────────────────────────────
+      //
+      // Wird beim Schreiben berechnet, nicht beim Suchen. Der Grund steht in
+      // Zahlen: die Einbettung kostet rund 280 ms Netz. Einmal je Lektion ist
+      // das nichts, bei jeder Frage waere es der halbe Gewinn.
+      //
+      // Bewusst NICHT abgewartet: wer eine Lektion speichert, soll nicht auf
+      // einen fremden Dienst warten. Faellt die Einbettung aus, fehlt der
+      // Vektor — und der Bedeutungsabgleich uebergeht diese eine Lektion still.
+      // Das ist der Preis dafuer, dass Lernen immer funktioniert, auch ohne
+      // Netz. Wie viele Lektionen einen Vektor haben, meldet brain_doctor.
+      if (bestGeschrieben && hasEmbedProvider()) {
+        void (async () => {
+          try {
+            const v = await computeEmbedding(textFuerVektor(safeJsonParse(lesson, {} as Record<string, unknown>)));
+            if (v?.length) await redis.set(`${VEKTOR_PRAEFIX}${topic}`, packe(v));
+          } catch { /* kein Vektor ist besser als keine Lektion */ }
+        })();
       }
 
       // Track in decision log for session replay
@@ -1233,6 +1268,67 @@ export async function handleBrainTool(
       // text-similar failed attempts (the moat; see src/rerank.ts + Cachly-Bench). ──
       const kwMatches = rerankByQuality(rawMatches);
 
+      // ── Layer 1.7: Bedeutungsabgleich ──────────────────────────────────────
+      //
+      // Der Wortabgleich findet, was woertlich dasteht. Eine Frage beschreibt
+      // aber ein SYMPTOM, die Lektion eine URSACHE — "Der Deploy haengt beim
+      // Bauen" und "No space left on device" teilen kein Wort und meinen
+      // dasselbe.
+      //
+      // Gemessen am 19.08.2026 an 499 echten Lektionen mit 100 Fragen:
+      //
+      //   Verfahren      Platz 1   Top 3   Top 10
+      //   nur Woerter      21 %    33 %     47 %
+      //   nur Bedeutung    40 %    60 %     68 %
+      //   gemischt 30/70   39 %    55 %     71 %
+      //
+      // Gemischt wird, nicht ersetzt: ohne Netz gibt es keine Einbettung, und
+      // die ersten zehn Treffer sind gemischt besser als bei beiden einzeln.
+      //
+      // Faellt hier etwas aus, bleibt es beim Wortabgleich. Ein Recall, der
+      // wegen eines fremden Dienstes gar nichts liefert, waere schlimmer als
+      // einer, der schlechter sortiert.
+      let sinnAngewandt = false;
+      const kwGemischt = await (async () => {
+        if (!hasEmbedProvider()) return kwMatches;
+        try {
+          await vektorbestand.aktualisiere(redis);
+          if (vektorbestand.groesse === 0) return kwMatches;
+
+          const frageVektor = await computeEmbedding(query);
+          if (!frageVektor?.length) return kwMatches;
+
+          const sinnThemen = vektorbestand.aehnlichste(frageVektor, 25).map((x) => x.topic);
+          const wortThemen = kwMatches
+            .filter((m) => m.key.startsWith('cachly:lesson:best:'))
+            .map((m) => m.key.slice('cachly:lesson:best:'.length));
+
+          const reihenfolge = mischeRangfolgen(wortThemen, sinnThemen);
+          const bekannt = new Map(kwMatches.map((m) => [m.key, m]));
+
+          // Lektionen, die NUR der Bedeutungsabgleich gefunden hat, muessen
+          // nachgeladen werden — der Wortabgleich hat sie nie angefasst.
+          const sortiert: typeof kwMatches = [];
+          for (const thema of reihenfolge) {
+            const key = `cachly:lesson:best:${thema}`;
+            const da = bekannt.get(key);
+            if (da) { sortiert.push(da); bekannt.delete(key); continue; }
+            const inhalt = await redis.get(key).catch(() => null);
+            if (inhalt) {
+              sortiert.push({ key, content: inhalt, score: 0, matchedWords: [], finalScore: 0, qualityBoost: 1 });
+            }
+          }
+          // Alles, was kein Thema war (Kontexteintraege, Index), bleibt hinten
+          // erhalten statt still zu verschwinden.
+          sortiert.push(...bekannt.values());
+          sinnAngewandt = true;
+          return sortiert;
+        } catch {
+          return kwMatches;
+        }
+      })();
+      void sinnAngewandt;
+
       // One quota unit for this call, regardless of how many lessons it surfaced.
       void bumpRecallQuota(redis);
 
@@ -1240,7 +1336,7 @@ export async function handleBrainTool(
       type RecalledLesson = { topic: string; severity: string; recall_count: number; savedMins: number; ts?: string; author?: string };
       const savedHere: RecalledLesson[] = [];
       // Exclude archived lessons — they are kept for audit but must not surface in recall.
-      const lessonMatches = kwMatches.filter(m => m.key.startsWith('cachly:lesson:best:'));
+      const lessonMatches = kwGemischt.filter(m => m.key.startsWith('cachly:lesson:best:'));
       let crossAuthorThisCall = 0;
       let successRecallsThisCall = 0;
       for (const m of lessonMatches.slice(0, 5)) {
@@ -1348,13 +1444,13 @@ export async function handleBrainTool(
         contextBoost?: boolean;
       };
 
-      const bm25Scores = kwMatches.map(m => m.score);
+      const bm25Scores = kwGemischt.map(m => m.score);
       const bm25Min = bm25Scores.length ? Math.min(...bm25Scores) : 0;
       const bm25Range = bm25Scores.length ? (Math.max(...bm25Scores) - bm25Min) || 1 : 1;
       const bm25Norm = (s: number) => (s - bm25Min) / bm25Range;
 
       const hybridMap = new Map<string, HybridResult>();
-      for (const m of kwMatches) {
+      for (const m of kwGemischt) {
         const n = bm25Norm(m.score);
         hybridMap.set(m.key, {
           key: m.key, content: m.content, bm25Score: n,
