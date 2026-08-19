@@ -48,6 +48,7 @@ import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 import { upgradeNudge } from '../upgrade-nudge.js';
 import { recallTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
 import { nutzungInWorten, nutzungsSchluessel, verdichte } from '../werkzeug-nutzung.js';
+import { inWorten as lieferungInWorten, lieferBild, lieferSchluessel, trefferSchluessel } from '../geliefert.js';
 import { TOOLS } from '../tools.js';
 import { vorspannHinweis } from '../vorspann.js';
 import { autorAbzeichen, fremdanteil } from '../autor-abzeichen.js';
@@ -3625,6 +3626,22 @@ export async function handleBrainTool(
       }
       const nutzung = verdichte(werkzeugRoh, 10);
 
+      // ── Die GEMESSENE Ersparnis, neben der gerechneten ─────────────────────
+      // Heinrich am 19.08.2026: "Bei der Schaetzung der Tokenersparnis sollten
+      // wir schauen, dass wir nicht nur schaetzen, denn das nervt Leute sehr
+      // stark." Dies hier ist eine Summe, keine Rechnung: die Laenge dessen,
+      // was das Brain wirklich zurueckgegeben hat. Dieselbe try/catch-Vorsicht
+      // wie oben — eine Messzeile darf das Werkzeug nie stoppen.
+      let lieferRoh = { token: 0 as string | number, abrufe: 0 as string | number, treffer: 0 as string | number };
+      try {
+        const token = await redis.get(lieferSchluessel(instance_id));
+        const quoten = (await redis.hgetall(trefferSchluessel(instance_id))) ?? {};
+        lieferRoh = { token: token ?? 0, abrufe: quoten.abrufe ?? 0, treffer: quoten.treffer ?? 0 };
+      } catch {
+        // still
+      }
+      const lieferung = lieferBild(lieferRoh);
+
       // ── Metric 1: Time-to-first-recall ──────────────────────────────────────
       let ttfrLine: string;
       if (bornAt && firstRecallAt) {
@@ -3671,6 +3688,9 @@ export async function handleBrainTool(
           ? `_Tip: pass \`author="your-handle"\` to \`smart_recall\` so cross-author reuse can be tracked._`
           : `_These numbers compound: every learned lesson and every teammate raises all three._`,
         ``,
+        ``,
+        `### 📦 Aus dem Brain geliefert _(gemessen, nicht gerechnet)_`,
+        lieferungInWorten(lieferung),
         `### 🔧 Werkzeug-Nutzung _(erst messen, dann zusammenlegen)_`,
         nutzungInWorten(nutzung, TOOLS.length),
         ...(nutzung.spitze.length > 0

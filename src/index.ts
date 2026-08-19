@@ -3,6 +3,7 @@ import { jwtExpiryMs, checkJwt, handleApiError, diagnoseAuth, planAuthHeal,
          readClientCredentialsFromEnv, buildClientCredentialsBody, clientCredentialsTokenUrl } from './auth.js';
 import { cachlyUrl } from './cachly-url.js';
 import { nutzungsSchluessel } from './werkzeug-nutzung.js';
+import { istLieferung, lieferSchluessel, tokenDerAntwort, hatTreffer, trefferSchluessel } from './geliefert.js';
 import type { FunnelEventName, DashboardMetrics } from './telemetry-types.js';
 import { notify } from './notifier.js';
 import { fileURLToPath } from 'node:url';
@@ -1030,6 +1031,27 @@ async function zaehleWerkzeug(instanceId: string, name: string): Promise<void> {
   }
 }
 
+/**
+ * Wie viel kam aus dem Gedaechtnis? — gezaehlt an der EINEN Stelle, durch die
+ * jede Antwort geht.
+ *
+ * Drei Zahlen, alle drei Summen: gelieferte Token, Abrufe, Abrufe mit Treffer.
+ * Keine davon braucht eine Annahme. Fire-and-forget wie die Werkzeugzaehlung —
+ * eine Statistik darf eine Antwort nie verzoegern und nie scheitern lassen.
+ */
+async function zaehleLieferung(instanceId: string, name: string, antwort: string): Promise<void> {
+  if (!istLieferung(name)) return;
+  try {
+    const redis = await getConnection(instanceId);
+    const treffer = hatTreffer(antwort);
+    await redis.incrby(lieferSchluessel(instanceId), treffer ? tokenDerAntwort(antwort) : 0);
+    await redis.hincrby(trefferSchluessel(instanceId), 'abrufe', 1);
+    if (treffer) await redis.hincrby(trefferSchluessel(instanceId), 'treffer', 1);
+  } catch {
+    // still — siehe oben
+  }
+}
+
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
   // Guard: if no JWT, return actionable onboarding message instead of HTTP 401
   if (!JWT) {
@@ -1143,6 +1165,10 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   // Delegate brain tools (learn, recall, session, etc.)
   const brainResult = await handleBrainTool(name, args, getConnection, apiFetch);
   if (brainResult !== null) {
+    // Erst hier steht die Antwort fest — vorher gibt es nichts zu zaehlen.
+    if (typeof args.instance_id === 'string' && args.instance_id) {
+      void zaehleLieferung(args.instance_id, name, String(brainResult ?? ''));
+    }
     if (!_firstCallSuccessSent && JWT) {
       _firstCallSuccessSent = true;
       // Persistent guard: ambient hooks spawn a fresh process per prompt, so the
