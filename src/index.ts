@@ -2,6 +2,7 @@
 import { jwtExpiryMs, checkJwt, handleApiError, diagnoseAuth, planAuthHeal,
          readClientCredentialsFromEnv, buildClientCredentialsBody, clientCredentialsTokenUrl } from './auth.js';
 import { cachlyUrl } from './cachly-url.js';
+import { nutzungsSchluessel } from './werkzeug-nutzung.js';
 import type { FunnelEventName, DashboardMetrics } from './telemetry-types.js';
 import { notify } from './notifier.js';
 import { fileURLToPath } from 'node:url';
@@ -1009,6 +1010,26 @@ async function featureGate(
   return { sperre: schrankeNachKostproben(name, pitch, UPGRADE_URL_FG) };
 }
 
+/**
+ * Einen Werkzeug-Aufruf zaehlen (GROW-046).
+ *
+ * Ein Hash je Brain, ein Feld je Werkzeugname. Gelesen wird das in
+ * `brain_metrics` — bewusst KEIN eigenes Werkzeug dafuer: ein 123. Werkzeug,
+ * um zu messen, dass es zu viele Werkzeuge gibt, waere die Pointe, die
+ * niemand will.
+ *
+ * Jeder Fehler wird geschluckt. Eine Messung, die den gemessenen Vorgang
+ * stoert, misst am Ende sich selbst.
+ */
+async function zaehleWerkzeug(instanceId: string, name: string): Promise<void> {
+  try {
+    const redis = await getConnection(instanceId);
+    await redis.hincrby(nutzungsSchluessel(instanceId), name, 1);
+  } catch {
+    // still — siehe oben
+  }
+}
+
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
   // Guard: if no JWT, return actionable onboarding message instead of HTTP 401
   if (!JWT) {
@@ -1097,6 +1118,26 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     }
     kostprobeHinweisText = gate.kostprobe;
     sendFunnelEvent('premium_taste_used', { tool: name, instance_id: (args.instance_id as string) ?? '' });
+  }
+
+  /*
+   * GROW-046: Erst messen, dann zusammenlegen.
+   *
+   * Die Glama-Bewertung sagt, cachly habe zu viele Werkzeuge. Der Einwand ist
+   * plausibel — nur konnte ihm niemand mit Zahlen begegnen, weil nirgends
+   * gezaehlt wurde, welches Werkzeug wie oft laeuft. Ohne diese Zahl streicht
+   * man das, was man SELBST selten benutzt, und das ist selten dasselbe wie
+   * das, was die Nutzer selten benutzen.
+   *
+   * Gezaehlt wird NACH dem Tarif-Gate: ein abgewiesener Aufruf ist kein
+   * Gebrauch, sondern ein verhinderter. Wer beides zusammenzaehlt, haelt
+   * gesperrte Werkzeuge faelschlich fuer beliebt.
+   *
+   * Fire-and-forget: eine Zaehlung darf einen Aufruf nie verzoegern und nie
+   * scheitern lassen.
+   */
+  if (typeof args.instance_id === 'string' && args.instance_id) {
+    void zaehleWerkzeug(args.instance_id, name);
   }
 
   // Delegate brain tools (learn, recall, session, etc.)

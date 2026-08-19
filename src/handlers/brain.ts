@@ -47,6 +47,8 @@ import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rer
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 import { upgradeNudge } from '../upgrade-nudge.js';
 import { recallTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
+import { nutzungInWorten, nutzungsSchluessel, verdichte } from '../werkzeug-nutzung.js';
+import { TOOLS } from '../tools.js';
 import { vorspannHinweis } from '../vorspann.js';
 import { autorAbzeichen, fremdanteil } from '../autor-abzeichen.js';
 import { cachlyUrl } from '../cachly-url.js';
@@ -3607,6 +3609,22 @@ export async function handleBrainTool(
           redis.smembers(`cachly:stats:reuse_pairs:${instance_id}`).catch(() => [] as string[]),
         ]);
 
+      // ── GROW-046: welche Werkzeuge dieses Brain wirklich benutzt ────────────
+      // Bewusst HIER und nicht in einem eigenen Werkzeug: ein 123. Werkzeug,
+      // um zu messen, dass es zu viele Werkzeuge gibt, waere die Pointe, die
+      // niemand will.
+      // try/catch und nicht nur .catch(): faellt die Methode ganz aus (aelterer
+      // Client, anderer Redis-Aufsatz), wirft schon der AUFRUF, und eine
+      // Zusagen-Absicherung greift dann nicht. Eine Messzeile darf das
+      // Werkzeug nie stoppen.
+      let werkzeugRoh: Record<string, string> = {};
+      try {
+        werkzeugRoh = (await redis.hgetall(nutzungsSchluessel(instance_id))) ?? {};
+      } catch {
+        werkzeugRoh = {};
+      }
+      const nutzung = verdichte(werkzeugRoh, 10);
+
       // ── Metric 1: Time-to-first-recall ──────────────────────────────────────
       let ttfrLine: string;
       if (bornAt && firstRecallAt) {
@@ -3652,6 +3670,14 @@ export async function handleBrainTool(
         recallsTotal === 0
           ? `_Tip: pass \`author="your-handle"\` to \`smart_recall\` so cross-author reuse can be tracked._`
           : `_These numbers compound: every learned lesson and every teammate raises all three._`,
+        ``,
+        `### 🔧 Werkzeug-Nutzung _(erst messen, dann zusammenlegen)_`,
+        nutzungInWorten(nutzung, TOOLS.length),
+        ...(nutzung.spitze.length > 0
+          ? nutzung.spitze.map(
+              (z, i) => `  ${String(i + 1).padStart(2)}. \`${z.name}\` — ${z.aufrufe}× (${Math.round(z.anteil * 100)} %)`,
+            )
+          : []),
       ].filter(Boolean);
 
       return lines.join('\n');

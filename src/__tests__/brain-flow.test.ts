@@ -79,6 +79,26 @@ class MockRedis {
     return [...(this.sets.get(key) ?? [])];
   }
 
+  // GROW-046: Der Doppelgaenger muss koennen, was der Code benutzt. Fehlte
+  // hincrby/hgetall, warf schon der AUFRUF — und ein .catch() faengt das nicht,
+  // weil der Fehler nicht aus einer Zusage kommt, sondern aus "ist keine
+  // Funktion".
+  private hashes = new Map<string, Map<string, number>>();
+
+  async hincrby(key: string, field: string, by: number): Promise<number> {
+    const h = this.hashes.get(key) ?? new Map<string, number>();
+    const next = (h.get(field) ?? 0) + by;
+    h.set(field, next);
+    this.hashes.set(key, h);
+    return next;
+  }
+
+  async hgetall(key: string): Promise<Record<string, string>> {
+    const h = this.hashes.get(key);
+    if (!h) return {};
+    return Object.fromEntries([...h.entries()].map(([f, v]) => [f, String(v)]));
+  }
+
   async mget(...keys: string[]): Promise<(string | null)[]> {
     return keys.map(k => this.store.get(k) ?? null);
   }
