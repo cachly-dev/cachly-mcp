@@ -31,7 +31,7 @@
     "verify-tool-spec-snapshots": "node scripts/tool-spec-snapshots.mjs check",
     "verify-tool-counts": "node scripts/verify-tool-counts.mjs",
     "verify-capabilities": "node scripts/verify-capabilities.mjs",
-    "build": "tsc",
+    "build": "tsc && node scripts/bauabdruck.mjs",
     "postinstall": "node scripts/postinstall.js",
     "dev": "tsx src/index.ts",
     "start": "node dist/src/index.js",

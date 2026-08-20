@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { bauabdruck, formatiereBauabdruck } from '../bauabdruck.js';
 import { beurteileDeckung } from '../eingaenge.js';
 import { join } from 'node:path';
 import type { Redis } from 'ioredis';
@@ -905,6 +906,7 @@ export async function handleTeamTool(
       checks.push(`💾 **Context entries:** ${ctxCount}`);
       checks.push(`🎯 **Confidence:** ${lessons.length - staleLessons.length - warnLessons.length} fresh · ${warnLessons.length} warn · ${staleLessons.length} stale`);
       checks.push(`⏱️ **Decay config:** warn after ${CONFIDENCE_WARN_DAYS}d · stale after ${CONFIDENCE_STALE_DAYS}d`);
+      checks.push(formatiereBauabdruck(bauabdruck));
       if (uniqueAuthors.size >= 2) {
         checks.push(`👥 **Team:** ${uniqueAuthors.size} contributors (${[...uniqueAuthors].join(', ')})`);
       }

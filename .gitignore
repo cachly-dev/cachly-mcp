@@ -4,3 +4,8 @@ dist/
 .env.production
 .env.staging
 .env.local
+
+# Bauabdruck: von scripts/bauabdruck.mjs bei jedem `npm run build` neu
+# geschrieben (Version, Commit, Baudatum). src/bauabdruck.ts ist die
+# eingecheckte Rueckfall-Fassung und bleibt unabhaengig davon bestehen.
+src/bauabdruck-daten.generiert.json
