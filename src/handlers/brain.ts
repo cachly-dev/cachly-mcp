@@ -10,6 +10,8 @@ import { safeJsonParse, scanKeys } from '../utils.js';
 import { ersparteMinuten, istStarterLektion } from '../wertbeitrag.js';
 import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
 import { meldeEinmal, OHNE_VEKTOREN, OHNE_DIENST, OHNE_FRAGEVEKTOR } from '../aussetzer.js';
+import { versuchStart, neueKennung, wendeZuteilungAn, schliesseVersuchAb,
+         type VersuchProtokollTeil } from '../versuch.js';
 
 /**
  * Preview for one smart_recall hit.
@@ -1737,6 +1739,45 @@ export async function handleBrainTool(
         })
         .sort((a, b) => b.hybridScore - a.hybridScore);
 
+      // ── Versuch (Messtechnik, siehe versuch.ts) ───────────────────────────────
+      //
+      // Standardmaessig AUS: `versuchStart()` gibt dann `null` zurueck, und
+      // dieser ganze Block tut nichts — `hybridResults` bleibt unangetastet,
+      // nichts wird nach Redis geschrieben, kein Zeichen im Text aendert sich.
+      // Erst mit `CACHLY_VERSUCH=an` UND gesetztem Salz greift die Zuteilung.
+      const versuchSalz = versuchStart();
+      let versuchKennung = '';
+      let versuchTeil: VersuchProtokollTeil | null = null;
+      if (versuchSalz !== null) {
+        versuchKennung = neueKennung();
+        const hoechstePunktzahl = hybridResults[0]?.hybridScore ?? 0;
+        const ergebnis = wendeZuteilungAn(
+          hybridResults.map((r) => ({ key: r.key, content: r.content, punktzahl: r.hybridScore })),
+          versuchKennung,
+          versuchSalz,
+          hoechstePunktzahl,
+        );
+        if (ergebnis.weggelassenesThema !== undefined) {
+          // HOLD: der bisher beste Treffer wird aus der ausgelieferten Liste
+          // entfernt. Die uebrigen Treffer und ihre Reihenfolge bleiben gleich.
+          hybridResults.splice(0, 1);
+        } else if (ergebnis.markierungGesetzt && hybridResults[0] && ergebnis.treffer[0]) {
+          // DELIVER: derselbe Treffer, aber sein Inhalt traegt jetzt die
+          // Kanarien-Markierung am Ende von `what_worked`.
+          hybridResults[0] = { ...hybridResults[0], content: ergebnis.treffer[0].content };
+        }
+        versuchTeil = {
+          frage: query,
+          hoechstePunktzahl,
+          themen: [], // unten befuellt, sobald feststeht, was wirklich sichtbar ist
+          zulassungsfaehig: ergebnis.zulassungsfaehig,
+          zulassungsGrund: ergebnis.zulassungsGrund,
+          zuteilung: ergebnis.zuteilung,
+          weggelassenesThema: ergebnis.weggelassenesThema,
+          markierungGesetzt: ergebnis.markierungGesetzt,
+        };
+      }
+
       // ── Teaser-Gate: free tier over its recall limit hides the long tail ──────
       const recallGate = await getRecallGate(instance_id, apiFetch);
       // Depth gate: once a free user is over their (monthly, goodwill-adjusted)
@@ -1910,6 +1951,15 @@ export async function handleBrainTool(
         }
       }
 
+      // Versuch, Abschluss: Kanarienvogel gegen die WIRKLICH zusammengebaute
+      // Antwort pruefen, Markierung entfernen, Protokoll schreiben (schlaegt
+      // das fehl, bleibt die Antwort trotzdem stehen — siehe schreibeTurnProtokoll).
+      if (versuchSalz !== null && versuchTeil) {
+        const themen = hybridResults.slice(0, visibleCount)
+          .filter((r) => r.key.startsWith('cachly:lesson:best:'))
+          .map((r) => r.key.slice('cachly:lesson:best:'.length));
+        return schliesseVersuchAb(redis, versuchKennung, { ...versuchTeil, themen }, lines.join('\n'));
+      }
       return lines.join('\n');
     }
 
