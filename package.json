@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.10.124",
+  "version": "0.10.125",
   "mcpName": "io.github.cachly-dev/mcp-server",
   "description": "Your AI forgets everything between sessions. cachly fixes that permanently: 122 MCP tools for Claude Code, Cursor, Copilot & Windsurf. Learns from every bug fix, commit and CI run. Arrives pre-briefed. Free tier forever, EU servers, GDPR.",
   "type": "module",

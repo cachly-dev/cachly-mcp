@@ -9,6 +9,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
 import { safeJsonParse, scanKeys } from '../utils.js';
 import { ersparteMinuten, istStarterLektion } from '../wertbeitrag.js';
 import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
+import { meldeEinmal, OHNE_VEKTOREN, OHNE_DIENST, OHNE_FRAGEVEKTOR } from '../aussetzer.js';
 
 /**
  * Preview for one smart_recall hit.
@@ -1336,15 +1337,33 @@ export async function handleBrainTool(
       // Faellt hier etwas aus, bleibt es beim Wortabgleich. Ein Recall, der
       // wegen eines fremden Dienstes gar nichts liefert, waere schlimmer als
       // einer, der schlechter sortiert.
+      //
+      // Jeder Ausstieg hier meldet sich EINMAL je Prozess (siehe
+      // `aussetzer.ts`). Am 20.08.2026 wurde gemessen, dass dieser Pfad in
+      // Produktion monatelang stumm ausstieg: 0 Vektoren bei 506 Lektionen.
+      // Von aussen war das von "alles in Ordnung" nicht zu unterscheiden.
       let sinnAngewandt = false;
       const kwGemischt = await (async () => {
-        if (!hasEmbedProvider()) return kwMatches;
+        if (!hasEmbedProvider()) {
+          meldeEinmal(OHNE_DIENST,
+            'kein Einbettungsdienst eingerichtet — die Suche laeuft nur ueber Woerter');
+          return kwMatches;
+        }
         try {
           await vektorbestand.aktualisiere(redis);
-          if (vektorbestand.groesse === 0) return kwMatches;
+          if (vektorbestand.groesse === 0) {
+            meldeEinmal(OHNE_VEKTOREN,
+              'keine einzige Lektion hat eine Einbettung — die Suche laeuft nur ueber '
+              + 'Woerter. Nachruesten mit eingaenge-nachruesten, pruefen mit brain_doctor');
+            return kwMatches;
+          }
 
           const frageVektor = await computeEmbedding(query);
-          if (!frageVektor?.length) return kwMatches;
+          if (!frageVektor?.length) {
+            meldeEinmal(OHNE_FRAGEVEKTOR,
+              'die Frage liess sich nicht einbetten — diese Suche laeuft nur ueber Woerter');
+            return kwMatches;
+          }
 
           await namensbestand.aktualisiere(redis);
           await eingangsbestand.aktualisiere(redis);
