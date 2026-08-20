@@ -9,7 +9,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
 import { safeJsonParse, scanKeys } from '../utils.js';
 import { ersparteMinuten, istStarterLektion } from '../wertbeitrag.js';
 import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
-import { meldeEinmal, OHNE_VEKTOREN, OHNE_DIENST, OHNE_FRAGEVEKTOR } from '../aussetzer.js';
+import { meldeEinmal, meldeUndVermerke, OHNE_VEKTOREN, OHNE_DIENST, OHNE_FRAGEVEKTOR, SINNPFAD_ABBRUCH } from '../aussetzer.js';
 import { versuchStart, neueKennung, wendeZuteilungAn, schliesseVersuchAb,
          type VersuchProtokollTeil } from '../versuch.js';
 
@@ -1473,7 +1473,24 @@ export async function handleBrainTool(
           sortiert.push(...bekannt.values());
           sinnAngewandt = true;
           return sortiert;
-        } catch {
+        } catch (e) {
+          // Der Auffang. Bis zum 21.08.2026 stand hier `catch { return
+          // kwMatches; }` — ohne Meldung, ohne Zaehler.
+          //
+          // Gefunden vom ersten Lauf der Gegenrede (Rolle: Der Wettbewerber),
+          // aus einer fremden Narbe: ein Abruf hinter einem Zeitlimit gegen
+          // einen Einbettungsdienst, der bei Inaktivitaet kalt startete. Der
+          // erste Aufruf nach einer Pause riss das Limit, wurde hier gefangen
+          // und lieferte dieselbe Antwort wie eine Suche ohne Treffer. Rund
+          // 40 Prozent der Rueckrufe in der ersten Stunde nach jedem
+          // Kaltstart waren stille Zeitueberlaeufe — bemerkt Wochen spaeter.
+          //
+          // Die drei Ausstiege darueber melden sich seit PR #424. Dieser ist der
+          // gefaehrlichste von allen, weil er das UNERWARTETE faengt: die drei
+          // anderen sind Luecken, das hier ist ein Fehler.
+          await meldeUndVermerke(redis, SINNPFAD_ABBRUCH,
+            `der Bedeutungspfad brach ab (${e instanceof Error ? e.message : String(e)}) `
+            + '— diese Suche lief nur ueber Woerter');
           return kwMatches;
         }
       })();

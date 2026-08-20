@@ -46,7 +46,14 @@
 
 import { randomBytes, createHash } from 'node:crypto';
 import type { Redis } from 'ioredis';
-import { meldeEinmal } from './aussetzer.js';
+import { meldeEinmal, meldeUndVermerke, VERSUCH_LEER } from './aussetzer.js';
+
+/**
+ * So viel Speicher, wie ein Vermerk braucht. Bewusst strukturell getippt und
+ * nicht als Redis-Typ: dieses Modul soll ohne Redis-Abhaengigkeit pruefbar
+ * bleiben.
+ */
+type VermerkSpeicherArt = Parameters<typeof meldeUndVermerke>[0];
 
 // ── Der Schalter ─────────────────────────────────────────────────────────────
 
@@ -65,14 +72,24 @@ export const OHNE_SALZ = 'versuch-ohne-salz';
  * `meldeEinmal`) und verhaelt sich danach wie der erste — still weiterlaufen
  * waere die Fehlerklasse, gegen die `aussetzer.ts` gebaut wurde.
  */
-export function versuchStart(): string | null {
+export function versuchStart(speicher?: VermerkSpeicherArt | null): string | null {
   if (process.env[VERSUCH_ENV] !== 'an') return null;
   const salz = process.env[VERSUCH_SALZ_ENV];
   if (!salz) {
-    meldeEinmal(
-      OHNE_SALZ,
-      `${VERSUCH_ENV}=an, aber ${VERSUCH_SALZ_ENV} fehlt — der Versuch verhaelt sich wie "aus"`,
-    );
+    const text = `${VERSUCH_ENV}=an, aber ${VERSUCH_SALZ_ENV} fehlt — der Versuch verhaelt sich wie "aus"`;
+    if (speicher) {
+      // Ohne Speicher stand die Meldung nur im Arbeitsspeicher und war nach
+      // jedem Deploy weg (Karte opupbt3l9wcq, gefunden von der Gegenrede,
+      // Rolle: Der Betreiber). Der Versuch konnte damit WOCHENLANG leer
+      // laufen: "keine Daten" sah genauso aus wie "noch nicht genug Daten".
+      //
+      // meldeUndVermerke faengt jeden eigenen Fehler ab und gibt eine
+      // Zusage zurueck, die niemand einloesen muss — deshalb `void`. Diese
+      // Funktion bleibt synchron, weil ihre Aufrufer es sind.
+      void meldeUndVermerke(speicher, VERSUCH_LEER, text);
+    } else {
+      meldeEinmal(OHNE_SALZ, text);
+    }
     return null;
   }
   return salz;

@@ -1,8 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  meldeEinmal, schonGemeldet, gemeldeteGruende, setzeAussetzerZurueck,
-  OHNE_VEKTOREN, OHNE_DIENST,
-} from './aussetzer.js';
+import { meldeEinmal, schonGemeldet, gemeldeteGruende, setzeAussetzerZurueck, OHNE_VEKTOREN, OHNE_DIENST, meldeUndVermerke, leseVermerke, SINNPFAD_ABBRUCH, VERSUCH_LEER, AUSSETZER_VORSATZ, AUSSETZER_TTL_SEKUNDEN } from './aussetzer.js';
 
 /**
  * ABNAHME zur Karte g7bqqy8r7z0t — "Der Bedeutungsabgleich lief in Produktion
@@ -91,5 +88,111 @@ describe('setzeAussetzerZurueck', () => {
     expect(meldeEinmal('probe', 'x'), 'nach dem Zuruecksetzen wurde nicht neu gemeldet').toBe(true);
     stille.mockRestore();
     setzeAussetzerZurueck();
+  });
+});
+
+// ── Der Vermerk, der einen Neustart ueberlebt ───────────────────────────────
+//
+// Anlass: Karte opupbt3l9wcq. meldeEinmal merkt sich den Grund im
+// Arbeitsspeicher — nach jedem Deploy ist die Meldung weg, und eine
+// Fehlkonfiguration konnte wochenlang bestehen.
+
+/** Kleiner Speicher, der sich wie die benutzten Redis-Befehle verhaelt. */
+function speicherAttrappe(kaputtAb?: string) {
+  const daten = new Map<string, Record<string, string>>();
+  return {
+    daten,
+    ttl: new Map<string, number>(),
+    async hincrby(key: string, field: string, inc: number) {
+      if (kaputtAb === 'hincrby') throw new Error('Speicher weg');
+      const h = daten.get(key) ?? {};
+      h[field] = String((Number(h[field]) || 0) + inc);
+      daten.set(key, h);
+      return Number(h[field]);
+    },
+    async hset(key: string, values: Record<string, string>) {
+      const h = daten.get(key) ?? {};
+      Object.assign(h, values);
+      daten.set(key, h);
+      return 'OK';
+    },
+    async expire(key: string, seconds: number) {
+      this.ttl.set(key, seconds);
+      return 1;
+    },
+    async keys(pattern: string) {
+      if (kaputtAb === 'keys') throw new Error('Speicher weg');
+      const vorsatz = pattern.replace(/\*$/, '');
+      return [...daten.keys()].filter((k) => k.startsWith(vorsatz));
+    },
+    async hgetall(key: string) {
+      return daten.get(key) ?? {};
+    },
+  };
+}
+
+describe('meldeUndVermerke', () => {
+  it('schreibt Zaehler, Zeitpunkt und Text — und setzt eine Lebensdauer', async () => {
+    const stille = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setzeAussetzerZurueck();
+    const s = speicherAttrappe();
+
+    await meldeUndVermerke(s, SINNPFAD_ABBRUCH, 'der Bedeutungspfad brach ab');
+    await meldeUndVermerke(s, SINNPFAD_ABBRUCH, 'nochmal');
+
+    const eintrag = s.daten.get(`${AUSSETZER_VORSATZ}${SINNPFAD_ABBRUCH}`)!;
+    expect(eintrag.anzahl, 'zwei Aussetzer, aber nur einer gezaehlt').toBe('2');
+    expect(eintrag.text).toBe('nochmal');
+    expect(eintrag.zuletzt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    expect(s.ttl.get(`${AUSSETZER_VORSATZ}${SINNPFAD_ABBRUCH}`)).toBe(AUSSETZER_TTL_SEKUNDEN);
+    stille.mockRestore();
+    setzeAussetzerZurueck();
+  });
+
+  it('KONTROLLE: ein kaputter Speicher bricht die Anfrage NICHT ab', async () => {
+    const stille = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setzeAussetzerZurueck();
+    // Wer eine Suche abbricht, weil er den Ausfall nicht aufschreiben konnte,
+    // hat aus einer Verschlechterung einen Ausfall gemacht.
+    await expect(meldeUndVermerke(speicherAttrappe('hincrby'), SINNPFAD_ABBRUCH, 'x'))
+      .resolves.toBe(true);
+    // Aber der Rueckfall ist nicht still: er meldet sich unter eigenem Grund.
+    expect(gemeldeteGruende()).toContain(`${SINNPFAD_ABBRUCH}-vermerk`);
+    stille.mockRestore();
+    setzeAussetzerZurueck();
+  });
+
+  it('ohne Speicher bleibt es bei der Meldung, ohne zu werfen', async () => {
+    const stille = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setzeAussetzerZurueck();
+    await expect(meldeUndVermerke(null, VERSUCH_LEER, 'x')).resolves.toBe(true);
+    stille.mockRestore();
+    setzeAussetzerZurueck();
+  });
+});
+
+describe('leseVermerke', () => {
+  it('liefert die Vermerke, der haeufigste zuerst', async () => {
+    const stille = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setzeAussetzerZurueck();
+    const s = speicherAttrappe();
+    await meldeUndVermerke(s, VERSUCH_LEER, 'a');
+    await meldeUndVermerke(s, SINNPFAD_ABBRUCH, 'b');
+    await meldeUndVermerke(s, SINNPFAD_ABBRUCH, 'b');
+
+    const v = await leseVermerke(s);
+    expect(v!.map((x) => x.grund)).toEqual([SINNPFAD_ABBRUCH, VERSUCH_LEER]);
+    expect(v![0].anzahl).toBe(2);
+    stille.mockRestore();
+    setzeAussetzerZurueck();
+  });
+
+  it('KONTROLLE: nicht messbar ist NICHT dasselbe wie nichts gefunden', async () => {
+    // Genau dieser Unterschied fehlte an allen Stellen, aus denen dieses
+    // Modul entstanden ist. null heisst "konnte nicht nachsehen", [] heisst
+    // "nachgesehen, nichts da".
+    expect(await leseVermerke(speicherAttrappe('keys')), 'Lesefehler wurde als "nichts da" gemeldet').toBe(null);
+    expect(await leseVermerke(null)).toBe(null);
+    expect(await leseVermerke(speicherAttrappe())).toEqual([]);
   });
 });
