@@ -51,6 +51,7 @@ import {
 } from '../bedeutung.js';
 import { schreibeEingaenge, Eingangsbestand, EINGANG_GEWICHT } from '../eingaenge.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
+import { spurLegen } from '../spuren.js';
 import {
   bewerteTopf, spreizeImTopf, reichereAn, inhaltsWoerter, grobStamm, GEWICHTE,
 } from '../rangfolge.js';
@@ -1459,6 +1460,30 @@ export async function handleBrainTool(
 
       // One quota unit for this call, regardless of how many lessons it surfaced.
       void bumpRecallQuota(redis);
+
+      // ── Gedaechtniszellen ────────────────────────────────────────────────
+      //
+      // Diese Frage hat diese Lektionen gefunden — das ist ein bewiesener Weg
+      // zu ihnen. Fuehrt dieselbe Frage ein ZWEITES Mal hierher, wird sie ein
+      // eigener Eingang, und beim naechsten Mal ist der Weg breiter.
+      //
+      // Warum erst beim zweiten Mal: das Signal "wurde benutzt" gibt es nicht.
+      // Der Server sieht, was er ausgeliefert hat, nicht was jemand damit
+      // gemacht hat. Wiederholung IST das, was einen Trampelpfad ausmacht.
+      //
+      // Nur die ersten DREI: das ist, was die Einblendung zeigt. Wer alle
+      // Treffer aufzeichnet, macht aus jedem Streifschuss einen Weg.
+      //
+      // Nicht abgewartet: wer sucht, soll nicht warten, bis das Gedaechtnis
+      // nachgefuehrt ist.
+      if (hasEmbedProvider()) {
+        const gefundeneThemen = kwGemischt
+          .filter((m) => m.key.startsWith('cachly:lesson:best:'))
+          .slice(0, 3)
+          .map((m) => m.key.slice('cachly:lesson:best:'.length));
+        void spurLegen(redis, query, gefundeneThemen, computeEmbedding)
+          .catch(() => { /* kein Pfad ist besser als keine Antwort */ });
+      }
 
       // Increment recall_count on matched lessons (fire-and-forget) + collect "Brain saved you here" signal.
       type RecalledLesson = { topic: string; severity: string; recall_count: number; savedMins: number; ts?: string; author?: string };

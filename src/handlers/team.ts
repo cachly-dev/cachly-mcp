@@ -841,6 +841,7 @@ export async function handleTeamTool(
       const vektorZahl = await zaehleSchluessel('cachly:lesson:vec:*');
       const namensZahl = await zaehleSchluessel('cachly:lesson:vecname:*');
       const eingangZahl = await zaehleSchluessel('cachly:lesson:eing:*');
+      const pfadZahl = await zaehleSchluessel('cachly:lesson:pfad:*');
       const deckung = lessonKeys.length > 0
         ? Math.round((vektorZahl / lessonKeys.length) * 100)
         : 100;
@@ -863,8 +864,18 @@ export async function handleTeamTool(
         } else {
           checks.push(
             `✅ **Semantic coverage: ${deckung}%** — ${vektorZahl} full-text, `
-            + `${namensZahl} topic-name, ${eingangZahl} with error-text entries`,
+            + `${namensZahl} topic-name, ${eingangZahl} with error-text entries`
+            + (pfadZahl > 0 ? `, ${pfadZahl} with learned question paths` : ''),
           );
+          // Die Trampelpfade sind das einzige, was MIT DER NUTZUNG waechst.
+          // Steht die Zahl auf null, obwohl schon lange gesucht wird, lernt
+          // das Gedaechtnis nichts dazu — das ist eine eigene Auskunft.
+          if (pfadZahl === 0 && lessonKeys.length >= 20) {
+            checks.push(
+              '💤 **No learned question paths yet** — a question that finds the same '
+              + 'lesson twice becomes its own entry. Needs repeated real use.',
+            );
+          }
         }
       }
 

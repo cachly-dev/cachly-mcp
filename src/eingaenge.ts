@@ -160,26 +160,43 @@ export class Eingangsbestand {
     return n;
   }
 
-  async aktualisiere(redis: Redis, jetzt = Date.now()): Promise<void> {
+  /**
+   * @param praefixe welche Hashes zum Bestand gehoeren
+   *
+   * Zwei statt einem: die aus dem Text gezogenen Fehlertexte
+   * (`cachly:lesson:eing:`) und die aus der Nutzung gelernten Fragen
+   * (`cachly:lesson:pfad:`). Sie liegen getrennt, weil `schreibeEingaenge`
+   * seinen Hash vor jedem Schreiben loescht — laegen die gelernten Fragen
+   * dort, wuerde jedes erneute Lernen die gesammelte Erfahrung wegwerfen.
+   * Fuer die SUCHE sind sie dasselbe: Tueren zu derselben Lektion.
+   */
+  async aktualisiere(
+    redis: Redis,
+    jetzt = Date.now(),
+    praefixe: readonly string[] = [EINGANG_PRAEFIX, 'cachly:lesson:pfad:'],
+  ): Promise<void> {
     if (this.eingaenge.size > 0 && jetzt - this.geladen < this.frischeMs) return;
 
-    const schluessel: string[] = [];
-    let cursor = '0';
-    do {
-      const [next, gefunden] = await redis.scan(cursor, 'MATCH', `${EINGANG_PRAEFIX}*`, 'COUNT', 500);
-      cursor = next;
-      schluessel.push(...gefunden);
-    } while (cursor !== '0');
-
     const frisch = new Map<string, number[][]>();
-    for (const k of schluessel) {
-      const hash = await redis.hgetall(k);
-      const vs: number[][] = [];
-      for (const roh of Object.values(hash)) {
-        const v = entpacke(roh);
-        if (v) vs.push(v);
+    for (const praefix of praefixe) {
+      const schluessel: string[] = [];
+      let cursor = '0';
+      do {
+        const [next, gefunden] = await redis.scan(cursor, 'MATCH', `${praefix}*`, 'COUNT', 500);
+        cursor = next;
+        schluessel.push(...gefunden);
+      } while (cursor !== '0');
+
+      for (const k of schluessel) {
+        const hash = await redis.hgetall(k);
+        const topic = k.slice(praefix.length);
+        const vs = frisch.get(topic) ?? [];
+        for (const roh of Object.values(hash)) {
+          const v = entpacke(roh);
+          if (v) vs.push(v);
+        }
+        if (vs.length) frisch.set(topic, vs);
       }
-      if (vs.length) frisch.set(k.slice(EINGANG_PRAEFIX.length), vs);
     }
     this.eingaenge = frisch;
     this.geladen = jetzt;
