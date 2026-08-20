@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 /**
@@ -39,13 +39,41 @@ describe('Versionssprung zieht die Schnappschuesse mit', () => {
     expect(paket().scripts?.version).toContain('tool-spec-snapshots');
   });
 
-  it('das Ziel des Hakens existiert als eigenes Skript', () => {
-    // GEGENPROBE gegen einen Haken, der ins Leere greift: ein Skriptname mit
-    // Tippfehler wuerde bei jedem Sprung still fehlschlagen.
+  it('jedes Glied der Kette zeigt auf etwas, das es gibt', () => {
+    /*
+     * GEGENPROBE gegen einen Haken, der ins Leere greift: ein Skriptname mit
+     * Tippfehler wuerde bei jedem Sprung still fehlschlagen.
+     *
+     * Erweitert am 20.08.2026. Vorher nahm diese Zeile an, der Haken sei
+     * GENAU EIN `npm run <name>`. Dann kam `nummer-nachziehen` davor, und die
+     * Probe fiel — richtigerweise, aber aus dem falschen Grund: die Kette war
+     * in Ordnung, nur die Annahme nicht.
+     *
+     * Jetzt prueft sie, was sie immer meinte: jedes Glied der Kette zeigt auf
+     * etwas Vorhandenes — ein npm-Skript oder eine Datei.
+     */
     const s = paket().scripts ?? {};
-    const gerufen = (s.version ?? '').replace(/^npm run /, '').trim();
-    expect(Object.keys(s), `der Haken ruft "${gerufen}" — das gibt es nicht`)
-      .toContain(gerufen);
+    const glieder = (s.version ?? '').split('&&').map((g) => g.trim()).filter(Boolean);
+    expect(glieder.length, 'der Haken ist leer').toBeGreaterThan(0);
+
+    for (const glied of glieder) {
+      if (glied.startsWith('npm run ')) {
+        const name = glied.slice('npm run '.length).trim();
+        expect(Object.keys(s), `der Haken ruft "npm run ${name}" — das Skript gibt es nicht`)
+          .toContain(name);
+      } else if (glied.startsWith('node ')) {
+        const datei = glied.slice('node '.length).trim().split(/\s+/)[0];
+        expect(
+          existsSync(new URL(`../${datei}`, import.meta.url)),
+          `der Haken ruft "node ${datei}" — die Datei gibt es nicht`,
+        ).toBe(true);
+      } else {
+        // Ein Glied, das weder npm-Skript noch node-Aufruf ist, wird hier
+        // nicht geprueft. Das still durchzuwinken waere derselbe Fehler noch
+        // einmal, also faellt die Probe stattdessen laut.
+        throw new Error(`unbekannte Form im Haken: "${glied}" — die Pruefung kennt sie nicht`);
+      }
+    }
   });
 
   it('die Waechter-Meldung nennt den Zusammenhang', () => {
