@@ -41,7 +41,7 @@ export function recallVorschau(key: string, content: string, maxChars: number): 
 import type { CKGEdge, CKGNode, PersonNode, ServiceNode } from '../ckg.js';
 import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
-import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
+import { keywordSearch, wortindexEntwerten, tokenize, splitMultiQuery, levenshtein,
          indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
@@ -843,6 +843,14 @@ export async function handleBrainTool(
         await redis.set(`cachly:lesson:best:${topic}`, lesson);
         bestGeschrieben = true;
       }
+
+      // Der stehende Wortindex kennt die neue Lektion noch nicht.
+      //
+      // Ohne diese Zeile waere sie bis zu eine Minute lang nicht auffindbar —
+      // und genau der Fall "gerade gelernt, sofort gesucht" ist der, bei dem
+      // ein Gedaechtnis sich beweisen muss. Der Index wird beim naechsten
+      // Recall neu gebaut, nicht hier: Lernen soll nicht auf das Bauen warten.
+      if (bestGeschrieben) wortindexEntwerten();
 
       // ── Vektor fuer den Bedeutungsabgleich ─────────────────────────────────
       //

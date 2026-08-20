@@ -1714,12 +1714,96 @@ function recencyBoost(timestampMs: number | undefined): number {
  * │  Recency boost → Sort → Top-K                                  │
  * └─────────────────────────────────────────────────────────────────┘
  */
+/**
+ * Der gebaute Wortbestand — einmal, dann stehend.
+ *
+ * ── Warum ────────────────────────────────────────────────────────────────
+ *
+ * Die Schritte 1 und 2 (Schluessel holen, alle Dokumente zerlegen,
+ * Worthaeufigkeiten und Bigramme rechnen, Dokumentfrequenz bilden) haengen
+ * NUR am Bestand, nicht an der Frage. Trotzdem liefen sie bisher bei JEDER
+ * Frage neu.
+ *
+ * Gemessen am 19.08.2026: 1,6 ms je Lektion und Frage.
+ *
+ *   Lektionen     50    100    250    499    998   1996
+ *   Wartezeit   75ms  156ms  408ms  792ms 1601ms 3185ms
+ *
+ * Bei 2000 Lektionen sind das 3,2 Sekunden — die automatische Einblendung hat
+ * ein 3-Sekunden-Budget. Am 20.08. kam die zweite Haelfte derselben Rechnung
+ * dazu: ueber eine Netzverbindung sind es zusaetzlich rund 500 KB je Frage.
+ *
+ * ── Die Frische, und was sie kostet ──────────────────────────────────────
+ *
+ * Der Bestand gilt eine Minute. Wer im selben Prozess lernt, entwertet ihn
+ * sofort (`wortindexEntwerten`) — die Lektion ist also unmittelbar findbar.
+ * Nur ein FREMDER Prozess, der gleichzeitig schreibt, kann bis zu 60 Sekunden
+ * unsichtbar bleiben. Das ist derselbe Handel, den `Vektorbestand` und
+ * `Seltenheitsbestand` schon eingehen; er steht hier, damit niemand ihn
+ * spaeter fuer einen Fehler haelt.
+ */
+interface Wortbestand {
+  docs: DocEntry[];
+  avgDL: number;
+  docFreq: Map<string, number>;
+  gebaut: number;
+}
+
+const WORTBESTAND_FRISCHE_MS = 60_000;
+
+/**
+ * Ein Bestand JE VERBINDUNG, nicht je Muster.
+ *
+ * Der erste Entwurf benannte den Zwischenspeicher nur nach dem Suchmuster.
+ * Das war falsch, und zwei Tests haben es sofort gezeigt: derselbe
+ * MCP-Prozess bedient MEHRERE Instanzen (`getConnection(instance_id)`), und
+ * `cachly:lesson:best:*` heisst in jeder davon etwas anderes. Ein Bestand nur
+ * nach Muster haette die Lektionen der einen Kanzlei an die naechste
+ * ausgeliefert.
+ *
+ * Deshalb eine WeakMap auf das Verbindungsobjekt: geht die Verbindung, geht
+ * der Bestand mit — ohne dass ihn jemand aufraeumen muesste.
+ */
+const _wortbestand = new WeakMap<object, Map<string, Wortbestand>>();
+/** Nur fuer die Zaehlung in Tests — die WeakMap laesst sich nicht zaehlen. */
+let _wortbestandZaehler = 0;
+
+/**
+ * Wirft alle Bestaende weg. Ruft der Schreibpfad auf, wenn eine Lektion neu
+ * geschrieben wurde — ohne das waere sie bis zu eine Minute unsichtbar.
+ *
+ * Absichtlich ALLE und nicht nur die betroffene Verbindung: der Aufrufer
+ * kennt die Verbindung an dieser Stelle nicht immer, und ein Bestand zu viel
+ * neu zu bauen kostet eine Sekunde. Einen zu wenig zu entwerten kostet eine
+ * Minute Unsichtbarkeit.
+ */
+export function wortindexEntwerten(): void {
+  _entwertetAb = Date.now();
+  _wortbestandZaehler = 0;
+}
+/** Alles, was vor diesem Zeitpunkt gebaut wurde, gilt als veraltet. */
+let _entwertetAb = 0;
+
+/** Nur fuer Tests: wie viele Bestaende seit dem letzten Entwerten stehen. */
+export function wortindexStand(): number {
+  return _wortbestandZaehler;
+}
+
 async function keywordSearch(
   redis: Redis,
   patterns: string[],
   query: string,
   topK = 10,
 ): Promise<KeywordMatch[]> {
+  const bestandsSchluessel = patterns.slice().sort().join('|');
+  const jeVerbindung = _wortbestand.get(redis as unknown as object);
+  const stehend = jeVerbindung?.get(bestandsSchluessel);
+  if (stehend
+    && stehend.gebaut > _entwertetAb
+    && Date.now() - stehend.gebaut < WORTBESTAND_FRISCHE_MS) {
+    return keywordSearchMitBestand(stehend, query, topK);
+  }
+
   // ── Step 1: Collect all matching keys — patterns scanned in parallel ──
   const keyBatches = await Promise.all(patterns.map(pattern => {
     const keys: string[] = [];
@@ -1804,6 +1888,27 @@ async function keywordSearch(
       }
     }
   }
+  const gebauter: Wortbestand = { docs, avgDL, docFreq, gebaut: Date.now() };
+  const fach = _wortbestand.get(redis as unknown as object) ?? new Map<string, Wortbestand>();
+  if (!fach.has(bestandsSchluessel)) _wortbestandZaehler++;
+  fach.set(bestandsSchluessel, gebauter);
+  _wortbestand.set(redis as unknown as object, fach);
+  return keywordSearchMitBestand(gebauter, query, topK);
+}
+
+/**
+ * Die Bewertung selbst — alles, was von der FRAGE abhaengt.
+ *
+ * Unveraendert aus keywordSearch herausgeloest: dieselbe Reihenfolge,
+ * dieselben Formeln. Getrennt wurde nur, was je Bestand gilt, von dem, was je
+ * Frage gilt.
+ */
+function keywordSearchMitBestand(
+  bestand: Wortbestand,
+  query: string,
+  topK: number,
+): KeywordMatch[] {
+  const { docs, avgDL, docFreq } = bestand;
   const N = docs.length;
 
   function idf(term: string): number {
