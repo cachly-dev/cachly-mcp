@@ -54,6 +54,26 @@ import type { Redis } from 'ioredis';
 export const VEKTOR_PRAEFIX = 'cachly:lesson:vec:';
 
 /**
+ * Wo der Vektor des THEMENNAMENS liegt.
+ *
+ * Warum getrennt vom Volltextvektor: der Name ist kurz und frageähnlich, der
+ * Volltext ist 1376 Zeichen lang. Eine 60-Zeichen-Frage gegen 60 Zeichen zu
+ * halten ist symmetrisch, gegen 1376 nicht — der Sortierer bewertet beide
+ * deshalb als eigene Merkmale (`naeheText` 1,0 und `naeheThema` 0,6).
+ *
+ * Gemessen am 19.08.2026: der Name allein findet nur 26 %, im Verbund trägt er
+ * verlässlich. Bis zum 20.08. gab es diese Vektoren nur im Messstand
+ * (korpus-gross.sicht-c.json), im Produkt nicht — der Sortierer aus
+ * rangfolge.ts war deshalb auch gar nicht verdrahtet.
+ */
+export const NAME_VEKTOR_PRAEFIX = 'cachly:lesson:vecname:';
+
+/** Der Text, aus dem der Namensvektor gebildet wird: Trennzeichen zu Wörtern. */
+export function textFuerNamensVektor(topic: string): string {
+  return topic.replace(/[:_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
  * Vektoren werden als base64 gespeichert, nicht als JSON-Zahlenliste.
  *
  * 1024 Zahlen als JSON sind rund 20 KB je Lektion, als Float32 sind es 4 KB.
@@ -122,7 +142,34 @@ export class Vektorbestand {
   private vektoren = new Map<string, number[]>();
   private geladen = 0;
 
-  constructor(private readonly frischeMs = 60_000) {}
+  /**
+   * @param frischeMs wie lange ein geladener Bestand als frisch gilt
+   * @param praefix   welche Sicht — Volltext (Standard) oder Themenname
+   *
+   * Der Präfix ist ein Parameter und keine zweite Klasse: die Mechanik ist
+   * identisch (scannen, in Blöcken holen, entpacken, Gelöschtes vergessen).
+   * Zwei Klassen dafür wären zwei Orte, an denen dieselbe Änderung nachgezogen
+   * werden müsste.
+   */
+  constructor(
+    private readonly frischeMs = 60_000,
+    private readonly praefix: string = VEKTOR_PRAEFIX,
+  ) {}
+
+  /** Die Nähe einer Frage zu EINER Lektion. -2, wenn sie keinen Vektor hat. */
+  naehe(frage: number[], topic: string): number {
+    const v = this.vektoren.get(`${this.praefix}${topic}`);
+    return v ? kosinus(frage, v) : -2;
+  }
+
+  /**
+   * Der Vektor selbst — für die Rückkopplung, die aus den besten Treffern
+   * einen angereicherten Fragevektor baut (`reichereAn`). `null`, wenn die
+   * Lektion keinen hat; der Aufrufer filtert das weg.
+   */
+  rohvektor(topic: string): number[] | null {
+    return this.vektoren.get(`${this.praefix}${topic}`) ?? null;
+  }
 
   get groesse(): number { return this.vektoren.size; }
 
@@ -133,7 +180,7 @@ export class Vektorbestand {
     const schluessel: string[] = [];
     let cursor = '0';
     do {
-      const [next, gefunden] = await redis.scan(cursor, 'MATCH', `${VEKTOR_PRAEFIX}*`, 'COUNT', 500);
+      const [next, gefunden] = await redis.scan(cursor, 'MATCH', `${this.praefix}*`, 'COUNT', 500);
       cursor = next;
       schluessel.push(...gefunden);
     } while (cursor !== '0');
@@ -166,7 +213,7 @@ export class Vektorbestand {
   aehnlichste(frage: number[], anzahl: number): Array<{ topic: string; naehe: number }> {
     const aus: Array<{ topic: string; naehe: number }> = [];
     for (const [k, v] of this.vektoren) {
-      aus.push({ topic: k.slice(VEKTOR_PRAEFIX.length), naehe: kosinus(frage, v) });
+      aus.push({ topic: k.slice(this.praefix.length), naehe: kosinus(frage, v) });
     }
     aus.sort((a, b) => b.naehe - a.naehe);
     return aus.slice(0, anzahl);

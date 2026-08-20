@@ -46,8 +46,14 @@ import { keywordSearch, tokenize, splitMultiQuery, levenshtein,
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
 import {
-  VEKTOR_PRAEFIX, packe, textFuerVektor, Vektorbestand, mischeRangfolgen,
+  VEKTOR_PRAEFIX, NAME_VEKTOR_PRAEFIX, packe, textFuerVektor, textFuerNamensVektor,
+  Vektorbestand,
 } from '../bedeutung.js';
+import { schreibeEingaenge, Eingangsbestand, EINGANG_GEWICHT } from '../eingaenge.js';
+import { Seltenheitsbestand } from '../seltenheitsbestand.js';
+import {
+  bewerteTopf, spreizeImTopf, reichereAn, inhaltsWoerter, grobStamm, GEWICHTE,
+} from '../rangfolge.js';
 
 /**
  * Ein Vektorbestand fuer den ganzen Prozess.
@@ -57,6 +63,12 @@ import {
  * der Gewinn waere weg, bevor er anfaengt.
  */
 const vektorbestand = new Vektorbestand();
+/** Dieselbe Mechanik, andere Sicht: die Vektoren der Themennamen. */
+const namensbestand = new Vektorbestand(60_000, NAME_VEKTOR_PRAEFIX);
+/** Die Fehlertext-Eingaenge, je Lektion ihr bester. */
+const eingangsbestand = new Eingangsbestand();
+/** Die Wortstatistik des Bestands — stehend, nicht je Frage neu. */
+const seltenheitsbestand = new Seltenheitsbestand();
 import { upgradeNudge } from '../upgrade-nudge.js';
 import { recallTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
 import { nutzungInWorten, nutzungsSchluessel, verdichte } from '../werkzeug-nutzung.js';
@@ -845,10 +857,37 @@ export async function handleBrainTool(
       // Netz. Wie viele Lektionen einen Vektor haben, meldet brain_doctor.
       if (bestGeschrieben && hasEmbedProvider()) {
         void (async () => {
+          const gelesen = safeJsonParse(lesson, {} as Record<string, unknown>);
           try {
-            const v = await computeEmbedding(textFuerVektor(safeJsonParse(lesson, {} as Record<string, unknown>)));
+            const v = await computeEmbedding(textFuerVektor(gelesen));
             if (v?.length) await redis.set(`${VEKTOR_PRAEFIX}${topic}`, packe(v));
           } catch { /* kein Vektor ist besser als keine Lektion */ }
+
+          // Der Themenname als eigene Sicht.
+          //
+          // Er ist kurz und frageaehnlich; eine 60-Zeichen-Frage gegen 60
+          // Zeichen zu halten ist symmetrisch, gegen 1376 Zeichen Volltext
+          // nicht. Der Sortierer bewertet beide getrennt (naeheText 1,0,
+          // naeheThema 0,6). Bis zum 20.08.2026 gab es diese Vektoren nur im
+          // Messstand — deshalb war rangfolge.ts auch nie verdrahtet.
+          try {
+            const nv = await computeEmbedding(textFuerNamensVektor(topic));
+            if (nv?.length) await redis.set(`${NAME_VEKTOR_PRAEFIX}${topic}`, packe(nv));
+          } catch { /* siehe oben */ }
+
+          // Die zweite Tuer: woertliche Fehlertexte als eigene Eingaenge.
+          //
+          // Gemessen am 20.08.2026 an 499 Lektionen mit zwei unabhaengigen
+          // 100-Fragen-Saetzen: von fuenf ausprobierten Tuerarten traegt genau
+          // DIESE eine. Erstsatz und Uebersetzung brachten null, der Themenname
+          // steckt schon im Sortierer. Volle Zahlen und Gegenproben stehen in
+          // .agent/cachly/tor0-tor1-ergebnis.md.
+          //
+          // Genau wie der Vektor: nicht abgewartet, Fehler verschluckt. Eine
+          // Lektion muss auch ohne Netz gespeichert werden koennen.
+          try {
+            await schreibeEingaenge(redis, topic, gelesen, computeEmbedding);
+          } catch { /* keine Eingaenge ist besser als keine Lektion */ }
         })();
       }
 
@@ -1298,12 +1337,93 @@ export async function handleBrainTool(
           const frageVektor = await computeEmbedding(query);
           if (!frageVektor?.length) return kwMatches;
 
-          const sinnThemen = vektorbestand.aehnlichste(frageVektor, 25).map((x) => x.topic);
+          await namensbestand.aktualisiere(redis);
+          await eingangsbestand.aktualisiere(redis);
+          await seltenheitsbestand.aktualisiere(redis);
+
           const wortThemen = kwMatches
             .filter((m) => m.key.startsWith('cachly:lesson:best:'))
             .map((m) => m.key.slice('cachly:lesson:best:'.length));
 
-          const reihenfolge = mischeRangfolgen(wortThemen, sinnThemen);
+          // ── Die Vorauswahl ────────────────────────────────────────────────
+          //
+          // Woerter (Top 25) vereinigt mit Bedeutung (Top 25). Bei vorhandenen
+          // Eingaengen zaehlt je Lektion ihr BESTER Eingang statt des
+          // Volltextvektors — gemessen am 20.08.2026 hebt das die Findequote@3
+          // von 52 auf 56 Prozent, und mit dem Merkmal unten auf 58.
+          //
+          // Der Preis steht offen im Ergebnisdokument: dieselben Eingaenge
+          // SENKEN die Decke von 89 auf 86 Prozent. Fuer den Nutzer zaehlt die
+          // Findequote — er sieht drei Lektionen, nicht 25.
+          //
+          // WICHTIG: das Maximum ueber ALLE Tueren — Volltext, Themenname UND
+          // Fehlertext. Der erste Versuch am 20.08. hat die Volltext-Auswahl
+          // durch die Eingangs-Auswahl ERSETZT. Das war falsch: nur 399 von 507
+          // Lektionen tragen einen Fehlertext, die uebrigen 108 fielen damit
+          // aus der Vorauswahl. Am echten Bestand gemessen fiel die Trefferlage
+          // von 90 auf 70 Prozent und die Findequote@3 von 50 auf 48.
+          const naeheBesteTuer = (t: string): number => Math.max(
+            vektorbestand.naehe(frageVektor, t),
+            namensbestand.naehe(frageVektor, t),
+            eingangsbestand.besteNaehe(frageVektor, t),
+          );
+          const alleThemen = [...seltenheitsbestand.themen()];
+          const sinnThemen = (alleThemen.length > 0
+            ? alleThemen
+            : vektorbestand.aehnlichste(frageVektor, 500).map((x) => x.topic))
+            .map((t) => ({ t, n: naeheBesteTuer(t) }))
+            .sort((a, b) => b.n - a.n)
+            .slice(0, 25)
+            .map((x) => x.t);
+
+          // ── Die Sortierung ───────────────────────────────────────────────
+          //
+          // Bis zum 20.08.2026 stand hier `mischeRangfolgen` (Reciprocal Rank
+          // Fusion). Das war der Grund, warum die ganze Eingangs-Arbeit im
+          // Produkt fast nichts brachte: RRF mischt ueber PLATZIERUNGEN und
+          // kann die Naehe zum besten Eingang nicht als abgestufte Groesse
+          // verwerten.
+          //
+          //   frischer Pruefsatz, Findequote@3
+          //     RRF, wie ausgeliefert                    50 %
+          //     RRF + Eingaenge als dritte Quelle        51 %
+          //     bewerteTopf                              52 %
+          //     bewerteTopf + Eingaenge                  58 %
+          //
+          // Faellt ein Merkmal aus (kein Namensvektor, kein Eingang), meldet es
+          // -2 und `spreizeImTopf` macht daraus fuer alle dieselbe Null — die
+          // Sortierung faellt dann auf die uebrigen Merkmale zurueck, statt
+          // falsch zu werden.
+          const topf = [...new Set([...wortThemen, ...sinnThemen])];
+          const besteDrei = sinnThemen.slice(0, 3)
+            .map((t) => vektorbestand.rohvektor(t)).filter(Boolean) as number[][];
+          const angereichert = besteDrei.length ? reichereAn(frageVektor, besteDrei) : frageVektor;
+          const frageWoerter = inhaltsWoerter(query);
+          const statistik = seltenheitsbestand.statistik;
+
+          const bewertbar = topf.map((t) => ({
+            naeheText: vektorbestand.naehe(frageVektor, t),
+            naeheThema: namensbestand.naehe(frageVektor, t),
+            naeheRueckkopplung: vektorbestand.naehe(angereichert, t),
+            seltenheitsDeckung: statistik
+              ? statistik.deckung(
+                frageWoerter,
+                new Set([...inhaltsWoerter(seltenheitsbestand.textVon(t))].map(grobStamm)),
+              )
+              : 0,
+          }));
+          let punkte = bewerteTopf(bewertbar, GEWICHTE);
+
+          if (eingangsbestand.groesse > 0) {
+            const naehen = topf.map((t) => eingangsbestand.besteNaehe(frageVektor, t));
+            const gespreizt = spreizeImTopf(naehen);
+            punkte = punkte.map((pkt, i) => pkt + EINGANG_GEWICHT * gespreizt[i]);
+          }
+
+          const reihenfolge = topf
+            .map((t, i) => ({ t, p: punkte[i] }))
+            .sort((a, b) => b.p - a.p)
+            .map((x) => x.t);
           const bekannt = new Map(kwMatches.map((m) => [m.key, m]));
 
           // Lektionen, die NUR der Bedeutungsabgleich gefunden hat, muessen

@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { beurteileDeckung } from '../eingaenge.js';
 import { join } from 'node:path';
 import type { Redis } from 'ioredis';
 import { calculateConfidence, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_VALUE,
@@ -816,6 +817,57 @@ export async function handleTeamTool(
       const totalRecalls = lessons.reduce((sum, l) => sum + (l.recall_count ?? 0), 0);
       const iqBoostPct = lessons.length > 0 ? Math.min(100, Math.round((totalRecalls / lessons.length) * 10)) : 0;
 
+      // ── Deckung des Bedeutungsabgleichs ─────────────────────────────────
+      //
+      // Gemessen am 20.08.2026 gegen die Produktion: `cachly:lesson:vec:*` war
+      // LEER — 0 Vektoren bei 506 Lektionen. Damit lief der Bedeutungsabgleich
+      // dort nie: `brain.ts` steigt bei `vektorbestand.groesse === 0` aus und
+      // faellt auf den reinen Wortabgleich zurueck.
+      //
+      // Von aussen war dieser Zustand von "alles in Ordnung" nicht zu
+      // unterscheiden — die Suche lieferte weiter Ergebnisse, nur schlechtere.
+      // Genau das ist die Fehlerklasse "Stille wird als gruen gebucht": es gab
+      // eine Zahl fuer alles Moegliche, aber keine fuer DAS.
+      const zaehleSchluessel = async (muster: string): Promise<number> => {
+        let n = 0;
+        const st = redis.scanStream({ match: muster, count: 200 });
+        await new Promise<void>((resolve, reject) => {
+          st.on('data', (batch: string[]) => { n += batch.length; });
+          st.on('end', resolve);
+          st.on('error', reject);
+        });
+        return n;
+      };
+      const vektorZahl = await zaehleSchluessel('cachly:lesson:vec:*');
+      const namensZahl = await zaehleSchluessel('cachly:lesson:vecname:*');
+      const eingangZahl = await zaehleSchluessel('cachly:lesson:eing:*');
+      const deckung = lessonKeys.length > 0
+        ? Math.round((vektorZahl / lessonKeys.length) * 100)
+        : 100;
+      const urteil = beurteileDeckung(lessonKeys.length, vektorZahl);
+
+      if (lessonKeys.length > 0) {
+        if (urteil === 'aus') {
+          issues.push(
+            'semantic search is OFF: not a single lesson has an embedding '
+            + `(0 of ${lessonKeys.length}). Recall falls back to keyword matching only. `
+            + 'Fix: run the backfill (sdk/mcp/src/eingaenge-nachruesten.ts).',
+          );
+          checks.push(`🔴 **Semantic search: OFF** — 0 of ${lessonKeys.length} lessons have an embedding`);
+        } else if (urteil === 'luecke') {
+          issues.push(
+            `only ${deckung}% of lessons have an embedding (${vektorZahl} of ${lessonKeys.length}) — `
+            + 'the rest can never be found by meaning.',
+          );
+          checks.push(`🟡 **Semantic coverage: ${deckung}%** — ${lessonKeys.length - vektorZahl} lessons without an embedding`);
+        } else {
+          checks.push(
+            `✅ **Semantic coverage: ${deckung}%** — ${vektorZahl} full-text, `
+            + `${namensZahl} topic-name, ${eingangZahl} with error-text entries`,
+          );
+        }
+      }
+
       // Quality score (0-100)
       let score = 50;
       if (lessonKeys.length >= 5)  score += 10;
@@ -828,6 +880,10 @@ export async function handleTeamTool(
       if (unusedRatio < 0.5)       score += 10;
       if (staleLessons.length === 0) score += 5;
       if (uniqueAuthors.size >= 2) score += 5; // team collaboration bonus
+      // Ohne Einbettungen laeuft die halbe Suche nicht — das darf keine
+      // Randnotiz sein, sondern muss die Zahl druecken, die oben steht.
+      if (urteil !== 'gut') score -= 20;
+      score = Math.max(0, Math.min(100, score));
 
       const scoreEmoji = score >= 80 ? '🟢' : score >= 50 ? '🟡' : '🔴';
       const iqEmoji = iqBoostPct >= 50 ? '🚀' : iqBoostPct >= 20 ? '📈' : '💤';

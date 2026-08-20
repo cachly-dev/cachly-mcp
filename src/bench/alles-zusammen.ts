@@ -36,8 +36,8 @@
  */
 
 import { readFileSync, existsSync } from 'node:fs';
-import { EventEmitter } from 'node:events';
 import { keywordSearch } from '../search.js';
+import { mitLektionen } from './mini-redis.js';
 import { kosinus, mischeRangfolgen } from '../bedeutung.js';
 import { grobStamm as stamm } from '../rangfolge.js';
 import type { BenchLesson, BenchQuery } from './fixtures.js';
@@ -59,25 +59,7 @@ const sichtA = aAlle.slice(0, korpus.lessons.length);
 const fragen = aAlle.slice(korpus.lessons.length);
 const sichtC = lade('.sicht-c.json').slice(0, korpus.lessons.length);
 
-class MiniRedis {
-  store = new Map<string, string>();
-  set(k: string, v: string) { this.store.set(k, v); }
-  async get(k: string) { return this.store.get(k) ?? null; }
-  scanStream(o: { match: string }) {
-    const e = new EventEmitter();
-    const p = o.match.replace('*', '');
-    const m = [...this.store.keys()].filter((k) => k.startsWith(p));
-    setImmediate(() => { e.emit('data', m); e.emit('end'); });
-    return e;
-  }
-  pipeline() {
-    const c: string[] = []; const s = this.store;
-    return { get(k: string) { c.push(k); return this; },
-             async exec() { return c.map((k) => [null, s.get(k) ?? null]); } };
-  }
-}
-const redis = new MiniRedis();
-for (const l of korpus.lessons) redis.set('cachly:lesson:best:' + l.topic, JSON.stringify(l));
+const redis = mitLektionen(korpus.lessons);
 
 /**
  * Wie selten ist ein Wort im ganzen Bestand?
