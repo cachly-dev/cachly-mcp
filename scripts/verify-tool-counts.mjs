@@ -47,6 +47,19 @@ const ignoredFiles = new Set([
 const broadScanAllowList = new Set([
   'sdk/mcp/CHANGELOG.md',
   'sdk/mcp/src/handlers/brain.ts',
+  // Der eingefrorene Messkorpus ist MESSGUT, keine Dokumentation.
+  //
+  // Er enthaelt 499 echte Lektionen, so wie sie geschrieben wurden. Eine davon
+  // nennt einen alten Werkzeugstand, weil der damals stimmte. Diesen Text
+  // nachzuziehen wuerde den Korpus faelschen: die Fragen sind gegen genau diese
+  // Formulierungen
+  // gestellt, und ein Messstand, dessen Inhalt sich mit dem Produkt aendert,
+  // misst das Produkt nicht mehr.
+  //
+  // Eingetragen am 20.08.2026, als der Messstand von 17 auf 499 Lektionen
+  // wuchs (PR #436).
+  'sdk/mcp/src/bench/korpus/korpus.json',
+  'sdk/mcp/src/bench/korpus/korpus-vektoren.json',
 ]);
 
 const stalePatterns = [

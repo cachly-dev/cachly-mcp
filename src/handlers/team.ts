@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { bauabdruck, formatiereBauabdruck } from '../bauabdruck.js';
+import { beurteileSpeicher, zahlAusInfo } from '../speicherlage.js';
 import { beurteileDeckung } from '../eingaenge.js';
 import { join } from 'node:path';
 import type { Redis } from 'ioredis';
@@ -907,6 +908,42 @@ export async function handleTeamTool(
       checks.push(`🎯 **Confidence:** ${lessons.length - staleLessons.length - warnLessons.length} fresh · ${warnLessons.length} warn · ${staleLessons.length} stale`);
       checks.push(`⏱️ **Decay config:** warn after ${CONFIDENCE_WARN_DAYS}d · stale after ${CONFIDENCE_STALE_DAYS}d`);
       checks.push(formatiereBauabdruck(bauabdruck));
+
+      // ── Was tut der Speicher WIRKLICH ────────────────────────────────────
+      //
+      // Neu am 20.08.2026. Bis dahin meldete brain_doctor, wie viele Lektionen
+      // da sind — aber nicht, ob der Speicher sie behaelt. Eine Instanz lief
+      // monatelang auf `allkeys-lru` und haette bei Platzmangel die aeltesten
+      // Lektionen still geloescht. Der Code war seit April richtig; ein
+      // Container behaelt aber den Startbefehl, mit dem er erzeugt wurde.
+      //
+      // Ein Test beweist die Absicht. Diese Zeilen messen den Zustand.
+      try {
+        const info = await redis.info('memory');
+        let richtlinie: string | null = null;
+        try {
+          const cfg = await redis.config('GET', 'maxmemory-policy') as unknown as string[];
+          richtlinie = Array.isArray(cfg) && cfg.length > 1 ? String(cfg[1]) : null;
+        } catch {
+          // CONFIG GET ist auf manchen verwalteten Speichern gesperrt. Dann
+          // bleibt richtlinie null — und beurteileSpeicher sagt "nicht
+          // gemessen" statt "in Ordnung".
+          richtlinie = null;
+        }
+        const lage = {
+          benutzt: zahlAusInfo(info, 'used_memory'),
+          grenze: zahlAusInfo(info, 'maxmemory'),
+          richtlinie,
+        };
+        for (const u of beurteileSpeicher(lage)) {
+          const zeichen = u.art === 'fehler' ? '🔴' : u.art === 'hinweis' ? '🟡' : u.art === 'ungemessen' ? '⚪' : '🟢';
+          const zeile = `${zeichen} **Speicher:** ${u.text}`;
+          if (u.art === 'fehler' || u.art === 'ungemessen') issues.push(zeile); else checks.push(zeile);
+        }
+      } catch {
+        // Auch das Scheitern der Messung ist eine Nachricht, keine Stille.
+        issues.push('⚪ **Speicher:** Lage nicht abfragbar — unbekannt, ob dieser Speicher bei Platzmangel still loescht.');
+      }
       if (uniqueAuthors.size >= 2) {
         checks.push(`👥 **Team:** ${uniqueAuthors.size} contributors (${[...uniqueAuthors].join(', ')})`);
       }

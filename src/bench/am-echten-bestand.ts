@@ -29,24 +29,13 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Redis } from 'ioredis';
-import { keywordSearch } from '../search.js';
 import { Vektorbestand, NAME_VEKTOR_PRAEFIX } from '../bedeutung.js';
-import { Eingangsbestand, EINGANG_GEWICHT } from '../eingaenge.js';
+import { Eingangsbestand } from '../eingaenge.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
-import {
-  bewerteTopf, spreizeImTopf, reichereAn, inhaltsWoerter, grobStamm, GEWICHTE,
-} from '../rangfolge.js';
 import { schluessel } from './eingaenge-einbetten.js';
+import { messe, bestePlatzierung, quote, type Frage } from './auswertung.js';
 
-const PRAEFIX = 'cachly:lesson:best:';
-
-interface Frage { query: string; relevant: string[]; art?: string }
-
-/** Der Platz der besten akzeptablen Antwort, 1-basiert. 0 = gar nicht dabei. */
-export function bestePlatzierung(rangfolge: string[], akzeptabel: string[]): number {
-  for (const [i, t] of rangfolge.entries()) if (akzeptabel.includes(t)) return i + 1;
-  return 0;
-}
+export { bestePlatzierung };
 
 function selbstprobe(): void {
   const proben: Array<[string, boolean]> = [
@@ -103,61 +92,16 @@ async function main(): Promise<void> {
       process.exit(3);
     }
 
-    const plaetze: number[] = [];
-    const artPlaetze = new Map<string, number[]>();
-    let ohneFragevektor = 0;
-
-    for (const q of satz.queries) {
-      const fv = vektoren[schluessel('frage', q.query)];
-      if (!fv) { ohneFragevektor++; continue; }
-
-      const wortThemen = (await keywordSearch(redis as never, [`${PRAEFIX}*`], q.query, POOL) as Array<{ key: string }>)
-        .map((h) => h.key.replace(PRAEFIX, ''));
-      // Maximum ueber ALLE Tueren, genau wie brain.ts. Mit --ohne-eingaenge
-      // faellt die Fehlertext-Tuer weg, der Rest bleibt gleich.
-      const naeheBesteTuer = (t: string): number => Math.max(
-        vektorbestand.naehe(fv, t),
-        namensbestand.naehe(fv, t),
-        ohneEingaenge ? -2 : eingangsbestand.besteNaehe(fv, t),
-      );
-      const sinnThemen = [...seltenheitsbestand.themen()]
-        .map((t) => ({ t, n: naeheBesteTuer(t) }))
-        .sort((a, b) => b.n - a.n)
-        .slice(0, POOL)
-        .map((x) => x.t);
-
-      const topf = [...new Set([...wortThemen, ...sinnThemen])];
-      const besteDrei = sinnThemen.slice(0, 3)
-        .map((t) => vektorbestand.rohvektor(t)).filter(Boolean) as number[][];
-      const angereichert = besteDrei.length ? reichereAn(fv, besteDrei) : fv;
-      const frageWoerter = inhaltsWoerter(q.query);
-      const statistik = seltenheitsbestand.statistik;
-
-      const bewertbar = topf.map((t) => ({
-        naeheText: vektorbestand.naehe(fv, t),
-        naeheThema: namensbestand.naehe(fv, t),
-        naeheRueckkopplung: vektorbestand.naehe(angereichert, t),
-        seltenheitsDeckung: statistik
-          ? statistik.deckung(
-            frageWoerter,
-            new Set([...inhaltsWoerter(seltenheitsbestand.textVon(t))].map(grobStamm)),
-          )
-          : 0,
-      }));
-      let punkte = bewerteTopf(bewertbar, GEWICHTE);
-      if (!ohneEingaenge && eingangsbestand.groesse > 0) {
-        const gespreizt = spreizeImTopf(topf.map((t) => eingangsbestand.besteNaehe(fv, t)));
-        punkte = punkte.map((p, i) => p + EINGANG_GEWICHT * gespreizt[i]);
-      }
-
-      const rang = topf.map((t, i) => ({ t, p: punkte[i] }))
-        .sort((a, b) => b.p - a.p).map((x) => x.t);
-      const platz = bestePlatzierung(rang, q.relevant);
-      plaetze.push(platz);
-      const art = q.art ?? 'ohne';
-      if (!artPlaetze.has(art)) artPlaetze.set(art, []);
-      artPlaetze.get(art)!.push(platz);
-    }
+    // Die Rechnung steht in auswertung.ts und wird mit dem eingefrorenen
+    // Korpus geteilt. Zwei Rechnungen waeren zwei Wahrheiten — genau der
+    // Fehler, an dem der alte Messstand gescheitert ist.
+    const { plaetze, artPlaetze, ohneFragevektor } = await messe(
+      redis,
+      satz.queries,
+      (q: Frage) => vektoren[schluessel('frage', q.query)] ?? null,
+      { vektorbestand, namensbestand, eingangsbestand, seltenheitsbestand },
+      { pool: POOL, ohneEingaenge },
+    );
 
     if (plaetze.length === 0) {
       console.error('NICHT GEMESSEN: keine einzige Frage hatte einen Vektor.');
@@ -167,21 +111,21 @@ async function main(): Promise<void> {
       console.error(`WARNUNG: ${ohneFragevektor} Fragen ohne Vektor uebersprungen.`);
     }
 
-    const quote = (ps: number[], bis: number): string => {
+    const zeile = (ps: number[], bis: number): string => {
       const n = ps.filter((p) => p > 0 && p <= bis).length;
-      return `${n} von ${ps.length} (${Math.round((n / ps.length) * 100)} %)`;
+      return `${n} von ${ps.length} (${Math.round(quote(ps, bis) * 100)} %)`;
     };
     console.log('');
     console.log(`  ${ohneEingaenge ? 'OHNE' : 'MIT'} Eingaengen · Vorauswahl je ${POOL}`);
-    console.log(`    Platz 1        ${quote(plaetze, 1)}`);
-    console.log(`    FINDEQUOTE@3   ${quote(plaetze, 3)}`);
-    console.log(`    Top 10         ${quote(plaetze, 10)}`);
-    console.log(`    im Topf        ${quote(plaetze, 99999)}`);
+    console.log(`    Platz 1        ${zeile(plaetze, 1)}`);
+    console.log(`    FINDEQUOTE@3   ${zeile(plaetze, 3)}`);
+    console.log(`    Top 10         ${zeile(plaetze, 10)}`);
+    console.log(`    im Topf        ${zeile(plaetze, 99999)}`);
     console.log('');
     const arten = [...artPlaetze.keys()].sort();
     if (arten.length > 1) {
       console.log('  Nach Art der Frage (Findequote@3):');
-      for (const a of arten) console.log(`    ${a.padEnd(14)} ${quote(artPlaetze.get(a)!, 3)}`);
+      for (const a of arten) console.log(`    ${a.padEnd(14)} ${zeile(artPlaetze.get(a)!, 3)}`);
     }
   } finally {
     redis.disconnect();

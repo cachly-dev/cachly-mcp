@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.10.127",
+  "version": "0.10.128",
   "mcpName": "io.github.cachly-dev/mcp-server",
   "description": "Your AI forgets everything between sessions. cachly fixes that permanently: 122 MCP tools for Claude Code, Cursor, Copilot & Windsurf. Learns from every bug fix, commit and CI run. Arrives pre-briefed. Free tier forever, EU servers, GDPR.",
   "type": "module",
@@ -38,7 +38,8 @@
     "start": "node dist/src/index.js",
     "test": "vitest run",
     "test:watch": "vitest",
-    "bench": "tsx src/bench/cachly-bench.ts",
+    "bench": "tsx src/bench/echter-korpus.ts",
+    "bench:spielzeug": "tsx src/bench/cachly-bench.ts",
     "bench:external": "tsx src/bench/external-corpus.ts",
     "bench:onboarding": "tsx src/bench/onboarding-bench.ts",
     "bench:gate": "tsx src/bench/gate.ts",

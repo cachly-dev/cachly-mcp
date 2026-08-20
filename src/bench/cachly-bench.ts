@@ -1,4 +1,19 @@
 /**
+ * ⚠ DIESER MESSSTAND MISST FALSCH HERUM. Er heisst seit dem 20.08.2026
+ * `npm run bench:spielzeug` und nicht mehr `npm run bench`.
+ *
+ * Belegt an diesem Tag: mit 17 Lektionen und 13 Fragen sortiert er die beiden
+ * Rangfolge-Formeln GENAU VERKEHRT HERUM ein — 92,3 gegen 69,2 Prozent fuer die
+ * Fassung, die auf 498 echten Lektionen 15 statt 30 Prozent erreichte.
+ *
+ * Er bleibt hier, weil seine gegnerischen Beispielpaare (zwei fast gleiche
+ * CSRF-Lektionen, von denen nur eine stimmt) etwas pruefen, was im grossen
+ * Korpus untergeht. Als Beleg fuer Rangfolge-Qualitaet taugt er NICHT.
+ *
+ * Der Messstand, der zaehlt: src/bench/echter-korpus.ts — 499 echte Lektionen,
+ * 100 von Hand geschriebene Fragen, mit Untergrenzen.
+ */
+/**
  * Cachly-Bench — the moat proof.
  *
  * Measures recall quality on a fixed, labeled corpus and compares two rankers

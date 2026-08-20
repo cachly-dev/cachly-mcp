@@ -12,29 +12,81 @@ import {
 } from './bedeutung.js';
 
 describe('Vektoren packen und entpacken', () => {
-  it('kommt heil zurück', () => {
+  // Bis 20.08.2026 stand hier `toBeCloseTo(v[i], 5)` — also float32-Genauigkeit
+  // als Bedingung. Das ist keine Anforderung, das war eine Beschreibung des
+  // damaligen Formats. Seit der Umstellung auf int8 prüft dieser Block, was
+  // wirklich gebraucht wird: die RICHTUNG des Vektors, denn nur die geht in den
+  // Kosinus ein. Ein Test, der die Genauigkeit einer Zahl bewacht, hätte die
+  // Speicherersparnis verboten, ohne je einen Nutzerschaden zu belegen.
+
+  it('behält die Richtung — Kosinus zum Original über 0,9999', () => {
     const v = Array.from({ length: 1024 }, (_, i) => Math.sin(i) * 0.7);
     const zurueck = entpacke(packe(v));
     expect(zurueck).not.toBeNull();
     expect(zurueck).toHaveLength(1024);
-    // Float32 statt Float64: ein winziger Verlust ist eingepreist und gewollt,
-    // er halbiert den Speicher. Was NICHT sein darf, ist ein grober Fehler.
+    // Das ist die einzige Eigenschaft, an der die Suche hängt.
+    expect(kosinus(v, zurueck!)).toBeGreaterThan(0.9999);
+  });
+
+  it('hält den Fehler je Zahl unter einer halben Stufe', () => {
+    const v = Array.from({ length: 1024 }, (_, i) => Math.sin(i) * 0.7);
+    const zurueck = entpacke(packe(v))!;
+    // Skala = groesster Betrag / 127, also ist der groesste zulaessige Fehler
+    // eine halbe Stufe. Als Zahl statt als Nachkommastelle, damit die Grenze
+    // aus der Rechnung kommt und nicht aus einem Gefuehl.
+    const groesstes = Math.max(...v.map(Math.abs));
+    const grenze = groesstes / 127 / 2 * 1.001;
+    for (let i = 0; i < v.length; i++) {
+      expect(Math.abs(zurueck[i] - v[i])).toBeLessThanOrEqual(grenze);
+    }
+  });
+
+  it('GEGENPROBE: ein grob verfaelschter Vektor faellt durch dieselbe Pruefung', () => {
+    // Ohne sie waere die Kosinus-Schwelle oben auch dann gruen, wenn packe
+    // etwas voellig anderes zurueckgaebe.
+    const v = Array.from({ length: 1024 }, (_, i) => Math.sin(i) * 0.7);
+    const kaputt = v.map((x, i) => (i % 3 === 0 ? -x : x));
+    expect(kosinus(v, kaputt)).toBeLessThan(0.9999);
+  });
+
+  it('liest das ALTE float32-Format weiter', () => {
+    // 507 Vektoren lagen am Umstellungstag im echten Bestand. Wer sie nicht mehr
+    // lesen kann, schaltet den Bedeutungsabgleich still ab — und still ist die
+    // schlimmste Art, das zu tun.
+    const v = Array.from({ length: 1024 }, (_, i) => Math.cos(i) * 0.4);
+    const f = new Float32Array(v);
+    const altBase64 = Buffer.from(f.buffer, f.byteOffset, f.byteLength).toString('base64');
+    const zurueck = entpacke(altBase64);
+    expect(zurueck).not.toBeNull();
+    expect(zurueck).toHaveLength(1024);
     for (let i = 0; i < v.length; i++) expect(zurueck![i]).toBeCloseTo(v[i], 5);
   });
 
-  it('spart gegenüber JSON deutlich Platz', () => {
-    // Der Grund, warum es überhaupt gepackt wird. Bei 500 Lektionen ist das der
-    // Unterschied zwischen 10 MB und 2 MB bei jedem kalten Start.
-    // Gemessen: 12 289 Zeichen als JSON gegen 5 464 als base64 — Faktor 2,25.
-    // Die Grenze steht bei der Haelfte, damit sie den Gewinn belegt und nicht
-    // eine Nachkommastelle bewacht.
+  it('spart gegenüber float32 rund den Faktor vier', () => {
+    // Der Anlass: von 23,6 MB im echten Bestand waren 11,2 MB Vektoren, bei
+    // 25 MB Tarifgrenze. Gemessen: 5 464 Zeichen als float32-base64 gegen
+    // 1 380 als int8-base64.
     const v = Array.from({ length: 1024 }, () => 0.123456789);
-    expect(packe(v).length).toBeLessThan(JSON.stringify(v).length / 2);
+    const f = new Float32Array(v);
+    const alsFloat32 = Buffer.from(f.buffer, f.byteOffset, f.byteLength).toString('base64');
+    expect(packe(v).length).toBeLessThan(alsFloat32.length / 3.5);
   });
 
   it('gibt bei Unsinn null zurück statt zu raten', () => {
     expect(entpacke('')).toBeNull();
     expect(entpacke('abc')).toBeNull(); // keine durch 4 teilbare Länge
+  });
+
+  it('verwechselt die beiden Formate nicht', () => {
+    // Die Kennung 0x01 allein reicht nicht: ein float32 darf zufaellig mit
+    // 0x01 anfangen. Deshalb muss AUSSERDEM die Laenge stimmen. Hier ein
+    // float32-Block, dessen erstes Byte 0x01 ist.
+    const b = Buffer.alloc(4096);
+    b.writeUInt8(0x01, 0);
+    b.writeUInt8(0x02, 1);
+    const zurueck = entpacke(b.toString('base64'));
+    expect(zurueck).not.toBeNull();
+    expect(zurueck).toHaveLength(1024); // als float32 gelesen, nicht als int8
   });
 });
 

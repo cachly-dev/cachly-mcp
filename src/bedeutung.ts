@@ -79,16 +79,81 @@ export function textFuerNamensVektor(topic: string): string {
  * 1024 Zahlen als JSON sind rund 20 KB je Lektion, als Float32 sind es 4 KB.
  * Bei 500 Lektionen ist das der Unterschied zwischen 10 MB und 2 MB, die bei
  * jedem kalten Start über die Leitung gehen.
+ *
+ * ── Seit 20.08.2026: int8 statt float32 ────────────────────────────────────
+ *
+ * Gemessen an diesem Tag: von 23,6 MB im Speicher waren 11,2 MB (47 %)
+ * Vektoren — 6,0 MB Lektionsvektoren und 5,2 MB Eingänge. Der Freitarif hat
+ * 25 MB. Der Bestand stand bei 94 % und die nächste Lektion wäre an einem
+ * Schreibfehler gescheitert.
+ *
+ * Eine Zahl braucht hier keine 4 Bytes. Die Vektoren sind normiert, alle Werte
+ * liegen dicht beieinander, und für den Kosinus zählt die RICHTUNG. Also wird
+ * je Vektor eine Skala mitgeschrieben und jede Zahl als ein Byte abgelegt.
+ * Aus 4096 Bytes werden 1033 — Faktor 3,96.
+ *
+ * Warum weiter base64 und nicht roh: rohe Bytes müssten überall als Buffer
+ * gelesen werden. Eine einzige Stelle, die weiter Text liest, macht Vektoren
+ * still kaputt statt laut. Der base64-Aufschlag von einem Drittel ist billiger
+ * als diese Fehlerklasse.
+ *
+ * ── Aufbau des neuen Formats ───────────────────────────────────────────────
+ *
+ *   Byte 0     Kennung 0x01
+ *   Byte 1–2   uint16 LE — wie viele Zahlen
+ *   Byte 3–6   float32 LE — die Skala
+ *   ab Byte 7  je Zahl ein int8
+ *   danach     Füllbytes, bis die Länge durch 4 geteilt den Rest 1 lässt
+ *
+ * Die Füllbytes sind kein Schönheitsfehler, sie sind die Unterscheidung: das
+ * alte Format ist IMMER durch 4 teilbar (float32), das neue lässt immer den
+ * Rest 1. Die Kennung allein würde nicht reichen — ein float32 darf zufällig
+ * mit 0x01 anfangen. Zwei unabhängige Merkmale, nicht eines.
+ *
+ * `entpacke` liest beide Formate. Alte Vektoren bleiben gültig und werden
+ * ersetzt, wenn ihre Lektion das nächste Mal geschrieben wird.
  */
+const KENNUNG_INT8 = 0x01;
+const KOPF_BYTES = 7; // Kennung(1) + Anzahl(2) + Skala(4)
+
 export function packe(vektor: number[]): string {
-  const f = new Float32Array(vektor);
-  return Buffer.from(f.buffer, f.byteOffset, f.byteLength).toString('base64');
+  let groesstes = 0;
+  for (const x of vektor) { const a = Math.abs(x); if (a > groesstes) groesstes = a; }
+  // Skala 1 bei einem Nullvektor: dann ist jede Zahl 0 und die Skala egal.
+  const skala = groesstes > 0 ? groesstes / 127 : 1;
+
+  let laenge = KOPF_BYTES + vektor.length;
+  while (laenge % 4 !== 1) laenge++;
+
+  const b = Buffer.alloc(laenge); // alloc, nicht allocUnsafe: die Füllbytes sollen 0 sein
+  b.writeUInt8(KENNUNG_INT8, 0);
+  b.writeUInt16LE(vektor.length, 1);
+  b.writeFloatLE(skala, 3);
+  for (let i = 0; i < vektor.length; i++) {
+    const q = Math.round(vektor[i] / skala);
+    b.writeInt8(q > 127 ? 127 : q < -127 ? -127 : q, KOPF_BYTES + i);
+  }
+  return b.toString('base64');
 }
 
 export function entpacke(s: string): number[] | null {
   try {
     const b = Buffer.from(s, 'base64');
-    if (b.byteLength === 0 || b.byteLength % 4 !== 0) return null;
+    if (b.byteLength === 0) return null;
+
+    // Neues Format: Kennung UND Restklasse 1 müssen beide stimmen.
+    if (b[0] === KENNUNG_INT8 && b.byteLength % 4 === 1 && b.byteLength > KOPF_BYTES) {
+      const anzahl = b.readUInt16LE(1);
+      if (anzahl === 0 || KOPF_BYTES + anzahl > b.byteLength) return null;
+      const skala = b.readFloatLE(3);
+      if (!Number.isFinite(skala)) return null;
+      const aus = new Array<number>(anzahl);
+      for (let i = 0; i < anzahl; i++) aus[i] = b.readInt8(KOPF_BYTES + i) * skala;
+      return aus;
+    }
+
+    // Altes Format: reine float32-Folge.
+    if (b.byteLength % 4 !== 0) return null;
     const f = new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4);
     return Array.from(f);
   } catch {
