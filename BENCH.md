@@ -37,7 +37,19 @@ ranking quality, not retrieval.
 | MRR          | 87.2%    | 84.6%    | 96.2%  | +10.3%  |
 | nDCG@5       | 89.9%    | 88.8%    | 97.6%  |  +8.7%  |
 
-vs raw BM25 baseline: **+33.3% Precision@1 · +13.6% MRR · +9.9% nDCG@5**
+> **Diese Zahl war veraltet und stand hier wie ein aktueller Messwert.**
+>
+> Gemessen am 20.08.2026 mit `npm run bench` auf demselben Pruefstand:
+> `vs BM25 baseline: MRR +0.0% · Precision@1 +0.0%`.
+>
+> Die alten Werte stammen aus einer Formel, die am 19.08.2026 abgeloest wurde,
+> weil sie auf 498 ECHTEN Lektionen nur 15 % Precision@1 erreichte. Die
+> Nachfolgerin erreicht dort 30 % — und auf diesem kleinen Pruefstand weniger.
+> Der Pruefstand bewegt sich also entgegengesetzt zur Wirklichkeit; die
+> Begruendung steht in `src/bench/gate.ts`.
+>
+> **17 Lektionen und 13 Fragen sind ein Beispielsatz, kein Bestand.** Wer eine
+> Zahl aus dieser Datei zitiert, zitiert einen Beispielsatz.
 
 ### External labeled corpus
 

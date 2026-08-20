@@ -1538,9 +1538,38 @@ describe('Phase 3C: brain_metrics — the three decisive metrics', () => {
     expect(out).toContain('Not enough data');
   });
 
-  it('always shows the published recall-lift moat number', async () => {
+  it('nennt KEINE fest eingebaute Rangfolge-Zahl', async () => {
+    /*
+     * UMGEDREHT am 20.08.2026, und der Grund ist unbequem.
+     *
+     * Dieser Test hiess "always shows the published recall-lift moat number"
+     * und ERZWANG die Zeichenkette "+33.3 % Precision@1". Er hat damit eine
+     * Behauptung festgeschrieben, die keine Messung war — und die aus einer
+     * Formel stammte, die am 19.08.2026 abgeloest wurde, weil sie auf 498
+     * echten Lektionen nur 15 Prozent erreichte (Nachfolgerin: 30).
+     *
+     * Gefunden hat es der erste Lauf der Gegenrede, Rolle Statistiker: er hat
+     * den Bench nicht geglaubt, sondern ausgefuehrt. Ergebnis auf main:
+     * "vs BM25 baseline: MRR +0.0% · Precision@1 +0.0%".
+     *
+     * Eine Kennzahl, die der Server nicht selbst erhebt, kann nicht fallen —
+     * also misst sie nichts. Der Test verlangt jetzt das Gegenteil dessen,
+     * was er vorher verlangte.
+     */
     const out = await handleBrainTool('brain_metrics', { instance_id: iid }, getConn, noopApiFetch);
-    expect(out).toContain('+33.3 % Precision@1');
+
+    // Keine Prozentzahl als Vorsprung gegenueber BM25, in keiner Schreibweise.
+    expect(out, 'eine fest eingebaute Rangfolge-Zahl ist zurueck').not.toMatch(/\+\s*\d+([.,]\d+)?\s*%[^\n]*BM25/i);
+
+    // Stattdessen: ehrlich sagen, dass nicht gemessen wurde, und WIE man misst.
+    expect(out).toContain('Nicht gemessen');
+    expect(out).toContain('npm run bench');
+  });
+
+  it('GEGENPROBE: die Pruefung erkennt eine wieder eingebaute Zahl', () => {
+    // Ohne sie waere die Zeile darueber auch dann gruen, wenn das Muster gar nichts trifft.
+    const erfunden = 'Recall-lift: **+33.3 % Precision@1** vs. raw BM25 · gemessen';
+    expect(erfunden).toMatch(/\+\s*\d+([.,]\d+)?\s*%[^\n]*BM25/i);
   });
 
   it('records born_at on first learn (first-wins NX semantics)', async () => {

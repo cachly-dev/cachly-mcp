@@ -4007,9 +4007,33 @@ export async function handleBrainTool(
         ttfrLine = `⚪ Not enough data yet — store a lesson, then recall it`;
       }
 
-      // ── Metric 2: Recall-lift (the moat proof) ──────────────────────────────
-      // Published headline from Cachly-Bench (CI-defended in rerank.test.ts).
-      const recallLiftLine = `**+33.3 % Precision@1**, **+13.6 % MRR**, **+9.9 % nDCG@5** vs. raw BM25 · external-corpus Recall@3 **98.2%**`;
+      // ── Metric 2: Recall-lift ────────────────────────────────────────────────
+      //
+      // HIER STAND EINE FEST EINGEBAUTE ZAHL.
+      //
+      // "+33.3 % Precision@1 vs. raw BM25" war eine Zeichenkette, keine Messung.
+      // Der Kommentar darueber behauptete "CI-defended" und liess sie wie einen
+      // Messwert aussehen. Gefunden am 20.08.2026 beim ersten Lauf der Gegenrede.
+      //
+      // Die Zahl stammte ausserdem aus einer Formel, die am 19.08.2026
+      // ABGELOEST wurde: auf 498 echten Lektionen erreichte sie 15 Prozent, die
+      // Nachfolgerin 30. Der kleine Pruefstand (17 Lektionen, 13 Fragen) belohnte
+      // dabei die schlechtere Fassung mit 92,3 gegen 69,2 Prozent — seine Zahl
+      // bewegt sich ENTGEGENGESETZT zur Wirklichkeit. Belegt in src/bench/gate.ts.
+      //
+      // Eine Kennzahl, die der Server nicht selbst erhebt, gehoert nicht in seine
+      // Ausgabe. Sie kann nicht fallen, also misst sie nichts. Ein leeres Feld ist
+      // ehrlicher als eine Zahl, die immer gut aussieht.
+      //
+      // Dieselbe Entscheidung wurde am 19.08.2026 eine Kennzahl weiter unten schon
+      // einmal getroffen (die erfundenen "1.429,5 h"). Sie galt hier genauso und
+      // wurde nur nicht angewandt.
+      const recallLiftLine = [
+        '⚪ **Nicht gemessen** — diese Zahl erhebt der Server nicht selbst.',
+        '  Selbst messen: `npm run bench` in `sdk/mcp`.',
+        '  Achtung, der Pruefstand hat 17 Lektionen und 13 Fragen — ein Beispielsatz, kein Bestand.',
+        '  Auf 498 ECHTEN Lektionen gemessen am 19.08.2026: Precision@1 **30 %** (vorher 15 %).',
+      ].join('\n');
 
       // ── Metric 3: Team-knowledge-reuse ──────────────────────────────────────
       const recallsTotal = Number(recallsTotalRaw ?? 0);
