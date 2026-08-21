@@ -66,10 +66,30 @@ interface Vektoren {
  * fangen, nicht eine Nachkommastelle bewachen.
  */
 export const UNTERGRENZEN = {
-  platz1: 0.30,
-  findequote3: 0.45,
-  top10: 0.62,
-  imTopf: 0.80,
+  // Dreimal angehoben am 21.08.2026, jede Stufe einzeln gemessen:
+  //
+  //   Stand                                Platz 1    @3    Top 10   im Topf
+  //   Ausgangslage                           37,0    52,0    70,0     86,0
+  //   (a) Tueren ganz raus                   39,0    51,0    71,0     90,0
+  //   (b) Topf 25 -> 75                      38,0    53,0    71,0     97,0
+  //   (c) Tueren zurueck, MIT Schwelle       40,0    55,0    72,0     97,0
+  //
+  // (c) ist die Korrektur an (a): nicht die Tueren waren falsch, sondern ihre
+  // Verrechnung. spreizeImTopf gibt einem fehlenden Wert eine NULL, also den
+  // schlechtesten Wert — die 108 Lektionen ohne Fehlertext bekamen dadurch
+  // systematisch Abzug. Mit Schwelle zaehlt die Tuer nur, wo sie etwas
+  // aussagt. Kreuzweise geprueft: 41 gegen 38 Prozent auf Platz 1.
+  //
+  // Die Grenzen liegen knapp darunter — sie fangen einen Einbruch, keine
+  // Nachkommastelle. Wer sie senkt, tut es hier, sichtbar, mit Begruendung.
+  //
+  // imTopf ist die wichtigste: sie ist die Decke jeder kuenftigen Sortierung.
+  // Faellt sie, ist ein Kanal kaputt — und das merkt man an Platz 1 erst
+  // Wochen spaeter.
+  platz1: 0.36,
+  findequote3: 0.50,
+  top10: 0.66,
+  imTopf: 0.92,
   /** Der Bedeutungsabgleich muss den reinen Wortabgleich schlagen. Sonst ist er nur teuer. */
   vorsprungGegenWorteFindequote3: 0.05,
 };
@@ -121,9 +141,32 @@ async function main(): Promise<void> {
     process.exit(3);
   }
 
-  const worte = await messe(redis, korpus.fragen, frageVektor, bestaende, { nurWorte: true });
-  const voll = await messe(redis, korpus.fragen, frageVektor, bestaende, {});
-  const ohneTueren = await messe(redis, korpus.fragen, frageVektor, bestaende, { ohneEingaenge: true });
+  const worte = await messe(redis, korpus.fragen, frageVektor, bestaende, { nurWorte: true, pool: 75 });
+  // `{}` misst das PRODUKTIONSVERHALTEN — seit dem 21.08.2026 ohne die
+  // Fehlertext-Tueren (Messung und Begruendung: Optionen.eingaenge in
+  // auswertung.ts und src/bench/tueren-vergleich.ts). Die Spalte "mit Tueren"
+  // bleibt in der Tabelle, damit sichtbar ist, was der Ausbau gebracht hat —
+  // und damit auffaellt, wenn sich das Verhaeltnis je wieder dreht.
+  // POOL muss der Produktion entsprechen (SINN_TOPF in handlers/brain.ts).
+  // Ein Messstand mit anderem Topf misst eine andere Suchmaschine.
+  const POOL = 75;
+  // Produktionsverhalten seit 21.08.2026: die Fehlertext-Tuer NOMINIERT nicht
+  // (sie hat die richtige Antwort fuenfmal aus dem Topf gedraengt), sortiert
+  // aber MIT SCHWELLE mit. Beides gemessen: tueren-vergleich.ts und
+  // schwelle-abtasten.ts. Der Bench muss das spiegeln, sonst misst er eine
+  // andere Suchmaschine als die ausgelieferte.
+  const EINGANG_SCHWELLE = 0.5;
+  const voll = await messe(redis, korpus.fragen, frageVektor, bestaende, {
+    pool: POOL,
+    zusatzMerkmal: {
+      werte: (fv, topic) => {
+        const n = eingangsbestand.besteNaehe(fv, topic);
+        return n >= EINGANG_SCHWELLE ? n : -2;
+      },
+      gewicht: 0.2,
+    },
+  });
+  const mitTueren = await messe(redis, korpus.fragen, frageVektor, bestaende, { eingaenge: 'voll', pool: POOL });
 
   if (voll.plaetze.length === 0) {
     console.error('NICHT GEMESSEN: keine einzige Frage hatte einen Vektor.');
@@ -134,10 +177,10 @@ async function main(): Promise<void> {
   }
 
   console.log('');
-  console.log('  Kennzahl        nur Worte   ohne Tueren    cachly     Vorsprung');
+  console.log('  Kennzahl        nur Worte   mit Tueren    cachly     Vorsprung');
   const zeile = (name: string, bis: number): void => {
     const w = quote(worte.plaetze, bis);
-    const o = quote(ohneTueren.plaetze, bis);
+    const o = quote(mitTueren.plaetze, bis);
     const c = quote(voll.plaetze, bis);
     const d = c - w;
     console.log(`  ${name.padEnd(14)} ${prozent(w)}     ${prozent(o)}   ${prozent(c)}    ${d >= 0 ? '+' : ''}${(d * 100).toFixed(1)} Pkt`);

@@ -220,6 +220,43 @@ export function bewerteTopf(topf: Bewertbar[], gewichte = GEWICHTE): number[] {
     + gewichte.seltenheit * k.seltenheitsDeckung);
 }
 
+/**
+ * Punktzahl je Kandidat — STRENGE Fassung: Merkmale multiplizieren statt addieren.
+ *
+ * ── Das Vorbild ─────────────────────────────────────────────────────────────
+ *
+ * Kinetisches Korrekturlesen (Hopfield 1974, T-Zell-Rezeptoren): Biochemie
+ * erreicht Fehlerraten weit unter dem, was ein einzelner Bindungsschritt
+ * hergibt, indem sie Kandidaten durch eine KETTE von Pruefschritten schickt.
+ * Bei jedem Schritt kann der Kandidat abfallen; die Trennschaerfe der Schritte
+ * MULTIPLIZIERT sich, statt sich zu mitteln.
+ *
+ * ── Der Unterschied zur Addition ────────────────────────────────────────────
+ *
+ * In der Summe (bewerteTopf) kann ein Kandidat totale Schwaeche in einem
+ * Merkmal mit Staerke in einem anderen voll ausgleichen. Im Produkt nicht:
+ * eine Null in einem Merkmal drueckt die Gesamtnote, egal wie gut der Rest
+ * ist. Das Produkt verlangt STIMMIGKEIT ueber alle Merkmale — die Summe
+ * verlangt nur Masse.
+ *
+ * `basis` stellt die Strenge ein: grosse Basis naehert sich der Summe an,
+ * kleine Basis macht eine Null toedlich. Rechnerisch ist das eine gewichtete
+ * Summe im Logarithmus — der Unterschied zur Addition ist die begrenzte
+ * Ausgleichbarkeit, nicht die Buchhaltung.
+ *
+ * Ergebnis der Messung vom 21.08.2026 steht in src/bench/fusion-vergleich.ts.
+ */
+export function bewerteTopfStreng(topf: Bewertbar[], gewichte = GEWICHTE, basis = 0.3): number[] {
+  const t = spreizeImTopf(topf.map((k) => k.naeheText));
+  const th = spreizeImTopf(topf.map((k) => k.naeheThema));
+  const r = spreizeImTopf(topf.map((k) => k.naeheRueckkopplung));
+  return topf.map((k, i) =>
+    gewichte.text * Math.log(basis + t[i])
+    + gewichte.thema * Math.log(basis + th[i])
+    + gewichte.rueckkopplung * Math.log(basis + r[i])
+    + gewichte.seltenheit * Math.log(basis + k.seltenheitsDeckung));
+}
+
 /** Bequemlichkeit: Kosinus mit Lücken-Behandlung. */
 export function naeheOderLuecke(frage: number[] | null, vektor: number[] | null | undefined): number {
   return frage && vektor && vektor.length > 0 ? kosinus(frage, vektor) : -2;

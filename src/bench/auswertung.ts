@@ -30,7 +30,7 @@ import type { Eingangsbestand } from '../eingaenge.js';
 import { EINGANG_GEWICHT } from '../eingaenge.js';
 import type { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import {
-  bewerteTopf, spreizeImTopf, reichereAn, inhaltsWoerter, grobStamm, GEWICHTE,
+  bewerteTopf, bewerteTopfStreng, spreizeImTopf, reichereAn, inhaltsWoerter, grobStamm, GEWICHTE,
 } from '../rangfolge.js';
 
 export const LEKTION_PRAEFIX = 'cachly:lesson:best:';
@@ -68,10 +68,55 @@ export function quote(plaetze: number[], bis: number): number {
 export interface Optionen {
   /** Wie viele Kandidaten je Weg in den Topf. */
   pool?: number;
-  /** Die Fehlertext-Tuer weglassen — fuer den Vergleich mit und ohne. */
-  ohneEingaenge?: boolean;
+  /**
+   * Was die Fehlertext-Tueren duerfen. Standard: NICHTS — das ist seit dem
+   * 21.08.2026 das Produktionsverhalten (brain.ts), und die Messung ohne
+   * Option muss die Produktion spiegeln.
+   *
+   * Gemessen am 21.08.2026 (tueren-vergleich.ts, eingefrorener 100-Fragen-
+   * Satz): die Tueren wirken an zwei Stellen, beide netto negativ.
+   *
+   *   Bauform            Platz 1   @3     Top 10   im Topf
+   *   voll                37,0    52,0    70,0     86,0
+   *   aus                 39,0    51,0    71,0     90,0
+   *   nur-sortieren       35,0    50,0    71,0     90,0
+   *
+   * In der VORAUSWAHL draengen sie die richtige Antwort fuenfmal ganz aus dem
+   * Topf und retten sie einmal. Die SORTIERUNG allein (auf dem tuerlosen
+   * Topf) faellt sogar auf 35 Prozent. Die Optionen bleiben, damit
+   * tueren-vergleich.ts die Behauptung jederzeit nachmessen kann.
+   */
+  eingaenge?: 'aus' | 'voll' | 'nur-sortieren';
   /** Nur der Wortabgleich, ohne Bedeutung — die Grundlinie. */
   nurWorte?: boolean;
+  /**
+   * Ersetzt die Bedeutungs-Nominierung (Tuer 2) durch eine eigene — fuer
+   * Experimente an der VORAUSWAHL, ohne die Sortierung anzufassen.
+   *
+   * Warum als Haken statt als Kopie: die Tueren-Messung hat gezeigt, dass
+   * Vorauswahl und Sortierung getrennt schwingen (eine Aenderung kann der
+   * einen nutzen und der anderen schaden). Ein Experiment, das seine eigene
+   * Sortierung mitbringt, misst am Ende zwei Aenderungen auf einmal — und
+   * ein Messstand mit eigener Rechnung misst sich selbst.
+   */
+  sinnNominierung?: (fv: number[], q: Frage) => string[];
+  /**
+   * Ein zusaetzliches Merkmal fuer die SORTIERUNG — fuer Experimente am
+   * anderen Ende als `sinnNominierung`.
+   *
+   * Liefert je Thema eine Zahl (hoeher = besser, -2 = kein Wert). Sie wird wie
+   * die alte Eingangs-Tuer behandelt: ueber den Topf gespreizt und mit
+   * `gewicht` auf die Punkte addiert. Genau dieser Weg hat bei den
+   * Fehlertext-Tueren VERLOREN — deshalb bekommt jedes neue Merkmal dieselbe
+   * Messung, bevor es in den Recall-Pfad darf.
+   */
+  zusatzMerkmal?: { werte: (fv: number[], topic: string) => number; gewicht: number };
+  /**
+   * Strenge Fusion statt Summe: Merkmale multiplizieren (bewerteTopfStreng).
+   * Nur fuer Experimente — die Produktion nutzt die Summe, solange die
+   * Messung nichts anderes sagt (src/bench/fusion-vergleich.ts).
+   */
+  fusion?: { basis: number };
 }
 
 /**
@@ -116,13 +161,15 @@ export async function messe(
     const naeheBesteTuer = (t: string): number => Math.max(
       b.vektorbestand.naehe(fv, t),
       b.namensbestand.naehe(fv, t),
-      o.ohneEingaenge ? -2 : b.eingangsbestand.besteNaehe(fv, t),
+      (o.eingaenge ?? 'aus') === 'voll' ? b.eingangsbestand.besteNaehe(fv, t) : -2,
     );
-    const sinnThemen = [...b.seltenheitsbestand.themen()]
-      .map((t) => ({ t, n: naeheBesteTuer(t) }))
-      .sort((x, y) => y.n - x.n)
-      .slice(0, POOL)
-      .map((x) => x.t);
+    const sinnThemen = o.sinnNominierung
+      ? o.sinnNominierung(fv, q)
+      : [...b.seltenheitsbestand.themen()]
+        .map((t) => ({ t, n: naeheBesteTuer(t) }))
+        .sort((x, y) => y.n - x.n)
+        .slice(0, POOL)
+        .map((x) => x.t);
 
     const topf = [...new Set([...wortThemen, ...sinnThemen])];
     const besteDrei = sinnThemen.slice(0, 3)
@@ -142,10 +189,16 @@ export async function messe(
         )
         : 0,
     }));
-    let punkte = bewerteTopf(bewertbar, GEWICHTE);
-    if (!o.ohneEingaenge && b.eingangsbestand.groesse > 0) {
+    let punkte = o.fusion
+      ? bewerteTopfStreng(bewertbar, GEWICHTE, o.fusion.basis)
+      : bewerteTopf(bewertbar, GEWICHTE);
+    if ((o.eingaenge ?? 'aus') !== 'aus' && b.eingangsbestand.groesse > 0) {
       const gespreizt = spreizeImTopf(topf.map((t) => b.eingangsbestand.besteNaehe(fv, t)));
       punkte = punkte.map((p, i) => p + EINGANG_GEWICHT * gespreizt[i]);
+    }
+    if (o.zusatzMerkmal) {
+      const gespreizt = spreizeImTopf(topf.map((t) => o.zusatzMerkmal!.werte(fv, t)));
+      punkte = punkte.map((p, i) => p + o.zusatzMerkmal!.gewicht * gespreizt[i]);
     }
 
     const rang = topf.map((t, i) => ({ t, p: punkte[i] }))

@@ -64,7 +64,9 @@ async function main(): Promise<void> {
   const satzPfad = resolve(flag('pruefsatz') ?? '');
   const vekPfad = resolve(flag('vektoren') ?? '');
   const POOL = Number(flag('pool') ?? '25');
-  const ohneEingaenge = argv.includes('--ohne-eingaenge');
+  // Seit dem 21.08.2026 sind die Tueren in Produktion AUS — der Schalter
+  // zeigt deshalb in die andere Richtung als frueher.
+  const mitEingaengen = argv.includes('--mit-eingaengen');
 
   for (const [was, p] of [['Pruefsatz', satzPfad], ['Fragevektoren', vekPfad]] as const) {
     if (!existsSync(p)) { console.error(`NICHT GEMESSEN: ${was} fehlt (${p}).`); process.exit(2); }
@@ -100,7 +102,7 @@ async function main(): Promise<void> {
       satz.queries,
       (q: Frage) => vektoren[schluessel('frage', q.query)] ?? null,
       { vektorbestand, namensbestand, eingangsbestand, seltenheitsbestand },
-      { pool: POOL, ohneEingaenge },
+      { pool: POOL, eingaenge: mitEingaengen ? 'voll' : 'aus' },
     );
 
     if (plaetze.length === 0) {
@@ -116,7 +118,7 @@ async function main(): Promise<void> {
       return `${n} von ${ps.length} (${Math.round(quote(ps, bis) * 100)} %)`;
     };
     console.log('');
-    console.log(`  ${ohneEingaenge ? 'OHNE' : 'MIT'} Eingaengen · Vorauswahl je ${POOL}`);
+    console.log(`  ${mitEingaengen ? 'MIT' : 'OHNE'} Eingaengen · Vorauswahl je ${POOL}`);
     console.log(`    Platz 1        ${zeile(plaetze, 1)}`);
     console.log(`    FINDEQUOTE@3   ${zeile(plaetze, 3)}`);
     console.log(`    Top 10         ${zeile(plaetze, 10)}`);

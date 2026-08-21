@@ -52,7 +52,7 @@ import {
   VEKTOR_PRAEFIX, NAME_VEKTOR_PRAEFIX, packe, textFuerVektor, textFuerNamensVektor,
   Vektorbestand,
 } from '../bedeutung.js';
-import { schreibeEingaenge, Eingangsbestand, EINGANG_GEWICHT } from '../eingaenge.js';
+import { schreibeEingaenge, Eingangsbestand } from '../eingaenge.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { spurLegen } from '../spuren.js';
 import {
@@ -69,10 +69,101 @@ import {
 const vektorbestand = new Vektorbestand();
 /** Dieselbe Mechanik, andere Sicht: die Vektoren der Themennamen. */
 const namensbestand = new Vektorbestand(60_000, NAME_VEKTOR_PRAEFIX);
-/** Die Fehlertext-Eingaenge, je Lektion ihr bester. */
+/** Die Fehlertext-Eingaenge, je Lektion ihr bester. Sortiert mit, nominiert nicht. */
 const eingangsbestand = new Eingangsbestand();
 /** Die Wortstatistik des Bestands — stehend, nicht je Frage neu. */
 const seltenheitsbestand = new Seltenheitsbestand();
+
+/**
+ * Wie viele Lektionen die Bedeutungs-Tuer in den Topf nominiert.
+ *
+ * Stand bis zum 21.08.2026 auf 25, ohne dass die Zahl je gemessen worden
+ * waere. Sie war der Grund fuer die "Decke", die am 20.08. fuer eine
+ * Naturkonstante gehalten wurde ("kein Sortierer kommt ueber 84/90 Prozent").
+ * Gemessen am eingefrorenen Korpus (src/bench/topfgroesse.ts):
+ *
+ *   POOL   Platz 1     @3    Top 10   Topf    ms/Frage
+ *     25     39,0     51,0    71,0    90,0      57
+ *     50     38,0     52,0    71,0    95,0      50
+ *     75     38,0     53,0    71,0    97,0      52
+ *    100     38,0     52,0    70,0    99,0      54
+ *    150     37,0     53,0    70,0    99,0      57
+ *
+ * 75 ist der Punkt, an dem die Findequote@3 ihr Maximum hat (53 statt 51) und
+ * die Decke von 90 auf 97 Prozent steigt. Der Preis ist EIN Punkt auf Platz 1.
+ * Fuer den Nutzer zaehlt @3: er sieht drei Lektionen, nicht eine.
+ *
+ * Warum die Decke wichtiger ist als die Kopfzahl: was nicht im Topf ist, kann
+ * keine spaetere Stufe zurueckholen. Jede kuenftige Verbesserung der
+ * Sortierung hat damit 59 Punkte Spielraum (97 minus 38) statt 51.
+ *
+ * Die Rechenzeit bleibt im Rauschen: die Vorauswahl rechnet ohnehin ueber ALLE
+ * Lektionen: nur die Sortierung bekommt mehr Kandidaten, und die kostet je
+ * Kandidat vier Zahlen.
+ */
+const SINN_TOPF = 75;
+
+/**
+ * Ab welcher Naehe eine Fehlertext-Tuer als Signal zaehlt.
+ *
+ * ── Die Geschichte, weil sie die Zahl erklaert ──────────────────────────────
+ *
+ * Am 21.08.2026 wurden die Tueren ausgebaut: sie kosteten zwei Punkte auf
+ * Platz 1 und vier auf die Topfdeckung. Ein paar Stunden spaeter fiel bei der
+ * Resonanz-Messung der wahre Grund auf, und er lag nicht an der Idee.
+ *
+ * `spreizeImTopf` gibt einem fehlenden Wert (-2) eine NULL — den schlechtesten
+ * Wert im Bereich [0,1]. Wer das Merkmal hat, kann also nur gewinnen; wer es
+ * nicht hat, nur verlieren. Bei den Tueren betraf das 108 von 507 Lektionen
+ * ohne Fehlertext: sie wurden systematisch nach unten gedrueckt, unabhaengig
+ * davon, ob die Tueren der anderen ueberhaupt passten.
+ *
+ * Mit Schwelle zaehlt eine Tuer nur, wenn sie WIRKLICH nahe ist. Darunter
+ * meldet sie -2 und ist damit "kein Wert" statt "schlechter Wert" — und der
+ * Vergleich laeuft nur noch zwischen Lektionen, bei denen das Merkmal etwas
+ * aussagt.
+ *
+ * ── Warum 0,5 und nicht der beste Wert ──────────────────────────────────────
+ *
+ * Gemessen ueber alle 100 Fragen (src/bench/schwelle-abtasten.ts):
+ *
+ *   Schwelle   0,35   0,40   0,45   0,50   0,55   0,60   0,70
+ *   Platz 1    39,0   38,0   40,0   40,0   41,0   39,0   38,0
+ *   @3         53,0   54,0   53,0   55,0   55,0   55,0   53,0
+ *   (ohne Merkmal: 38,0 / 53,0)
+ *
+ * 0,55 waere der hoechste Punkt. Genommen wird 0,50, weil der Gewinn dort
+ * MITTIG in einem breiten Band liegt (0,45 bis 0,60 gewinnen alle). Ein Wert
+ * am Rand des Bandes ist eine Eigenschaft des Pruefsatzes — genau daran ist am
+ * 19.08. die alte Rangfolge-Formel gescheitert.
+ *
+ * Kreuzweise geprueft (auf einer Haelfte gesucht, auf der anderen gemessen):
+ * Platz 1 41,0 gegen 38,0 Prozent. Der Gewinn haelt, wenn er nie dieselben
+ * Fragen sieht, an denen er gefunden wurde.
+ *
+ * Die Tueren nominieren weiter NICHT — dort haben sie die richtige Antwort
+ * fuenfmal ganz aus dem Topf gedraengt und einmal hineingeholt.
+ */
+const EINGANG_SCHWELLE = 0.5;
+
+/**
+ * Wie stark die Tuer mitsortiert.
+ *
+ * NICHT EINGANG_GEWICHT (0,5) aus eingaenge.js: der Wert wurde fuer die alte
+ * Bauform OHNE Schwelle bemessen. Mit Schwelle ist er zu hoch — gemessen ueber
+ * alle 100 Fragen (src/bench/schwelle-abtasten.ts, Schwelle 0,5):
+ *
+ *   Gewicht    0,10   0,15   0,20   0,30   0,40   0,50
+ *   Platz 1    39,0   41,0   40,0   40,0   41,0   41,0
+ *   @3         55,0   55,0   55,0   55,0   54,0   52,0
+ *
+ * Bei 0,5 bricht die Findequote@3 auf 52 ein — das Merkmal draengt dann
+ * Treffer von Platz 2 und 3 weg, um einen auf Platz 1 zu heben. Fuer den
+ * Nutzer zaehlt @3: er sieht drei Lektionen.
+ *
+ * 0,2 liegt mittig im Band, in dem BEIDE Kennzahlen ihr Maximum halten.
+ */
+const EINGANG_SORTIER_GEWICHT = 0.2;
 import { upgradeNudge } from '../upgrade-nudge.js';
 import { recallTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
 import { nutzungInWorten, nutzungsSchluessel, verdichte } from '../werkzeug-nutzung.js';
@@ -1377,25 +1468,36 @@ export async function handleBrainTool(
 
           // ── Die Vorauswahl ────────────────────────────────────────────────
           //
-          // Woerter (Top 25) vereinigt mit Bedeutung (Top 25). Bei vorhandenen
-          // Eingaengen zaehlt je Lektion ihr BESTER Eingang statt des
-          // Volltextvektors — gemessen am 20.08.2026 hebt das die Findequote@3
-          // von 52 auf 56 Prozent, und mit dem Merkmal unten auf 58.
+          // Woerter (Top 25) vereinigt mit Bedeutung (Top 25). Zwei Tueren je
+          // Lektion: Volltext und Themenname.
           //
-          // Der Preis steht offen im Ergebnisdokument: dieselben Eingaenge
-          // SENKEN die Decke von 89 auf 86 Prozent. Fuer den Nutzer zaehlt die
-          // Findequote — er sieht drei Lektionen, nicht 25.
+          // Die DRITTE Tuer — woertliche Fehlertexte als eigene Eingaenge —
+          // stand hier vom 20.08. bis zum 21.08.2026 und ist AUSGEBAUT.
+          // Die Begruendung, mit der sie kam ("hebt die Findequote@3 von 52
+          // auf 56/58"), reproduzierte auf dem eingefrorenen 100-Fragen-Satz
+          // nicht mehr. Dort, je Frage nachgemessen (tueren-vergleich.ts):
           //
-          // WICHTIG: das Maximum ueber ALLE Tueren — Volltext, Themenname UND
-          // Fehlertext. Der erste Versuch am 20.08. hat die Volltext-Auswahl
-          // durch die Eingangs-Auswahl ERSETZT. Das war falsch: nur 399 von 507
-          // Lektionen tragen einen Fehlertext, die uebrigen 108 fielen damit
-          // aus der Vorauswahl. Am echten Bestand gemessen fiel die Trefferlage
-          // von 90 auf 70 Prozent und die Findequote@3 von 50 auf 48.
+          //   Bauform         Platz 1    @3     Top 10   im Topf
+          //   mit Tueren        37,0    52,0    70,0     86,0
+          //   ohne Tueren       39,0    51,0    71,0     90,0
+          //   nur sortieren     35,0    50,0    71,0     90,0
+          //
+          // Der eigentliche Schaden sass in der Vorauswahl: die Tueren
+          // draengten die richtige Antwort FUENFMAL ganz aus dem Topf und
+          // retteten sie EINMAL. Ein schlechter Platz ist ein
+          // Schoenheitsfehler — ein Rauswurf aus dem Topf ist ein
+          // Totalausfall, den keine spaetere Stufe heilen kann. Und die
+          // Decke des Topfes ist die harte Grenze jeder kuenftigen besseren
+          // Sortierung: 90 statt 86 Prozent ist der wertvollere Rohstoff.
+          //
+          // Die Eingaenge werden weiter GESCHRIEBEN (siehe schreibeEingaenge
+          // weiter oben): die Daten kosten einen Einbettungsaufruf je Lektion
+          // und sind der natuerliche Speicherplatz fuer den naechsten Anlauf —
+          // gemessene Frage-Vektoren echter Treffer statt geratener
+          // Fehlertexte.
           const naeheBesteTuer = (t: string): number => Math.max(
             vektorbestand.naehe(frageVektor, t),
             namensbestand.naehe(frageVektor, t),
-            eingangsbestand.besteNaehe(frageVektor, t),
           );
           const alleThemen = [...seltenheitsbestand.themen()];
           const sinnThemen = (alleThemen.length > 0
@@ -1403,7 +1505,7 @@ export async function handleBrainTool(
             : vektorbestand.aehnlichste(frageVektor, 500).map((x) => x.topic))
             .map((t) => ({ t, n: naeheBesteTuer(t) }))
             .sort((a, b) => b.n - a.n)
-            .slice(0, 25)
+            .slice(0, SINN_TOPF)
             .map((x) => x.t);
 
           // ── Die Sortierung ───────────────────────────────────────────────
@@ -1420,10 +1522,19 @@ export async function handleBrainTool(
           //     bewerteTopf                              52 %
           //     bewerteTopf + Eingaenge                  58 %
           //
-          // Faellt ein Merkmal aus (kein Namensvektor, kein Eingang), meldet es
-          // -2 und `spreizeImTopf` macht daraus fuer alle dieselbe Null — die
-          // Sortierung faellt dann auf die uebrigen Merkmale zurueck, statt
-          // falsch zu werden.
+          // KORREKTUR 21.08.2026: die 58 % reproduzieren auf dem EINGEFRORENEN
+          // 100-Fragen-Satz nicht (dieselben Fragen!): dort bringt die
+          // Eingangs-Sortierung 52 statt 51 — ein Punkt, nicht sechs — und
+          // kostet zwei Punkte auf Platz 1. Die Eingaenge sind deshalb aus
+          // Vorauswahl UND Sortierung ausgebaut; Messung und alle drei
+          // Bauformen in src/bench/tueren-vergleich.ts. Die Tabelle oben
+          // bleibt als Beleg, wie eine Zahl aussieht, die eine Pipeline
+          // beschreibt, die es nicht mehr gibt.
+          //
+          // Faellt ein Merkmal aus (kein Namensvektor), meldet es -2 und
+          // `spreizeImTopf` (in bewerteTopf) macht daraus fuer alle dieselbe
+          // Null — die Sortierung faellt dann auf die uebrigen Merkmale
+          // zurueck, statt falsch zu werden.
           const topf = [...new Set([...wortThemen, ...sinnThemen])];
           const besteDrei = sinnThemen.slice(0, 3)
             .map((t) => vektorbestand.rohvektor(t)).filter(Boolean) as number[][];
@@ -1444,10 +1555,21 @@ export async function handleBrainTool(
           }));
           let punkte = bewerteTopf(bewertbar, GEWICHTE);
 
+          // Die Fehlertext-Tuer als fuenftes Merkmal — mit Schwelle.
+          //
+          // Sie NOMINIERT nicht (siehe Vorauswahl oben), sie sortiert nur mit.
+          // Und sie zaehlt nur, wo sie wirklich nahe ist: unterhalb von
+          // EINGANG_SCHWELLE meldet sie -2, und spreizeImTopf behandelt das
+          // als "kein Wert" statt als "schlechter Wert". Ohne diese Schwelle
+          // bekamen die 108 Lektionen ohne Fehlertext systematisch Abzug —
+          // das war der ganze gemessene Schaden, nicht die Idee.
           if (eingangsbestand.groesse > 0) {
-            const naehen = topf.map((t) => eingangsbestand.besteNaehe(frageVektor, t));
+            const naehen = topf.map((t) => {
+              const n = eingangsbestand.besteNaehe(frageVektor, t);
+              return n >= EINGANG_SCHWELLE ? n : -2;
+            });
             const gespreizt = spreizeImTopf(naehen);
-            punkte = punkte.map((pkt, i) => pkt + EINGANG_GEWICHT * gespreizt[i]);
+            punkte = punkte.map((pkt, i) => pkt + EINGANG_SORTIER_GEWICHT * gespreizt[i]);
           }
 
           const reihenfolge = topf
