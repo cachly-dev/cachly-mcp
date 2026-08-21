@@ -97,6 +97,21 @@ async function main() {
     process.exit(1);
   }
   console.log('\n✅ Bench gate passed — no recall-quality regression.\n');
+
+  // Was dieses Tor NICHT bewacht — und warum das hier steht.
+  //
+  // Bis zum 21.08.2026 war dies das EINZIGE Bench-Tor in der CI. Wer den
+  // gruenen Haken sah, durfte annehmen, die Rangfolge sei abgesichert. Sie war
+  // es nicht: hier laufen 17 handgeschriebene Fixtures plus ein kleiner
+  // externer Beispielkorpus. Beide sind gut fuer das, wofuer sie gebaut sind —
+  // die Formel-Mechanik festhalten —, und beide sagen NICHTS ueber die Zahl,
+  // die wir nach aussen nennen.
+  //
+  // Ein Tor, das mehr zu bewachen scheint als es tut, ist schlimmer als
+  // keines. Deshalb sagt es das jetzt selbst, bei jedem Lauf.
+  console.log('   Bewacht: die Formel-Mechanik auf 17 Fixtures + externem Beispielkorpus.');
+  console.log('   NICHT bewacht: die Rangfolge am echten Bestand — das tut `npm run bench`');
+  console.log('   (499 Lektionen, eigene Untergrenzen, laeuft seit 21.08.2026 daneben in der CI).\n');
 }
 
 main().catch((e: Error) => { console.error(`\n❌ Bench gate error: ${e.message}\n`); process.exit(1); });
