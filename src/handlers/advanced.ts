@@ -2,7 +2,7 @@ import type { Redis } from 'ioredis';
 import { ckgSlug } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse } from '../utils.js';
-import { ersparteMinuten } from '../wertbeitrag.js';
+import { ersparteMinuten, zaehltAlsErsparnis } from '../wertbeitrag.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -418,8 +418,8 @@ export async function handleAdvancedTool(
           lines.push('');
 
           // Track estimated time saved — causal_trace finding a known fix is worth 1-4h.
-          // Starter-Lektionen zaehlen 0 — siehe wertbeitrag.ts.
-          const savedMins = ersparteMinuten(topSolution, 'trace');
+          // Nur beim ERSTEN Mal, und nie fuer den Startvorrat — wertbeitrag.ts.
+          const savedMins = zaehltAlsErsparnis(topSolution) ? ersparteMinuten(topSolution, 'trace') : 0;
           if (savedMins > 0) {
             redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
           }

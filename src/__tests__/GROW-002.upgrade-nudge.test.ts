@@ -101,11 +101,30 @@ describe('GROW-002: die Nahtstelle — der Hinweis haengt wirklich im Briefing',
     // Genau das Genoergel, das der Vertrag ausschliesst. Deshalb wird jetzt auf
     // die Zeichenkette verankert, die es NUR im Briefing gibt.
     const src = readFileSync(new URL('../handlers/brain.ts', import.meta.url), 'utf8');
-    const anker = src.indexOf('total** (time not re-researching known fixes)');
+    // ANKER VERSCHOBEN 22.08.2026: Der alte Satz "(time not re-researching
+    // known fixes)" ist weg — die Zahl nennt jetzt ihre Grundlage. Der neue
+    // Anker erfuellt dieselbe Bedingung: er kommt NUR im Briefing vor, nicht
+    // im Pro-Lektion-Banner von smart_recall. Die Probe unten beweist das.
+    const anker = src.indexOf('of your own lessons that already helped');
     const aufruf = src.indexOf('upgradeNudge(');
     expect(anker).toBeGreaterThan(-1);
     expect(aufruf).toBeGreaterThan(-1);
     expect(Math.abs(aufruf - anker)).toBeLessThan(2000);
+  });
+
+  it('der Anker ist EINDEUTIG — sonst zeigt indexOf wieder auf die falsche Stelle', () => {
+    // Genau daran ist die Probe oben schon einmal gescheitert: sie ankerte auf
+    // 'Brain saved you ~', und das steht DREIMAL in der Datei. indexOf traf den
+    // ersten Treffer im smart_recall-Banner und bewies damit das Gegenteil von
+    // dem, was drueberstand. Ein Anker, der mehrfach vorkommt, ist kein Anker.
+    const src = readFileSync(new URL('../handlers/brain.ts', import.meta.url), 'utf8');
+    const treffer = src.split('of your own lessons that already helped').length - 1;
+    expect(treffer, 'Anker kommt mehrfach vor — die Probe oben wird unzuverlaessig').toBe(1);
+
+    // Die Gegenprobe, die zeigt, dass diese Zaehlung ueberhaupt etwas findet:
+    // die alte, mehrdeutige Zeichenkette steht weiterhin mehrfach da.
+    const alteFalle = src.split('Brain saved you ~').length - 1;
+    expect(alteFalle).toBeGreaterThan(1);
   });
 
   it('die reine Funktion bleibt rein — kein Netz, kein Redis, kein Dateisystem', () => {

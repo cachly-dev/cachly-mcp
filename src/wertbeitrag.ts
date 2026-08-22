@@ -30,7 +30,35 @@
  * Starter-Korpus mit anderen Namen wäre er blind. Die Starter-Lektionen tragen
  * seit ihrer Einführung `source: 'starter'` im Datensatz — genau dafür. Diese
  * Datei benutzt die Markierung, nicht die Namen.
+ *
+ * ─── NACHTRAG 22.08.2026: DIE MARKIERUNG GAB ES NICHT ──────────────────────
+ *
+ * Der Absatz darüber stand fünf Tage lang so da und war falsch. Gemessen in
+ * der Gegenrede über die Zahl „Brain saved you ~1664h":
+ *
+ *     brain_hygiene(dry_run) → "Startvorrat entwertet (Zähler auf 0): 0"
+ *     bei 543 gescannten Lektionen.
+ *
+ * NULL. Der Filter griff bei keiner einzigen. `docker:layer-cache` — der
+ * Anlass dieser ganzen Datei — zählte weiterhin voll mit inzwischen 974
+ * Abrufen.
+ *
+ * Der Grund: Die eingebauten Lektionen kommen über `import_public_brain`
+ * herein und tragen dabei gar kein `source`-Feld. Die Markierung, auf die
+ * sich der Absatz oben verlässt, wird beim Schreiben nie gesetzt.
+ *
+ * Das ist die eigentliche Lehre, und sie ist unbequemer als die erste: Der
+ * Fix war gebaut, beschrieben und begründet — und hat nie gewirkt. Niemand
+ * hat nachgemessen, ob er greift. Fünf Tage lang stand in dieser Datei ein
+ * Kommentar über einen Schutz, den es nicht gab.
+ *
+ * Deshalb prüft `istStarterLektion` jetzt drei Dinge (Herkunft, Thema,
+ * fremder Installationsweg) — und deshalb steht darunter eine Probe, die
+ * nicht den Code liest, sondern eine echte Lektion durch die Funktion
+ * schickt. Ein Kommentar ist kein Beweis.
  */
+
+import { STARTER_CORPUS } from './starter-corpus.js';
 
 /** fmtStunden macht aus Minuten eine lesbare Angabe ("21 h", "3 d 4 h"). */
 export function fmtStunden(minuten: number): string {
@@ -47,21 +75,91 @@ export function fmtStunden(minuten: number): string {
 export interface BewertbareLektion {
   severity?: string;
   source?: string;
+  topic?: string;
+  what_worked?: string;
+  recall_count?: number;
   [k: string]: unknown;
 }
 
 /**
- * Stammt die Lektion aus dem mitgelieferten Startvorrat?
+ * Der ausgelieferte Startvorrat, nach Thema aufgeschlagen — ABGELEITET.
  *
- * Solche Lektionen dürfen abgerufen werden und sind nützlich — sie zählen nur
- * nicht als etwas, das dieser Mensch oder dieses Team gelernt hat.
+ * Erster Versuch am 22.08.2026 war eine von Hand gepflegte Namensliste. Sie war
+ * schon beim Schreiben falsch: sieben Themen fehlten, drei standen darin, die
+ * es gar nicht gibt. Eine zweite Liste derselben Wahrheit laeuft auseinander,
+ * bevor sie fertig ist.
+ */
+const STARTER_NACH_THEMA: ReadonlyMap<string, string> = new Map(
+  STARTER_CORPUS.map((l) => [l.topic, l.what_worked]),
+);
+
+/** Die Themen des Startvorrats — fuer Aufrufer, die nur die Namen brauchen. */
+export const STARTER_THEMEN: ReadonlySet<string> = new Set(STARTER_NACH_THEMA.keys());
+
+/**
+ * Herkuenfte, die NICHT als eigene Lernleistung zaehlen.
+ *
+ * Es gibt zwei Wege, auf denen fremdes Wissen in ein Brain kommt, und sie
+ * schreiben ZWEI VERSCHIEDENE Werte:
+ *
+ *   brain_seed_starter   (share.ts)  → source: 'starter'
+ *   import_public_brain  (team.ts)   → source: 'public_brain'
+ *
+ * `marketplace:` und `syndicate:` sind vorgemerkt, damit der naechste
+ * Einbauweg nicht wieder still durchrutscht.
+ */
+const FREMDE_HERKUNFT = /^(starter|public_brain|marketplace:|syndicate:|import)/;
+
+/**
+ * Stammt die Lektion aus fremdem Wissen statt aus eigener Arbeit?
+ *
+ * Solche Lektionen duerfen abgerufen werden und sind nuetzlich — sie zaehlen
+ * nur nicht als etwas, das dieser Mensch oder dieses Team gelernt hat.
+ *
+ * ── NACHTRAG 22.08.2026: der Filter kannte nur die Haelfte ──────────────────
+ *
+ * Der Schutz war seit dem 17.08. gebaut, beschrieben und begruendet — und hat
+ * die groesste Einzelquelle nie erwischt. Er pruefte:
+ *
+ *     return lesson?.source === 'starter';
+ *
+ * `import_public_brain` schreibt aber `source: 'public_brain'` (team.ts:1610),
+ * und dahinter steht eine EIGENE eingebaute Liste von rund 40 Lektionen ueber
+ * go, docker, kubernetes, react, typescript und python — darunter
+ * `docker:layer-cache`, die meistabgerufene Lektion dieses Brains ueberhaupt
+ * (980 Abrufe, gemessen am 22.08.2026).
+ *
+ * Ein Vergleich auf genau eine Zeichenkette ist blind fuer den zweiten Weg.
+ * Und weil `brain_hygiene` (team.ts:1247) die Zeitersparnis aus derselben
+ * Funktion NEU rechnet, machte die Luecke die Zahl nicht nur zu gross, sondern
+ * beim Aufraeumen noch groesser: 1664 h → 6445 h.
+ *
+ * ── Warum trotzdem nicht nur ueber die Namen ────────────────────────────────
+ *
+ * Eine reine Namensliste wuerde eine echte Regel brechen: Wer selbst etwas
+ * ueber `docker:layer-cache` lernt, hat etwas gelernt. Deshalb entscheidet
+ * zuerst die Herkunft. Nur wenn gar keine dasteht — `learn_from_attempts`
+ * setzt das Feld nicht — wird das Thema geprueft, und dann muss auch der TEXT
+ * wortgleich der ausgelieferte sein. Ein eigener Satz zum selben Thema zaehlt.
  */
 export function istStarterLektion(lesson: BewertbareLektion | null | undefined): boolean {
-  return lesson?.source === 'starter';
+  if (!lesson) return false;
+
+  if (typeof lesson.source === 'string' && lesson.source !== '') {
+    // Herkunft steht da: sie entscheidet, in beide Richtungen.
+    return FREMDE_HERKUNFT.test(lesson.source);
+  }
+
+  // Keine Herkunft: nur ein WORTGLEICHER Treffer aus dem Vorrat zaehlt nicht.
+  if (typeof lesson.topic !== 'string') return false;
+  const ausgeliefert = STARTER_NACH_THEMA.get(lesson.topic);
+  if (ausgeliefert === undefined) return false;
+  const eigener = typeof lesson.what_worked === 'string' ? lesson.what_worked : '';
+  return eigener.trim() === ausgeliefert.trim();
 }
 
 /**
- * Minuten, die ein Abruf dieser Lektion einspart — 0 für den Startvorrat.
+ * Minuten, die ein Abruf dieser Lektion einspart — 0 für fremdes Wissen.
  *
  * Die Staffel (30 / 60 / 240) ist unverändert; sie stand vorher an drei
  * Stellen im Code und steht jetzt hier. `basis` erlaubt der abweichenden
@@ -79,3 +177,44 @@ export function ersparteMinuten(
   if (sev === 'major') return basis === 'trace' ? 120 : 60;
   return basis === 'trace' ? 60 : 30;
 }
+
+/**
+ * Zaehlt dieser Abruf ueberhaupt Zeit — oder ist es ein Wiedersehen?
+ *
+ * ── DER ZWEITE BEFUND VOM 22.08.2026 ────────────────────────────────────────
+ *
+ * Der Startvorrat-Filter war nur die halbe Ursache. Die andere Haelfte:
+ * Zeitersparnis wurde bei JEDEM Abruf erneut gutgeschrieben.
+ *
+ * `smart_recall` schreibt bis zu FUENF Lektionen pro Aufruf die volle
+ * Recherchezeit gut (brain.ts:1725 ff.). Die Anleitung des Servers verlangt
+ * einen Aufruf "BEFORE every task", und eingeblendete Lektionen kommen
+ * zusaetzlich bei jedem Prompt. Zehn Aufgaben in einer Sitzung konnten so
+ * rechnerisch zweihundert Stunden erzeugen.
+ *
+ * Gemessen: Dieses Brain ist am 01.06.2026 entstanden, 82 Tage alt, und meldete
+ * 1664,5 Stunden. Eine Person haette in 82 Tagen zu acht Stunden 656 Stunden
+ * gehabt. Die Zahl war nicht zu hoch — sie war unmoeglich.
+ *
+ * ── Die Regel, die haelt ────────────────────────────────────────────────────
+ *
+ * Die Zusage lautet "time not re-researching known fixes". Recherchiert wird
+ * EINMAL. Wer dieselbe Lektion zum neunhundertsten Mal sieht, spart nicht zum
+ * neunhundertsten Mal eine Recherche — er spart ein Nachschlagen.
+ *
+ * Also: jede Lektion zaehlt genau EINMAL, beim ersten Abruf. Damit ist die
+ * Zahl nach oben durch den Wissensstand begrenzt statt durch die Nutzung, sie
+ * kann nicht mehr schneller wachsen als gelernt wird — und das Einblenden
+ * treibt sie gar nicht mehr.
+ *
+ * Das ist dieselbe Fehlerklasse wie `cachly:metric-inflation-fixed` (PR #158,
+ * stuendliche Heartbeat-Pings blaehten die ROI-Zahlen auf). Damals wurde die
+ * eine Quelle abgestellt; die Bauart, die aus Wiederholung Wert macht, blieb.
+ */
+export function zaehltAlsErsparnis(lesson: BewertbareLektion | null | undefined): boolean {
+  if (!lesson || istStarterLektion(lesson)) return false;
+  // recall_count ist der Stand VOR diesem Abruf. 0 heisst: das erste Mal.
+  const bisher = typeof lesson.recall_count === 'number' ? lesson.recall_count : 0;
+  return bisher <= 0;
+}
+

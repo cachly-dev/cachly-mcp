@@ -40,7 +40,11 @@ describe('notice-Kanal: von der API bis in die Sitzung', () => {
     // Verankert an einer Zeichenkette, die es nur im Briefing gibt. Die erste
     // Fassung des Upgrade-Hinweis-Tests hat hier den falschen Anker erwischt
     // und den Hinweis dadurch in smart_recall gezwungen.
-    const anker = quelle.indexOf('total** (time not re-researching known fixes)');
+    // ANKER VERSCHOBEN 22.08.2026: Der alte Satz "(time not re-researching
+    // known fixes)" ist weg — die Zahl nennt jetzt ihre Grundlage. Der neue
+    // Anker erfuellt dieselbe Bedingung: er kommt NUR im Briefing vor, nicht
+    // im Pro-Lektion-Banner von smart_recall. Die Probe unten beweist das.
+    const anker = quelle.indexOf('of your own lessons that already helped');
     const stelle = quelle.indexOf('recallGate.notice');
     expect(anker).toBeGreaterThan(-1);
     expect(stelle).toBeGreaterThan(-1);

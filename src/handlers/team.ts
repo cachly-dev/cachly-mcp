@@ -1229,8 +1229,19 @@ export async function handleTeamTool(
       //     ist nicht rekonstruierbar (sie wurde im Juli schon einmal
       //     zurückgesetzt und geht nicht mit der Summe der Einzelzähler auf).
       //     Etwas davon abzuziehen ergäbe eine Zahl, die genauso erfunden wäre
-      //     wie die alte — nur unauffälliger. Neu gerechnet ist sie prüfbar:
-      //     Summe über alle NICHT-Starter-Lektionen aus Abrufzahl mal Staffel.
+      //     wie die alte — nur unauffälliger. Neu gerechnet ist sie prüfbar.
+      //
+      // NACHTRAG 22.08.2026: Der Filter oben erwischte den größten Posten
+      // nicht — `import_public_brain` schreibt `source: 'public_brain'`, und
+      // verglichen wurde mit `=== 'starter'`. Und die Zeile darunter rechnete
+      // ABRUFZAHL MAL STAFFEL. Beides zusammen machte das Aufräumen zu einer
+      // Verschlimmerung: 1664 h → 6445 h.
+      //
+      // Die Rechnung lautet jetzt: Summe über alle NICHT fremden Lektionen,
+      // die mindestens einmal geholfen haben — JEDE GENAU EINMAL. Recherchiert
+      // wird einmal; der neunhundertste Blick auf dieselbe Lektion spart keine
+      // neunhundertste Recherche. Damit ist die Zahl nach oben durch den
+      // Wissensstand begrenzt statt durch die Nutzung.
       let starterZurueckgesetzt = 0;
       let minutenNeu = 0;
       const minutenAlt = parseFloat((await redis.get(`cachly:stats:time_saved_mins:${instance_id}`)) ?? '0') || 0;
@@ -1244,7 +1255,10 @@ export async function handleTeamTool(
           }
           continue;
         }
-        minutenNeu += (lesson.recall_count ?? 0) * ersparteMinuten(lesson);
+        // NICHT mal Abrufzahl. Recherchiert wird einmal; der neunhundertste
+        // Blick auf dieselbe Lektion spart keine neunhundertste Recherche.
+        // Zaehlt also jede Lektion einmal, sobald sie ueberhaupt geholfen hat.
+        if ((lesson.recall_count ?? 0) > 0) minutenNeu += ersparteMinuten(lesson);
       }
 
       if (!dry_run) {
@@ -1281,7 +1295,7 @@ export async function handleTeamTool(
         // eine kleinere Ersparnis im Panel sieht, soll hier lesen koennen warum.
         lines.push(
           `**⏱️ Zeitersparnis neu gerechnet:** ${fmtStunden(minutenAlt)} → **${fmtStunden(minutenNeu)}**`,
-          `_Nur noch eigene Lektionen. Der mitgelieferte Startvorrat zählt nicht mehr — er ist Allgemeinwissen, kein gelerntes._`,
+          `_Nur eigene Lektionen, und jede genau einmal. Der mitgelieferte Startvorrat ist Allgemeinwissen, kein gelerntes; und wer dieselbe Lektion zum zweiten Mal liest, spart keine zweite Recherche._`,
           '',
         );
       }

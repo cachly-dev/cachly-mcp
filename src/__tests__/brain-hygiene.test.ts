@@ -289,15 +289,40 @@ describe('brain_hygiene', () => {
       // 973 + 971 Starter-Abrufe = 58.320 Minuten nach alter Rechnung.
       seed(redis, starterLesson('docker:layer-cache', 973));
       seed(redis, starterLesson('cache:stampede', 971));
-      // Eigene: 7 Abrufe × 60 min (major) = 420 Minuten. Mehr ist es nicht.
+      // Eigene: EINE Lektion, 60 min (major). Sie wurde sieben Mal geholt —
+      // das aendert nichts. Bis zum 22.08.2026 stand hier 7 x 60 = 420; die
+      // Regel "jede Lektion zaehlt einmal" hat diese Zahl auf 60 gesenkt.
+      // Begruendung in wertbeitrag.ts: recherchiert wird einmal.
       seed(redis, { ...freshLesson('node1:portkollision', 'success', 7), severity: 'major' });
       redis.store.set(`cachly:stats:time_saved_mins:${INSTANCE}`, '77790');
 
       const result = await runHygiene({ dry_run: false });
 
-      expect(redis.store.get(`cachly:stats:time_saved_mins:${INSTANCE}`)).toBe('420');
+      expect(redis.store.get(`cachly:stats:time_saved_mins:${INSTANCE}`)).toBe('60');
       // Die Korrektur wird BENANNT, nicht still vorgenommen.
       expect(result).toContain('Zeitersparnis neu gerechnet');
+    });
+
+    it('eine viel geholte Lektion zaehlt genauso oft wie eine einmal geholte', async () => {
+      // Der Kern der Aenderung vom 22.08.2026, als Zahl. Vorher waere die
+      // erste Lektion 900-mal so viel wert gewesen wie die zweite.
+      seed(redis, { ...freshLesson('deploy:node1', 'success', 900), severity: 'major' });
+      seed(redis, { ...freshLesson('node1:portkollision', 'success', 1), severity: 'major' });
+
+      await runHygiene({ dry_run: false });
+
+      // 2 Lektionen x 60 min. Nicht 901 x 60.
+      expect(redis.store.get(`cachly:stats:time_saved_mins:${INSTANCE}`)).toBe('120');
+    });
+
+    it('eine nie geholte Lektion zaehlt nicht', async () => {
+      // GEGENPROBE zur Regel oben: "einmal zaehlen" heisst nicht "immer
+      // zaehlen". Wissen, das noch nie geholfen hat, hat noch nichts gespart.
+      seed(redis, { ...freshLesson('nie-gebraucht', 'success', 0), severity: 'critical' });
+
+      await runHygiene({ dry_run: false });
+
+      expect(redis.store.get(`cachly:stats:time_saved_mins:${INSTANCE}`)).toBe('0');
     });
 
     it('aendert im Probelauf nichts', async () => {
@@ -313,7 +338,9 @@ describe('brain_hygiene', () => {
 
     it('meldet nichts, wenn es keinen Startvorrat gibt', async () => {
       seed(redis, { ...freshLesson('node1:portkollision', 'success', 7), severity: 'major' });
-      redis.store.set(`cachly:stats:time_saved_mins:${INSTANCE}`, '420');
+      // Der Stand, den die neue Rechnung ergibt: eine eigene major-Lektion = 60.
+      // Stimmt Alt und Neu ueberein, darf keine Korrektur gemeldet werden.
+      redis.store.set(`cachly:stats:time_saved_mins:${INSTANCE}`, '60');
 
       const result = await runHygiene({ dry_run: false });
 

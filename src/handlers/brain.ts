@@ -7,7 +7,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration,
          ckgUpsertServiceNode } from '../ckg.js';
 import { safeJsonParse, scanKeys } from '../utils.js';
-import { ersparteMinuten, istStarterLektion } from '../wertbeitrag.js';
+import { ersparteMinuten, istStarterLektion, zaehltAlsErsparnis } from '../wertbeitrag.js';
 import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
 import { meldeEinmal, meldeUndVermerke, fehlerText, OHNE_VEKTOREN, OHNE_DIENST, OHNE_FRAGEVEKTOR, SINNPFAD_ABBRUCH, OHNE_SCHREIBVEKTOR } from '../aussetzer.js';
 import { versuchStart, neueKennung, wendeZuteilungAn, schliesseVersuchAb,
@@ -1350,8 +1350,10 @@ export async function handleBrainTool(
         void bumpRecallQuota(redis);
 
         // Track estimated time saved (30m minor · 60m major · 240m critical).
-        // Starter-Lektionen zaehlen 0 — siehe wertbeitrag.ts.
-        const savedMins = ersparteMinuten(lesson);
+        // Nur der ERSTE Abruf zaehlt, und der Startvorrat gar nicht — die
+        // Begruendung fuer beides steht in wertbeitrag.ts. `lesson` ist hier
+        // noch der Stand VOR dieser Erhoehung, das ist Absicht.
+        const savedMins = zaehltAlsErsparnis(lesson) ? ersparteMinuten(lesson) : 0;
         if (savedMins > 0) {
           redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
         }
@@ -1732,8 +1734,10 @@ export async function handleBrainTool(
             const recalledAt = new Date().toISOString();
             const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, verified_at: recalledAt, last_recalled_at: recalledAt };
             redis.set(m.key, JSON.stringify(updated)).catch(() => {});
-            // Starter-Lektionen zaehlen 0 — siehe wertbeitrag.ts.
-            const savedMins = ersparteMinuten(lesson);
+            // Nur der ERSTE Abruf zaehlt — siehe wertbeitrag.ts. Diese
+            // Schleife lief ueber bis zu FUENF Lektionen je Aufruf und schrieb
+            // jeder die volle Recherchezeit gut, bei jedem Aufruf erneut.
+            const savedMins = zaehltAlsErsparnis(lesson) ? ersparteMinuten(lesson) : 0;
             if (savedMins > 0) {
               redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
             }
@@ -2290,11 +2294,24 @@ export async function handleBrainTool(
       if (streakMessage) lines.push(streakMessage, '');
 
       // Time saved (only show when meaningful — 30+ minutes)
+      //
+      // Die Zahl nennt ihre Grundlage. Bis zum 22.08.2026 stand hier nur
+      // "~1664h total" — eine Zahl, die niemand nachrechnen konnte und die auf
+      // diesem 82 Tage alten Brain mehr Stunden behauptete, als eine Person in
+      // dieser Zeit ueberhaupt haette arbeiten koennen. Jetzt steht daneben,
+      // WORAUS sie entsteht: so viele eigene Lektionen, jede einmal gezaehlt.
+      // Wer will, kann sie abzaehlen.
       if (timeSavedMins >= 30) {
         const h = Math.floor(timeSavedMins / 60);
         const m = Math.round(timeSavedMins % 60);
         const timeStr = h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
-        lines.push(`⏱️ **Brain saved you ~${timeStr} total** (time not re-researching known fixes)`, '');
+        const zaehlende = lessons.filter(
+          (l) => !istStarterLektion(l) && ((l as { recall_count?: number }).recall_count ?? 0) > 0,
+        ).length;
+        const grundlage = zaehlende > 0
+          ? ` — ${zaehlende} of your own lessons that already helped, counted once each`
+          : ' (time not re-researching known fixes)';
+        lines.push(`⏱️ **Brain saved you ~${timeStr} total**${grundlage}`, '');
       }
 
       // Upgrade nudge — surfaces the free-tier quota BEFORE the wall, once
