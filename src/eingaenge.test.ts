@@ -144,6 +144,48 @@ describe('Eingangsbestand — der beste Eingang zaehlt', () => {
     expect(b.aehnlichste(frage, 1)[0].topic).toBe('b');
   });
 
+  it('mittelNaehe ordnet DIESELBE Lage genau umgekehrt — das ist der Sinn', async () => {
+    // Die gleiche Vorrichtung wie oben. Sie belegt die Behauptung, auf der der
+    // Einbau vom 21.08.2026 steht: die beiden Merkmale ziehen entgegengesetzt.
+    //
+    //   "b" hat EINE perfekte Tuer und drei schlechte -> Maximum vorn
+    //   "a" hat EINE mittelmaessige Tuer und sonst nichts -> Mittelwert vorn
+    //
+    // Genau deshalb stehen sie nebeneinander und nicht anstelle voneinander.
+    // Faellt diese Probe, ist die Begruendung fuer EINGANG_MITTEL_GEWICHT weg.
+    const b = await bestandMit({
+      a: [[0.5, 0.4, 0]],
+      b: [[0.95, 0.1, 0], [0, 1, 0], [0, 1, 0], [0, 1, 0]],
+    });
+    const frage = [1, 0, 0];
+    expect(b.besteNaehe(frage, 'b')).toBeGreaterThan(b.besteNaehe(frage, 'a'));
+    expect(b.mittelNaehe(frage, 'a')).toBeGreaterThan(b.mittelNaehe(frage, 'b'));
+  });
+
+  it('mittelNaehe rechnet wirklich den Mittelwert, nicht irgendetwas Aehnliches', async () => {
+    // Eine Tuer passt genau, eine gar nicht -> die Mitte liegt dazwischen.
+    const b = await bestandMit({ a: [[1, 0, 0], [0, 1, 0]] });
+    const frage = [1, 0, 0];
+    expect(b.mittelNaehe(frage, 'a')).toBeCloseTo(0.5, 5);
+    expect(b.besteNaehe(frage, 'a')).toBeCloseTo(1, 5);
+  });
+
+  it('bei genau EINER Tuer sind Maximum und Mittelwert dasselbe', async () => {
+    // Die Gegenprobe: ohne Auswahl kann sich das zweite Merkmal nicht vom
+    // ersten unterscheiden. Taete es das doch, rechnete eines von beiden falsch.
+    const b = await bestandMit({ a: [[0.5, 0.4, 0]] });
+    const frage = [1, 0, 0];
+    expect(b.mittelNaehe(frage, 'a')).toBeCloseTo(b.besteNaehe(frage, 'a'), 10);
+  });
+
+  it('mittelNaehe meldet -2 fuer eine Lektion ohne Eingang, statt 0 zu erfinden', async () => {
+    // Eine Null waere hier der schlechteste MOEGLICHE Wert und damit eine
+    // Aussage. -2 heisst "kein Wert" — spreizeImTopf behandelt das anders.
+    // Dieselbe Falle wie am 21.08. bei spreizeImTopf und klassifiziereDeckung.
+    const b = await bestandMit({ a: [[1, 0, 0]] });
+    expect(b.mittelNaehe([1, 0, 0], 'gibtsnicht')).toBe(-2);
+  });
+
   it('meldet -2 fuer eine Lektion ohne Eingang', async () => {
     const b = await bestandMit({ a: [[1, 0, 0]] });
     expect(b.besteNaehe([1, 0, 0], 'gibtsnicht')).toBe(-2);

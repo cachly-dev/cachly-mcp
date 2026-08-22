@@ -110,7 +110,24 @@ export interface Optionen {
    * Fehlertext-Tueren VERLOREN — deshalb bekommt jedes neue Merkmal dieselbe
    * Messung, bevor es in den Recall-Pfad darf.
    */
-  zusatzMerkmal?: { werte: (fv: number[], topic: string) => number; gewicht: number };
+  /**
+   * Ein oder MEHRERE zusaetzliche Merkmale fuer die Sortierung.
+   *
+   * Die Mehrzahl kam am 21.08.2026 dazu, und der Anlass ist ein Messergebnis:
+   * Maximum und Mittelwert ueber die Tueren ziehen ENTGEGENGESETZT. Das
+   * Maximum gewinnt auf Findequote@3 (58 gegen 55), der Mittelwert auf Platz 1
+   * (41 gegen 40) — auf zwei unabhaengigen Fragensaetzen gleichgerichtet. Sie
+   * messen Verschiedenes: das Maximum die naechste Tuer, der Mittelwert die
+   * Passung der ganzen Lektion.
+   *
+   * Solange nur EINES ging, musste man sich entscheiden. Jedes Merkmal wird
+   * einzeln durch spreizeImTopf gestreckt und dann gewichtet addiert — genau
+   * wie das einzelne vorher, damit ein Lauf mit einem Merkmal Zahl fuer Zahl
+   * dasselbe liefert wie zuvor.
+   */
+  zusatzMerkmal?:
+    | { werte: (fv: number[], topic: string) => number; gewicht: number }
+    | Array<{ werte: (fv: number[], topic: string) => number; gewicht: number }>;
   /**
    * Strenge Fusion statt Summe: Merkmale multiplizieren (bewerteTopfStreng).
    * Nur fuer Experimente — die Produktion nutzt die Summe, solange die
@@ -197,8 +214,11 @@ export async function messe(
       punkte = punkte.map((p, i) => p + EINGANG_GEWICHT * gespreizt[i]);
     }
     if (o.zusatzMerkmal) {
-      const gespreizt = spreizeImTopf(topf.map((t) => o.zusatzMerkmal!.werte(fv, t)));
-      punkte = punkte.map((p, i) => p + o.zusatzMerkmal!.gewicht * gespreizt[i]);
+      const merkmale = Array.isArray(o.zusatzMerkmal) ? o.zusatzMerkmal : [o.zusatzMerkmal];
+      for (const m of merkmale) {
+        const gespreizt = spreizeImTopf(topf.map((t) => m.werte(fv, t)));
+        punkte = punkte.map((p, i) => p + m.gewicht * gespreizt[i]);
+      }
     }
 
     const rang = topf.map((t, i) => ({ t, p: punkte[i] }))

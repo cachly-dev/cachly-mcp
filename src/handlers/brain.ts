@@ -9,7 +9,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
 import { safeJsonParse, scanKeys } from '../utils.js';
 import { ersparteMinuten, istStarterLektion } from '../wertbeitrag.js';
 import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
-import { meldeEinmal, meldeUndVermerke, OHNE_VEKTOREN, OHNE_DIENST, OHNE_FRAGEVEKTOR, SINNPFAD_ABBRUCH } from '../aussetzer.js';
+import { meldeEinmal, meldeUndVermerke, fehlerText, OHNE_VEKTOREN, OHNE_DIENST, OHNE_FRAGEVEKTOR, SINNPFAD_ABBRUCH, OHNE_SCHREIBVEKTOR } from '../aussetzer.js';
 import { versuchStart, neueKennung, wendeZuteilungAn, schliesseVersuchAb,
          type VersuchProtokollTeil } from '../versuch.js';
 
@@ -47,7 +47,7 @@ import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
 import { keywordSearch, wortindexEntwerten, tokenize, splitMultiQuery, levenshtein,
          indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
-import { computeEmbedding, hasEmbedProvider } from '../embeddings.js';
+import { computeEmbedding, hasEmbedProvider, EMBED_PROVIDER } from '../embeddings.js';
 import {
   VEKTOR_PRAEFIX, NAME_VEKTOR_PRAEFIX, packe, textFuerVektor, textFuerNamensVektor,
   Vektorbestand,
@@ -164,6 +164,36 @@ const EINGANG_SCHWELLE = 0.5;
  * 0,2 liegt mittig im Band, in dem BEIDE Kennzahlen ihr Maximum halten.
  */
 const EINGANG_SORTIER_GEWICHT = 0.2;
+
+/*
+ * ── Ein ZWEITES Tuer-Merkmal wurde gemessen und NICHT eingebaut ─────────────
+ *
+ * Damit es niemand in vier Wochen neu baut. Der Kandidat: der MITTELWERT ueber
+ * alle Tueren einer Lektion, als sechstes Merkmal NEBEN dem Maximum oben
+ * (Eingangsbestand.mittelNaehe, samt Begruendung, warum die beiden
+ * entgegengesetzt ziehen). Abgetastet in src/bench/mittel-gewicht-abtasten.ts.
+ *
+ * Er haengt vollstaendig davon ab, WELCHE Tueren im Speicher liegen:
+ *
+ *   Bestand                              Tueren   Abdeckung   @3 ohne -> mit
+ *   echter Speicher (Fehlertexte)          965      78,4 %     55,0 -> 51,0
+ *   volle Impfung (Fragewolken)           2462     100,0 %     58,0 -> 63,0
+ *   dasselbe, unabhaengiger Fragensatz    2462     100,0 %     63,0 -> 67,0
+ *
+ * Auf dem heutigen Speicher SCHADET er also, auf dem geimpften nuetzt er. Die
+ * naheliegende Erklaerung — Lektionen ohne Tuer bekommen ueber spreizeImTopf
+ * eine Null, also den schlechtesten Platz — wurde geprueft und ist NICHT der
+ * Grund: mit mittiger statt schlechtester Einstufung faellt @3 genauso
+ * (55,0 -> 52,0, dabei 14 Fragen besser und 30 schlechter).
+ *
+ * Ehrlich bleibt eine Unschaerfe: die beiden Bestaende unterscheiden sich in
+ * ZWEI Dingen zugleich — Abdeckung (78 gegen 100 Prozent) UND Art der Tuer
+ * (Fehlertext gegen handgeschriebene Fragewolke). Welches davon den Ausschlag
+ * gibt, ist mit diesen Daten nicht zu trennen.
+ *
+ * Bedingung fuer einen zweiten Anlauf: die Fragewolken liegen im echten
+ * Speicher. Dann neu abtasten — nicht die 0,3 von damals uebernehmen.
+ */
 import { upgradeNudge } from '../upgrade-nudge.js';
 import { recallTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
 import { nutzungInWorten, nutzungsSchluessel, verdichte } from '../werkzeug-nutzung.js';
@@ -964,7 +994,15 @@ export async function handleBrainTool(
           try {
             const v = await computeEmbedding(textFuerVektor(gelesen));
             if (v?.length) await redis.set(`${VEKTOR_PRAEFIX}${topic}`, packe(v));
-          } catch { /* kein Vektor ist besser als keine Lektion */ }
+          } catch (e) {
+            // Kein Vektor ist besser als keine Lektion — aber der GRUND darf
+            // nicht verlorengehen. Vor dem 22.08.2026 stand hier ein leeres
+            // catch, und drei Kundeninstanzen hatten Lektionen ohne Vektoren,
+            // ohne dass irgendwo stand, warum (siehe OHNE_SCHREIBVEKTOR).
+            meldeEinmal(OHNE_SCHREIBVEKTOR,
+              `Volltext-Vektor nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
+              + ' — die Lektion ist gespeichert, der Bedeutungsabgleich uebergeht sie.');
+          }
 
           // Der Themenname als eigene Sicht.
           //
@@ -976,7 +1014,11 @@ export async function handleBrainTool(
           try {
             const nv = await computeEmbedding(textFuerNamensVektor(topic));
             if (nv?.length) await redis.set(`${NAME_VEKTOR_PRAEFIX}${topic}`, packe(nv));
-          } catch { /* siehe oben */ }
+          } catch (e) {
+            meldeEinmal(OHNE_SCHREIBVEKTOR,
+              `Namens-Vektor nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
+              + ' — siehe oben, die Lektion selbst ist gespeichert.');
+          }
 
           // Die zweite Tuer: woertliche Fehlertexte als eigene Eingaenge.
           //
@@ -990,7 +1032,11 @@ export async function handleBrainTool(
           // Lektion muss auch ohne Netz gespeichert werden koennen.
           try {
             await schreibeEingaenge(redis, topic, gelesen, computeEmbedding);
-          } catch { /* keine Eingaenge ist besser als keine Lektion */ }
+          } catch (e) {
+            meldeEinmal(OHNE_SCHREIBVEKTOR,
+              `Eingaenge nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
+              + ' — siehe oben, die Lektion selbst ist gespeichert.');
+          }
         })();
       }
 

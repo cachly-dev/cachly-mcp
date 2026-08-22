@@ -33,6 +33,30 @@
 const gemeldet = new Set<string>();
 
 /**
+ * Aus einem geworfenen Wert einen lesbaren Grund machen.
+ *
+ * JavaScript laesst zu, dass ALLES geworfen wird — ein Error, ein String, ein
+ * undefined. `String(e)` auf einem leeren Objekt ergibt "[object Object]", und
+ * das ist als Ursachenangabe wertlos.
+ *
+ * Gekuerzt auf 200 Zeichen: der Grund gehoert in EINE Protokollzeile. Manche
+ * Anbieter antworten mit einer ganzen HTML-Seite, und ein Protokoll, das
+ * niemand mehr liest, ist wieder Stille.
+ */
+export function fehlerText(e: unknown): string {
+  if (e instanceof Error) return (e.message || e.name || 'Error').slice(0, 200);
+  if (typeof e === 'string') return e.slice(0, 200) || 'leerer Text geworfen';
+  if (e === undefined) return 'undefined geworfen (kein Grund mitgegeben)';
+  if (e === null) return 'null geworfen (kein Grund mitgegeben)';
+  try {
+    const j = JSON.stringify(e);
+    return j && j !== '{}' ? j.slice(0, 200) : `${typeof e} ohne Inhalt geworfen`;
+  } catch {
+    return `${typeof e} geworfen, nicht darstellbar`;
+  }
+}
+
+/**
  * Meldet einen Aussetzer genau einmal je Grund und Prozess.
  *
  * @param grund kurzer Schluessel, z. B. 'bedeutung-ohne-vektoren'
@@ -96,6 +120,32 @@ export const OHNE_FRAGEVEKTOR = 'bedeutung-ohne-fragevektor';
  * Namen fuehrt, sieht nicht, dass er einen Fehler hat statt einer Luecke.
  */
 export const SINNPFAD_ABBRUCH = 'bedeutung-abbruch';
+
+/**
+ * Die Einbettung BEIM SCHREIBEN einer Lektion ist fehlgeschlagen.
+ *
+ * ── Warum dieser Grund am 22.08.2026 dazukam ────────────────────────────────
+ *
+ * Alle Gruende darueber betreffen das SUCHEN. Das Schreiben hatte keinen: in
+ * handlers/brain.ts standen drei leere `catch { }` um die drei Einbettungen
+ * (Volltext, Themenname, Eingaenge). Sie sind mit Absicht fehlertolerant —
+ * eine Lektion muss auch ohne Netz gespeichert werden koennen — aber sie
+ * warfen den GRUND weg.
+ *
+ * Gemessen am 22.08.2026 ueber den Admin-Endpunkt: von 50 gezogenen Instanzen
+ * hatten drei Lektionen (10, 2 und 46) und NULL Vektoren. Warum, konnte
+ * niemand sagen — kein Protokoll, keine Zahl, nichts. Der Wachhund meldete
+ * seit zwei Tagen "Bedeutungsabgleich AUS", ohne dass eine Ursache
+ * feststellbar war.
+ *
+ * Die Fehlerklasse ist bekannt: "Stille wird als gruen gebucht". Der
+ * Unterschied hier ist, dass nicht einmal der Ausfall still war, sondern nur
+ * sein Grund. Ein Alarm ohne Ursache ist ein Alarm, den man abschaltet.
+ *
+ * Die Lektion wird weiterhin gespeichert. Es aendert sich NUR, dass der Grund
+ * einmal je Prozess im Protokoll steht.
+ */
+export const OHNE_SCHREIBVEKTOR = 'einbettung-beim-schreiben';
 
 /** Der Versuch ist eingeschaltet, laeuft aber ohne Wirkung (siehe versuch.ts). */
 export const VERSUCH_LEER = 'versuch-laeuft-leer';

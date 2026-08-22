@@ -85,6 +85,38 @@
  * Bei vollstaendiger Impfung faellt der Nachteil weg, weil es keine
  * Lektion ohne Wolke mehr gibt.
  *
+ * ── PRAEZISIERUNG NACH DER VOLLIMPFUNG (21.08.2026, gemessen) ──────────────
+ *
+ * Der Satz oben stand ohne Einschraenkung da und gilt nur fuer EINE der
+ * beiden Anordnungen:
+ *
+ *   OHNE SCHWELLE (die alte, abgeschaltete Einstellung): er stimmt. Die Null
+ *   aus spreizeImTopf traf dort nur Lektionen GANZ OHNE Tueren. Die gibt es
+ *   nach der Vollimpfung nicht mehr, der Nachteil verschwindet wirklich.
+ *
+ *   MIT SCHWELLE (der ausgelieferte Stand, EINGANG_SCHWELLE 0,5): er stimmt
+ *   NICHT. Die Schwelle macht aus jedem Wert darunter ein -2, und das wird
+ *   wieder zur Null. Eine vollstaendig geimpfte Lektion, deren Wolke zu DIESER
+ *   Frage nicht passt, bekommt sie weiterhin. Was sich aendert, ist die
+ *   Bedeutung: die Null heisst jetzt "keine Tuer dieser Lektion passt hier"
+ *   statt "diese Lektion hat keine Tueren". Das Merkmal misst Passung statt
+ *   Besitz.
+ *
+ * Daran haengt das Ergebnis, und es faellt drastisch aus:
+ *
+ *   Findequote@3          eingebauter Satz    unabhaengiger Satz
+ *   ohne Schwelle          52 -> 65            61 -> 70
+ *   ausgeliefert           55 -> 58            61 -> 63
+ *
+ * Der Abstand zum ausgelieferten Stand betraegt auf BEIDEN Saetzen +7 Punkte.
+ * Die Decke geht auf dem unabhaengigen Satz von 94 auf 99 — die Lektion
+ * cachly:mehr-eingaenge-senken-die-decke gilt bei VOLLER Deckung nicht mehr,
+ * weil ihr Schaden aus der Ungleichheit kam und nicht aus der Menge.
+ *
+ * Gegenprobe mit pruefsatz-alt.json. NICHT mit pruefsatz-frisch.json: dessen
+ * 100 Fragen stehen bereits im eingefrorenen Korpus, 100 von 100 identisch.
+ * Aufgefallen ist das nur, weil zwoelf Kennzahlen aufs Zehntel gleich blieben.
+ *
  * Aufruf:
  *   npx tsx src/bench/fragewolke.ts --regel > wolken.jsonl
  *   npx tsx src/bench/fragewolke.ts --pruefe wolken.jsonl

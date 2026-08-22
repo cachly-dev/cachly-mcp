@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { meldeEinmal, schonGemeldet, gemeldeteGruende, setzeAussetzerZurueck, OHNE_VEKTOREN, OHNE_DIENST, meldeUndVermerke, leseVermerke, SINNPFAD_ABBRUCH, VERSUCH_LEER, AUSSETZER_VORSATZ, AUSSETZER_TTL_SEKUNDEN } from './aussetzer.js';
+import { meldeEinmal, schonGemeldet, gemeldeteGruende, setzeAussetzerZurueck, OHNE_VEKTOREN, OHNE_DIENST, meldeUndVermerke, leseVermerke, SINNPFAD_ABBRUCH, VERSUCH_LEER, AUSSETZER_VORSATZ, AUSSETZER_TTL_SEKUNDEN, fehlerText, OHNE_SCHREIBVEKTOR } from './aussetzer.js';
 
 /**
  * ABNAHME zur Karte g7bqqy8r7z0t — "Der Bedeutungsabgleich lief in Produktion
@@ -194,5 +194,67 @@ describe('leseVermerke', () => {
     expect(await leseVermerke(speicherAttrappe('keys')), 'Lesefehler wurde als "nichts da" gemeldet').toBe(null);
     expect(await leseVermerke(null)).toBe(null);
     expect(await leseVermerke(speicherAttrappe())).toEqual([]);
+  });
+});
+
+/*
+ * fehlerText — der Grund, den die drei leeren catch-Bloecke in
+ * handlers/brain.ts bis zum 22.08.2026 weggeworfen haben.
+ *
+ * Die Probe deckt genau die Faelle ab, an denen ein blosses String(e)
+ * scheitert. Sie ist keine Formsache: der Wachhund meldete zwei Tage lang
+ * "Bedeutungsabgleich AUS", und die Ursache war nirgends aufgeschrieben.
+ */
+describe('fehlerText — macht aus jedem geworfenen Wert einen lesbaren Grund', () => {
+  it('nimmt die Botschaft eines Error', () => {
+    expect(fehlerText(new Error('fetch failed'))).toBe('fetch failed');
+  });
+
+  it('faellt bei einem Error OHNE Botschaft auf den Namen zurueck', () => {
+    const e = new TypeError('');
+    expect(fehlerText(e)).toBe('TypeError');
+  });
+
+  it('nimmt einen geworfenen Text unveraendert', () => {
+    expect(fehlerText('429 Too Many Requests')).toBe('429 Too Many Requests');
+  });
+
+  it('benennt undefined und null, statt "undefined" zu schreiben', () => {
+    // throw undefined kommt vor. "undefined" im Protokoll sieht aus wie ein
+    // Fehler im Melder selbst.
+    expect(fehlerText(undefined)).toContain('kein Grund mitgegeben');
+    expect(fehlerText(null)).toContain('kein Grund mitgegeben');
+  });
+
+  it('macht aus einem leeren Objekt KEIN "[object Object]"', () => {
+    // Genau der Fall, der die Ursachensuche wertlos macht.
+    const t = fehlerText({});
+    expect(t).not.toContain('[object Object]');
+    expect(t).toContain('ohne Inhalt');
+  });
+
+  it('nimmt den Inhalt eines Objekts, wenn eines da ist', () => {
+    expect(fehlerText({ status: 401, error: 'invalid token' })).toContain('invalid token');
+  });
+
+  it('kuerzt auf 200 Zeichen — eine Protokollzeile, keine HTML-Seite', () => {
+    expect(fehlerText(new Error('x'.repeat(5000))).length).toBe(200);
+    expect(fehlerText('y'.repeat(5000)).length).toBe(200);
+  });
+
+  it('wirft NIE selbst, auch nicht bei einem Ringschluss', () => {
+    // Ein Melder, der beim Melden abstuerzt, verschluckt den Fehler erst recht.
+    const ring: Record<string, unknown> = {};
+    ring.selbst = ring;
+    expect(() => fehlerText(ring)).not.toThrow();
+    expect(fehlerText(ring)).toContain('nicht darstellbar');
+  });
+
+  it('der neue Grund ist ein eigener — nicht in die Suchgruende gemischt', () => {
+    // Schreiben und Suchen sind zwei verschiedene Ausfaelle. Unter einem
+    // Namen gefuehrt, sieht niemand, welcher von beiden vorliegt.
+    expect(OHNE_SCHREIBVEKTOR).not.toBe(OHNE_VEKTOREN);
+    expect(OHNE_SCHREIBVEKTOR).not.toBe(OHNE_DIENST);
+    expect(OHNE_SCHREIBVEKTOR).not.toBe(SINNPFAD_ABBRUCH);
   });
 });

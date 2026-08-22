@@ -220,6 +220,37 @@ export class Eingangsbestand {
     return best;
   }
 
+  /**
+   * Die MITTLERE Nähe über alle Eingänge einer Lektion. -2, wenn sie keine hat.
+   *
+   * Sie ersetzt `besteNaehe` nicht, sie steht daneben. Am 21.08.2026 wurde
+   * "Mittelwert STATT Maximum" gemessen und verworfen — er verlor auf der
+   * Findequote@3 (55 und 62 Prozent gegen 58 und 63).
+   *
+   * Dieselbe Messung zeigte aber, dass die beiden ENTGEGENGESETZT ziehen: das
+   * Maximum gewinnt auf @3, der Mittelwert auf Platz 1, gleichgerichtet auf
+   * zwei unabhängigen Fragensätzen. Sie messen Verschiedenes.
+   *
+   *   Maximum      "gibt es EINE Tür, die genau auf diese Frage passt?"
+   *   Mittelwert   "passt die Lektion als GANZE zu dieser Frage?"
+   *
+   * Das Maximum allein belohnt eine Lektion, die zufällig eine gut passende
+   * Tür trägt und sonst am Thema vorbeigeht. Der Mittelwert allein bestraft
+   * eine breit aufgestellte Lektion, die nur mit einer Tür trifft. Nebeneinander
+   * heben sich die beiden Fehler teilweise auf.
+   *
+   * Ohne Schwelle, anders als das Maximum: ein Mittelwert liegt naturgemäß
+   * niedriger, und die für das Maximum abgetastete 0,5 würde ihn fast überall
+   * auf "kein Wert" drücken — das Merkmal wäre still abgeschaltet.
+   */
+  mittelNaehe(frage: number[], topic: string): number {
+    const vs = this.eingaenge.get(topic);
+    if (!vs?.length) return -2;
+    let summe = 0;
+    for (const v of vs) summe += kosinus(frage, v);
+    return summe / vs.length;
+  }
+
   /** Die ähnlichsten Lektionen, je Lektion ihr bester Eingang. */
   aehnlichste(frage: number[], anzahl: number): Array<{ topic: string; naehe: number }> {
     const aus: Array<{ topic: string; naehe: number }> = [];

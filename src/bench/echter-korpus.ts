@@ -112,8 +112,23 @@ const prozent = (x: number): string => `${(x * 100).toFixed(1).padStart(5)} %`;
 
 async function main(): Promise<void> {
   const hier = dirname(fileURLToPath(import.meta.url));
-  const korpus = JSON.parse(readFileSync(join(hier, 'korpus', 'korpus.json'), 'utf8')) as Korpus;
-  const v = JSON.parse(readFileSync(join(hier, 'korpus', 'korpus-vektoren.json'), 'utf8')) as Vektoren;
+  // --korpus zeigt auf einen ANDEREN Fragensatz bei denselben Lektionen.
+  // Gebraucht fuer die Gegenprobe: ein Gewinn auf EINEM Fragensatz ist eine
+  // Eigenschaft des Satzes, nicht des Verfahrens (Beleg 19.08.2026, die alte
+  // Rangfolge-Formel gewann nur auf dem Satz, an dem sie gefunden wurde).
+  const ki = process.argv.indexOf('--korpus');
+  const kDatei = ki > -1 ? process.argv[ki + 1] : join(hier, 'korpus', 'korpus.json');
+  const korpus = JSON.parse(readFileSync(kDatei, 'utf8')) as Korpus;
+  if (ki > -1) console.log(`\n  Korpus aus:   ${kDatei}`);
+  // --vektoren zeigt auf eine ANDERE Vektordatei, Vorgabe bleibt die
+  // eingefrorene. Gebraucht, um einen Umbau (z.B. die Fragewolken) gegen
+  // dieselben Untergrenzen zu halten, BEVOR er in den Korpus wandert. Ohne den
+  // Schalter muesste man die eingefrorene Datei tauschen — und wer das
+  // vergisst, misst danach den Umbau als Ausgangslage.
+  const i = process.argv.indexOf('--vektoren');
+  const vDatei = i > -1 ? process.argv[i + 1] : join(hier, 'korpus', 'korpus-vektoren.json');
+  const v = JSON.parse(readFileSync(vDatei, 'utf8')) as Vektoren;
+  if (i > -1) console.log(`\n  Vektoren aus: ${vDatei}`);
 
   const redis = baueBestand(korpus, v);
   const vektorbestand = new Vektorbestand();
@@ -156,6 +171,11 @@ async function main(): Promise<void> {
   // schwelle-abtasten.ts. Der Bench muss das spiegeln, sonst misst er eine
   // andere Suchmaschine als die ausgelieferte.
   const EINGANG_SCHWELLE = 0.5;
+  // EIN Tuer-Merkmal, nicht zwei. Ein zweites (der Mittelwert ueber alle
+  // Tueren) wurde am 21.08.2026 abgetastet und NICHT eingebaut, weil er auf
+  // dem heutigen Speicher schadet — Begruendung mit Zahlen in handlers/brain.ts
+  // ueber dem Tuer-Block. Wer ihn hier aufnimmt, ohne ihn dort einzubauen,
+  // misst wieder eine andere Suchmaschine als die ausgelieferte.
   const voll = await messe(redis, korpus.fragen, frageVektor, bestaende, {
     pool: POOL,
     zusatzMerkmal: {

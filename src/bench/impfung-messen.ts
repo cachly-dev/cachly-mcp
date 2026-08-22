@@ -110,6 +110,15 @@ async function main(): Promise<void> {
   }
 
   const zeile = (name: string, vor: number[], nach: number[]): void => {
+    // Eine leere Gruppe hat keine Quote. quote() liefert dafuer 0, und "0,0 %"
+    // liest sich wie ein Totalausfall — dieselbe Fehlerklasse wie
+    // klassifiziereDeckung, das bei 0 Lektionen 100 Prozent meldete. Bei einer
+    // VOLLimpfung ist die Gruppe "uebrige" zwangslaeufig leer: das ist kein
+    // Ergebnis, sondern die Abwesenheit einer Messung, und muss so dastehen.
+    if (vor.length === 0) {
+      console.log(`  ${name.padEnd(22)}nicht messbar — Gruppe ist leer`);
+      return;
+    }
     const p = (x: number): string => `${(x * 100).toFixed(1)} %`.padStart(8);
     const d = (v: number, n: number): string => {
       const diff = (n - v) * 100;
@@ -135,14 +144,22 @@ async function main(): Promise<void> {
   }
   console.log(`\n  Je Frage (betroffen): besser ${besser} · schlechter ${schlechter} · gleich ${betroffen.length - besser - schlechter}`);
 
-  let rBesser = 0; let rSchlechter = 0;
-  for (const [k, vor] of rest.entries()) {
-    if (rang(restNeu[k]) < rang(vor)) rBesser++;
-    else if (rang(restNeu[k]) > rang(vor)) rSchlechter++;
+  if (rest.length === 0) {
+    console.log('  Je Frage (uebrige):   nicht messbar — keine Frage ausserhalb der geimpften Menge');
+    console.log('\n  VOLLIMPFUNG: es gibt keine ungeimpfte Vergleichsgruppe mehr. Genau das ist der');
+    console.log('  Zweck — der Nachteil aus spreizeImTopf (fehlender Wert = Null) kann nicht mehr');
+    console.log('  entstehen, weil keine Lektion ohne Wolke uebrig ist. Massgeblich ist die Zeile');
+    console.log('  "alle": sie vergleicht denselben Fragensatz vor und nach der Impfung.');
+  } else {
+    let rBesser = 0; let rSchlechter = 0;
+    for (const [k, vor] of rest.entries()) {
+      if (rang(restNeu[k]) < rang(vor)) rBesser++;
+      else if (rang(restNeu[k]) > rang(vor)) rSchlechter++;
+    }
+    console.log(`  Je Frage (uebrige):   besser ${rBesser} · schlechter ${rSchlechter} · gleich ${rest.length - rBesser - rSchlechter}`);
+    console.log('\n  Die uebrigen duerfen sich NICHT verschlechtern — sonst schaden die Ablenker mehr,');
+    console.log('  als die Ziele nutzen, und das Merkmal ist netto negativ.');
   }
-  console.log(`  Je Frage (uebrige):   besser ${rBesser} · schlechter ${rSchlechter} · gleich ${rest.length - rBesser - rSchlechter}`);
-  console.log('\n  Die uebrigen duerfen sich NICHT verschlechtern — sonst schaden die Ablenker mehr,');
-  console.log('  als die Ziele nutzen, und das Merkmal ist netto negativ.');
 }
 
 main().catch((e) => { console.error('FEHLER:', e); process.exit(1); });
