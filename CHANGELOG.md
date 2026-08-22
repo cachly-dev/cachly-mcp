@@ -7,6 +7,69 @@
 
 ---
 
+## [0.10.129] – 2026-08-22 — *"The briefing claimed more hours than had passed."*
+
+The session briefing greeted every start with **"Brain saved you ~1664h total"**.
+The Brain was born 2026-06-01, making it 82 days old. One person working eight
+hours a day would have had **656 hours** in that time. The number was not too
+high — it was impossible.
+
+A 25-objection review took it apart; 21 objections held. Two causes, both
+measured.
+
+### Fixed
+
+- **The starter filter knew only one of two import paths.** It compared
+  `lesson?.source === 'starter'`. But `import_public_brain` writes
+  `source: 'public_brain'` (`handlers/team.ts`), and behind it sits its own
+  built-in list of ~40 lessons across go, docker, kubernetes, react, typescript
+  and python. Among them `docker:layer-cache` — the single most-recalled lesson
+  on this Brain at **980 recalls**, counting in full.
+
+  The filter had been built, documented and reasoned about since 0.10.127. It
+  never caught the largest single source, and nobody measured whether it did.
+  The test meant to guard it was named *"the shipped starter corpus really
+  carries the marking"* and asserted, in its body, that `topic` is a string.
+  The field `source` never appeared in it.
+
+  `istStarterLektion` now checks origin against a pattern (`starter`,
+  `public_brain`, `marketplace:`, `syndicate:`, `import`), and a guard reads the
+  origin values **out of the source files** and puts each one through the
+  function — so a third import path cannot slip past unnoticed.
+
+- **Every repeat recall was credited again.** `smart_recall` credited the full
+  research time to **up to five lessons per call**, and the server's own
+  instructions ask for a call before every task; ambient recall adds more on
+  every prompt. Ten tasks in one session could account for two hundred hours.
+  There was no ceiling of any kind.
+
+  The promise reads *"time not re-researching known fixes"*. You research once.
+  Seeing the same lesson for the nine-hundredth time does not save a
+  nine-hundredth research. **Each lesson now counts exactly once**, on its first
+  recall — bounding the number by what has been learned instead of by how often
+  the Brain is used.
+
+- **`brain_hygiene` made it worse, not better.** Its recomputation multiplied
+  recall count by the severity tier. On this Brain that would have lifted
+  1664 h to **6445 h** — a cleanup that inflates the number it exists to
+  correct. It now counts each lesson once.
+
+### Changed
+
+- The briefing line states its basis. Instead of a bare `~1664h total` it names
+  how many of your own lessons the figure comes from, so it can be counted.
+
+### Known limits
+
+- The 30/60/240-minute tiers per severity remain an estimate. They are simply no
+  longer multiplied by usage frequency.
+- The accumulated counter corrects itself on the next `brain_hygiene` run, not
+  on upgrade.
+- The euro figure in the analytics panel reads the same counter. It benefits
+  from the correction but was not separately reviewed.
+
+---
+
 ## [0.10.124] – 2026-08-14 — *"The commands reached the server. Then they showed zeros."*
 
 0.10.123 fixed the URL five CLI commands called. They stopped 404-ing and
