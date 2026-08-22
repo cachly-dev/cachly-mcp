@@ -48,6 +48,7 @@ import { keywordSearch, wortindexEntwerten, tokenize, splitMultiQuery, levenshte
          indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider, EMBED_PROVIDER } from '../embeddings.js';
+import { repariereFelder } from '../feldreparatur.js';
 import {
   VEKTOR_PRAEFIX, NAME_VEKTOR_PRAEFIX, packe, textFuerVektor, textFuerNamensVektor,
   Vektorbestand,
@@ -732,9 +733,9 @@ export async function handleBrainTool(
         instance_id,
         topic,
         outcome,
-        what_worked,
-        what_failed = '',
-        context: ctx = '',
+        what_worked: rohWorked,
+        what_failed: rohFailed = '',
+        context: rohCtx = '',
         severity = 'major',
         file_paths = [],
         commands = [],
@@ -763,6 +764,29 @@ export async function handleBrainTool(
         service_kind?: 'service' | 'system';
         group?: string;
       };
+
+      /*
+       * Verklebte Felder trennen, BEVOR irgendetwas geschrieben wird.
+       *
+       * Wer ein Feld mit dem falschen Tag schliesst, uebergibt den ganzen
+       * Rest — samt der Marke des naechsten Feldes — als what_worked. Das
+       * Ergebnis sieht aus wie eine volle Lektion, hat aber ein leeres
+       * what_failed und Steuerzeichen im Fliesstext.
+       *
+       * Belegt am 22.08.2026 an derselben Lektion zweimal hintereinander,
+       * beide Male unbemerkt: die Rueckmeldung zeigte den kaputten Text an
+       * und sah trotzdem aus wie ein Erfolg.
+       *
+       * ohneMarkierungen() in eingaenge.ts raeumt dasselbe beim EINBETTEN
+       * weg. Das rettet den Vektor, aber nicht den Bestand — im Speicher
+       * bleibt der Text falsch und what_failed leer. Deshalb hier, an der
+       * einzigen Stelle, an der der Fehler entsteht.
+       */
+      const { what_worked, what_failed = '', context: ctx = '' } = repariereFelder({
+        what_worked: rohWorked,
+        what_failed: rohFailed,
+        context: rohCtx,
+      });
 
       const redis = await getConnection(instance_id);
       const ts = new Date().toISOString();
