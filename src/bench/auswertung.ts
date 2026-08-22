@@ -101,6 +101,19 @@ export interface Optionen {
    */
   sinnNominierung?: (fv: number[], q: Frage) => string[];
   /**
+   * Nachbearbeitung der fertigen Punkte, MIT Blick auf den ganzen Topf.
+   *
+   * Anders als `zusatzMerkmal`, das je Kandidat einzeln rechnet: hier sieht
+   * die Funktion alle Punkte und alle Themen nebeneinander. Gebraucht fuer
+   * Verfahren, bei denen Kandidaten einander beeinflussen — etwa die laterale
+   * Hemmung aus dem Naturworkshop (v3): jeder Kandidat wird um einen Anteil
+   * der Punktzahl seiner naechsten Nachbarn im Vektorraum gedaempft.
+   *
+   * Ohne die Option aendert sich nichts. Der Messstand muss ohne Schalter
+   * genau das tun, was die Produktion tut.
+   */
+  punkteNachbearbeitung?: (punkte: number[], topf: string[], fv: number[]) => number[];
+  /**
    * Ein zusaetzliches Merkmal fuer die SORTIERUNG — fuer Experimente am
    * anderen Ende als `sinnNominierung`.
    *
@@ -220,6 +233,8 @@ export async function messe(
         punkte = punkte.map((p, i) => p + m.gewicht * gespreizt[i]);
       }
     }
+
+    if (o.punkteNachbearbeitung) punkte = o.punkteNachbearbeitung(punkte, topf, fv);
 
     const rang = topf.map((t, i) => ({ t, p: punkte[i] }))
       .sort((x, y) => y.p - x.p).map((x) => x.t);
