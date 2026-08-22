@@ -56,7 +56,10 @@ import type { BenchLesson } from './fixtures.js';
 export { ohneMarkierungen };
 export const fehlertexte = fehlertexteAus;
 
-export type Eingangsart = 'name' | 'volltext' | 'erstsatz' | 'fehlertext' | 'uebersetzung';
+// 'frage' = Fragenschatten (Kandidat A, Architektenlauf 22.08.2026): erzeugte
+// Fragen, deren Antwort die Lektion ist. Entsteht NICHT hier (eingaenge-b ist
+// die Variante ohne Sprachmodell), sondern offline beim Schreiben der Lektion.
+export type Eingangsart = 'name' | 'volltext' | 'erstsatz' | 'fehlertext' | 'uebersetzung' | 'frage';
 export interface Eingang { art: Eingangsart; text: string }
 
 /** Der Themenname als lesbarer Satz: Trennzeichen raus, Woerter rein. */

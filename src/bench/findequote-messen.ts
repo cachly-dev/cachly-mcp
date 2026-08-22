@@ -29,7 +29,7 @@
  *   npx tsx src/bench/findequote-messen.ts --selbstprobe
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { keywordSearch } from '../search.js';
 import { kosinus, mischeRangfolgen } from '../bedeutung.js';
@@ -42,7 +42,13 @@ import { schluessel } from './eingaenge-einbetten.js';
 import type { Eingang } from './eingaenge-b.js';
 import type { BenchLesson } from './fixtures.js';
 
-interface Frage { query: string; relevant: string[]; art?: string }
+// Der 3000er-Pool (22.08.2026) traegt fuenf Achsen je Frage. Sie sind optional:
+// die beiden alten eingefrorenen Saetze haben sie nicht, und die Messung muss
+// auf beiden laufen.
+interface Frage {
+  query: string; relevant: string[]; art?: string;
+  guete?: string; form?: string; sprache?: string; tippform?: string; leck?: number;
+}
 interface Korpus { lessons: BenchLesson[]; queries: Frage[] }
 interface Lektionseingaenge { topic: string; eingaenge: Eingang[] }
 
@@ -142,16 +148,31 @@ async function main(): Promise<void> {
   const { vektoren } = JSON.parse(readFileSync(vekPfad, 'utf8')) as { vektoren: Record<string, number[]> };
   if (satz.queries.length === 0) fehlt('Fragen im Pruefsatz', satzPfad);
 
+  // --tuerfilter <datei> --schwelle <x>: Tueren unter der Trennschaerfe-Schwelle
+  // streichen (Kandidat B, tuer-trennschaerfe.ts). Volltext ausgenommen — er
+  // ist zugleich Merkmal (naeheText) und Grundlinie.
+  const filterPfad = flag('tuerfilter');
+  const schwelle = Number(flag('schwelle') ?? '0');
+  const tuerfilter = filterPfad
+    ? (JSON.parse(readFileSync(resolve(filterPfad), 'utf8')) as { tueren: Record<string, number> })
+    : null;
+  let gestrichen = 0;
+
   const volltextVektor = new Map<string, number[]>();
   const themaVektor = new Map<string, number[]>();
   const tuerVektoren = new Map<string, number[][]>();
   for (const l of lektionen) {
     const vs: number[][] = [];
     for (const e of l.eingaenge) {
-      const v = vektoren[schluessel(e.art, e.text)];
+      const key = schluessel(e.art, e.text);
+      const v = vektoren[key];
       if (!v) continue;
       if (e.art === 'volltext') volltextVektor.set(l.topic, v);
       if (e.art === 'name') themaVektor.set(l.topic, v);
+      if (tuerfilter && e.art !== 'volltext') {
+        const w = tuerfilter.tueren[key];
+        if (w !== undefined && w < schwelle) { gestrichen++; continue; }
+      }
       if (!tueren || tueren.includes(e.art)) vs.push(v);
     }
     tuerVektoren.set(l.topic, vs);
@@ -169,6 +190,17 @@ async function main(): Promise<void> {
 
   const plaetze: number[] = [];
   const artPlaetze = new Map<string, number[]>();
+  // Je Achse: Wert -> Plaetze. Damit beantwortet EIN Lauf die Frage, der die
+  // 100er-Saetze nie gewachsen waren: hilft ein Kandidat bei vagen Fragen und
+  // schadet bei praezisen? Bei klein getippten und nicht bei sauberen?
+  const achsen = new Map<string, Map<string, number[]>>();
+
+  // --diagnose <datei>: je Frage die Groessen, aus denen ein Unsicherheits-
+  // Schalter (Kandidat C1) gebaut werden koennte — am ECHTEN Messweg erhoben,
+  // nicht nachgebaut. Eine zweite Fassung dieser Schleife waere eine zweite
+  // Wahrheit.
+  const diagnosePfad = flag('diagnose');
+  const diagnose: Array<Record<string, unknown>> = [];
 
   for (const q of satz.queries) {
     const fv = vektoren[schluessel('frage', q.query)];
@@ -241,6 +273,40 @@ async function main(): Promise<void> {
     const art = q.art ?? 'ohne';
     if (!artPlaetze.has(art)) artPlaetze.set(art, []);
     artPlaetze.get(art)!.push(platz);
+
+    for (const [achse, wert] of [
+      ['guete', q.guete], ['form', q.form], ['sprache', q.sprache],
+      ['tippform', q.tippform],
+      ['leck', q.leck === undefined ? undefined : (q.leck >= 4 ? 'woertlich' : 'eigene Worte')],
+    ] as const) {
+      if (wert === undefined) continue;
+      if (!achsen.has(achse)) achsen.set(achse, new Map());
+      const m = achsen.get(achse)!;
+      if (!m.has(wert)) m.set(wert, []);
+      m.get(wert)!.push(platz);
+    }
+
+    if (diagnosePfad && !rrf) {
+      const geordnet = topf.map((t, i) => ({ t, p: punkte[i], i }))
+        .sort((a, b) => b.p - a.p);
+      const gewinner = geordnet[0];
+      diagnose.push({
+        query: q.query,
+        art,
+        platz,
+        topf: topf.length,
+        bestPunkt: gewinner?.p ?? 0,
+        abstand12: geordnet.length > 1 ? geordnet[0].p - geordnet[1].p : 0,
+        abstand34: geordnet.length > 3 ? geordnet[2].p - geordnet[3].p : 0,
+        deckungGewinner: gewinner ? bewertbar[gewinner.i].seltenheitsDeckung : 0,
+        besterEingang: gewinner ? besterEingangVon(gewinner.t) : -2,
+      });
+    }
+  }
+
+  if (diagnosePfad && diagnose.length > 0) {
+    writeFileSync(resolve(diagnosePfad), diagnose.map((d) => JSON.stringify(d)).join('\n') + '\n', 'utf8');
+    console.log(`  Diagnose: ${diagnose.length} Zeilen nach ${resolve(diagnosePfad)}`);
   }
 
   const quote = (ps: number[], bis: number): string => {
@@ -257,7 +323,8 @@ async function main(): Promise<void> {
     + (dreifach ? ' · DREIFACHE Vorauswahl' : '')
     + (rrf ? ' · AUSGELIEFERTER Pfad (RRF)' : '')
     + (ersetzeText ? ' · Text ERSETZT durch besten Eingang' : '')
-    + (flag('gewichte') ? ` · Gewichte ${flag('gewichte')}` : ''));
+    + (flag('gewichte') ? ` · Gewichte ${flag('gewichte')}` : '')
+    + (tuerfilter ? ` · Tuerfilter Schwelle ${schwelle}: ${gestrichen} gestrichen` : ''));
   console.log('');
   console.log(`  Platz 1        ${quote(plaetze, 1)}`);
   console.log(`  FINDEQUOTE@3   ${quote(plaetze, 3)}`);
@@ -269,6 +336,19 @@ async function main(): Promise<void> {
   if (arten.length > 1) {
     console.log('  Nach Art der Frage (Findequote@3):');
     for (const a of arten) console.log(`    ${a.padEnd(14)} ${quote(artPlaetze.get(a)!, 3)}`);
+    console.log('');
+  }
+  // Der Standardfehler je Gruppe: ohne ihn liest man 2 Punkte Unterschied als
+  // Wirkung, wo er Rauschen ist. sqrt(p(1-p)/n), in Prozentpunkten.
+  const streuung = (ps: number[]): string => {
+    const p = ps.filter((x) => x > 0 && x <= 3).length / ps.length;
+    return `±${(Math.sqrt((p * (1 - p)) / ps.length) * 100).toFixed(1)}`;
+  };
+  for (const [achse, m] of achsen) {
+    console.log(`  Nach ${achse} (Findequote@3, mit Standardfehler):`);
+    for (const w of [...m.keys()].sort()) {
+      console.log(`    ${w.padEnd(24)} ${quote(m.get(w)!, 3).padEnd(22)} ${streuung(m.get(w)!)}`);
+    }
     console.log('');
   }
   const drin = plaetze.filter((p) => p > 0).length;

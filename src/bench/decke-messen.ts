@@ -167,6 +167,17 @@ async function main(): Promise<void> {
   const { lektionen } = JSON.parse(readFileSync(eingPfad, 'utf8')) as { lektionen: Lektionseingaenge[] };
   const { vektoren } = JSON.parse(readFileSync(vekPfad, 'utf8')) as { vektoren: Record<string, number[]> };
 
+  // --tuerfilter <datei> --schwelle <x>: Tueren unter der Trennschaerfe-Schwelle
+  // streichen (Kandidat B, tuer-trennschaerfe.ts). Volltext-Tueren sind davon
+  // ausgenommen — sie sind die Grundlinie "heute", und eine veraenderte
+  // Grundlinie macht jede alte Messung unvergleichbar.
+  const filterPfad = flag('tuerfilter');
+  const schwelle = Number(flag('schwelle') ?? '0');
+  const tuerfilter = filterPfad
+    ? (JSON.parse(readFileSync(resolve(filterPfad), 'utf8')) as { tueren: Record<string, number> })
+    : null;
+  let gestrichen = 0;
+
   if (satz.queries.length === 0) fehlt('Fragen im Pruefsatz', satzPfad);
 
   // Sicht A getrennt halten: sie ist die Grundlinie "heute".
@@ -182,10 +193,15 @@ async function main(): Promise<void> {
         if (e.art === 'volltext' && vg) volltextVektor.set(l.topic, vg);
         continue;
       }
-      const v = vektoren[schluessel(e.art, e.text)];
+      const key = schluessel(e.art, e.text);
+      const v = vektoren[key];
       if (!v) { eingaengeOhneVektor++; continue; }
-      vs.push(v);
       if (e.art === 'volltext') volltextVektor.set(l.topic, v);
+      if (tuerfilter && e.art !== 'volltext') {
+        const w = tuerfilter.tueren[key];
+        if (w !== undefined && w < schwelle) { gestrichen++; continue; }
+      }
+      vs.push(v);
     }
     alleEingaenge.set(l.topic, vs);
   }
@@ -233,7 +249,8 @@ async function main(): Promise<void> {
   console.log('');
   console.log(`  ${korpus.lessons.length} Lektionen · ${n} frische Fragen · Vorauswahl je ${POOL}`);
   console.log(`  ${[...alleEingaenge.values()].reduce((s2, v) => s2 + v.length, 0)} Eingaenge mit Vektor`
-    + (nurArten ? ` (nur: ${nurArten.join(', ')})` : ''));
+    + (nurArten ? ` (nur: ${nurArten.join(', ')})` : '')
+    + (tuerfilter ? ` · Tuerfilter Schwelle ${schwelle}: ${gestrichen} gestrichen` : ''));
   console.log('');
   console.log('  DECKE — enthaelt die Vorauswahl ueberhaupt eine akzeptable Lektion?');
   console.log(`    nur Woerter                 ${anteil((z) => z.wort)}`);
