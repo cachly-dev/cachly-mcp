@@ -161,12 +161,19 @@ async function main(): Promise<void> {
   const volltextVektor = new Map<string, number[]>();
   const themaVektor = new Map<string, number[]>();
   const tuerVektoren = new Map<string, number[][]>();
+  // Tueren ohne Vektor wurden bis zum 22.08.2026 STILL uebersprungen. Was das
+  // gekostet hat: ein Messlauf mit 1484 neuen Tueren lieferte Zahlen, die bis
+  // auf die letzte Stelle der Grundlinie entsprachen — weil KEINE davon einen
+  // Vektor hatte (zwei Einbettungslaeufe hatten dieselbe Ausgabedatei
+  // ueberschrieben). Nur weil "identisch" anders aussieht als "keine Wirkung",
+  // ist es aufgefallen. Ab jetzt zaehlt und meldet der Lauf es je Tuerart.
+  const ohneVektor = new Map<string, number>();
   for (const l of lektionen) {
     const vs: number[][] = [];
     for (const e of l.eingaenge) {
       const key = schluessel(e.art, e.text);
       const v = vektoren[key];
-      if (!v) continue;
+      if (!v) { ohneVektor.set(e.art, (ohneVektor.get(e.art) ?? 0) + 1); continue; }
       if (e.art === 'volltext') volltextVektor.set(l.topic, v);
       if (e.art === 'name') themaVektor.set(l.topic, v);
       if (tuerfilter && e.art !== 'volltext') {
@@ -176,6 +183,13 @@ async function main(): Promise<void> {
       if (!tueren || tueren.includes(e.art)) vs.push(v);
     }
     tuerVektoren.set(l.topic, vs);
+  }
+
+  if (ohneVektor.size > 0) {
+    const liste = [...ohneVektor.entries()].sort((a, b) => b[1] - a[1])
+      .map(([art, n]) => `${art}=${n}`).join(' ');
+    console.error(`WARNUNG: Tueren ohne Vektor werden uebergangen — ${liste}.`
+      + ' Die Messung sagt dann nichts ueber sie aus. Erst eingaenge-einbetten.ts fahren.');
   }
 
   const themen = korpus.lessons.map((l) => l.topic);
