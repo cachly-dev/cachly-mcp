@@ -208,6 +208,39 @@ export interface Bewertbar {
  * Erwartet den GANZEN Topf auf einmal, weil die Normierung ihn braucht — eine
  * Punktzahl für einen einzelnen Kandidaten gibt es nicht und kann es nicht
  * geben.
+ *
+ * ── WARUM `seltenheitsDeckung` NICHT gespreizt wird (gemessen 22.08.2026) ───
+ *
+ * Drei Merkmale laufen durch `spreizeImTopf`, das vierte nicht — und
+ * ausgerechnet das vierte hat mit 1,3 das höchste Gewicht. Das sieht nach
+ * einem Versehen aus. Es ist keines.
+ *
+ * Im zweiten Naturworkshop hat eine Rolle genau diese Unstimmigkeit gefunden
+ * und daraus einen Kandidaten gebaut. Gemessen auf dem eingefrorenen Prüfsatz
+ * (100 ungesehene Fragen), Platz 1 / @3:
+ *
+ *   Auslieferstand, roh          39,0 / 58,0   <- hier
+ *   dieselbe Zahl, gespreizt     38,0 / 56,0
+ *   Topf-Seltenheit zusätzlich   33,0 / 53,0
+ *   Topf-Seltenheit statt global 37,0 / 53,0
+ *   KONTROLLE Zufallstexte       32,0 / 50,0
+ *
+ * Spreizen KOSTET zwei Punkte @3 und einen auf Platz 1. Der Grund: Der Wert
+ * ist durch seine Bauart schon auf 0..1 (`getroffen / gesamt` in
+ * `Seltenheit.deckung`) und trägt eine ABSOLUTE Aussage — "diese Lektion deckt
+ * 80 Prozent der seltenen Fragewörter ab". `spreizeImTopf` wirft genau diese
+ * Absolutheit weg: es zieht den kleinsten Wert im Topf auf 0 und den größten
+ * auf 1, egal wie nah die beiden beieinanderliegen. Aus einem Unterschied von
+ * 0,02 zwischen zwei fast gleichen Kandidaten wird so der volle Abstand. Bei
+ * den Kosinus-Merkmalen ist das erwünscht — die liegen alle eng beieinander
+ * und tragen keine absolute Bedeutung. Hier macht es aus Rauschen ein Signal.
+ *
+ * Der Eingriff hat nachweislich stattgefunden: in 709 Fällen unterschieden
+ * sich globale und Topf-Seltenheit um mehr als 0,05.
+ *
+ * Wer diese Zeile "aufräumen" will, misst vorher mit
+ * `src/bench/topfseltenheit-messen.ts` gegen. Das ist billiger als der Punkt,
+ * den es kostet.
  */
 export function bewerteTopf(topf: Bewertbar[], gewichte = GEWICHTE): number[] {
   const t = spreizeImTopf(topf.map((k) => k.naeheText));
@@ -217,6 +250,7 @@ export function bewerteTopf(topf: Bewertbar[], gewichte = GEWICHTE): number[] {
     gewichte.text * t[i]
     + gewichte.thema * th[i]
     + gewichte.rueckkopplung * r[i]
+    // ABSICHTLICH roh — siehe die Messung im Kommentar oben.
     + gewichte.seltenheit * k.seltenheitsDeckung);
 }
 
