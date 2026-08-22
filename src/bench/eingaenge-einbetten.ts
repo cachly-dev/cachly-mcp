@@ -261,7 +261,22 @@ async function main(): Promise<void> {
   console.log(`Fertig in ${dauer} s. ${Object.keys(vektoren).length} Vektoren in ${ziel}`);
   if (gruende.size) console.log('Fehlgruende:', [...gruende.entries()].map(([g, n]) => `${g}=${n}`).join(' '));
   if (bremse.gezogen) {
-    console.error(`NOTBREMSE: ${bremse.stand} mal HTTP 429 — Lauf abgebrochen. Ohne Admin-Schluessel weitermachen (--parallel 2).`);
+    // Die Bremse verhindert den Vorfall vom 19.08. (563 x 429). Sie verhindert
+    // NICHT, was am 22.08. passiert ist: schon 16 abgewiesene Anfragen liessen
+    // fail2ban auf node-1 unsere oeffentliche Adresse sperren — in den Jails
+    // cachly-api UND cachly-admin, und der Bann gilt fuer ALLE Ports. Damit
+    // starben WireGuard (UDP 51820) und SSH gleichzeitig, und der Weg zurueck
+    // fuehrte ueber node-3 als Sprungrechner. Wer das hier liest, weiss also
+    // schon, warum gleich nichts mehr geht.
+    console.error(`NOTBREMSE: ${bremse.stand} mal HTTP 429 — Lauf abgebrochen.`);
+    console.error('ACHTUNG: Abgewiesene Anfragen sperren die eigene Adresse auf node-1 (fail2ban,');
+    console.error('  Jails cachly-api und cachly-admin, alle Ports — Tunnel und SSH sterben mit).');
+    console.error('  Entsperren ueber node-3 als Sprungrechner:');
+    console.error('  ssh -i ~/.ssh/cachly-deploy -o "ProxyCommand=ssh -i ~/.ssh/cachly-deploy \\');
+    console.error('    -p 2222 -W %h:%p root@89.167.65.29" -p 2222 root@10.8.0.1 \\');
+    console.error('    "fail2ban-client set cachly-api unbanip $(curl -s https://api.ipify.org)"');
+    console.error('RICHTIG WEITER: export CACHLY_ADMIN_KEY="$X_ADMIN_KEY" — dann faellt die Drossel weg');
+    console.error('  (gemessen: 11,8 Einbettungen je Sekunde, null 429er). Ohne Schluessel: --parallel 2.');
     process.exit(4);
   }
   const fehlend = liste.filter(([k]) => !vektoren[k]).length;
