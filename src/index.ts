@@ -1134,8 +1134,15 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       // entscheidet der Assistent. stderr landet im Protokoll des Editors und
       // ist die einzige Stelle, die niemand wegfassen kann.
       openInBrowser(flow.verifyUrl, (ok, err) => {
-        if (ok) return;
-        sendFunnelEvent('device_browser_failed', { reason: err ?? 'unknown' });
+        if (ok) {
+          // Karte trichteranm1: der Erfolg wird MITGEZAEHLT. Nur so laesst sich
+          // "hat nie einen Browser gesehen" von "hat ihn gesehen und
+          // aufgegeben" trennen — das eine behebt man mit Code, das andere mit
+          // weniger Schritten.
+          sendFunnelEvent('device_browser_opened', { stelle: 'tool' });
+          return;
+        }
+        sendFunnelEvent('device_browser_failed', { reason: err ?? 'unknown', stelle: 'tool' });
         process.stderr.write(
           `\ncachly: could not open a browser (${err ?? 'unknown'}).\n`
           + `cachly: open this yourself to finish signing in:\n`
@@ -3583,11 +3590,39 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     }
 
     if (deviceFlowOk && deviceCode) {
-      // Open browser and show code
+      /*
+       * ── Derselbe Fehler wie im Werkzeugpfad, hier noch mit Haken davor ─────
+       *
+       * Hier stand bis zum 23.08.2026:
+       *
+       *     openInBrowser(verifyUri);
+       *     console.log('   ✓  Browser opened — confirm the code above ...');
+       *
+       * Zwei Zeilen, zwei Fehler. openInBrowser bekam keinen Rueckruf, also
+       * blieb ein ENOENT (kein xdg-open in Containern, SSH-Sitzungen, WSL ohne
+       * Oberflaeche) unbemerkt. Und die Zeile danach behauptete unbedingt, der
+       * Browser sei aufgegangen — mit einem Haken davor, also mit dem
+       * staerksten Zeichen fuer "erledigt", das die Ausgabe kennt.
+       *
+       * Der Mensch sass dann vor einem Terminal, das ihm sagte, sein Browser
+       * sei offen, und wartete auf ein Fenster, das nie kam. Die Zahlen dazu:
+       * setup_auth_started 13, setup_auth_completed 3.
+       *
+       * Jetzt steht die Handlung ZUERST und unbedingt da ("open the URL"), und
+       * der Browser ist die Bequemlichkeit obendrauf. Gemeldet wird nur, was
+       * wirklich passiert ist.
+       */
       console.log(`   Code: \x1b[1;33m${userCode}\x1b[0m`);
       console.log(`   URL:  ${verifyUri}\n`);
-      openInBrowser(verifyUri);
-      console.log('   ✓  Browser opened — confirm the code above to continue...\n');
+      console.log('   Open the URL above and confirm the code to continue...\n');
+      openInBrowser(verifyUri, (ok, err) => {
+        if (ok) {
+          sendFunnelEvent('device_browser_opened', { stelle: 'setup' });
+          return;
+        }
+        sendFunnelEvent('device_browser_failed', { reason: err ?? 'unknown', stelle: 'setup' });
+        console.log(`   ℹ️  No browser could be opened here (${err ?? 'unknown'}) — please open the URL yourself.\n`);
+      });
 
       // Poll for token with proper timeouts
       process.stdout.write('   Waiting for authorization');

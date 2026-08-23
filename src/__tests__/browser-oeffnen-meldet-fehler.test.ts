@@ -114,3 +114,110 @@ describe('Browser oeffnen · Fehlschlag wird gemeldet', () => {
     expect(QUELLE).not.toContain('122 MCP tools');
   });
 });
+
+/**
+ * ══ Nachtrag vom 23.08.2026: der Erfolg zaehlt auch, und der Assistent log ══
+ *
+ * Karte trichteranm1 ("Der Bruch liegt an der Anmeldung, nicht an der Seite").
+ *
+ * Zwei Luecken blieben nach der ersten Runde offen:
+ *
+ * 1. Nur das SCHEITERN wurde gezaehlt. Damit bleiben zwei voellig verschiedene
+ *    Ursachen ununterscheidbar — "hat nie einen Browser gesehen" und "hat ihn
+ *    gesehen und aufgegeben". Das eine behebt man mit Code, das andere mit
+ *    weniger Schritten.
+ *
+ * 2. Der Einrichtungs-Assistent (`npx ... setup` / `autopilot`) hatte denselben
+ *    Fehler wie der Werkzeugpfad — nur schlimmer. Er rief openInBrowser ohne
+ *    Rueckruf UND schrieb danach unbedingt:
+ *
+ *        console.log('   ✓  Browser opened — confirm the code above ...');
+ *
+ *    Ein Haken davor, also das staerkste Zeichen fuer "erledigt", das die
+ *    Ausgabe kennt. Der Mensch wartete auf ein Fenster, das nie kam.
+ *    Die Zahlen dazu: setup_auth_started 13, setup_auth_completed 3.
+ */
+/**
+ * Der Quelltext OHNE Kommentare.
+ *
+ * ── Warum das noetig wurde (23.08.2026, beim Schreiben dieser Proben) ────────
+ *
+ * Die erste Fassung des Blocks unten war rot, und zwar zu Recht falsch: Die
+ * Kommentare oben zitieren die alte Zeile `console.log('   ✓  Browser opened
+ * — ...')` und den alten Aufruf `openInBrowser(verifyUri);`, um zu erklaeren,
+ * was behoben wurde. Der Waechter fand seine EIGENE Erklaerung im Quelltext
+ * wieder und meldete, der Fehler stehe noch da.
+ *
+ * Das ist dieselbe Fehlerklasse wie am 22.08.: ein Waechter, der Unschuldige
+ * greift, wird abgeschaltet — und dann bewacht er nichts mehr.
+ *
+ * Zeilenbasiert und bewusst grob: ganze Kommentarzeilen fallen weg,
+ * angehaengte Kommentare hinter Code bleiben stehen. Fuer diese Datei reicht
+ * das, und mehr zu bauen hiesse, einen Parser zu pflegen.
+ */
+function ohneKommentare(src: string): string {
+  return src
+    .split('\n')
+    .filter((z) => !/^\s*(\/\/|\*|\/\*)/.test(z))
+    .join('\n');
+}
+
+const CODE = ohneKommentare(QUELLE);
+
+describe('Anmeldung · beide Wege zaehlen und behaupten nichts', () => {
+  it('der Erfolg wird ebenfalls gemeldet — sonst fehlt der Nenner', () => {
+    expect(QUELLE).toContain("sendFunnelEvent('device_browser_opened'");
+  });
+
+  it('beide Ereignisse tragen, an WELCHER Stelle sie entstanden sind', () => {
+    // Werkzeugpfad und Einrichtungs-Assistent haben getrennte Trichter (51
+    // gegen 15 Starts) und wurden bisher in einen Topf geworfen.
+    for (const stelle of ["stelle: 'tool'", "stelle: 'setup'"]) {
+      expect(QUELLE, `${stelle} fehlt`).toContain(stelle);
+    }
+  });
+
+  it('DER BEFUND: der Assistent behauptet nicht mehr, der Browser sei offen', () => {
+    // Wenn diese Zeile je wieder auftaucht, ist die Luege zurueck.
+    expect(CODE).not.toContain('Browser opened —');
+    expect(CODE).not.toMatch(/✓\s+Browser opened/);
+  });
+
+  it('stattdessen steht die HANDLUNG da, und zwar unbedingt', () => {
+    // Der Browser ist die Bequemlichkeit obendrauf, nicht der Weg.
+    expect(QUELLE).toContain('Open the URL above and confirm the code to continue');
+  });
+
+  it('auch der Assistent uebergibt einen Rueckruf', () => {
+    const ab = CODE.indexOf('openInBrowser(verifyUri');
+    expect(ab, 'Aufrufstelle im Assistenten nicht gefunden').toBeGreaterThan(-1);
+    expect(CODE.slice(ab, ab + 400)).toMatch(/openInBrowser\(verifyUri,\s*\(ok, err\)/);
+  });
+
+  it('GEGENPROBE: KEIN Aufruf von openInBrowser meldet still Erfolg, wo er etwas behauptet', () => {
+    /*
+     * Die drei uebrigen Aufrufstellen (Web-Rueckfall, /setup-ai bei 401,
+     * /instances) bleiben bewusst ohne Rueckruf: sie drucken die Adresse
+     * unmittelbar DAVOR und sind reine Bequemlichkeit. Diese Probe haelt genau
+     * das fest — wer dort spaeter einen Erfolgssatz hinschreibt, faellt auf.
+     *
+     * Gezaehlt statt aufgezaehlt: die Zahl darf sinken, aber nicht steigen,
+     * ohne dass jemand hinsieht.
+     */
+    const ohneRueckruf = [...CODE.matchAll(/^\s*openInBrowser\(([^;]*?)\);/gms)].filter(
+      (m) => !m[1].includes('(ok, err)'),
+    );
+    expect(
+      ohneRueckruf.length,
+      `Aufrufe ohne Rueckruf: ${ohneRueckruf.map((m) => m[1].slice(0, 40)).join(' · ')}`,
+    ).toBeLessThanOrEqual(3);
+  });
+
+  it('GEGENPROBE: die beiden Ereignisse schliessen einander aus', () => {
+    // Ein Zweig, der beides sendet, macht den Trichter unbrauchbar. Im
+    // Erfolgsfall steht ein `return` direkt hinter der Meldung.
+    const ab = CODE.indexOf("sendFunnelEvent('device_browser_opened', { stelle: 'tool' });");
+    expect(ab, 'Werkzeugpfad sendet den Erfolg nicht').toBeGreaterThan(-1);
+    expect(CODE.slice(ab, ab + 120)).toContain('return;');
+  });
+});

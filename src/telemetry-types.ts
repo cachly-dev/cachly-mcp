@@ -31,6 +31,26 @@ export type FunnelEventName =
    * Funktion meldete Erfolg, indem sie schwieg.
    */
   | 'device_browser_failed'
+  /**
+   * Der Browser ging auf — das Gegenstueck zu `device_browser_failed`.
+   *
+   * ── Warum der Erfolg gezaehlt werden MUSS (Karte trichteranm1) ────────────
+   *
+   * Nur das Scheitern zu zaehlen, beantwortet die Frage nicht. Von 51
+   * begonnenen Anmeldungen wurden 4 abgeschlossen; 47 gingen verloren. Ohne
+   * dieses Ereignis bleiben zwei voellig verschiedene Ursachen ununterscheidbar:
+   *
+   *   begonnen − geoeffnet   =  hat nie einen Browser gesehen (Technik)
+   *   geoeffnet − beendet    =  hat ihn gesehen und aufgegeben (Aufwand)
+   *
+   * Das erste behebt man mit Code, das zweite mit weniger Schritten. Solange
+   * beides in einer Zahl steckt, waehlt man das Mittel nach Bauchgefuehl.
+   *
+   * Feld `stelle`: 'tool' (Werkzeugaufruf aus dem Editor) oder 'setup' (der
+   * Assistent `npx ... setup`/`autopilot`). Die beiden Wege haben getrennte
+   * Trichter — 51 gegen 15 Starts — und wurden bisher in einen Topf geworfen.
+   */
+  | 'device_browser_opened'
   | 'auth_self_healed'
   | 'm2m_auth_completed'
   | 'm2m_auth_failed'
