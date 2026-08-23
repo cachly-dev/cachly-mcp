@@ -37,15 +37,53 @@ const EMBED_TIMEOUT_MS = Number(process.env.CACHLY_EMBED_TIMEOUT_MS ?? 8_000);
 
 // ── Provider auto-detection ───────────────────────────────────────────────────
 
+/**
+ * Pick an embedding provider.
+ *
+ * ── WHAT THIS USED TO DO, AND WHAT IT COST (fixed 23 Aug 2026) ───────────────
+ *
+ * Until today the order was: OPENAI_API_KEY, then GEMINI, MISTRAL, COHERE,
+ * OLLAMA — and only then our own endpoint. A developer who had OPENAI_API_KEY
+ * exported for some other tool, which is the common case, got `openai` here.
+ * Lesson text and indexed source files then left the EU on the first tool
+ * call, and auto-indexing is ON by default (`CACHLY_AUTO_INDEX !== 'false'`,
+ * index.ts), so it happened without anyone choosing it.
+ *
+ * At the same time our landing page said, in German and legally sharper than
+ * the English: "Ausschliesslich auf deutschen Servern (Hetzner), nie ausserhalb
+ * der EU." Both statements lived in this repository. Which one was true for a
+ * given user was decided by an environment variable that user had set for
+ * something else entirely.
+ *
+ * ── WHY THE ORDER IS NOW REVERSED ────────────────────────────────────────────
+ *
+ * The third-party providers date from a time when embeddings were not part of
+ * the product and every user had to bring their own model. That time is over:
+ * embeddings run on our own EU infrastructure (bge-m3 on the LLM gateway).
+ * There is no longer any reason to send a single byte to OpenAI, Google,
+ * Mistral or Cohere — so we no longer do it by accident.
+ *
+ * `cachly` is now the default whenever a JWT exists. The other providers are
+ * still reachable, but ONLY when someone names them explicitly through
+ * CACHLY_EMBED_PROVIDER. A deliberate choice stays possible; an accidental one
+ * does not.
+ *
+ * OLLAMA_BASE_URL keeps its auto-detection: a local Ollama sends nothing
+ * anywhere, so it raises no data-residency question. It ranks below `cachly`
+ * because our endpoint gives every instance the same model, and mixing models
+ * makes vectors incomparable.
+ *
+ * Found in a design-workshop run, role "Der Wortpruefer", by reading each
+ * promise on the landing page against the code that would have to keep it.
+ */
 function detectEmbedProvider(): string {
-  // Client-side keys first (direct, fast, no server roundtrip)
-  if (process.env.OPENAI_API_KEY) return 'openai';
-  if (process.env.GEMINI_API_KEY) return 'gemini';
-  if (process.env.MISTRAL_API_KEY) return 'mistral';
-  if (process.env.COHERE_API_KEY) return 'cohere';
-  if (process.env.OLLAMA_BASE_URL) return 'ollama';
-  // Server-side fallback — no API key needed, but adds latency
+  // Our own EU endpoint first — no key needed beyond the one the user already
+  // has, and the vectors match every other instance.
   if (process.env.CACHLY_JWT) return 'cachly';
+  // A local Ollama leaves the machine at all, so it is safe to auto-detect.
+  if (process.env.OLLAMA_BASE_URL) return 'ollama';
+  // Third-party providers are NOT auto-detected any more. Setting
+  // OPENAI_API_KEY for some unrelated tool must not reroute our data.
   return 'none'; // no provider → embedding disabled, brain still works via exact keys
 }
 

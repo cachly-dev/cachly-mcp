@@ -144,7 +144,34 @@ async function main(): Promise<void> {
   const satzPfad = resolve(flag('pruefsatz') ?? '');
   const eingPfad = resolve(flag('eingaenge') ?? '');
   const vekPfad = resolve(flag('vektoren') ?? '');
+  /**
+   * Wie viele Plaetze jeder Kanal bekommt.
+   *
+   * ── WARUM ES ZWEI ZAHLEN BRAUCHT (gefunden am 23.08.2026) ─────────────────
+   *
+   * Bis heute gab `--pool` beiden Kanaelen dieselbe Zahl, und die Voreinstellung
+   * war 25. Das PRODUKT faehrt anders: `handlers/brain.ts:1478` gibt dem
+   * Wortabgleich 25 Plaetze, `brain.ts:105` gibt dem Bedeutungskanal 75
+   * (`SINN_TOPF`).
+   *
+   * Der Unterschied ist kein Detail, er verschiebt die Zielgroesse:
+   *
+   *   Topf 25 je Kanal   nur Woerter 68 %   Woerter+Bedeutung 87 %
+   *   Topf 75 je Kanal   nur Woerter 82 %   Woerter+Bedeutung 95 %
+   *
+   * Zwei Tage lang haben ein Naturworkshop mit zwoelf Rollen und der
+   * Orchestrator an einer Luecke von 13 Punkten gearbeitet, die im Produkt
+   * 5 Punkte gross ist. Aufgefallen ist es dem Zweifler, der als einziger
+   * nachgesehen hat, mit welcher Topfgroesse der Bench eigentlich faehrt.
+   *
+   * `--pool` bleibt als gemeinsame Zahl erhalten, damit alte Aufrufe und
+   * Vergleiche gegen frueher weiter gelten. `--wortpool` und `--sinnpool`
+   * ueberschreiben sie einzeln. Wer den AUSLIEFERSTAND messen will, nimmt
+   * `--wortpool 25 --sinnpool 75`.
+   */
   const POOL = Number(flag('pool') ?? '25');
+  const WORTPOOL = Number(flag('wortpool') ?? String(POOL));
+  const SINNPOOL = Number(flag('sinnpool') ?? String(POOL));
 
   for (const [was, pfad] of [['Korpus', korpusPfad], ['Pruefsatz', satzPfad],
     ['Eingangsdatei', eingPfad], ['Vektordatei', vekPfad]] as const) {
@@ -223,14 +250,14 @@ async function main(): Promise<void> {
 
   for (const q of satz.queries) {
     const fv = vektoren[schluessel('frage', q.query)];
-    const wortTreffer = (await keywordSearch(redis as never, [`${PRAEFIX}*`], q.query, POOL) as Array<{ key: string }>)
+    const wortTreffer = (await keywordSearch(redis as never, [`${PRAEFIX}*`], q.query, WORTPOOL) as Array<{ key: string }>)
       .map((h) => h.key.replace(PRAEFIX, ''));
 
     const sinnAListe = themen
       .map((t) => ({ topic: t, naehe: volltextVektor.has(t) ? kosinus(fv, volltextVektor.get(t)!) : -2 }))
-      .sort((a, b) => b.naehe - a.naehe).slice(0, POOL).map((x) => x.topic);
+      .sort((a, b) => b.naehe - a.naehe).slice(0, SINNPOOL).map((x) => x.topic);
 
-    const sinnBListe = besteNachEingang(fv, alleEingaenge, themen, POOL).liste.map((x) => x.topic);
+    const sinnBListe = besteNachEingang(fv, alleEingaenge, themen, SINNPOOL).liste.map((x) => x.topic);
 
     zeilen.push({
       art: q.art ?? 'ohne',
@@ -247,7 +274,14 @@ async function main(): Promise<void> {
     `${zeilen.filter(f).length} von ${n} (${Math.round((zeilen.filter(f).length / n) * 100)} %)`;
 
   console.log('');
-  console.log(`  ${korpus.lessons.length} Lektionen · ${n} frische Fragen · Vorauswahl je ${POOL}`);
+  // Die Topfgroesse steht in JEDER Ausgabe, und bei ungleichen Kanaelen
+  // getrennt. Eine Deckenzahl ohne sie ist nicht einzuordnen — genau das hat
+  // am 23.08.2026 zwei Tage Arbeit auf eine falsche Zielgroesse gelenkt.
+  const topfText = WORTPOOL === SINNPOOL
+    ? `Vorauswahl je ${WORTPOOL}`
+    : `Vorauswahl Wort ${WORTPOOL} · Bedeutung ${SINNPOOL}`
+      + (WORTPOOL === 25 && SINNPOOL === 75 ? ' (AUSLIEFERSTAND)' : '');
+  console.log(`  ${korpus.lessons.length} Lektionen · ${n} frische Fragen · ${topfText}`);
   console.log(`  ${[...alleEingaenge.values()].reduce((s2, v) => s2 + v.length, 0)} Eingaenge mit Vektor`
     + (nurArten ? ` (nur: ${nurArten.join(', ')})` : '')
     + (tuerfilter ? ` · Tuerfilter Schwelle ${schwelle}: ${gestrichen} gestrichen` : ''));
