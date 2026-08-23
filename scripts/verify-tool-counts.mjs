@@ -157,12 +157,35 @@ for (const rel of trackedSurfaces) {
 
   const expectedPhrase = `${expected} MCP tools`;
   const expectedRe = new RegExp(`\\b${expected}\\s+MCP\\s+tools\\b`, 'i');
+  /**
+   * Eine ABGELEITETE Zahl zaehlt als erfuellt — sie ist besser als die
+   * getippte, nicht schlechter.
+   *
+   * Am 23.08.2026 fiel diese Pruefung an sdk/mcp/src/index.ts, weil dort
+   * `${TOOLS.length} MCP tools` steht statt `122 MCP tools`. Die Meldung
+   * lautete "mentions MCP tools but not 122 MCP tools" — und sie haette dazu
+   * gezwungen, eine ableitbare Zahl wieder von Hand einzutippen.
+   *
+   * Das waere gegen den eigenen Zweck gelaufen. Der Kommentar oben sagt es:
+   * die Liste alter Zahlen war "selbst eine zweite Wahrheit", und genau daran
+   * ist die Pruefung am 14.08. gescheitert. Wer aus derselben Quelle liest,
+   * aus der auch `expected` kommt, kann per Bauart nicht auseinanderlaufen.
+   *
+   * Anerkannt werden die zwei Ausdruecke, die im Haus dafuer benutzt werden:
+   * TOOLS.length (das MCP-Paket) und MCP_TOOL_COUNT (die Web-Seiten). Eine
+   * beliebige andere Variable zaehlt NICHT — sonst waere jede Zahl mit einem
+   * Platzhalter zu verstecken.
+   */
+  const abgeleitetRe = /\$\{(?:TOOLS\.length|MCP_TOOL_COUNT)\}\s+MCP\s+tools\b/i;
   if (
     /MCP tools/i.test(text) &&
     !expectedRe.test(text) &&
+    !abgeleitetRe.test(text) &&
     !text.includes(`${expected}\\ MCP tools`)
   ) {
-    failures.push(`${rel}: mentions MCP tools but not "${expectedPhrase}"`);
+    failures.push(
+      `${rel}: mentions MCP tools but neither "${expectedPhrase}" nor a derived count (\${TOOLS.length} / \${MCP_TOOL_COUNT})`,
+    );
   }
 }
 

@@ -344,21 +344,54 @@ async function selfHealAuth(): Promise<boolean> {
 }
 
 // Open a URL in the user's default browser, cross-platform.
+//
 // IMPORTANT (Windows): the cmd `start` builtin treats the FIRST quoted token as the
 // window *title*, so `start "https://…"` opens an empty console window instead of the
 // browser. The fix is to pass an empty title first: `start "" "https://…"`. We run it
 // through `cmd /c` so the builtin resolves regardless of the parent shell (pwsh/cmd).
-function openInBrowser(url: string): void {
+//
+// ── WHY THIS REPORTS BACK NOW (23 Aug 2026) ──────────────────────────────────
+//
+// Measured in production: between 23 June and 14 August, 34 device sign-ins were
+// STARTED and 0 completed. Not one. Meanwhile the /device page recorded zero
+// "Device Page Viewed" events in Plausible, while other page events from the
+// same period arrived normally. So the people who got a code never reached the
+// page — the browser never opened for them.
+//
+// The old code could not have told us. `execFile` was called WITHOUT a callback,
+// so the child process error (ENOENT when `xdg-open` does not exist — every
+// container, every SSH session, every WSL install without a desktop) surfaced
+// asynchronously and the surrounding try/catch never saw it. The function
+// reported success by staying silent, which is the worst possible failure mode
+// for a step the whole onboarding depends on.
+//
+// Now it takes a callback and tells the caller. The caller decides what to say;
+// this function only stops lying about what happened.
+function openInBrowser(url: string, onResult?: (ok: boolean, err?: string) => void): void {
+  const fertig = (ok: boolean, err?: string): void => {
+    try {
+      onResult?.(ok, err);
+    } catch {
+      /* a reporting callback must never break sign-in */
+    }
+  };
+  const nachStart = (e: Error | null): void => {
+    if (e) fertig(false, (e as NodeJS.ErrnoException).code ?? e.message);
+    else fertig(true);
+  };
   try {
     if (process.platform === 'win32') {
       // Empty-string title arg is required so `start` does not treat the URL as the title.
-      execFile('cmd', ['/c', 'start', '', url], { windowsHide: true });
+      execFile('cmd', ['/c', 'start', '', url], { windowsHide: true }, nachStart);
     } else if (process.platform === 'darwin') {
-      execFile('open', [url]);
+      execFile('open', [url], nachStart);
     } else {
-      execFile('xdg-open', [url]);
+      execFile('xdg-open', [url], nachStart);
     }
-  } catch { /* non-critical — the URL is always printed for manual open */ }
+  } catch (e) {
+    // Synchronous throw (rare, e.g. bad argv) — the async path covers the rest.
+    fertig(false, e instanceof Error ? e.message : 'unknown');
+  }
 }
 
 // ── Zero-Credential Device Flow (for Smithery & zero-config installs) ─────────
@@ -1087,22 +1120,60 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     if (flow) {
       _deviceFlow = flow;
       sendFunnelEvent('device_flow_started', { tool: name });
-      // Try to open the browser automatically — fire-and-forget, never block
-      openInBrowser(flow.verifyUrl);
+      // Try to open the browser automatically — never block, but DO report.
+      //
+      // Gemessen: 34 begonnene Anmeldungen zwischen dem 23.06. und 14.08.2026,
+      // null abgeschlossene, und null Seitenaufrufe auf /device. Wenn das
+      // Oeffnen scheitert, ist das der einzige Grund, den wir kennen — und bis
+      // heute hat es niemand erfahren. Das Ereignis traegt den Fehlercode
+      // (meist ENOENT: kein xdg-open in Containern, SSH-Sitzungen und WSL ohne
+      // Oberflaeche), damit die naechste Auswertung nicht wieder raten muss.
+      //
+      // Zusaetzlich geht die Adresse auf stderr. Der Rueckgabetext eines
+      // Werkzeugs landet beim ASSISTENTEN, und ob der ihn dem Menschen zeigt,
+      // entscheidet der Assistent. stderr landet im Protokoll des Editors und
+      // ist die einzige Stelle, die niemand wegfassen kann.
+      openInBrowser(flow.verifyUrl, (ok, err) => {
+        if (ok) return;
+        sendFunnelEvent('device_browser_failed', { reason: err ?? 'unknown' });
+        process.stderr.write(
+          `\ncachly: could not open a browser (${err ?? 'unknown'}).\n`
+          + `cachly: open this yourself to finish signing in:\n`
+          + `cachly:   ${flow.verifyUrl}\n`
+          + `cachly:   code ${flow.userCode}\n\n`,
+        );
+      });
       // Poll in the background so sign-in self-completes — the user no longer
       // has to trigger another tool call to drive the flow (the #1 drop-off).
       startBackgroundDevicePoll(flow);
+      // Der Text sagt nicht mehr "browser opening…". Das war eine Behauptung,
+      // und sie war zwischen dem 23.06. und 14.08.2026 in 34 von 34 Faellen
+      // falsch. Jetzt steht die Adresse als HANDLUNG da, und der Browser ist
+      // nur noch die Bequemlichkeit obendrauf.
+      //
+      // Die erste Zeile ist ausdruecklich eine Anweisung an den Assistenten:
+      // dieser Text landet bei IHM, nicht beim Menschen, und ob er ihn zeigt,
+      // entscheidet er. Wer den Menschen erreichen will, muss es sagen.
       return [
-        '🧠 **cachly AI Brain — sign in to activate** (browser opening...)',
+        '🧠 **cachly AI Brain — the user must sign in once.**',
+        '',
+        '**Show the following link and code to the user verbatim — they cannot',
+        'continue without them.**',
         '',
         `👉 **${flow.verifyUrl}**`,
         '',
-        `Code: **${flow.userCode}** (pre-filled if browser opened automatically)`,
+        `Code: **${flow.userCode}**`,
         '',
-        'That’s it — your Brain activates automatically the moment you finish',
-        'signing in. Just keep working; your next request arrives brain-powered.',
+        'A browser may have opened automatically with the code pre-filled. If it',
+        'did not, the link above is the whole step.',
         '',
-        '✨ Free forever · No credit card · 122 MCP tools · GDPR · EU servers',
+        'Once signed in, the Brain activates on its own — no further action, no',
+        'restart. The next request arrives brain-powered.',
+        '',
+        // Die Zahl kommt aus TOOLS statt aus einer getippten 122. Auf der
+        // Landingpage standen bis heute 122 und 126 nebeneinander, weil beide
+        // von Hand gepflegt wurden.
+        `✨ Free forever · No credit card · ${TOOLS.length} MCP tools · GDPR · EU servers`,
       ].join('\n');
     }
 
@@ -2997,7 +3068,9 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
-  console.log('  \x1b[90mFree forever · GDPR · German servers · 122 MCP tools\x1b[0m');
+  // Aus TOOLS statt getippt — dieselbe Zahl stand auf der Landingpage
+  // gleichzeitig als 122 und als 126, weil beide von Hand gepflegt wurden.
+  console.log(`  \x1b[90mFree forever · GDPR · German servers · ${TOOLS.length} MCP tools\x1b[0m`);
   console.log('');
   process.exit(0);
 }

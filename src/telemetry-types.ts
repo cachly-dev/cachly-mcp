@@ -17,6 +17,20 @@ export type FunnelEventName =
   | 'device_flow_started'
   | 'device_flow_completed'
   | 'device_flow_failed'
+  /**
+   * Der Browser liess sich nicht oeffnen — mit Fehlercode im Feld `reason`.
+   *
+   * Gemessen am 23.08.2026: zwischen dem 23.06. und 14.08. wurden 34
+   * Geraete-Anmeldungen begonnen und NULL abgeschlossen, waehrend die Seite
+   * /device im selben Zeitraum null Aufrufe verzeichnete. Die Menschen, die
+   * einen Code bekamen, haben die Seite also nie gesehen.
+   *
+   * Warum das niemand merkte: openInBrowser rief execFile OHNE Rueckruf auf.
+   * Ein ENOENT (kein xdg-open in Containern, SSH-Sitzungen, WSL ohne
+   * Oberflaeche) kommt asynchron, und das try/catch drumherum sah ihn nie. Die
+   * Funktion meldete Erfolg, indem sie schwieg.
+   */
+  | 'device_browser_failed'
   | 'auth_self_healed'
   | 'm2m_auth_completed'
   | 'm2m_auth_failed'
