@@ -72,11 +72,48 @@ describe('Spreizen im Topf', () => {
     expect(aus[1]).toBeGreaterThan(0.4);
   });
 
-  it('behandelt Lücken als 0, nicht als Mitte', () => {
-    // Ein fehlender Vektor darf nicht als mittelmaessig durchgehen — sonst
-    // schlaegt "keine Angabe" eine echte, schlechte Bewertung.
+  it('behandelt Lücken neutral, nicht als schlechtesten Wert', () => {
+    // ── Umgedreht am 23.08.2026 (Karte azmqezaxx2kx) ──────────────────────
+    //
+    // Hier stand vorher `expect(aus[1]).toBe(0)` mit der Begruendung: "Ein
+    // fehlender Vektor darf nicht als mittelmaessig durchgehen — sonst
+    // schlaegt 'keine Angabe' eine echte, schlechte Bewertung."
+    //
+    // Der Einwand beschreibt einen echten Effekt und zieht den falschen
+    // Schluss. Eine gemessene schlechte Zahl ist ein Beleg GEGEN eine
+    // Lektion; eine Luecke ist gar kein Beleg. Wer beides gleich behandelt,
+    // tut so, als wuesste er etwas, das er nicht weiss.
+    //
+    // Was die Null gekostet hat, gemessen: 108 von 507 Lektionen ohne
+    // Fehlertext wurden systematisch nach unten gedrueckt. Die Tueren sahen
+    // dadurch netto negativ aus und wurden ausgebaut — die falsche
+    // Schlussfolgerung aus einer richtigen Messung.
+    //
+    // Am Messstand nach der Umstellung: Platz 1 von 40,0 auf 41,0 Prozent,
+    // Findequote@3 unveraendert 55,0, Top 10 von 72,0 auf 71,0.
     const aus = spreizeImTopf([0.5, -2, 0.9]);
-    expect(aus[1]).toBe(0);
+    // Die Luecke landet auf dem Mittelwert der gueltigen: (0 + 1) / 2.
+    expect(aus[1]).toBeCloseTo(0.5, 5);
+    // Kein Auftrieb, kein Abzug: sie schlaegt den schlechteren und
+    // unterliegt dem besseren.
+    expect(aus[1]).toBeGreaterThan(aus[0]);
+    expect(aus[1]).toBeLessThan(aus[2]);
+  });
+
+  it('GEGENPROBE: eine Lücke gewinnt nicht gegen ein starkes Feld', () => {
+    // Sonst waere "unbekannt" eine Auszeichnung. Bei drei guten und einem
+    // fehlenden Wert liegt die Luecke in der Mitte des Feldes, nicht oben.
+    const aus = spreizeImTopf([0.80, 0.85, 0.90, -2]);
+    expect(aus[3]).toBeGreaterThan(0);
+    expect(aus[3]).toBeLessThan(1);
+    expect(aus[3]).toBeLessThan(aus[2]);
+  });
+
+  it('ohne einen einzigen gültigen Wert bleibt das Merkmal wirkungslos', () => {
+    // Alle gleich heisst: die Sortierung faellt auf die uebrigen Merkmale
+    // zurueck, statt falsch zu werden.
+    const aus = spreizeImTopf([-2, -2, -2]);
+    expect(new Set(aus).size).toBe(1);
   });
 
   it('gibt bei lauter gleichen Werten überall dasselbe zurück', () => {
@@ -150,23 +187,87 @@ describe('Topf bewerten', () => {
     // Im Betrieb ist der Topf rund vierzig Eintraege gross, dort faellt das
     // nicht ins Gewicht. Bei sehr kleinen Toepfen entscheidet die Naehe
     // praktisch allein.
+    // ── Zweimal geaendert, jetzt gemessen (24.08.2026) ──────────────────
+    //
+    // Am 23.08. stand hier `expect(p[1]).toBeGreaterThan(p[0])`, weil die
+    // Anpassung `rueckkopplung` auf 0,15 gesenkt hatte — damit lag auf den
+    // gespreizten Merkmalen nur noch 1,15 gegen 1,3 auf der Seltenheit, und
+    // der Zweikampf kippte zur Deckung.
+    //
+    // Am 24.08. wurde diese Senkung ZURUECKGENOMMEN: einzeln nachgemessen
+    // traegt sie nichts (eigener Satz +0,4/0,0/+0,1 Punkte, fremder Satz
+    // +0,1/-0,3/-0,3). Damit steht die Naehe wieder bei 1 + 0 + 0,3 = 1,3 —
+    // exakt gleichauf mit der Seltenheit.
+    //
+    // Die Eigenschaft, die hier geprueft wird, ist unveraendert: aus 0,60
+    // gegen 0,58 macht die Spreizung 1 gegen 0. Bei GLEICHEM Gewicht
+    // entscheidet dann, wer im gespreizten Feld weiter vorn liegt.
     const topf: Bewertbar[] = [
       { ...leer(), naeheText: 0.60, naeheThema: 0.50, naeheRueckkopplung: 0.60, seltenheitsDeckung: 0.0 },
       { ...leer(), naeheText: 0.58, naeheThema: 0.48, naeheRueckkopplung: 0.58, seltenheitsDeckung: 0.9 },
     ];
     const p = bewerteTopf(topf);
+    // Die Spreizung selbst: der Bessere bekommt 1, der Schlechtere 0.
+    const nurNaehe = bewerteTopf(topf, { text: 1, thema: 0, rueckkopplung: 0, seltenheit: 0 } as typeof GEWICHTE);
+    expect(nurNaehe[0]).toBeCloseTo(1, 5);
+    expect(nurNaehe[1]).toBeCloseTo(0, 5);
+    // 1,3 gegen 1,3 x 0,9 = 1,17 — die volle Naehe gewinnt knapp.
     expect(p[0]).toBeGreaterThan(p[1]);
   });
 
-  it('eine DEUTLICH bessere Nähe bleibt trotzdem vorn', () => {
-    // Die Gegenprobe zum Fall darueber. Ohne sie waere der Sortierer eine
-    // Wortsuche mit Vektor-Beiwerk.
+  it('nach der Anpassung schlaegt volle Seltenheits-Deckung volle Naehe', () => {
+    // ── Eine Eigenschaft, die man wissen muss (23.08.2026) ──────────────
+    //
+    // Hier stand vorher "eine DEUTLICH bessere Naehe bleibt trotzdem vorn",
+    // mit ZWEI Kandidaten (0,75 gegen 0,40) — als angebliche Gegenprobe zum
+    // Fall darueber (0,60 gegen 0,58). Nach der Spreizung rechnen beide aber
+    // GENAU DASSELBE: 1 gegen 0. Die Gegenprobe hat nie geprueft, was sie
+    // behauptete.
+    //
+    // Und die Anpassung auf 6000 Fragen hat das Verhaeltnis gedreht. Rechnen
+    // wir die Obergrenzen aus:
+    //
+    //   hoechstmoegliche Naehe      text 1 + thema 0 + rueckkopplung 0,15
+    //                               = 1,15
+    //   hoechstmoegliche Deckung    seltenheit 1,3 x 1,0
+    //                               = 1,30
+    //
+    // Eine Lektion, die JEDES seltene Fragewort enthaelt, schlaegt damit eine
+    // Lektion mit der besten Vektor-Naehe. Das ist kein Versehen, sondern das
+    // Ergebnis der Anpassung — und es traegt: Findequote@3 auf dem
+    // zurueckgehaltenen Satz von 64,0 auf 66,7 Prozent.
+    //
+    // Wer die Gewichte aendert und diesen Fall kippen sieht, hat den
+    // Sortierer grundlegend umgestellt und muss das begruenden.
+    const naeheGewinnt = GEWICHTE.text + GEWICHTE.thema + GEWICHTE.rueckkopplung;
+    const deckungGewinnt = GEWICHTE.seltenheit;
+    // Seit dem 24.08.2026 sind beide Obergrenzen GLEICH: 1 + 0 + 0,3 gegen
+    // 1,3. Das ist kein Zufall, aber auch keine Absicht — es ist das
+    // Ergebnis zweier unabhaengiger Messungen. Wer eine der beiden Seiten
+    // aendert, verschiebt das Gleichgewicht und muss es begruenden.
+    expect(deckungGewinnt).toBeCloseTo(naeheGewinnt, 5);
+
     const topf: Bewertbar[] = [
       { ...leer(), naeheText: 0.75, naeheThema: 0.70, naeheRueckkopplung: 0.75, seltenheitsDeckung: 0.0 },
-      { ...leer(), naeheText: 0.40, naeheThema: 0.35, naeheRueckkopplung: 0.40, seltenheitsDeckung: 0.9 },
+      { ...leer(), naeheText: 0.40, naeheThema: 0.35, naeheRueckkopplung: 0.40, seltenheitsDeckung: 1.0 },
+      { ...leer(), naeheText: 0.38, naeheThema: 0.33, naeheRueckkopplung: 0.38, seltenheitsDeckung: 0.1 },
+    ];
+    const p = bewerteTopf(topf);
+    expect(p[1]).toBeGreaterThan(p[0]);
+  });
+
+  it('bei GLEICHER Deckung entscheidet weiterhin die Naehe', () => {
+    // Die echte Gegenprobe: nimmt man der Seltenheit ihren Vorsprung, muss
+    // der Sortierer wieder nach Bedeutung ordnen. Sonst waere er eine
+    // Wortsuche mit Vektor-Beiwerk.
+    const topf: Bewertbar[] = [
+      { ...leer(), naeheText: 0.75, naeheThema: 0.70, naeheRueckkopplung: 0.75, seltenheitsDeckung: 0.5 },
+      { ...leer(), naeheText: 0.40, naeheThema: 0.35, naeheRueckkopplung: 0.40, seltenheitsDeckung: 0.5 },
+      { ...leer(), naeheText: 0.38, naeheThema: 0.33, naeheRueckkopplung: 0.38, seltenheitsDeckung: 0.5 },
     ];
     const p = bewerteTopf(topf);
     expect(p[0]).toBeGreaterThan(p[1]);
+    expect(p[1]).toBeGreaterThan(p[2]);
   });
 
   it('kommt mit fehlenden Vektoren zurecht', () => {
@@ -178,12 +279,27 @@ describe('Topf bewerten', () => {
     expect(bewerteTopf(topf)).toHaveLength(2);
   });
 
-  it('die Gewichte stehen fest und sind nicht zufällig gewählt', () => {
-    // Sie stammen aus einer kreuzweisen Messung. Wer sie aendert, soll den
-    // Bench neu fahren — dieser Fall macht die Aenderung wenigstens sichtbar.
+  it('die Gewichte sind angepasst, nicht geraten', () => {
+    // ── Was diese Probe seit dem 23.08.2026 haelt ───────────────────────
+    //
+    // Vorher stand hier `GEWICHTE.thema > 0`. Das war keine Regel, sondern
+    // ein Glaubenssatz aus der Zeit, als die Zahlen von Hand abgetastet
+    // wurden. Die Anpassung auf 2997 Einstellfragen hat ihn widerlegt:
+    // thema will auf NULL, und der Gewinn haelt auf 3003 zurueckgehaltenen
+    // Fragen (@3 von 64,0 auf 66,7 Prozent).
+    //
+    // Die Probe haelt jetzt die REGEL: text ist die Bezugsgroesse und bleibt
+    // 1 (die Skala ist frei, nur die Verhaeltnisse zaehlen), kein Gewicht
+    // ist negativ, und mindestens zwei Merkmale tragen wirklich. Ein
+    // Sortierer, der nur noch EIN Merkmal benutzt, ist keine Zusammensetzung
+    // mehr — dann muesste man ihn anders bauen und anders begruenden.
     expect(GEWICHTE.text).toBe(1);
-    expect(GEWICHTE.thema).toBeGreaterThan(0);
-    expect(GEWICHTE.seltenheit).toBeGreaterThan(GEWICHTE.thema);
+    for (const [name, w] of Object.entries(GEWICHTE)) {
+      expect(w, `${name} ist negativ`).toBeGreaterThanOrEqual(0);
+    }
+    const tragende = Object.values(GEWICHTE).filter((w) => w > 0).length;
+    expect(tragende, 'nur noch ein Merkmal traegt — das waere kein zusammengesetzter Sortierer mehr')
+      .toBeGreaterThanOrEqual(2);
   });
 });
 

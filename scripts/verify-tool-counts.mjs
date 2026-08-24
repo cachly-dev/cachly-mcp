@@ -135,11 +135,44 @@ function relativePath(abs) {
   return abs.slice(repoRoot.length + 1).replaceAll('\\', '/');
 }
 
+/**
+ * Kommentare ausblenden, Zeilennummern behalten.
+ *
+ * ══ Warum das noetig wurde (24.08.2026) ═══════════════════════════════════
+ *
+ * Beim Einbau des 123. Werkzeugs meldete dieser Waechter drei Treffer in
+ * `sdk/mcp/src/index.ts` — alle drei in KOMMENTAREN, die die Geschichte
+ * erzaehlen:
+ *
+ *   "Die Zahl kommt aus TOOLS statt aus einer getippten 122."
+ *   "Auf der Landingpage standen bis heute 122 und 126 nebeneinander."
+ *
+ * Das sind Belege dafuer, dass die Zahl NICHT mehr getippt wird — und der
+ * Waechter las sie als Behauptung, sie werde getippt. Er meldete also genau
+ * die Erklaerung seiner eigenen Regel als Verstoss.
+ *
+ * Dieselbe Falle ist an einem einzigen Tag viermal in diesem Haus
+ * zugeschnappt. Ein Waechter, der seine eigene Begruendung anzeigt, wird
+ * nach zwei Tagen abgeschaltet.
+ *
+ * Markdown-Dateien bleiben unangetastet: dort ist `//` kein Kommentar,
+ * sondern kommt in Adressen vor.
+ */
+function ohneKommentare(quelle, rel) {
+  if (/\.(md|txt|json)$/i.test(rel)) return quelle;
+  const blockKommentar = /\/\*[\s\S]*?\*\//g;
+  const zeilenKommentar = /(^|[^:])\/\/[^\n]*/g;
+  const nichtUmbruch = /[^\n]/g;
+  return quelle
+    .replace(blockKommentar, (t) => t.replace(nichtUmbruch, ' '))
+    .replace(zeilenKommentar, (t, vor) => vor + ' '.repeat(t.length - vor.length));
+}
+
 for (const rel of trackedSurfaces) {
   const abs = join(repoRoot, rel);
   let text = '';
   try {
-    text = readFileSync(abs, 'utf8');
+    text = ohneKommentare(readFileSync(abs, 'utf8'), rel);
   } catch {
     failures.push(`${rel}: tracked surface is missing`);
     continue;
@@ -176,9 +209,45 @@ for (const rel of trackedSurfaces) {
    * beliebige andere Variable zaehlt NICHT — sonst waere jede Zahl mit einem
    * Platzhalter zu verstecken.
    */
-  const abgeleitetRe = /\$\{(?:TOOLS\.length|MCP_TOOL_COUNT)\}\s+MCP\s+tools\b/i;
+  /*
+   * Zwei Schreibweisen, dieselbe Ableitung. Ergaenzt am 24.08.2026:
+   *
+   *   `${MCP_TOOL_COUNT} MCP tools`   Vorlagen-Zeichenkette
+   *   {MCP_TOOL_COUNT} MCP Tools      JSX, ohne Dollarzeichen
+   *
+   * Der Ausdruck kannte nur die erste und zwang damit die JSX-Seite zurueck
+   * auf eine getippte Zahl — gegen den eigenen Zweck dieser Pruefung. Das
+   * `\s+` deckt auch einen Zeilenumbruch ab; in JSX steht die Zahl oft am
+   * Zeilenende.
+   */
+  const abgeleitetRe = /\$?\{(?:TOOLS\.length|MCP_TOOL_COUNT)\}\s+MCP\s+tools\b/i;
+  /*
+   * ── Eine ERWAEHNUNG ist keine BEHAUPTUNG (24.08.2026) ────────────────────
+   *
+   * Die Pruefung feuerte auf `sdk/mcp/src/toolspecs.ts`, weil dort steht:
+   *
+   *     const SERVER_TITLE = 'cachly AI Brain — MCP tools';
+   *
+   * Das ist ein Titel. Er nennt keine Zahl, also kann er auch keine falsche
+   * nennen. Die Forderung "schreib die richtige Zahl hinein" haette eine
+   * Zahl in einen Produktnamen gezwungen.
+   *
+   * Verlangt wird die richtige Zahl deshalb nur dort, wo UEBERHAUPT eine
+   * Zahl bei den Werkzeugen steht — sei es getippt oder abgeleitet.
+   */
+  /*
+   * Eng gefasst, und das ist Absicht. Ein erster Entwurf erlaubte eine
+   * beliebige geschweifte Klammer vor "tools" — damit traf schon jedes
+   * `{ tools: … }` in einem Objekt, und der Fehlalarm blieb.
+   *
+   * Es zaehlt genau zweierlei: eine getippte Zahl, oder einer der beiden
+   * Ausdruecke, aus denen im Haus abgeleitet wird.
+   */
+  const nenntEineZahl =
+    /(?:\d+|\$?\{(?:TOOLS\.length|MCP_TOOL_COUNT)\})\s*(?:MCP\s+)?tools?\b/i.test(text);
   if (
     /MCP tools/i.test(text) &&
+    nenntEineZahl &&
     !expectedRe.test(text) &&
     !abgeleitetRe.test(text) &&
     !text.includes(`${expected}\\ MCP tools`)

@@ -21,6 +21,7 @@ import { Vektorbestand, NAME_VEKTOR_PRAEFIX, entpacke } from '../bedeutung.js';
 import { Eingangsbestand } from '../eingaenge.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { messe, type Frage } from './auswertung.js';
+import { SINN_TOPF } from '../rangfolge-stellschrauben.js';
 
 interface Korpus { lektionen: unknown[]; fragen: Frage[] }
 interface Vektoren { fragen: Record<string, string>; eingaenge: Record<string, Record<string, string>> }
@@ -47,7 +48,7 @@ async function main(): Promise<void> {
 
   // Dieselben Fragen, zweimal gemessen. Die Reihenfolge der plaetze-Arrays
   // folgt der Reihenfolge der Fragen — darauf stuetzt sich der Vergleich.
-  const POOL = 75;
+  const POOL = SINN_TOPF;
   const mit = await messe(redis, korpus.fragen, frageVektor, bestaende, { eingaenge: 'voll', pool: POOL });
   const ohne = await messe(redis, korpus.fragen, frageVektor, bestaende, { pool: POOL });
 

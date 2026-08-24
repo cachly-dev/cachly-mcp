@@ -46,6 +46,9 @@ const AREAS = [
     tools: [
       'learn_from_attempts',
       'smart_recall',
+      // Die Rueckmeldung gehoert neben den Abruf, nicht in eine eigene Ecke:
+      // sie ist der zweite Halbsatz derselben Bewegung ("hat es geholfen?").
+      'recall_feedback',
       'causal_trace',
       'remember_context',
       'recall_context',

@@ -34,11 +34,12 @@ import { Eingangsbestand } from '../eingaenge.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { messe, quote, type Frage, type Messung } from './auswertung.js';
 import { Resonanzbestand, ueberlagere } from '../resonanz.js';
+import { SINN_TOPF } from '../rangfolge-stellschrauben.js';
 
 interface Korpus { lektionen: unknown[]; fragen: Frage[] }
 interface Vektoren { fragen: Record<string, string>; eingaenge: Record<string, Record<string, string>> }
 
-const POOL = 75;
+const POOL = SINN_TOPF;
 
 async function main(): Promise<void> {
   const hier = dirname(fileURLToPath(import.meta.url));

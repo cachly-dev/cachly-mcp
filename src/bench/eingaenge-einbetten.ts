@@ -124,13 +124,35 @@ async function main(): Promise<void> {
   // Vorhandene Vektoren uebernehmen (Sicht A = Volltext, Sicht C = Name).
   const ladeSicht = (endung: string): Array<number[] | null> => {
     const p = korpusPfad.replace(/\.json$/, endung);
-    if (!existsSync(p)) fehlt(`Vektordatei ${endung}`, p);
+    if (!existsSync(p)) {
+      /*
+       * ── Ein fehlender Zwischenspeicher ist kein Fehler ─────────────────
+       *
+       * Bis zum 23.08.2026 brach das Werkzeug hier ab. Das war richtig fuer
+       * den einen Fall, fuer den es gebaut wurde: einen Korpus nachruesten,
+       * dessen Vektoren schon berechnet sind.
+       *
+       * Fuer einen NEUEN Korpus — etwa die Fremdernte aus oeffentlichen
+       * Repos — gibt es diesen Zwischenspeicher naturgemaess nicht. Dann ist
+       * "fehlt" die richtige Antwort, nicht "Abbruch": alles faellt weiter
+       * unten in die Liste dessen, was ueber das Netz muss.
+       *
+       * Die Meldung bleibt sichtbar. Ein still uebersprungener
+       * Zwischenspeicher waere teuer, ohne dass es jemand merkt.
+       */
+      console.log(`  (kein Zwischenspeicher ${endung} — alles wird frisch eingebettet)`);
+      return [];
+    }
     const roh = JSON.parse(readFileSync(p, 'utf8')) as Record<string, Array<number[] | null>>;
     return roh.lektionen ?? roh.alle ?? [];
   };
   const sichtA = ladeSicht('.einbettungen.json').slice(0, korpus.lessons.length);
   const sichtC = ladeSicht('.sicht-c.json').slice(0, korpus.lessons.length);
-  if (sichtA.length !== korpus.lessons.length || sichtC.length !== korpus.lessons.length) {
+  // Leer heisst "kein Zwischenspeicher" und ist erlaubt. Eine NICHT LEERE,
+  // aber falsch lange Liste heisst dagegen: der Korpus wurde umsortiert, und
+  // dann waere jede Zuordnung ueber die Position falsch.
+  const passtNicht = (v: Array<number[] | null>) => v.length > 0 && v.length !== korpus.lessons.length;
+  if (passtNicht(sichtA) || passtNicht(sichtC)) {
     console.error(`NICHT GEMESSEN: Vektorzahl passt nicht zum Korpus (A=${sichtA.length}, C=${sichtC.length}, Lektionen=${korpus.lessons.length}).`);
     process.exit(3);
   }

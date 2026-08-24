@@ -24,7 +24,7 @@
     <img src="https://img.shields.io/badge/GDPR-EU%20servers-green" alt="GDPR: EU servers" />
   </a>
   &nbsp;
-  <img src="https://img.shields.io/badge/122_MCP_tools-violet" alt="122 MCP tools" />
+  <img src="https://img.shields.io/badge/123_MCP_tools-violet" alt="123 MCP tools" />
   &nbsp;
   <img src="https://img.shields.io/badge/License-Apache--2.0-yellow" alt="License: Apache-2.0" />
 </p>
@@ -301,7 +301,7 @@ MCP tool — bulk-ingests past outcomes the same way `brain_from_git` ingests co
 
 ---
 
-## MCP Tools (122 total)
+## MCP Tools (123 total)
 
 The full tool catalog is generated from `sdk/mcp/src/tools.ts`. Cross-surface
 coverage is tracked in [`../../docs/generated/surface-parity.md`](../../docs/generated/surface-parity.md),

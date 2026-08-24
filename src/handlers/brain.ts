@@ -59,6 +59,15 @@ import { spurLegen } from '../spuren.js';
 import {
   bewerteTopf, spreizeImTopf, reichereAn, inhaltsWoerter, grobStamm, GEWICHTE,
 } from '../rangfolge.js';
+import {
+  pruefeWirkung, werteAus, lehrwert, leiteAb,
+  type Wirkungseintrag, type WirkungsEingabe, type LetzterRecall,
+} from '../wirkungsspur.js';
+import {
+  SINN_TOPF as STELLSCHRAUBE_SINN_TOPF,
+  EINGANG_SCHWELLE as STELLSCHRAUBE_EINGANG_SCHWELLE,
+  EINGANG_SORTIER_GEWICHT as STELLSCHRAUBE_EINGANG_SORTIER_GEWICHT,
+} from '../rangfolge-stellschrauben.js';
 
 /**
  * Ein Vektorbestand fuer den ganzen Prozess.
@@ -102,7 +111,9 @@ const seltenheitsbestand = new Seltenheitsbestand();
  * Lektionen: nur die Sortierung bekommt mehr Kandidaten, und die kostet je
  * Kandidat vier Zahlen.
  */
-const SINN_TOPF = 75;
+// Wert in ../rangfolge-stellschrauben.js — dieselbe Zahl benutzt der
+// Messstand. Die Begruendung steht hier, der Wert dort.
+const SINN_TOPF = STELLSCHRAUBE_SINN_TOPF;
 
 /**
  * Ab welcher Naehe eine Fehlertext-Tuer als Signal zaehlt.
@@ -145,7 +156,7 @@ const SINN_TOPF = 75;
  * Die Tueren nominieren weiter NICHT — dort haben sie die richtige Antwort
  * fuenfmal ganz aus dem Topf gedraengt und einmal hineingeholt.
  */
-const EINGANG_SCHWELLE = 0.5;
+const EINGANG_SCHWELLE = STELLSCHRAUBE_EINGANG_SCHWELLE;
 
 /**
  * Wie stark die Tuer mitsortiert.
@@ -164,7 +175,7 @@ const EINGANG_SCHWELLE = 0.5;
  *
  * 0,2 liegt mittig im Band, in dem BEIDE Kennzahlen ihr Maximum halten.
  */
-const EINGANG_SORTIER_GEWICHT = 0.2;
+const EINGANG_SORTIER_GEWICHT = STELLSCHRAUBE_EINGANG_SORTIER_GEWICHT;
 
 /*
  * ── Ein ZWEITES Tuer-Merkmal wurde gemessen und NICHT eingebaut ─────────────
@@ -614,7 +625,7 @@ type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 
 export const BRAIN_TOOL_NAMES = new Set([
-  'learn_from_attempts', 'recall_best_solution', 'smart_recall',
+  'learn_from_attempts', 'recall_best_solution', 'smart_recall', 'recall_feedback',
   'session_start', 'session_start_summary', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
   'brain_who_knows', 'brain_file_map', 'team_expertise_map',
   'skill_gaps', 'brain_coverage', 'brain_metrics', 'brain_service_map',
@@ -1312,9 +1323,112 @@ export async function handleBrainTool(
       ].filter(l => l !== '').join('\n');
     }
 
+    /**
+     * ══ Die Wirkungsspur ═══════════════════════════════════════════════════
+     *
+     * Das Feld, das dem Produkt bis zum 23.08.2026 gefehlt hat. Alle
+     * Kennzahlen zaehlten ANZEIGEN — `recall_count` heisst "wurde
+     * ausgegeben", die ROI-Stunden waren Anzeigen mal einer Schaetzung,
+     * `team_confirm` sagt nur, dass jemand die Lektion allgemein gut findet.
+     *
+     * Nirgends stand: DIESE Lektion hat GENAU DIESE Frage beantwortet.
+     *
+     * Ohne dieses Paar bleibt jedes Gewicht der Rangfolge eine Abtastung auf
+     * 100 handgeschriebenen Fragen. Mit ihm wird es lernbar.
+     *
+     * Angehaengt, nie ueberschrieben: das hier sind Trainingsdaten.
+     */
+    case 'recall_feedback': {
+      const { instance_id } = args as { instance_id: string };
+      const redis = await getConnection(instance_id);
+
+      const geprueft = pruefeWirkung(args as WirkungsEingabe, new Date().toISOString());
+      if (!geprueft.ok) {
+        return [
+          `⚠️ ${geprueft.grund}`,
+          '',
+          'Beispiel:',
+          '```',
+          'recall_feedback(instance_id="…", query="warum bricht der Deploy ab",',
+          '  topic="ci:zeitgrenze-meldet-cancelled", helped=true, rank=0)',
+          '```',
+          'rank=0 heisst: die Lektion stand GAR NICHT in der Antwort.',
+          'Das ist die wertvollste Rueckmeldung von allen.',
+        ].join('\n');
+      }
+
+      const eintrag = geprueft.eintrag;
+      const schluessel = `cachly:wirkung:${instance_id}`;
+      await redis.rpush(schluessel, JSON.stringify(eintrag));
+
+      const roh = await redis.lrange(schluessel, 0, -1).catch(() => [] as string[]);
+      const spur = roh
+        .map((z) => safeJsonParse(z, null as null | Wirkungseintrag))
+        .filter(Boolean) as Wirkungseintrag[];
+      const zahlen = werteAus(spur);
+      const wert = lehrwert(eintrag);
+
+      const deutung: Record<string, string> = {
+        'fehlender-treffer':
+          'Sie half, stand aber gar nicht in der Antwort — der Topf hat sie nicht aufgenommen. Das ist der wertvollste Fall.',
+        'zu-weit-hinten':
+          `Sie half, stand aber auf Platz ${eintrag.platz} — die Sortierung war zu schwach.`,
+        'falsch-und-sicher':
+          `Sie stand auf Platz ${eintrag.platz} und half nicht — die Sortierung war sich sicher und lag falsch.`,
+        bestaetigung: 'Sie stand vorn und half. Bestaetigung.',
+        unauffaellig: 'Half nicht und stand hinten. Sagt wenig.',
+      };
+
+      const quote = zahlen.trefferquote === null
+        ? 'noch keine hilfreiche Rueckmeldung'
+        : `${(zahlen.trefferquote * 100).toFixed(0)} % der hilfreichen Lektionen standen unter den ersten dreien`;
+
+      return [
+        `✅ Notiert: **${eintrag.thema}** — ${eintrag.geholfen ? 'hat geholfen' : 'hat nicht geholfen'}`
+        + `, Platz ${eintrag.platz === 0 ? '— (stand nicht drin)' : eintrag.platz}`,
+        '',
+        deutung[wert],
+        '',
+        `Spur: ${zahlen.gesamt} Rueckmeldungen, ${quote}.`,
+        `Davon: ${zahlen.nachLehrwert['fehlender-treffer']} nicht gefunden · `
+        + `${zahlen.nachLehrwert['zu-weit-hinten']} zu weit hinten · `
+        + `${zahlen.nachLehrwert['falsch-und-sicher']} falsch und sicher.`,
+      ].join('\n');
+    }
+
     case 'recall_best_solution': {
       const { instance_id, topic } = args as { instance_id: string; topic: string };
       const redis = await getConnection(instance_id);
+
+      /*
+       * ── Die Auswahl mitschreiben, ohne jemanden zu fragen ─────────────
+       *
+       * Wer hier ankommt, hat sich fuer EINE Lektion entschieden. Stand kurz
+       * davor eine Suche, dann ist die Platzierung dieser Lektion in jener
+       * Antwort genau die Zahl, die der Sortierung fehlt.
+       *
+       * Das laeuft bei JEDEM Hersteller, in JEDER IDE, mit JEDEM Modell — es
+       * braucht keine Absprache, weil beide Ereignisse ohnehin durch diesen
+       * Server gehen.
+       *
+       * Der Eintrag traegt `quelle: 'abgeleitet'`. Er sagt AUSGEWAEHLT, nicht
+       * GELOEST, und wird getrennt gezaehlt. Alles andere waere dieselbe
+       * Luege wie Anzeigen als Wert zu buchen.
+       *
+       * Best-effort: schlaegt es fehl, bekommt der Mensch trotzdem seine
+       * Lektion. Eine Messung darf das Produkt nie aufhalten.
+       */
+      try {
+        const rohLetzter = await redis.get(`cachly:letzter-recall:${instance_id}`);
+        const letzter = rohLetzter ? safeJsonParse(rohLetzter, null as null | LetzterRecall) : null;
+        const abgeleitet = leiteAb(letzter, topic, new Date().toISOString());
+        if (abgeleitet) {
+          await redis.rpush(`cachly:wirkung:${instance_id}`, JSON.stringify(abgeleitet));
+          // Einmal je Suche: sonst zaehlt jedes weitere Oeffnen dieselbe
+          // Suche noch einmal, und aus einer Frage werden fuenf Belege.
+          await redis.del(`cachly:letzter-recall:${instance_id}`);
+        }
+      } catch { /* Die Spur darf keinen Abruf kaputtmachen. */ }
 
       // Try exact best-solution key first
       const best = await redis.get(`cachly:lesson:best:${topic}`);
@@ -2161,6 +2275,65 @@ export async function handleBrainTool(
           lines.push(`  • Try different keywords`);
           lines.push(`  • Use \`list_remembered\` to see available context`);
           lines.push(`  • Use \`recall_best_solution("topic")\` for exact topic lookup`);
+        }
+      }
+
+      /*
+       * ── Die Einladung zur Rueckmeldung ────────────────────────────────
+       *
+       * EINE Zeile, und nur wenn ueberhaupt etwas gefunden wurde. Ein
+       * Werkzeug, das niemand kennt, wird nicht benutzt — und ohne diese
+       * Rueckmeldung bleibt jedes Gewicht der Rangfolge eine Abtastung auf
+       * 100 handgeschriebenen Fragen.
+       *
+       * Der Hinweis nennt BEIDE Faelle. Nur nach dem Treffer zu fragen waere
+       * genau der Entwurfsfehler, den die Spur vermeiden soll: der wertvollste
+       * Eintrag ist der, bei dem die richtige Lektion GAR NICHT dabei war.
+       */
+      if (hybridResults.length > 0) {
+        lines.push('');
+        lines.push(
+          '↩︎ Hat eine davon geholfen? `recall_feedback(query=…, topic=…, helped=true, rank=N)` — '
+          + 'und wenn die richtige Lektion **nicht** dabei war: dieselbe Meldung mit `rank=0`. '
+          + 'Das ist die einzige Zahl, die die Sortierung besser macht.',
+        );
+
+        /*
+         * ── Der automatische Weg ──────────────────────────────────────────
+         *
+         * Die Zeile darueber ist eine Bitte. Bitten wirken bei einem
+         * Hersteller und bei den anderen nicht.
+         *
+         * Deshalb merkt sich der Server hier, WAS er in welcher Reihenfolge
+         * angeboten hat. Oeffnet gleich darauf jemand eine dieser Lektionen
+         * (`recall_best_solution`), faellt die Platzierung von selbst an —
+         * ohne dass irgendeine KI, irgendeine IDE oder irgendein Hersteller
+         * etwas anders machen muss.
+         *
+         * Zwei Stunden Haltbarkeit: laenger waere geraten. Wer eine Lektion
+         * am naechsten Tag oeffnet, tut das nicht mehr wegen dieser Suche.
+         */
+        const angebotene = hybridResults
+          .filter((r) => r.key.startsWith('cachly:lesson:best:'))
+          .map((r) => r.key.slice('cachly:lesson:best:'.length));
+        /*
+         * try/catch, nicht .catch(): der erste Entwurf haing ein `.catch()`
+         * an den Aufruf und fiel trotzdem um. `redis.setex` ist bei manchen
+         * Klienten gar nicht vorhanden — das wirft SYNCHRON einen TypeError,
+         * und ein .catch() fuer abgelehnte Zusagen sieht den nie. Elf Proben
+         * haben das binnen einer Minute gezeigt.
+         *
+         * Eine Messung darf das Produkt nie umwerfen. Wenn sie es doch tut,
+         * hatte der Schutz die falsche Form.
+         */
+        if (angebotene.length > 0) {
+          try {
+            await redis.setex(
+              `cachly:letzter-recall:${instance_id}`,
+              7200,
+              JSON.stringify({ frage: query, themen: angebotene } satisfies LetzterRecall),
+            );
+          } catch { /* Die Spur darf keine Suche kaputtmachen. */ }
         }
       }
 

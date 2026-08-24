@@ -56,12 +56,13 @@ import { Vektorbestand, NAME_VEKTOR_PRAEFIX, entpacke } from '../bedeutung.js';
 import { Eingangsbestand } from '../eingaenge.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { messe, quote, type Frage, type Messung } from './auswertung.js';
+import { SINN_TOPF, EINGANG_SCHWELLE, EINGANG_SORTIER_GEWICHT } from '../rangfolge-stellschrauben.js';
 
 interface Korpus { lektionen: unknown[]; fragen: Frage[] }
 interface Vektoren { fragen: Record<string, string>; eingaenge: Record<string, Record<string, string>> }
 
-const POOL = 75;
-const EINGANG_SCHWELLE = 0.5;
+const POOL = SINN_TOPF;
+
 
 async function main(): Promise<void> {
   const hier = dirname(fileURLToPath(import.meta.url));
@@ -92,7 +93,7 @@ async function main(): Promise<void> {
         const n = eingangsbestand.besteNaehe(fv, topic);
         return n >= EINGANG_SCHWELLE ? n : -2;
       },
-      gewicht: 0.2,
+      gewicht: EINGANG_SORTIER_GEWICHT,
     },
   };
 

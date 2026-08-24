@@ -32,11 +32,12 @@ import { Vektorbestand, NAME_VEKTOR_PRAEFIX, entpacke, kosinus } from '../bedeut
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import type { Frage } from './auswertung.js';
 import { varianten } from '../interferenz.js';
+import { SINN_TOPF } from '../rangfolge-stellschrauben.js';
 
 interface Korpus { lektionen: unknown[]; fragen: Frage[] }
 interface Vektoren { fragen: Record<string, string>; eingaenge: Record<string, Record<string, string>> }
 
-const POOL = 25;
+const POOL = SINN_TOPF;
 
 async function main(): Promise<void> {
   const hier = dirname(fileURLToPath(import.meta.url));

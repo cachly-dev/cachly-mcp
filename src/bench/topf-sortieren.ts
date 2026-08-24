@@ -38,6 +38,7 @@ import { EventEmitter } from 'node:events';
 import { keywordSearch } from '../search.js';
 import { kosinus, mischeRangfolgen } from '../bedeutung.js';
 import type { BenchLesson, BenchQuery } from './fixtures.js';
+import { SINN_TOPF } from '../rangfolge-stellschrauben.js';
 
 interface Korpus { lessons: BenchLesson[]; queries: BenchQuery[] }
 const pfad = process.argv[2];
@@ -93,7 +94,7 @@ function spreize(werte: number[]): number[] {
   return werte.map((x) => (x > -2 ? (x - min) / (max - min) : 0));
 }
 
-const POOL = 25;
+const POOL = SINN_TOPF;
 const kandidatenJeFrage: Kandidat[][] = [];
 const ziele: string[] = [];
 

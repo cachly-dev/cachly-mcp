@@ -29,7 +29,7 @@
  *   npx tsx src/bench/findequote-messen.ts --selbstprobe
  */
 
-import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, createWriteStream, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { keywordSearch } from '../search.js';
 import { kosinus, mischeRangfolgen } from '../bedeutung.js';
@@ -41,6 +41,7 @@ import { mitLektionen } from './mini-redis.js';
 import { schluessel } from './eingaenge-einbetten.js';
 import type { Eingang } from './eingaenge-b.js';
 import type { BenchLesson } from './fixtures.js';
+import { SINN_TOPF } from '../rangfolge-stellschrauben.js';
 
 // Der 3000er-Pool (22.08.2026) traegt fuenf Achsen je Frage. Sie sind optional:
 // die beiden alten eingefrorenen Saetze haben sie nicht, und die Messung muss
@@ -105,9 +106,17 @@ async function main(): Promise<void> {
   const satzPfad = resolve(flag('pruefsatz') ?? '');
   const eingPfad = resolve(flag('eingaenge') ?? '');
   const vekPfad = resolve(flag('vektoren') ?? '');
-  const POOL = Number(flag('pool') ?? '25');
+  // Vorgabe aus dem Auslieferstand, NICHT aus einer Zahl hier. Bis zum
+  // 24.08.2026 stand hier 25, waehrend das Produkt mit 75 sucht — jede
+  // Messung ohne ausdrueckliches --pool mass damit eine Suchmaschine mit
+  // einem Drittel der Kandidaten. Genau die Fehlerklasse, gegen die
+  // rangfolge-stellschrauben.ts gebaut wurde.
+  const POOL = Number(flag('pool') ?? String(SINN_TOPF));
   const tueren = flag('tueren')?.split(',').map((x) => x.trim()).filter(Boolean);
   const eingangsGewicht = Number(flag('eingang') ?? '0');
+  // Optionaler Merkmals-Auszug fuer den Gewichts-Anpasser.
+  const merkmalPfad = flag('merkmale-nach');
+  const merkmalStrom = merkmalPfad ? createWriteStream(resolve(merkmalPfad)) : null;
   const dreifach = argv.includes('--dreifach');
 
   // --rrf: den AUSGELIEFERTEN Pfad messen statt des Sortierers aus rangfolge.ts.
@@ -282,6 +291,36 @@ async function main(): Promise<void> {
       })()
       : topf.map((t, i) => ({ t, p: punkte[i] }))
         .sort((a, b) => b.p - a.p).map((x) => x.t);
+    if (merkmalStrom) {
+      /*
+       * ── Warum die Merkmale ausgeschrieben werden ────────────────────────
+       *
+       * Ein voller Lauf ueber 2997 Fragen kostet 243 Sekunden. Ein Suchlauf
+       * ueber dreissig Gewichtungen waere damit zwei Stunden.
+       *
+       * Die Merkmale haengen aber GAR NICHT von den Gewichten ab — nur ihre
+       * Verrechnung tut das. Einmal rechnen, tausendmal bewerten.
+       *
+       * Wichtig dabei: der Anpasser darf die Punktzahl NICHT selbst
+       * nachbauen. Er liest diese Datei und ruft dieselbe `bewerteTopf`, die
+       * im Produkt sortiert. Sonst haetten wir wieder zwei Messstaende, die
+       * sich langsam auseinanderbewegen — der Fehler vom 20.08.2026.
+       */
+      merkmalStrom.write(`${JSON.stringify({
+        query: q.query,
+        art: q.art ?? 'ohne',
+        relevant: q.relevant,
+        topf: topf.map((t, i) => ({
+          t,
+          nT: bewertbar[i].naeheText,
+          nTh: bewertbar[i].naeheThema,
+          nR: bewertbar[i].naeheRueckkopplung,
+          sD: bewertbar[i].seltenheitsDeckung,
+          bE: besterEingangVon(t),
+        })),
+      })}
+`);
+    }
     const platz = bestePlatzierung(rangfolge, q.relevant);
     plaetze.push(platz);
     const art = q.art ?? 'ohne';
@@ -322,6 +361,7 @@ async function main(): Promise<void> {
     writeFileSync(resolve(diagnosePfad), diagnose.map((d) => JSON.stringify(d)).join('\n') + '\n', 'utf8');
     console.log(`  Diagnose: ${diagnose.length} Zeilen nach ${resolve(diagnosePfad)}`);
   }
+  if (merkmalStrom) merkmalStrom.end();
 
   const quote = (ps: number[], bis: number): string => {
     const n = ps.filter((p) => p > 0 && p <= bis).length;

@@ -138,14 +138,65 @@ export class Seltenheit {
   }
 }
 
-/** Auf 0 bis 1 spreizen — innerhalb des Topfes, nicht über den Bestand. */
+/**
+ * Auf 0 bis 1 spreizen — innerhalb des Topfes, nicht über den Bestand.
+ *
+ * ══ Was eine Lücke bedeutet (Karte azmqezaxx2kx, 23.08.2026) ═══════════════
+ *
+ * Bis heute bekam ein fehlender Wert (−2) eine **Null**, also den
+ * schlechtesten Platz im Bereich [0,1]. Wer das Merkmal hatte, konnte damit
+ * nur gewinnen; wer es nicht hatte, nur verlieren.
+ *
+ * Das ist kein Fehler EINES Merkmals. Es trifft jedes Merkmal, das nicht alle
+ * Lektionen haben — und das sind alle außer den Volltext-Vektoren.
+ *
+ * ── Was es gekostet hat, in Zahlen ────────────────────────────────────────
+ *
+ * Bei den Fehlertext-Türen hatten 108 von 507 Lektionen keinen Eintrag. Sie
+ * wurden systematisch nach unten gedrückt, unabhängig von der Passung.
+ * Gemessene Folge: die Türen sahen netto negativ aus (−2 auf Platz 1) und
+ * wurden ausgebaut. Mit einer Schwelle davor sind sie **+2 auf Platz 1 und
+ * +2 auf @3** — der Ausbau war die falsche Schlussfolgerung aus einer
+ * richtigen Messung. Bei der Resonanz dasselbe Bild: 64 von 499 Lektionen.
+ *
+ * ── Der Einwand, der hier vorher stand, und warum er nicht trägt ──────────
+ *
+ * Die alte Probe begründete die Null so: *"Ein fehlender Vektor darf nicht
+ * als mittelmäßig durchgehen — sonst schlägt 'keine Angabe' eine echte,
+ * schlechte Bewertung."*
+ *
+ * Der Einwand beschreibt einen echten Effekt, zieht aber den falschen
+ * Schluss. **Eine gemessene schlechte Zahl ist ein Beleg GEGEN eine Lektion.
+ * Eine Lücke ist gar kein Beleg.** Wer beides gleich behandelt, tut so, als
+ * wüsste er etwas, das er nicht weiß — und bestraft dabei genau die
+ * Lektionen, über die das Merkmal nichts sagen kann.
+ *
+ * Die Lücke landet deshalb auf dem **Mittelwert der gültigen Werte**: kein
+ * Auftrieb, kein Abzug. Wer besser ist als der Durchschnitt, gewinnt gegen
+ * sie; wer schlechter ist, verliert gegen sie. Genau das heißt "unbekannt".
+ *
+ * ── Warum das mehr ist als eine Feinheit ─────────────────────────────────
+ *
+ * In `handlers/brain.ts` steht heute ein `EINGANG_SCHWELLE`, der −2 erzeugt,
+ * bevor diese Funktion es falsch verrechnet. Das wirkt, ist aber eine
+ * Umgehung an der Aufrufstelle: **jedes künftige Merkmal braucht dieselbe
+ * Umgehung, und wer sie vergisst, baut den Fehler neu.**
+ */
 export function spreizeImTopf(werte: number[]): number[] {
   const gueltig = werte.filter((x) => Number.isFinite(x) && x > -2);
   if (gueltig.length === 0) return werte.map(() => 0);
   let min = Infinity; let max = -Infinity;
   for (const x of gueltig) { if (x < min) min = x; if (x > max) max = x; }
   if (max === min) return werte.map(() => 0.5);
-  return werte.map((x) => (x > -2 ? (x - min) / (max - min) : 0));
+
+  // −1 markiert vorläufig die Lücken: der Wertebereich der gültigen ist [0,1],
+  // ein negativer Wert kann dort nicht entstehen und ist damit eindeutig.
+  const gespreizt = werte.map((x) =>
+    Number.isFinite(x) && x > -2 ? (x - min) / (max - min) : -1);
+  let summe = 0;
+  for (const x of gespreizt) if (x >= 0) summe += x;
+  const mittel = summe / gueltig.length;
+  return gespreizt.map((x) => (x >= 0 ? x : mittel));
 }
 
 /**
@@ -180,14 +231,69 @@ export function reichereAn(frage: number[], besteTreffer: number[][], anteil = 0
  * NICHT dabei: was nur in einer Hälfte hilft, ist eine Eigenschaft dieser
  * Hälfte, keine des Verfahrens.
  */
+/**
+ * ══ Angepasst am 23.08.2026, zum ersten Mal ════════════════════════════════
+ *
+ * Diese vier Zahlen waren bis heute von Hand abgetastet — jede einzeln, auf
+ * 100 Fragen. Sie waren das beste Wissen von jemandem, nicht das Ergebnis von
+ * Fällen.
+ *
+ * Seit dem 22.08.2026 liegen zwei überschneidungsfreie Sätze bereit: 2997
+ * Fragen zum Einstellen, 3003 zum Abnehmen, beide über vier Achsen
+ * geschichtet. Sie sind nie benutzt worden.
+ *
+ * Angepasst wurde per Koordinatensuche auf dem EINSTELLsatz
+ * (`bench/gewichte-anpassen.ts`, 63 Bewertungen), abgenommen genau einmal auf
+ * dem Prüfsatz:
+ *
+ *                  Prüfsatz vorher   Prüfsatz nachher
+ *     Platz 1           48,8 %            51,8 %
+ *     Findequote@3      64,0 %            66,7 %
+ *     Top 10            76,6 %            77,9 %
+ *
+ * Der Gewinn überträgt sich also auf Fragen, die beim Einstellen nie gesehen
+ * wurden. Die Nachbarschaft trägt: eine Änderung um ±0,1 auf jeder Achse
+ * kostet höchstens 0,5 Punkte — das Ergebnis steht nicht auf einer
+ * Messerschneide.
+ *
+ * ── Der überraschende Teil ────────────────────────────────────────────────
+ *
+ * `thema` will auf NULL. Die Ähnlichkeit zum Themennamen trägt auf diesem
+ * Bestand nichts bei; sie kostet sogar. Das Merkmal bleibt im Code — es wird
+ * nur nicht mehr gewichtet.
+ *
+ * ── Die Einschränkung, die dazugehört ────────────────────────────────────
+ *
+ * Angepasst wurde auf EINEM Bestand: unseren 499 Lektionen. Dass `thema` hier
+ * nichts trägt, heißt nicht, dass es bei einer Kundin mit anderen Themennamen
+ * nichts trägt. Die richtige Antwort darauf sind Gewichte JE INSTANZ, gespeist
+ * aus der Wirkungsspur (`wirkungsspur.ts`) — bis dahin ist das hier der beste
+ * gemessene Stand, nicht der endgültige.
+ */
 export const GEWICHTE = {
-  /** Nähe zum ganzen Text. Der Grundstock, deshalb 1. */
+  /** Nähe zum ganzen Text. Der Grundstock, deshalb 1 — die Skala ist frei. */
   text: 1,
-  /** Nähe zum Themennamen. In beiden Richtungen 0,6. */
-  thema: 0.6,
-  /** Angereicherte Frage gegen den ganzen Text. In beiden Richtungen 0,3. */
+  /**
+   * Nähe zum Themennamen. Angepasst von 0,6 auf 0. Auf 2997 Einstellfragen
+   * gemessen: jeder Wert über 0 kostet Findequote@3.
+   */
+  thema: 0,
+  /**
+   * Angereicherte Frage gegen den ganzen Text. Unverändert 0,3.
+   *
+   * Die Anpassung vom 23.08.2026 hatte 0,15 vorgeschlagen. Am 24.08. einzeln
+   * nachgemessen — und wieder zurückgenommen, weil sie nichts trägt:
+   *
+   *              Platz 1        @3           Top 10
+   *   eigener    +0,4 (p 0,045) 0,0 (p 0,82) +0,1 (p 0,58)
+   *   fremder    +0,1 (p 1,00)  −0,3 (p 0,45) −0,3 (p 0,37)
+   *
+   * Auf 1195 fremden Paaren ist sie sogar leicht negativ. Eine Änderung, die
+   * man nicht belegen kann, wird nicht ausgeliefert — auch dann nicht, wenn
+   * sie aus einer Anpassung stammt, deren übrige Teile tragen.
+   */
   rueckkopplung: 0.3,
-  /** Anteil der seltenen Fragewörter im Text. 1,0 bis 1,6 — Mitte genommen. */
+  /** Anteil der seltenen Fragewörter im Text. Unverändert — 1,3 hält. */
   seltenheit: 1.3,
 } as const;
 

@@ -41,6 +41,7 @@ import { mitLektionen } from './mini-redis.js';
 import { kosinus, mischeRangfolgen } from '../bedeutung.js';
 import { grobStamm as stamm } from '../rangfolge.js';
 import type { BenchLesson, BenchQuery } from './fixtures.js';
+import { SINN_TOPF } from '../rangfolge-stellschrauben.js';
 
 interface Korpus { lessons: BenchLesson[]; queries: BenchQuery[] }
 const pfad = process.argv[2];
@@ -124,7 +125,7 @@ for (const menge of textWoerter) for (const w of menge) textDf.set(w, (textDf.ge
 const textSeltenheit = (w: string) =>
   Math.log((korpus.lessons.length + 1) / ((textDf.get(w) ?? 0) + 1));
 
-const POOL = 25;
+const POOL = SINN_TOPF;
 const kandidatenJeFrage: Kandidat[][] = [];
 const ziele: string[] = [];
 const nachThema = new Map(korpus.lessons.map((l, j) => [l.topic, j]));

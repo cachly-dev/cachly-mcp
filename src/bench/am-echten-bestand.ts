@@ -34,6 +34,7 @@ import { Eingangsbestand } from '../eingaenge.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { schluessel } from './eingaenge-einbetten.js';
 import { messe, bestePlatzierung, quote, type Frage } from './auswertung.js';
+import { SINN_TOPF } from '../rangfolge-stellschrauben.js';
 
 export { bestePlatzierung };
 
@@ -63,7 +64,7 @@ async function main(): Promise<void> {
   if (!url) { console.error('NICHT GEMESSEN: REDIS_URL fehlt.'); process.exit(2); }
   const satzPfad = resolve(flag('pruefsatz') ?? '');
   const vekPfad = resolve(flag('vektoren') ?? '');
-  const POOL = Number(flag('pool') ?? '25');
+  const POOL = Number(flag('pool') ?? String(SINN_TOPF));
   // Seit dem 21.08.2026 sind die Tueren in Produktion AUS — der Schalter
   // zeigt deshalb in die andere Richtung als frueher.
   const mitEingaengen = argv.includes('--mit-eingaengen');

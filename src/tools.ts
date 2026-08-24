@@ -620,6 +620,41 @@ const TOOLS = [
     },
   },
   {
+    name: 'recall_feedback',
+    description:
+      'Tell the Brain whether a recalled lesson ACTUALLY SOLVED your problem. ' +
+      'This is the one signal the Brain cannot infer: recall_count only means "it was shown". ' +
+      'Call it right after a lesson helped you — or after you solved something the Brain should have found. ' +
+      'IMPORTANT: rank=0 means the lesson was NOT in the answer at all. That is the most valuable feedback ' +
+      'there is, because it says the ranking never surfaced it. ' +
+      'Example: recall_feedback(query="why does the deploy abort", topic="ci:timeout-reports-cancelled", helped=true, rank=0)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        query: {
+          type: 'string',
+          description: 'The question you asked, as you asked it. Not a summary — the ranking has to learn from the real wording.',
+        },
+        topic: {
+          type: 'string',
+          description: 'Topic of the lesson this is about. May be a lesson that was NOT returned (then set rank=0).',
+        },
+        helped: {
+          type: 'boolean',
+          description: 'Did it solve your problem? true or false. There is deliberately no "not sure" — a guessed value is worse than none.',
+        },
+        rank: {
+          type: 'number',
+          description: 'Where it stood in the answer, 1-based. 0 = it was NOT in the answer at all (the most valuable case).',
+        },
+        note: { type: 'string', description: 'Optional: what was missing, or why it did not fit.' },
+        author: { type: 'string', description: 'Optional: your handle.' },
+      },
+      required: ['instance_id', 'query', 'topic', 'helped', 'rank'],
+    },
+  },
+  {
     name: 'smart_recall',
     description:
       'Semantically search cached context using natural language. ' +

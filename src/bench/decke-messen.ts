@@ -42,6 +42,7 @@ import { mitLektionen } from './mini-redis.js';
 import { schluessel } from './eingaenge-einbetten.js';
 import type { Eingang } from './eingaenge-b.js';
 import type { BenchLesson } from './fixtures.js';
+import { SINN_TOPF } from '../rangfolge-stellschrauben.js';
 
 interface Pruefsatzfrage { query: string; relevant: string[]; art?: string }
 interface Korpus { lessons: BenchLesson[]; queries: Pruefsatzfrage[] }
@@ -169,7 +170,12 @@ async function main(): Promise<void> {
    * ueberschreiben sie einzeln. Wer den AUSLIEFERSTAND messen will, nimmt
    * `--wortpool 25 --sinnpool 75`.
    */
-  const POOL = Number(flag('pool') ?? '25');
+  // Vorgabe aus dem Auslieferstand, NICHT aus einer Zahl hier. Bis zum
+  // 24.08.2026 stand hier 25, waehrend das Produkt mit 75 sucht — jede
+  // Messung ohne ausdrueckliches --pool mass damit eine Suchmaschine mit
+  // einem Drittel der Kandidaten. Genau die Fehlerklasse, gegen die
+  // rangfolge-stellschrauben.ts gebaut wurde.
+  const POOL = Number(flag('pool') ?? String(SINN_TOPF));
   const WORTPOOL = Number(flag('wortpool') ?? String(POOL));
   const SINNPOOL = Number(flag('sinnpool') ?? String(POOL));
 

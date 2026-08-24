@@ -47,6 +47,7 @@ import { Vektorbestand, NAME_VEKTOR_PRAEFIX, entpacke, kosinus } from '../bedeut
 import { Eingangsbestand } from '../eingaenge.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { messe, quote, type Frage } from './auswertung.js';
+import { SINN_TOPF } from '../rangfolge-stellschrauben.js';
 
 interface Korpus { lektionen: Array<{ topic: string }>; fragen: Frage[] }
 interface Vektoren {
@@ -57,7 +58,7 @@ interface Vektoren {
 }
 
 /** Produktionswerte — der Messstand muss die Auslieferung spiegeln. */
-const POOL = 75;
+const POOL = SINN_TOPF;
 const SCHWELLE = 0.5;
 const MAX_GEWICHT = 0.2;
 

@@ -43,6 +43,11 @@ import { Eingangsbestand } from '../eingaenge.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { entpacke } from '../bedeutung.js';
 import { messe, quote, type Frage } from './auswertung.js';
+import {
+  SINN_TOPF,
+  EINGANG_SCHWELLE,
+  EINGANG_SORTIER_GEWICHT,
+} from '../rangfolge-stellschrauben.js';
 
 interface Lektion { topic: string; [k: string]: unknown }
 interface Korpus { lektionen: Lektion[]; fragen: Frage[] }
@@ -156,7 +161,7 @@ async function main(): Promise<void> {
     process.exit(3);
   }
 
-  const worte = await messe(redis, korpus.fragen, frageVektor, bestaende, { nurWorte: true, pool: 75 });
+  const worte = await messe(redis, korpus.fragen, frageVektor, bestaende, { nurWorte: true, pool: SINN_TOPF });
   // `{}` misst das PRODUKTIONSVERHALTEN — seit dem 21.08.2026 ohne die
   // Fehlertext-Tueren (Messung und Begruendung: Optionen.eingaenge in
   // auswertung.ts und src/bench/tueren-vergleich.ts). Die Spalte "mit Tueren"
@@ -164,13 +169,14 @@ async function main(): Promise<void> {
   // und damit auffaellt, wenn sich das Verhaeltnis je wieder dreht.
   // POOL muss der Produktion entsprechen (SINN_TOPF in handlers/brain.ts).
   // Ein Messstand mit anderem Topf misst eine andere Suchmaschine.
-  const POOL = 75;
+  const POOL = SINN_TOPF;
   // Produktionsverhalten seit 21.08.2026: die Fehlertext-Tuer NOMINIERT nicht
   // (sie hat die richtige Antwort fuenfmal aus dem Topf gedraengt), sortiert
   // aber MIT SCHWELLE mit. Beides gemessen: tueren-vergleich.ts und
   // schwelle-abtasten.ts. Der Bench muss das spiegeln, sonst misst er eine
   // andere Suchmaschine als die ausgelieferte.
-  const EINGANG_SCHWELLE = 0.5;
+  // Kein eigener Wert mehr: er kommt aus derselben Datei wie im
+  // ausgelieferten Pfad (rangfolge-stellschrauben.ts).
   // EIN Tuer-Merkmal, nicht zwei. Ein zweites (der Mittelwert ueber alle
   // Tueren) wurde am 21.08.2026 abgetastet und NICHT eingebaut, weil er auf
   // dem heutigen Speicher schadet — Begruendung mit Zahlen in handlers/brain.ts
@@ -183,7 +189,7 @@ async function main(): Promise<void> {
         const n = eingangsbestand.besteNaehe(fv, topic);
         return n >= EINGANG_SCHWELLE ? n : -2;
       },
-      gewicht: 0.2,
+      gewicht: EINGANG_SORTIER_GEWICHT,
     },
   });
   const mitTueren = await messe(redis, korpus.fragen, frageVektor, bestaende, { eingaenge: 'voll', pool: POOL });

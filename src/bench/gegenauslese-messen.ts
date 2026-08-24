@@ -72,6 +72,7 @@ import { mitLektionen } from './mini-redis.js';
 import { schluessel } from './eingaenge-einbetten.js';
 import type { Eingang } from './eingaenge-b.js';
 import type { BenchLesson } from './fixtures.js';
+import { SINN_TOPF } from '../rangfolge-stellschrauben.js';
 
 interface Frage { query: string; relevant: string[]; art?: string }
 interface Korpus { lessons: BenchLesson[]; queries: Frage[] }
@@ -217,7 +218,7 @@ async function main(): Promise<void> {
   const satzPfad = resolve(flag('pruefsatz') ?? '');
   const eingPfad = resolve(flag('eingaenge') ?? '');
   const vekPfad = resolve(flag('vektoren') ?? '');
-  const POOL = Number(flag('pool') ?? '25');
+  const POOL = Number(flag('pool') ?? String(SINN_TOPF));
   const eingangsGewicht = Number(flag('eingang') ?? '0.5');
   const anzahlGegen = Number(flag('gegenfragen') ?? '3');
 
