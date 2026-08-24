@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { bewertePaar, ueberlappung, frageAusIssue, lektionAusPr } from '../fremdernte.js';
+import { bewertePaar, ueberlappung, frageAusIssue, lektionAusPr, istUeberlastung } from '../fremdernte.js';
 
 /**
  * ══ Die Ernte darf Stille nicht als Null buchen ═════════════════════════════
@@ -239,5 +239,53 @@ describe('Eine leere Ernte wird nicht geschrieben', () => {
   it('die Kosten und der Rest des Kontingents werden gemeldet', () => {
     // Ohne diese Zeile merkt man erst am naechsten Projekt, dass es eng wird.
     expect(CODE).toContain('punkteUebrig');
+  });
+});
+
+describe('Ueberlastung wird an der Bedeutung erkannt, nicht am Wortlaut', () => {
+  /*
+   * GitHub meldet dieselbe Sache auf zwei Wegen, und der zweite fiel durch.
+   *
+   * Gemessen am 24.08.2026: grafana, minikube und terraform kamen mit
+   * "Something went wrong while executing your query" — die wurden erkannt
+   * und mit kleinerer Seite geholt. microsoft/TypeScript und pytorch/pytorch
+   * kamen mit "502 Bad Gateway" und fielen ZWEIMAL komplett aus.
+   *
+   * Beide Male dieselbe Ursache: die Abfrage ist zu schwer. Der Waechter sah
+   * aber auf die Schreibweise.
+   */
+  it('erkennt GitHubs eigene Meldung', () => {
+    expect(istUeberlastung('Something went wrong while executing your query.')).toBe(true);
+  });
+
+  it('erkennt den 502, der dasselbe bedeutet', () => {
+    expect(istUeberlastung('GraphQL: 502 Bad Gateway')).toBe(true);
+    expect(istUeberlastung('GraphQL: 500 Internal Server Error')).toBe(true);
+    expect(istUeberlastung('GraphQL: 504 Gateway Timeout')).toBe(true);
+  });
+
+  it('KONTROLLE: 503 zaehlt NICHT als zu schwer', () => {
+    // 503 ist Wartung. Die geht auch mit kleinerer Seite nicht weg — wer sie
+    // umdeutet, fragt dreimal kleiner und scheitert dreimal.
+    expect(istUeberlastung('GraphQL: 503 Service Unavailable')).toBe(false);
+  });
+
+  it('KONTROLLE: echte Absagen bleiben Absagen', () => {
+    /*
+     * Der gefaehrliche Fehler waere andersherum: ein 404 oder 403 als
+     * "zu schwer" zu lesen. Dann fragt die Ernte dreimal kleiner, bekommt
+     * dreimal dasselbe Nein und meldet am Ende einen falschen Grund.
+     */
+    expect(istUeberlastung('GraphQL: 404 Not Found')).toBe(false);
+    expect(istUeberlastung('GraphQL: 403 Forbidden')).toBe(false);
+    expect(istUeberlastung('GraphQL: 401 Unauthorized')).toBe(false);
+    expect(istUeberlastung('fetch failed')).toBe(false);
+    expect(istUeberlastung('')).toBe(false);
+  });
+
+  it('KONTROLLE: die Ziffernfolge muss zu Ende sein', () => {
+    // Ohne Grenze faenge "5001" mit — ein Status, den es nicht gibt, aber
+    // ein Muster, das spaeter auf eine Fehlernummer passen koennte.
+    expect(istUeberlastung('GraphQL: 5001 Erfunden')).toBe(false);
   });
 });

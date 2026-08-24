@@ -139,6 +139,32 @@ class ZuSchwer extends Error {
 }
 
 /**
+ * Sagt GitHub hier "zu schwer" — egal in welcher Schreibweise?
+ *
+ * ── Warum das EINE Funktion ist ──────────────────────────────────────────
+ *
+ * GitHub meldet dieselbe Ueberlastung auf zwei Wegen:
+ *
+ *   im Feld `errors`   "Something went wrong while executing your query"
+ *   als HTTP-Status    502 Bad Gateway (auch 500 und 504)
+ *
+ * Gemessen am 24.08.2026: grafana, minikube und terraform kamen ueber den
+ * ersten Weg — die wurden erkannt und mit kleinerer Seite geholt.
+ * microsoft/TypeScript und pytorch/pytorch kamen ueber den zweiten und
+ * fielen ZWEIMAL komplett aus, weil der Waechter nur den Wortlaut kannte.
+ *
+ * Zwei Regeln an zwei Stellen waeren die zweite Wahrheit: man pflegt eine
+ * und vergisst die andere. Deshalb steht die Frage genau einmal hier.
+ */
+export function istUeberlastung(meldung: string): boolean {
+  if (/Something went wrong while executing your query/i.test(meldung)) return true;
+  // 500, 502, 504 — Serverseite. 503 bewusst NICHT: das ist Wartung, und die
+  // geht auch mit kleinerer Seite nicht weg. Die Ziffernfolge muss zu Ende
+  // sein: sonst faenge "5001" mit, das es als Status gar nicht gibt.
+  return /^GraphQL: 50[024]([^0-9]|$)/.test(meldung);
+}
+
+/**
  * Eine GraphQL-Abfrage, mit drei Versuchen.
  *
  * Am 23.08.2026 fielen zwei von fuenf Ernten mit "fetch failed" aus — ein
@@ -218,7 +244,7 @@ async function graph<T>(abfrage: string, werte: Record<string, unknown>, versuch
            * behandelt, verliert genau die groessten Bestaende — also die,
            * derentwegen der ganze Umbau gemacht wurde.
            */
-          if (/Something went wrong while executing your query/i.test(text)) {
+          if (istUeberlastung(text)) {
             throw new ZuSchwer(text);
           }
           throw new Error(`GraphQL meldet: ${text}`);
@@ -234,6 +260,26 @@ async function graph<T>(abfrage: string, werte: Record<string, unknown>, versuch
       letzterFehler = e;
     }
     if (n < versuche) await new Promise((r) => { setTimeout(r, 1000 * n); });
+  }
+  /*
+   * ── Ein hartnaeckiger 502 ist dieselbe Ueberlastung, nur anders gesagt ──
+   *
+   * Gemessen am 24.08.2026: microsoft/TypeScript und pytorch/pytorch fielen
+   * ZWEIMAL hintereinander mit "GraphQL: 502 Bad Gateway" aus — nach allen
+   * Wiederholungen. Beides Bestaende mit zehntausenden Issues, also genau
+   * der Fall, fuer den `ZuSchwer` gebaut wurde.
+   *
+   * Nur sagt GitHub es hier nicht im Feld `errors`, sondern als HTTP-Status.
+   * Dieselbe Ursache, zwei Schreibweisen — und die zweite fiel durch, weil
+   * der Waechter auf den WORTLAUT sah statt auf die Bedeutung. Genau die
+   * Fehlerklasse, gegen die dieser ganze Ernter umgebaut wurde.
+   *
+   * Erst NACH allen Wiederholungen umdeuten: ein einzelner 502 ist wirklich
+   * oft ein Schluckauf. Wer beim ersten schon die Seite verkleinert, macht
+   * jede Ernte langsamer, ohne etwas zu gewinnen.
+   */
+  if (letzterFehler instanceof Error && istUeberlastung(letzterFehler.message)) {
+    throw new ZuSchwer(letzterFehler.message);
   }
   throw letzterFehler instanceof Error ? letzterFehler : new Error(String(letzterFehler));
 }
