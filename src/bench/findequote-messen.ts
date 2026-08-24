@@ -271,6 +271,8 @@ async function main(): Promise<void> {
       naeheThema: themaVektor.has(t) ? kosinus(fv, themaVektor.get(t)!) : -2,
       naeheRueckkopplung: volltextVektor.has(t) ? kosinus(angereichert, volltextVektor.get(t)!) : -2,
       seltenheitsDeckung: seltenheit.deckung(fw, textWoerter.get(t) ?? new Set()),
+      // Naturworkshop 3: das Maximum der Wort-Seltenheit, nicht der Anteil.
+      besterZeuge: seltenheit.besterZeuge(fw, textWoerter.get(t) ?? new Set()),
     }));
     let punkte = bewerteTopf(bewertbar, eigeneGewichte as typeof GEWICHTE);
 
@@ -316,6 +318,10 @@ async function main(): Promise<void> {
           nTh: bewertbar[i].naeheThema,
           nR: bewertbar[i].naeheRueckkopplung,
           sD: bewertbar[i].seltenheitsDeckung,
+          // Neu seit dem Naturworkshop 3. Aeltere Merkmalsdateien tragen das
+          // Feld nicht — dort liest der Vergleicher 0 fuer alle, und das
+          // Merkmal veraendert keine Rangfolge (Topf-Spreizung lauter Gleicher).
+          bZ: bewertbar[i].besterZeuge,
           bE: besterEingangVon(t),
         })),
       })}

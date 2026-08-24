@@ -339,7 +339,18 @@ async function main(): Promise<void> {
   console.log(`  ${zeichen} ${endgueltig}${paare ? ` · ${paare} Paare` : ''}${grund ? ` · ${grund}` : ''} · noch ${offen} offen`);
 }
 
-main().catch((e) => {
-  console.error(e instanceof Error ? e.message : e);
-  process.exit(1);
-});
+/*
+ * Nur laufen, wenn DIREKT aufgerufen — nicht beim Import.
+ *
+ * Ohne diese Zeile startete `main()` beim blossen Laden des Moduls. Der
+ * Test korpus-maschine.test.ts importiert `naechstes` und `ausgangAusCode`,
+ * main sah keine Flags und rief process.exit(2) — die CI von PR #497 fiel
+ * genau daran. fremdernte.ts traegt denselben Schutz seit jeher; diese
+ * Datei hatte ihn schlicht nicht.
+ */
+if (process.argv[1]?.includes('korpus-maschine')) {
+  main().catch((e) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
+}

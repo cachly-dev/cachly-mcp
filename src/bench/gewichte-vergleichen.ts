@@ -33,7 +33,7 @@ import { createInterface } from 'node:readline';
 import { resolve } from 'node:path';
 import { bewerteTopf, spreizeImTopf, type GEWICHTE } from '../rangfolge.js';
 
-type Kandidat = { t: string; nT: number; nTh: number; nR: number; sD: number; bE: number };
+type Kandidat = { t: string; nT: number; nTh: number; nR: number; sD: number; bE: number; bZ?: number };
 type Zeile = { query: string; art: string; relevant: string[]; topf: Kandidat[] };
 type Einstellung = {
   text: number; thema: number; rueckkopplung: number; seltenheit: number; eingang: number;
@@ -58,6 +58,8 @@ export function leseEinstellung(text: string): Einstellung {
 export function platzVon(z: Zeile, e: Einstellung): number {
   const bewertbar = z.topf.map((k) => ({
     naeheText: k.nT, naeheThema: k.nTh, naeheRueckkopplung: k.nR, seltenheitsDeckung: k.sD,
+    // Aeltere Merkmalsdateien tragen bZ nicht: 0 fuer alle = keine Wirkung.
+    besterZeuge: k.bZ ?? 0,
   }));
   let punkte = bewerteTopf(bewertbar, {
     text: e.text, thema: e.thema, rueckkopplung: e.rueckkopplung, seltenheit: e.seltenheit,

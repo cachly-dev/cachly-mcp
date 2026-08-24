@@ -1728,17 +1728,26 @@ export async function handleBrainTool(
           const frageWoerter = inhaltsWoerter(query);
           const statistik = seltenheitsbestand.statistik;
 
-          const bewertbar = topf.map((t) => ({
-            naeheText: vektorbestand.naehe(frageVektor, t),
-            naeheThema: namensbestand.naehe(frageVektor, t),
-            naeheRueckkopplung: vektorbestand.naehe(angereichert, t),
-            seltenheitsDeckung: statistik
-              ? statistik.deckung(
-                frageWoerter,
-                new Set([...inhaltsWoerter(seltenheitsbestand.textVon(t))].map(grobStamm)),
-              )
-              : 0,
-          }));
+          const bewertbar = topf.map((t) => {
+            // EINMAL je Kandidat zerlegen — Deckung und Zeuge lesen dieselbe
+            // Wortmenge. Zwei Zerlegungen waeren doppelte Arbeit und, bei der
+            // naechsten Aenderung an inhaltsWoerter, zwei Wahrheiten.
+            const textWoerter = new Set(
+              [...inhaltsWoerter(seltenheitsbestand.textVon(t))].map(grobStamm),
+            );
+            return {
+              naeheText: vektorbestand.naehe(frageVektor, t),
+              naeheThema: namensbestand.naehe(frageVektor, t),
+              naeheRueckkopplung: vektorbestand.naehe(angereichert, t),
+              seltenheitsDeckung: statistik ? statistik.deckung(frageWoerter, textWoerter) : 0,
+              /*
+               * Der beste Zeuge — das Maximum der Wort-Seltenheit. Gemessen
+               * am 24.08.2026: @3 +2,1 auf sechs nie gesehenen Projekten.
+               * Begruendung am Seltenheit.besterZeuge-Kommentar (rangfolge.ts).
+               */
+              besterZeuge: statistik ? statistik.besterZeuge(frageWoerter, textWoerter) : 0,
+            };
+          });
           let punkte = bewerteTopf(bewertbar, GEWICHTE);
 
           // Die Fehlertext-Tuer als fuenftes Merkmal — mit Schwelle.

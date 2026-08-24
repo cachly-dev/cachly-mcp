@@ -183,4 +183,10 @@ function main(): void {
   console.log(`    npx tsx src/bench/zirkel-messen.ts --korpus ${nach} --fragen ${nach}`);
 }
 
-main();
+// Nur laufen, wenn DIREKT aufgerufen. starter-brain-bauen.ts importiert
+// `abdruck` — und main() lief beim Import mit FREMDEN Flags los und
+// versuchte, in deren Zielordner zu schreiben. Vierte Datei mit derselben
+// Landmine an einem Tag.
+if (process.argv[1]?.includes('ernten-zusammenfuehren')) {
+  main();
+}

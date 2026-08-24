@@ -136,6 +136,47 @@ export class Seltenheit {
     }
     return gesamt > 0 ? getroffen / gesamt : 0;
   }
+
+  /**
+   * Der beste Zeuge: die hoechste Seltenheit unter den GETEILTEN Woertern.
+   *
+   * ── Warum ein Maximum neben dem Anteil (Naturworkshop 3, 24.08.2026) ──────
+   *
+   * `deckung` ist ein Anteil. Ein entscheidender Token wie
+   * `_sync_to_local_dir_if_changed` — geteilt zwischen Frage und richtiger
+   * Antwort, im Bestand fast einmalig — wird darin von vierzig
+   * gleichgueltigen Fragewoertern weggemittelt. Ein Maximum kann nicht
+   * weggemittelt werden: ein geteilter, fast einmaliger Token hat genau EINE
+   * Erklaerung (Hennigs Synapomorphie — ein abgeleitetes Merkmal schlaegt
+   * hundert geteilte urspruengliche).
+   *
+   * Gemessen auf 2001 Fragen aus sechs NIE gesehenen Projekten, Gewicht nur
+   * auf den vier anderen eingestellt: Findequote@3 42,0 → 44,1 % (+70/−27,
+   * p<0,0001). Gegenproben: Gewinn in fuenf von sechs Projekten (groesster
+   * Anteil 44 %); dasselbe Merkmal je Frage PERMUTIERT verliert 54 Faelle —
+   * der Inhalt traegt, nicht der freie Parameter. Mehr Gewicht auf `deckung`
+   * stattdessen: −0,6. Messstand:
+   * .agent/_naturworkshop/laeufe/2026-08-24-verfahren-suche-3/
+   *
+   * Die Formel ist auf 0..1 normiert (log(N+1) im Nenner), ueber DIESELBE
+   * df-Tabelle wie `wert` — bewusst keine zweite Zaehlung. Baugleichheit mit
+   * der rohen Messfassung ist belegt: 44,2 gegen 44,1 auf Satz B, eine
+   * einzige Frage antwortet anders (variante-stamm-df.mjs im Laufordner).
+   *
+   * 0 heisst: kein geteiltes Wort. Das ist ein ECHTER Wert, kein Ausfall —
+   * er nimmt an der Topf-Spreizung teil.
+   */
+  besterZeuge(frageWoerter: Set<string>, textWoerter: Set<string>): number {
+    let best = 0;
+    const nenner = Math.log(this.anzahl + 1);
+    if (nenner <= 0) return 0;
+    for (const w of frageWoerter) {
+      if (!textWoerter.has(grobStamm(w))) continue;
+      const g = this.wert(w) / nenner;
+      if (g > best) best = g;
+    }
+    return best;
+  }
 }
 
 /**
@@ -295,6 +336,16 @@ export const GEWICHTE = {
   rueckkopplung: 0.3,
   /** Anteil der seltenen Fragewörter im Text. Unverändert — 1,3 hält. */
   seltenheit: 1.3,
+  /**
+   * Der beste Zeuge — das MAXIMUM der Wort-Seltenheit statt des Anteils.
+   *
+   * Naturworkshop 3 (24.08.2026), auf A eingestellt (0,2/0,5/0,8/1,2/1,8/2,5
+   * abgetastet, 0,5 bestes), EINMAL auf sechs nie gesehenen Projekten
+   * gemessen: @3 42,0 → 44,1 % (p<0,0001), Gewinn in fünf von sechs
+   * Projekten, Zufallskontrolle −54 Fälle. Begründung und Messstand am
+   * `Seltenheit.besterZeuge`-Kommentar.
+   */
+  zeuge: 0.5,
 } as const;
 
 export interface Bewertbar {
@@ -306,6 +357,13 @@ export interface Bewertbar {
   naeheRueckkopplung: number;
   /** Anteil der seltenen Fragewörter, die im Text vorkommen. */
   seltenheitsDeckung: number;
+  /**
+   * Seltenheit des seltensten GETEILTEN Wortes (`Seltenheit.besterZeuge`).
+   *
+   * Optional, damit ältere Aufrufer weiterlaufen: fehlt der Wert überall,
+   * spreizt der Topf lauter Gleiche und das Merkmal ändert keine Rangfolge.
+   */
+  besterZeuge?: number;
 }
 
 /**
@@ -352,12 +410,25 @@ export function bewerteTopf(topf: Bewertbar[], gewichte = GEWICHTE): number[] {
   const t = spreizeImTopf(topf.map((k) => k.naeheText));
   const th = spreizeImTopf(topf.map((k) => k.naeheThema));
   const r = spreizeImTopf(topf.map((k) => k.naeheRueckkopplung));
+  /*
+   * Der beste Zeuge wird GESPREIZT, nicht roh — so wurde er gemessen
+   * (messung-bester-zeuge.mjs: LAM * spreizeImTopf(zeuge)). 0 ist ein
+   * echter Wert (kein geteiltes Wort), kein Ausfall. Fehlt das Feld bei
+   * allen (alte Aufrufer), sind alle gleich und nichts verschiebt sich.
+   *
+   * `?? 0` auch am Gewicht: Vergleichswerkzeuge bauen eigene
+   * Gewichts-Objekte aus Zeichenketten; ein fehlender Eintrag darf die
+   * Punktzahl nicht zu NaN machen.
+   */
+  const z = spreizeImTopf(topf.map((k) => k.besterZeuge ?? 0));
+  const zg = gewichte.zeuge ?? 0;
   return topf.map((k, i) =>
     gewichte.text * t[i]
     + gewichte.thema * th[i]
     + gewichte.rueckkopplung * r[i]
     // ABSICHTLICH roh — siehe die Messung im Kommentar oben.
-    + gewichte.seltenheit * k.seltenheitsDeckung);
+    + gewichte.seltenheit * k.seltenheitsDeckung
+    + zg * z[i]);
 }
 
 /**

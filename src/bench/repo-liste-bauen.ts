@@ -303,7 +303,11 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => {
-  console.error(e instanceof Error ? e.message : e);
-  process.exit(1);
-});
+// Nur laufen, wenn DIREKT aufgerufen — ein Import darf nie main() starten
+// (die CI von PR #497 fiel an genau dieser Falle in korpus-maschine.ts).
+if (process.argv[1]?.includes('repo-liste-bauen')) {
+  main().catch((e) => {
+    console.error(e instanceof Error ? e.message : e);
+    process.exit(1);
+  });
+}
