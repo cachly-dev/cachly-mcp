@@ -1,26 +1,58 @@
 # brain-from-ci-gitlab.yml
 #
-# Copy these two jobs into your .gitlab-ci.yml (or `include:` this file) to
-# automatically push CI outcomes to your cachly Brain so it can
-# self-calibrate prediction confidence.
+# Kopiere diese Jobs in deine .gitlab-ci.yml (oder binde die Datei mit
+# `include:` ein). Sie schreiben jeden Pipeline-Ausgang in dein cachly Brain —
+# und aus einem ROTEN Lauf eine Lektion, die sagt, WELCHER Job gefallen ist
+# und WARUM.
 #
-# GitLab does not expose the final pipeline status to a running job, so the
-# reliable pattern is one job per outcome: `on_success` fires only when all
-# earlier stages passed, `on_failure` only when at least one failed.
+# ══ Was sich am 23.08.2026 geaendert hat ═════════════════════════════════════
 #
-# Required CI/CD variables (Settings → CI/CD → Variables, masked):
-#   CACHLY_JWT                – your cachly API key / Keycloak access token
-#   CACHLY_BRAIN_INSTANCE_ID  – your Brain instance UUID (from cachly dashboard)
+# Die vorherige Fassung setzte:
+#
+#     JOB_NAME: "$CI_PROJECT_NAME-pipeline"
+#
+# Daraus wurde ein Thema je PROJEKT — ein Topf, in dem jeder rote Lauf des
+# Projekts liegt. Und eine Fehlschlag-Lektion wurde ueberhaupt nicht
+# geschrieben: das Brain erfuhr nur, DASS ein Lauf rot war, nie warum.
+#
+# Gemessen am eigenen Brain (dieselbe Krankheit auf der GitHub-Seite): die so
+# entstandenen Lektionen hatten `recall_count: 0`. Niemand hat sie je
+# abgerufen, und es gab auch nichts abzurufen.
+#
+# Jetzt kommt das Thema vom Job, der gefallen ist, und GitLabs
+# `failure_reason` steht dabei. Beispiel:
+#
+#     ci:test-integration
+#     "test:integration scheiterte auf main: die Zeitgrenze des Jobs war
+#      erreicht. Stufe: test. 1 weiterer Job rot: build:image https://…"
+#
+# `job_execution_timeout` ist dabei der wertvollste Grund: GitHub meldet
+# genau diesen Fall nur als "cancelled", ohne Anlass. GitLab nennt ihn.
+#
+# ══ Variablen (Settings → CI/CD → Variables, maskiert) ═══════════════════════
+#
+# Pflicht:
+#   CACHLY_API_KEY            dein cachly-Schluessel (cky_live_…)
+#                             — oder CACHLY_JWT als Rueckfallebene
+#   CACHLY_BRAIN_INSTANCE_ID  Kennung deiner Brain-Instanz
+#
+# Fuer die Fehlschlag-Lektion zusaetzlich:
+#   CACHLY_GITLAB_TOKEN       Lesezugriff auf die Jobliste. Ein Projekt-Token
+#                             mit `read_api` genuegt. OHNE dieses Token wird
+#                             der Ausgang weiterhin gemeldet, aber keine
+#                             Lektion geschrieben — das Skript sagt das dann
+#                             ausdruecklich, statt still nichts zu tun.
 #
 # Optional:
-#   CACHLY_API_URL            – override API base (default: https://api.cachly.dev)
+#   CACHLY_API_URL            andere Adresse (Vorgabe: https://api.cachly.dev)
 #
-# The helper script always exits 0 and silently skips when the variables are
-# unset (e.g. forks / external MRs) — your pipeline never fails because of a
-# Brain push error.
+# Beide Skripte beenden sich IMMER mit 0 und ueberspringen sich still, wenn die
+# Variablen fehlen (Forks, fremde Merge Requests). Deine Pipeline wird nie
+# wegen des Brains rot. `allow_failure: true` steht trotzdem dabei — Guertel
+# und Hosentraeger.
 
 cachly-brain-push-success:
-  stage: .post                # runs after all other stages
+  stage: .post # laeuft nach allen anderen Stufen
   image: node:20-alpine
   rules:
     - when: on_success
@@ -42,5 +74,8 @@ cachly-brain-push-failure:
     JOB_NAME: "$CI_PROJECT_NAME-pipeline"
     JOB_STATUS: "failure"
   script:
+    # Erst der Ausgang (kalibriert die Zuversicht des Brains), dann die
+    # Lektion (sagt, was kaputt war). Zwei Zeilen, weil es zwei Aussagen sind.
     - node sdk/mcp/src/ci-integration/push-ci-outcome.mjs
+    - node sdk/mcp/src/ci-integration/push-fehlschlag-lektion.mjs
   allow_failure: true
