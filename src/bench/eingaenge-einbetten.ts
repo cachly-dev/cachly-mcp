@@ -260,6 +260,38 @@ async function main(): Promise<void> {
     return null;
   };
 
+  /*
+   * ── Die Zwischensicherung kostet quadratisch ────────────────────────────
+   *
+   * Bis zum 24.08.2026 wurde alle 100 Einbettungen die GANZE Datei neu
+   * geschrieben. Fuer den Bestand, fuer den das gebaut wurde — 1195 Lektionen,
+   * 71 MB — war das richtig: 12 Sicherungen, jede in Bruchteilen einer
+   * Sekunde.
+   *
+   * Fuer den Fremdsatz aus 43 Projekten sind es 16266 Lektionen und rund
+   * 900 MB. Das sind 257 Sicherungen, jede mit einem JSON.stringify ueber
+   * einen Baum, der auf 900 MB waechst. Die Schreibarbeit steigt mit dem
+   * QUADRAT der Menge, die Einbettungen selbst nur linear.
+   *
+   * Gemessen: nach 130 Minuten lagen 269 MB vor — hochgerechnet acht Stunden.
+   * Die Einbettungen waren dabei nicht der Engpass.
+   *
+   * Das ist die Fehlerklasse "richtig bei einer Groesse, still falsch bei der
+   * naechsten". Sie faellt nicht auf, weil nichts kaputtgeht: es dauert nur.
+   *
+   * ── Die Behebung: nach ZEIT sichern, nicht nach Anzahl ──────────────────
+   *
+   * Alle 60 Sekunden. Damit kostet die Sicherung immer denselben ANTEIL der
+   * Laufzeit, egal wie gross die Datei wird. Verloren gehen im schlimmsten
+   * Fall 60 Sekunden Arbeit — bei einem Lauf, der ohnehin von vorn
+   * weiterlaufen kann, weil die Zieldatei beim Start eingelesen wird.
+   *
+   * Der Fortschritt wird weiter alle 100 Stueck gemeldet: eine Meldung kostet
+   * nichts, eine Sicherung schon.
+   */
+  const SICHERUNG_ALLE_MS = 60_000;
+  let zuletztGesichert = Date.now();
+
   let naechster = 0;
   const arbeiter = Array.from({ length: parallel }, async () => {
     for (;;) {
@@ -272,7 +304,14 @@ async function main(): Promise<void> {
       if (fertig % 100 === 0) {
         const proSek = fertig / ((Date.now() - begonnen) / 1000);
         console.log(`  ${fertig}/${liste.length}  (${proSek.toFixed(1)}/s, 429er: ${bremse.stand})`);
+      }
+      if (Date.now() - zuletztGesichert >= SICHERUNG_ALLE_MS) {
+        zuletztGesichert = Date.now();
+        const t0 = Date.now();
         writeFileSync(ziel, JSON.stringify({ vektoren }), 'utf8');
+        const ms = Date.now() - t0;
+        // Wird die Sicherung selbst teuer, soll man es SEHEN und nicht raten.
+        if (ms > 5000) console.log(`  (Zwischensicherung ${(ms / 1000).toFixed(1)} s — die Datei waechst)`);
       }
     }
   });
