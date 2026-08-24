@@ -3612,9 +3612,26 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
        * der Browser ist die Bequemlichkeit obendrauf. Gemeldet wird nur, was
        * wirklich passiert ist.
        */
+      /*
+       * ── Die Adresse steht ALLEIN auf ihrer Zeile ────────────────────────
+       *
+       * Vorher: `   URL:  https://…` — Beschriftung und Adresse zusammen.
+       *
+       * Viele Terminals nehmen beim Dreifachklick die GANZE Zeile. Der Mensch
+       * kopiert dann `URL:  https://…` samt Vorspann und Leerzeichen, faengt
+       * sich einen Fehler im Browser ein und weiss nicht, warum.
+       *
+       * Das trifft genau die Leute, bei denen kein Fenster aufging — also die,
+       * fuer die dieser Link die EINZIGE Tuer ist. Fuer alle anderen ist die
+       * Zeile Beiwerk.
+       *
+       * Deshalb: eine Zeile Beschriftung, eine Zeile Adresse, nichts davor und
+       * nichts dahinter. Dieselbe Form benutzt Claude Code, und aus demselben
+       * Grund.
+       */
       console.log(`   Code: \x1b[1;33m${userCode}\x1b[0m`);
-      console.log(`   URL:  ${verifyUri}\n`);
-      console.log('   Open the URL above and confirm the code to continue...\n');
+      console.log('   Open this URL and confirm the code:');
+      console.log(`${verifyUri}\n`);
       openInBrowser(verifyUri, (ok, err) => {
         if (ok) {
           sendFunnelEvent('device_browser_opened', { stelle: 'setup' });

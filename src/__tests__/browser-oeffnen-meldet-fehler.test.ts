@@ -183,9 +183,59 @@ describe('Anmeldung · beide Wege zaehlen und behaupten nichts', () => {
     expect(CODE).not.toMatch(/✓\s+Browser opened/);
   });
 
-  it('stattdessen steht die HANDLUNG da, und zwar unbedingt', () => {
-    // Der Browser ist die Bequemlichkeit obendrauf, nicht der Weg.
-    expect(QUELLE).toContain('Open the URL above and confirm the code to continue');
+  it('stattdessen steht die HANDLUNG da, und zwar VOR dem Browserversuch', () => {
+    /*
+     * ── Warum diese Probe umgeschrieben wurde (24.08.2026) ────────────────
+     *
+     * Hier stand ein einziger Satz, woertlich:
+     *
+     *     expect(QUELLE).toContain('Open the URL above and confirm the code to continue');
+     *
+     * Einen Tag spaeter wurde derselbe Satz VERBESSERT — die Adresse steht
+     * jetzt allein auf ihrer Zeile, weil manche Terminals beim Dreifachklick
+     * die Beschriftung mitnehmen. Die Probe fiel um, obwohl die Regel
+     * strenger eingehalten war als vorher.
+     *
+     * Das ist der Waechter, der die SCHREIBWEISE bewacht statt die Regel.
+     * Derselbe Fehler ist heute schon einmal aufgefallen (sieben von dreizehn
+     * Proben in der Fremdernte). Ein Waechter, den eine Verbesserung umwirft,
+     * schuetzt einen Satz, nicht ein Verhalten.
+     *
+     * Die REGEL ist: die Adresse steht unbedingt da, BEVOR ein Browser
+     * versucht wird. Der Browser ist die Bequemlichkeit obendrauf, nicht der
+     * Weg. Genau das wird jetzt geprueft.
+     */
+    const druck = CODE.indexOf('console.log(`${verifyUri}');
+    const versuch = CODE.indexOf('openInBrowser(verifyUri');
+    expect(druck, 'die Adresse wird nirgends allein gedruckt').toBeGreaterThan(-1);
+    expect(versuch, 'Aufrufstelle im Assistenten nicht gefunden').toBeGreaterThan(-1);
+    expect(
+      druck,
+      'die Adresse wird erst NACH dem Browserversuch gedruckt — wer kein Fenster '
+        + 'bekommt, sieht sie dann womoeglich gar nicht',
+    ).toBeLessThan(versuch);
+  });
+
+  it('die Adresse steht ALLEIN auf ihrer Zeile', () => {
+    /*
+     * Viele Terminals nehmen beim Dreifachklick die ganze Zeile. Stand
+     * `   URL:  https://…` da, kopierte der Mensch den Vorspann mit und
+     * bekam einen Fehler im Browser, ohne zu wissen warum.
+     *
+     * Das trifft genau die Leute, bei denen kein Fenster aufging — also die,
+     * fuer die dieser Link die EINZIGE Tuer ist.
+     */
+    expect(
+      CODE,
+      'die Adresse traegt wieder einen Vorspann in derselben Zeile',
+    ).not.toMatch(/console\.log\(`\s*\S+[^`]*\$\{verifyUri\}/);
+  });
+
+  it('und eine Anweisung sagt, was damit zu tun ist', () => {
+    // Eine nackte Adresse ohne Satz ist eine Zumutung. Geprueft wird die
+    // ABSICHT (oeffnen + bestaetigen), nicht der Wortlaut.
+    expect(CODE).toMatch(/Open this URL|Open the URL/i);
+    expect(CODE).toMatch(/confirm the code/i);
   });
 
   it('auch der Assistent uebergibt einen Rueckruf', () => {
