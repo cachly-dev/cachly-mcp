@@ -5,9 +5,9 @@
   "description": "Your AI forgets everything between sessions. cachly fixes that permanently: 122 MCP tools for Claude Code, Cursor, Copilot & Windsurf. Learns from every bug fix, commit and CI run. Arrives pre-briefed. Free tier forever, EU servers, GDPR.",
   "type": "module",
   "files": [
-    "dist/index.*",
-    "dist/src/**/*",
-    "dist/packages/**/*",
+    "dist/index.js",
+    "dist/src/**/*.js",
+    "dist/packages/**/*.js",
     "scripts/postinstall.js",
     "server.json",
     "glama.json"
@@ -32,7 +32,7 @@
     "verify-tool-spec-snapshots": "node scripts/tool-spec-snapshots.mjs check",
     "verify-tool-counts": "node scripts/verify-tool-counts.mjs",
     "verify-capabilities": "node scripts/verify-capabilities.mjs",
-    "build": "tsc && node scripts/bauabdruck.mjs",
+    "build": "tsc && node scripts/paket-schliessen.mjs && node scripts/bauabdruck.mjs",
     "postinstall": "node scripts/postinstall.js",
     "dev": "tsx src/index.ts",
     "start": "node dist/src/index.js",
@@ -60,6 +60,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@types/node": "^22",
+    "esbuild": "^0.28.2",
     "eslint": "^9",
     "gpt-tokenizer": "^3.4.0",
     "tsx": "^4.23.12",
@@ -68,7 +69,7 @@
     "vitest": "^3.2.4"
   },
   "overrides": {
-    "esbuild": "^0.28.2"
+    "esbuild": "$esbuild"
   },
   "engines": {
     "node": ">=20"
