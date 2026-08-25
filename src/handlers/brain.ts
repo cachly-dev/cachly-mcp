@@ -1601,9 +1601,18 @@ export async function handleBrainTool(
           ? ` (am ${(lesson as { ersetzt_am?: string }).ersetzt_am!.slice(0, 10)})`
           : '';
         const nachfolgerDa = ersetztDurch ? await redis.get(`cachly:lesson:best:${ersetztDurch}`) : null;
+        // Karte pguy341m6u7s ("persistence is not permission"): ein PRIVATER
+        // Nachfolger darf hier weder beim Namen genannt noch als Abrufziel
+        // ausgewiesen werden — der Banner leakte sonst Existenz + Topic und
+        // lieferte die Abruf-Anleitung gleich mit.
+        const nachfolgerPrivat = nachfolgerDa
+          ? safeJsonParse<{ visibility?: string }>(nachfolgerDa, {}).visibility === 'private'
+          : false;
         const ersetztBanner = ersetztDurch
           ? nachfolgerDa
-            ? `🚫 **DIESE FASSUNG IST ERSETZT**${ersetztAmText} — die gueltige Antwort steht in \`recall_best_solution(topic="${ersetztDurch}")\`. Der Text unten bleibt als Vorgeschichte lesbar.`
+            ? nachfolgerPrivat
+              ? `🚫 **DIESE FASSUNG IST ERSETZT**${ersetztAmText} — die Nachfolge-Lektion ist nicht team-sichtbar (privat). Der Text unten bleibt als Vorgeschichte lesbar; die gueltige Fassung kennt ihr Autor.`
+              : `🚫 **DIESE FASSUNG IST ERSETZT**${ersetztAmText} — die gueltige Antwort steht in \`recall_best_solution(topic="${ersetztDurch}")\`. Der Text unten bleibt als Vorgeschichte lesbar.`
             : `⚠️ **ERSETZT-VERWEIS INS LEERE**${ersetztAmText} — der Nachfolger \`${ersetztDurch}\` wurde inzwischen geloescht. Diese Fassung gilt wieder als beste VORHANDENE Antwort; bei Gelegenheit neu bestaetigen (learn_from_attempts mit grund).`
           : '';
 
@@ -2201,9 +2210,22 @@ export async function handleBrainTool(
               `↷ \`${altThema}\` verdraengt — ersetzt durch \`${ld.ersetzt_durch}\`${ld.ersetzt_am ? ` am ${ld.ersetzt_am.slice(0, 10)}` : ''}`,
             );
           } else if (await redis.get(`cachly:lesson:best:${ld.ersetzt_durch}`)) {
-            ersetzungsNotizen.push(
-              `⚠️ \`${altThema}\` ist ersetzt durch \`${ld.ersetzt_durch}\` (nicht in dieser Liste) — die gueltige Antwort: \`recall_best_solution(topic="${ld.ersetzt_durch}")\``,
+            // Karte pguy341m6u7s: ein privater Nachfolger wird NICHT beim
+            // Namen genannt und nicht als Abrufziel ausgewiesen — die alte,
+            // sichtbare Fassung bleibt die beste SICHTBARE Antwort.
+            const nf = safeJsonParse<{ visibility?: string }>(
+              (await redis.get(`cachly:lesson:best:${ld.ersetzt_durch}`))!,
+              {},
             );
+            if (nf.visibility === 'private') {
+              ersetzungsNotizen.push(
+                `↷ \`${altThema}\`: von einer nicht team-sichtbaren Fassung ersetzt — diese Fassung bleibt die beste sichtbare Antwort.`,
+              );
+            } else {
+              ersetzungsNotizen.push(
+                `⚠️ \`${altThema}\` ist ersetzt durch \`${ld.ersetzt_durch}\` (nicht in dieser Liste) — die gueltige Antwort: \`recall_best_solution(topic="${ld.ersetzt_durch}")\``,
+              );
+            }
           } else {
             // Karte g4j4fy030fsp: Nachfolger geloescht — der Treffer bleibt
             // stehen, die Notiz erklaert die Lage, statt den Leser in ein
