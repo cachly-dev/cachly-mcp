@@ -757,6 +757,8 @@ export async function handleBrainTool(
         service = '',
         service_kind = 'service',
         group = '',
+        grund = '',
+        ersetzt = '',
       } = args as {
         instance_id: string;
         topic: string;
@@ -770,6 +772,8 @@ export async function handleBrainTool(
         tags?: string[];
         depends_on?: string[];
         author?: string;
+        grund?: string;
+        ersetzt?: string;
         visibility?: 'public' | 'team' | 'private';
         service?: string;
         service_kind?: 'service' | 'system';
@@ -858,20 +862,46 @@ export async function handleBrainTool(
       let isUpdate = false;
       let recallCount = 0;
       let lastRecalledAt: string | undefined;
-      let auditTrail: Array<{ ts: string; action: string; prev_outcome?: string }> = [];
+      let auditTrail: Array<{ ts: string; action: string; prev_outcome?: string; grund?: string }> = [];
       const existingRaw = await redis.get(`cachly:lesson:best:${topic}`);
+      /*
+       * ── Jede Aktualisierung traegt ein Warum (Karte 5hlj9vvxeopp) ──────
+       *
+       * Der Git-Import (brain_from_git) liest Commit-Botschaften, WEIL sie
+       * Ausloeser und Begruendung tragen — und derselbe Server warf beim
+       * Update genau diese Information weg: Zeitpunkt und Vorher-Outcome
+       * wurden protokolliert, der Grund nicht. Zwei Monate spaeter ist die
+       * Warum-Zeile das, was gelesen wird (Vorschlag pm25coder, 21.08.).
+       *
+       * Pflicht NUR beim Update: der Schreiber ist fast immer ein Modell
+       * mitten in der Sitzung — es weiss in dem Moment, warum es
+       * aktualisiert, der Halbsatz kostet nichts. Beim ERSTEN Anlegen ist
+       * das Warum die Lektion selbst. Abgewiesen wird VOR jeder Schreibung.
+       */
+      const warumZeile = String(grund ?? '').trim();
+      if (existingRaw && !warumZeile) {
+        return [
+          `✋ **Update abgewiesen:** \`${topic}\` existiert bereits — eine Aktualisierung braucht das Feld \`grund\`.`,
+          ``,
+          `Eine Zeile genuegt: WARUM war die bisherige Fassung falsch oder unvollstaendig?`,
+          `Beispiel: grund="Die IP stimmte nicht mehr — node-4 ist seit dem Umzug Peer .7"`,
+          ``,
+          `Der Diff sagt, WAS sich aendert. Die grund-Zeile sagt, warum es vorher falsch war —`,
+          `und genau sie wird in zwei Monaten gelesen (audit_trail, recall_best_solution).`,
+        ].filter(Boolean).join('\n');
+      }
       if (existingRaw) {
         try {
           const prev = JSON.parse(existingRaw) as {
             recall_count?: number;
             last_recalled_at?: string;
             outcome?: string;
-            audit_trail?: Array<{ ts: string; action: string; prev_outcome?: string }>;
+            audit_trail?: Array<{ ts: string; action: string; prev_outcome?: string; grund?: string }>;
           };
           recallCount = prev.recall_count ?? 0;
           lastRecalledAt = prev.last_recalled_at; // learn never stamps it — only recall does
           auditTrail = prev.audit_trail ?? [];
-          auditTrail.push({ ts, action: 'updated', prev_outcome: prev.outcome });
+          auditTrail.push({ ts, action: 'updated', prev_outcome: prev.outcome, grund: warumZeile });
           if (auditTrail.length > 20) auditTrail = auditTrail.slice(-20);
           isUpdate = true;
 
@@ -982,6 +1012,33 @@ export async function handleBrainTool(
         audit_trail: auditTrail,
         version: 3,
       };
+      /*
+       * ── Ersetzung quer ueber Themen (Karte exa5ya3w2m0w) ────────────────
+       *
+       * 47 von 521 Lektionen korrigieren AUSDRUECKLICH eine fruehere unter
+       * anderem Themennamen — und keine einzige war mit ihr verknuepft. Die
+       * widerlegte Fassung lag gleichberechtigt daneben und konnte jederzeit
+       * statt der Korrektur zurueckkommen (Mads Hansen, 20.08.: "contradictions
+       * should be surfaced rather than blended" — wir mischten).
+       *
+       * `ersetzt` verweist auf das ALTE Thema. Beide Seiten werden markiert:
+       * die neue traegt `ersetzt`, die alte `ersetzt_durch` + `ersetzt_am`.
+       * Ein Verweis auf ein Thema, das nicht existiert, wird NICHT gespeichert
+       * — verknuepft wird von Hand, nicht geraten.
+       */
+      const ersetztZiel = String(ersetzt ?? '').trim();
+      let ersetztHinweis = '';
+      let ersetztAltRaw: string | null = null;
+      if (ersetztZiel === topic && ersetztZiel) {
+        ersetztHinweis = '⚠️ `ersetzt` zeigt auf dasselbe Thema — fuer Korrekturen im selben Thema reicht das Update samt `grund`. Der Verweis wurde ignoriert.';
+      } else if (ersetztZiel) {
+        ersetztAltRaw = await redis.get(`cachly:lesson:best:${ersetztZiel}`);
+        if (!ersetztAltRaw) {
+          ersetztHinweis = `⚠️ Die zu ersetzende Lektion \`${ersetztZiel}\` existiert nicht — der Verweis wurde NICHT gespeichert. Themennamen zeigt \`smart_recall\`.`;
+        } else {
+          (lessonObj as Record<string, unknown>).ersetzt = ersetztZiel;
+        }
+      }
       const lesson = JSON.stringify(lessonObj);
 
       // Metric 1 (time-to-first-recall): mark the moment the Brain first gained
@@ -1002,6 +1059,18 @@ export async function handleBrainTool(
       } else if (!existingRaw) {
         await redis.set(`cachly:lesson:best:${topic}`, lesson);
         bestGeschrieben = true;
+      }
+
+      // Die ALTE Seite der Ersetzung markieren — erst wenn die neue wirklich
+      // im Bestand liegt. Der Abruf verdraengt sie dann und nennt die
+      // Nachfolgerin; recall_best_solution zeigt ein lautes Banner.
+      if (ersetztAltRaw && bestGeschrieben) {
+        try {
+          const alt = JSON.parse(ersetztAltRaw) as Record<string, unknown>;
+          alt.ersetzt_durch = topic;
+          alt.ersetzt_am = ts;
+          await redis.set(`cachly:lesson:best:${ersetztZiel}`, JSON.stringify(alt));
+        } catch { /* kaputtes JSON repariert brain_doctor, nicht dieser Pfad */ }
       }
 
       // Der stehende Wortindex kennt die neue Lektion noch nicht.
@@ -1311,6 +1380,9 @@ export async function handleBrainTool(
         depends_on.length > 0
           ? `🔗 Depends on: ${depends_on.map(d => `\`${d}\``).join(', ')} → trace with \`trace_dependency\``
           : '',
+        ersetztAltRaw && bestGeschrieben
+          ? `↷ Ersetzt \`${ersetztZiel}\` — die alte Fassung wird im Abruf verdraengt und nennt ihre Nachfolgerin.`
+          : ersetztHinweis,
         ...templateWarnings,
         ...iWasWrongWarning,
         // GROW-044: Die 100-Zeichen-Regel wird geprueft, nicht geglaubt.
@@ -1473,8 +1545,19 @@ export async function handleBrainTool(
         }
 
         const sevEmoji = lesson.severity === 'critical' ? '🔴' : lesson.severity === 'major' ? '🟡' : lesson.severity ? '🟢' : '';
-        const auditSummary = (lesson.audit_trail ?? []).length > 1
-          ? `_Audit: ${(lesson.audit_trail ?? []).length} changes · stored ${new Date(lesson.ts).toLocaleDateString('de-DE')}_`
+        // Die Warum-Zeilen der letzten Fassungen (Karte 5hlj9vvxeopp): der
+        // Diff sagt, was sich aenderte — diese Zeilen sagen, warum es vorher
+        // falsch war. Genau sie werden zwei Monate spaeter gelesen.
+        const trail = (lesson.audit_trail ?? []) as Array<{ ts?: string; action?: string; grund?: string }>;
+        const warumZeilen = trail
+          .filter((e) => e && typeof e.grund === 'string' && e.grund.trim().length > 0)
+          .slice(-3)
+          .map((e) => `  · ${e.ts ? new Date(e.ts).toLocaleDateString('de-DE') : '?'}: ${e.grund!.trim()}`);
+        const auditSummary = trail.length > 1
+          ? [
+              `_Audit: ${trail.length} changes · stored ${new Date(lesson.ts).toLocaleDateString('de-DE')}_`,
+              ...(warumZeilen.length > 0 ? ['**Warum zuletzt geaendert:**', ...warumZeilen] : []),
+            ].join('\n')
           : '';
 
         // "Remember when..." — emotional header for lessons > 60 days old
@@ -1506,7 +1589,16 @@ export async function handleBrainTool(
           trustBadge = `✅ **Proven** — recalled ${rc}× without contradiction.`;
         }
 
+        // Ersetzt? Dann steht das ZUERST — laut, vor jedem Inhalt (Karte
+        // exa5ya3w2m0w): eine widerlegte Fassung, die wie eine gueltige
+        // aussieht, schickt in die falsche Richtung.
+        const ersetztDurch = (lesson as { ersetzt_durch?: string; ersetzt_am?: string }).ersetzt_durch;
+        const ersetztBanner = ersetztDurch
+          ? `🚫 **DIESE FASSUNG IST ERSETZT**${(lesson as { ersetzt_am?: string }).ersetzt_am ? ` (am ${(lesson as { ersetzt_am?: string }).ersetzt_am!.slice(0, 10)})` : ''} — die gueltige Antwort steht in \`recall_best_solution(topic="${ersetztDurch}")\`. Der Text unten bleibt als Vorgeschichte lesbar.`
+          : '';
+
         return [
+          ersetztBanner,
           rememberWhen,
           trustBadge,
           `${badge} **Best solution for \`${topic}\`** ${sevEmoji}${lesson.severity ? ` (${lesson.severity})` : ''} · recalled ${updatedLesson.recall_count}×`,
@@ -2075,6 +2167,37 @@ export async function handleBrainTool(
         })
         .sort((a, b) => b.hybridScore - a.hybridScore);
 
+      /*
+       * ── Ersetzte Fassungen verdraengen, NICHT verschlucken (exa5ya3w2m0w) ──
+       *
+       * Liegt die Nachfolgerin MIT in der Liste, fliegt die ersetzte Fassung
+       * raus und wird GENANNT. Liegt sie nicht drin, bleibt die alte sichtbar
+       * — mit Warnung und Wegweiser. Zwei Lektionen zum selben Thema OHNE
+       * Ersetzungs-Verweis bleiben unangetastet beide stehen: sonst waere aus
+       * dem Mischen ein stilles Verschlucken geworden (Gegenprobe im Test).
+       */
+      const ersetzungsNotizen: string[] = [];
+      {
+        const daKeys = new Set(hybridResults.map((r) => r.key));
+        for (let i = hybridResults.length - 1; i >= 0; i--) {
+          const r = hybridResults[i];
+          if (!r.key.startsWith('cachly:lesson:best:')) continue;
+          const ld = safeJsonParse<{ ersetzt_durch?: string; ersetzt_am?: string }>(r.content, {});
+          if (!ld.ersetzt_durch) continue;
+          const altThema = r.key.replace('cachly:lesson:best:', '');
+          if (daKeys.has(`cachly:lesson:best:${ld.ersetzt_durch}`)) {
+            hybridResults.splice(i, 1);
+            ersetzungsNotizen.push(
+              `↷ \`${altThema}\` verdraengt — ersetzt durch \`${ld.ersetzt_durch}\`${ld.ersetzt_am ? ` am ${ld.ersetzt_am.slice(0, 10)}` : ''}`,
+            );
+          } else {
+            ersetzungsNotizen.push(
+              `⚠️ \`${altThema}\` ist ersetzt durch \`${ld.ersetzt_durch}\` (nicht in dieser Liste) — die gueltige Antwort: \`recall_best_solution(topic="${ld.ersetzt_durch}")\``,
+            );
+          }
+        }
+      }
+
       // ── Versuch (Messtechnik, siehe versuch.ts) ───────────────────────────────
       //
       // Standardmaessig AUS: `versuchStart()` gibt dann `null` zurueck, und
@@ -2177,6 +2300,9 @@ export async function handleBrainTool(
           ? `keyword + CKG hybrid`
           : `keyword`;
         lines.push(`### 🔍 Results (${hybridResults.length} — ${modeLabel})\n`);
+        if (ersetzungsNotizen.length > 0) {
+          lines.push(...ersetzungsNotizen.map((n) => `> ${n}`), '');
+        }
 
         // Group by sub-query for multi-topic queries
         if (subQueries.length > 1) {
@@ -2260,6 +2386,12 @@ export async function handleBrainTool(
         }
       } else {
         lines.push(`⚠️ No matches found for: "${query}"`);
+        // War der EINZIGE Treffer eine verdraengte Fassung, muss ihr
+        // Wegweiser trotzdem erscheinen — sonst waere die Verdraengung
+        // genau das stille Verschlucken, gegen das sie gebaut ist.
+        if (ersetzungsNotizen.length > 0) {
+          lines.push('', ...ersetzungsNotizen.map((n) => `> ${n}`));
+        }
 
         // Did-You-Mean: find nearest token in index vocab
         const queryTokens = tokenize(query);

@@ -348,7 +348,15 @@ async function main(): Promise<void> {
  * genau daran. fremdernte.ts traegt denselben Schutz seit jeher; diese
  * Datei hatte ihn schlicht nicht.
  */
-if (process.argv[1]?.includes('korpus-maschine')) {
+/*
+ * NACHGESCHAERFT am 25.08.2026: der includes-Vergleich war selbst die
+ * naechste Falle. Unter vitest kann argv[1] die TESTDATEI sein, und
+ * 'korpus-maschine.test.ts'.includes('korpus-maschine') ist wahr — main()
+ * lief beim Testlauf an und rief process.exit(2): 1594 gruene Tests UND
+ * ein Fehler. Deshalb exakter Dateinamen-Vergleich mit Endung.
+ */
+const aufgerufenAls = process.argv[1]?.replace(/\\/g, '/').split('/').pop() ?? '';
+if (aufgerufenAls === 'korpus-maschine.ts' || aufgerufenAls === 'korpus-maschine.js') {
   main().catch((e) => {
     console.error(e instanceof Error ? e.message : e);
     process.exit(1);

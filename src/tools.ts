@@ -537,7 +537,8 @@ const TOOLS = [
       'Fields: topic (short slug like "deploy:web"), outcome ("success"|"failure"), ' +
       'what_worked (what solved it), what_failed (what did NOT work), context (extra details). ' +
       'Supports structured metadata: severity, file_paths (files involved), commands (working commands), tags. ' +
-      'Deduplication: if a lesson for this topic already exists, it is updated with full audit trail. ' +
+      'Deduplication: if a lesson for this topic already exists, it is updated with full audit trail — ' +
+      'an UPDATE then REQUIRES the field `grund` (one line: WHY the previous version was wrong); without it the update is rejected. ' +
       'Contradiction detection: warns if new outcome conflicts with existing lesson outcome. ' +
       'Confidence: lesson starts at 1.0, decays after 5d (→0.7) and 10d (→0.5) without recall. ' +
       'Example: learn_from_attempts(topic="deploy:api", outcome="success", what_worked="nohup docker compose up -d --build", what_failed="docker compose up hangs on SSH timeout", severity="critical", commands=["nohup docker compose up -d --build"])',
@@ -578,6 +579,14 @@ const TOOLS = [
         author: {
           type: 'string',
           description: 'Name or handle of the person storing this lesson (e.g. "alice", "bob"). Used for Team Telepathy — teammates see each other\'s lessons in session_start. Also powers brain_who_knows and team_expertise_map.',
+        },
+        grund: {
+          type: 'string',
+          description: 'One line: WHY the previous version was wrong or incomplete (like a commit message). REQUIRED when the topic already exists — an update without it is rejected. Free on first write. Shown in recall_best_solution as the change history that gets read two months later.',
+        },
+        ersetzt: {
+          type: 'string',
+          description: 'Topic slug of an OLDER lesson (different topic) that this lesson refutes/supersedes. Both sides get linked: the old lesson is suppressed in smart_recall when this one is present (and named, never silently swallowed), and recall_best_solution on the old topic shows a loud "superseded" banner pointing here. The target must exist — a dangling reference is not stored. For corrections within the SAME topic, just update it and pass `grund`.',
         },
         visibility: {
           type: 'string',
