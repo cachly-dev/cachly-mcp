@@ -1593,8 +1593,18 @@ export async function handleBrainTool(
         // exa5ya3w2m0w): eine widerlegte Fassung, die wie eine gueltige
         // aussieht, schickt in die falsche Richtung.
         const ersetztDurch = (lesson as { ersetzt_durch?: string; ersetzt_am?: string }).ersetzt_durch;
+        // Karte g4j4fy030fsp: der Nachfolger kann NACH der Markierung geloescht
+        // worden sein (cache_delete trifft jeden Schluessel, Ops-Aufraeumen
+        // ebenso). Ein Banner, das dann auf ihn zeigt, ist ein Wegweiser ins
+        // Leere — und diese Fassung bliebe fuer immer "ersetzt" durch ein Nichts.
+        const ersetztAmText = (lesson as { ersetzt_am?: string }).ersetzt_am
+          ? ` (am ${(lesson as { ersetzt_am?: string }).ersetzt_am!.slice(0, 10)})`
+          : '';
+        const nachfolgerDa = ersetztDurch ? await redis.get(`cachly:lesson:best:${ersetztDurch}`) : null;
         const ersetztBanner = ersetztDurch
-          ? `🚫 **DIESE FASSUNG IST ERSETZT**${(lesson as { ersetzt_am?: string }).ersetzt_am ? ` (am ${(lesson as { ersetzt_am?: string }).ersetzt_am!.slice(0, 10)})` : ''} — die gueltige Antwort steht in \`recall_best_solution(topic="${ersetztDurch}")\`. Der Text unten bleibt als Vorgeschichte lesbar.`
+          ? nachfolgerDa
+            ? `🚫 **DIESE FASSUNG IST ERSETZT**${ersetztAmText} — die gueltige Antwort steht in \`recall_best_solution(topic="${ersetztDurch}")\`. Der Text unten bleibt als Vorgeschichte lesbar.`
+            : `⚠️ **ERSETZT-VERWEIS INS LEERE**${ersetztAmText} — der Nachfolger \`${ersetztDurch}\` wurde inzwischen geloescht. Diese Fassung gilt wieder als beste VORHANDENE Antwort; bei Gelegenheit neu bestaetigen (learn_from_attempts mit grund).`
           : '';
 
         return [
@@ -2190,9 +2200,16 @@ export async function handleBrainTool(
             ersetzungsNotizen.push(
               `↷ \`${altThema}\` verdraengt — ersetzt durch \`${ld.ersetzt_durch}\`${ld.ersetzt_am ? ` am ${ld.ersetzt_am.slice(0, 10)}` : ''}`,
             );
-          } else {
+          } else if (await redis.get(`cachly:lesson:best:${ld.ersetzt_durch}`)) {
             ersetzungsNotizen.push(
               `⚠️ \`${altThema}\` ist ersetzt durch \`${ld.ersetzt_durch}\` (nicht in dieser Liste) — die gueltige Antwort: \`recall_best_solution(topic="${ld.ersetzt_durch}")\``,
+            );
+          } else {
+            // Karte g4j4fy030fsp: Nachfolger geloescht — der Treffer bleibt
+            // stehen, die Notiz erklaert die Lage, statt den Leser in ein
+            // totes Thema zu schicken.
+            ersetzungsNotizen.push(
+              `↩️ \`${altThema}\` war ersetzt durch \`${ld.ersetzt_durch}\` — der Nachfolger wurde geloescht, diese Fassung gilt wieder (bei Gelegenheit neu bestaetigen).`,
             );
           }
         }
