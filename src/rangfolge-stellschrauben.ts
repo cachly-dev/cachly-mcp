@@ -38,7 +38,9 @@
 /**
  * Wie viele Themen der Bedeutungsabgleich in die engere Wahl nimmt.
  *
- * Ein Messstand mit anderem Topf misst eine andere Suchmaschine.
+ * 75 — und ein Messstand mit anderem Topf misst eine andere Suchmaschine
+ * (Naturworkshop 2: mit Bench-Vorgabe 25 statt der echten 75 war die
+ * vermeintliche Vorauswahl-Luecke zu zwei Dritteln eingebildet).
  */
 export const SINN_TOPF = 75;
 
@@ -58,7 +60,11 @@ export const EINGANG_SCHWELLE = 0.5;
 /**
  * Wie stark die Tuer mitsortiert.
  *
- * 0,2 liegt mittig im Band, in dem Platz 1 UND Findequote@3 ihr Maximum
- * halten (Abtastung in `bench/schwelle-abtasten.ts`).
+ * 0,7 seit dem 24.08. (Anhebung von 0,2 in der Messstand-Serie zu Karte
+ * azmqezaxx2kx: Untergrenzen 41/55/71/97 gehalten). Der alte Satz "0,2 liegt
+ * mittig im Band" beschrieb die Abtastung VOR dieser Anhebung
+ * (`bench/schwelle-abtasten.ts`) und stand hier zwei Tage lang neben dem
+ * neuen Wert — genau die Drift-Klasse, die Kommentare zu Zahlen befaellt:
+ * Wer eine Stellschraube dreht, dreht den Satz darueber MIT.
  */
 export const EINGANG_SORTIER_GEWICHT = 0.7;
