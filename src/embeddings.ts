@@ -107,7 +107,7 @@ export const EMBED_PROVIDER = (process.env.CACHLY_EMBED_PROVIDER ?? detectEmbedP
  * Note: Brain works fully WITHOUT embedding (keyword search + exact keys).
  *       Embedding is an OPTIONAL boost for semantic_search and index_project.
  */
-export async function computeEmbedding(text: string): Promise<number[]> {
+async function embeddingEinmal(text: string): Promise<number[]> {
   switch (EMBED_PROVIDER) {
     case 'cachly': {
       // Server-side embedding — the Cachly API computes the embedding
@@ -134,7 +134,22 @@ export async function computeEmbedding(text: string): Promise<number[]> {
       });
       if (!res.ok) {
         const errBody = await res.text();
-        throw new Error(`Cachly embed API error ${res.status}: ${errBody}`);
+        // Status und Wartewunsch mitgeben, damit die Wiederholung oben
+        // entscheiden kann: 429 traegt Retry-After als Header (Sekunden),
+        // der Circuit-Breaker-Fall (503) traegt retry_after im JSON-Body.
+        let retryAfterSek: number | null = null;
+        const header = Number(res.headers.get('retry-after'));
+        if (Number.isFinite(header) && header >= 0) retryAfterSek = header;
+        else {
+          try {
+            const b = JSON.parse(errBody) as { retry_after?: number };
+            if (typeof b.retry_after === 'number' && b.retry_after >= 0) retryAfterSek = b.retry_after;
+          } catch { /* Body war kein JSON — kein Wartewunsch */ }
+        }
+        throw Object.assign(new Error(`Cachly embed API error ${res.status}: ${errBody.slice(0, 200)}`), {
+          status: res.status,
+          retryAfterSek,
+        });
       }
       const json = (await res.json()) as { embedding: number[]; dimensions: number };
       return json.embedding;
@@ -230,6 +245,74 @@ export async function computeEmbedding(text: string): Promise<number[]> {
         `Unknown CACHLY_EMBED_PROVIDER="${EMBED_PROVIDER}".\n` +
         'Supported: cachly (default), openai, mistral, cohere, ollama, gemini'
       );
+    }
+  }
+}
+
+// ── Wiederholung bei voruebergehenden Fehlern (Karte hcg8neyut0kd) ───────────
+//
+// Beleg 26.08.2026 (LoCoMo-Smoke, Produktpfad): mitten im Lauf schlug ein
+// einzelner Embed-Aufruf mit "fetch failed" fehl — die Lektion wurde ohne
+// Volltext-Vektor gespeichert und war fuer den Bedeutungsabgleich unsichtbar;
+// eine Suche fiel still auf Woerter zurueck. Ein einzelner Netz-Blip kostete
+// dauerhaft Abrufqualitaet, weil es KEINEN Wiederholversuch gab.
+//
+// Zwei Geduldsstufen, weil die Pfade verschieden viel Zeit haben:
+//  - 'kurz' (Standard, Suchpfad): nur schnelle Wiederholungen. Ein Timeout
+//    wird NICHT wiederholt (ein langsames Modell wird nicht schneller, und
+//    der Suchpfad darf den Agenten-Zug nie aufhalten).
+//  - 'lang' (Schreibpfad, fire-and-forget): wartet auch ein volles
+//    Rate-Fenster ab (Retry-After bis 61 s) — dort blockiert niemand.
+
+export type EmbedGeduld = 'kurz' | 'lang';
+
+const KURZ_VERSUCHE = 3;
+const LANG_VERSUCHE = 4;
+
+/** Ist dieser Fehler von der Art, die beim naechsten Versuch weg sein kann? */
+export function istVoruebergehend(fehler: unknown): boolean {
+  const f = fehler as { status?: number; name?: string; message?: string; cause?: { code?: string } };
+  if (typeof f?.status === 'number') return f.status === 429 || f.status >= 500;
+  // Timeouts sind KEIN voruebergehender Fehler im Sinne der Wiederholung:
+  // wer 8 s nicht schaffte, schafft sie beim direkten zweiten Anlauf selten —
+  // und der Suchpfad haengt sonst ein Mehrfaches des Zeitlimits.
+  if (f?.name === 'TimeoutError' || f?.name === 'AbortError') return false;
+  if (/fetch failed/i.test(String(f?.message ?? ''))) return true;
+  const code = f?.cause?.code ?? '';
+  return ['ECONNRESET', 'ECONNREFUSED', 'ETIMEDOUT', 'EAI_AGAIN', 'EPIPE', 'UND_ERR_SOCKET'].includes(code);
+}
+
+/**
+ * Wartezeit vor Versuch (versuch+1), oder null = nicht wiederholen.
+ * Rein und getestet — die Politik steht HIER, nicht verstreut im Wrapper.
+ */
+export function wiederholungMs(fehler: unknown, versuch: number, geduld: EmbedGeduld): number | null {
+  const max = geduld === 'lang' ? LANG_VERSUCHE : KURZ_VERSUCHE;
+  if (versuch >= max) return null;
+  if (!istVoruebergehend(fehler)) return null;
+  const ra = (fehler as { retryAfterSek?: number | null })?.retryAfterSek;
+  if (typeof ra === 'number' && Number.isFinite(ra) && ra >= 0) {
+    const ms = ra * 1000;
+    // 'kurz' wartet kein Rate-Fenster ab: ein Wartewunsch ueber 2 s heisst
+    // fuer den Suchpfad "gib auf und lauf ueber Woerter weiter".
+    if (geduld === 'kurz') return ms <= 2_000 ? ms : null;
+    return Math.min(ms, 61_000); // das 60-s-Fenster plus Puffer
+  }
+  return geduld === 'lang' ? Math.min(1_000 * 2 ** (versuch - 1), 8_000) : 250 * 2 ** (versuch - 1);
+}
+
+/** Siehe embeddingEinmal fuer die Provider; hier sitzt NUR die Wiederholung. */
+export async function computeEmbedding(text: string, opts?: { geduld?: EmbedGeduld }): Promise<number[]> {
+  const geduld = opts?.geduld ?? 'kurz';
+  let versuch = 0;
+  for (;;) {
+    versuch++;
+    try {
+      return await embeddingEinmal(text);
+    } catch (fehler) {
+      const warte = wiederholungMs(fehler, versuch, geduld);
+      if (warte === null) throw fehler;
+      await new Promise((r) => setTimeout(r, warte));
     }
   }
 }

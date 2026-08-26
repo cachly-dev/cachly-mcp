@@ -1096,7 +1096,11 @@ export async function handleBrainTool(
         void (async () => {
           const gelesen = safeJsonParse(lesson, {} as Record<string, unknown>);
           try {
-            const v = await computeEmbedding(textFuerVektor(gelesen));
+            // geduld 'lang': dieser Block ist fire-and-forget — hier darf der
+            // Client ein 429-Fenster absitzen und Netz-Blips wiederholen,
+            // statt die Lektion dauerhaft ohne Vektor zu lassen (Beleg
+            // 26.08.2026: ein einzelnes "fetch failed" im LoCoMo-Smoke).
+            const v = await computeEmbedding(textFuerVektor(gelesen), { geduld: 'lang' });
             if (v?.length) await redis.set(`${VEKTOR_PRAEFIX}${topic}`, packe(v));
           } catch (e) {
             // Kein Vektor ist besser als keine Lektion — aber der GRUND darf
@@ -1116,7 +1120,7 @@ export async function handleBrainTool(
           // naeheThema 0,6). Bis zum 20.08.2026 gab es diese Vektoren nur im
           // Messstand — deshalb war rangfolge.ts auch nie verdrahtet.
           try {
-            const nv = await computeEmbedding(textFuerNamensVektor(topic));
+            const nv = await computeEmbedding(textFuerNamensVektor(topic), { geduld: 'lang' });
             if (nv?.length) await redis.set(`${NAME_VEKTOR_PRAEFIX}${topic}`, packe(nv));
           } catch (e) {
             meldeEinmal(OHNE_SCHREIBVEKTOR,
@@ -1135,7 +1139,7 @@ export async function handleBrainTool(
           // Genau wie der Vektor: nicht abgewartet, Fehler verschluckt. Eine
           // Lektion muss auch ohne Netz gespeichert werden koennen.
           try {
-            await schreibeEingaenge(redis, topic, gelesen, computeEmbedding);
+            await schreibeEingaenge(redis, topic, gelesen, (t) => computeEmbedding(t, { geduld: 'lang' }));
           } catch (e) {
             meldeEinmal(OHNE_SCHREIBVEKTOR,
               `Eingaenge nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
