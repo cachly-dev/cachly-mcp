@@ -9,6 +9,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
 import { safeJsonParse, scanKeys } from '../utils.js';
 import { ersparteMinuten, istStarterLektion, zaehltAlsErsparnis } from '../wertbeitrag.js';
 import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
+import { normalisiereZeit, zaehleZeitangaben } from '../zeit-normalisieren.js';
 import { meldeEinmal, meldeUndVermerke, fehlerText, OHNE_VEKTOREN, OHNE_DIENST, OHNE_FRAGEVEKTOR, SINNPFAD_ABBRUCH, OHNE_SCHREIBVEKTOR } from '../aussetzer.js';
 import { versuchStart, neueKennung, wendeZuteilungAn, schliesseVersuchAb,
          type VersuchProtokollTeil } from '../versuch.js';
@@ -797,14 +798,42 @@ export async function handleBrainTool(
        * bleibt der Text falsch und what_failed leer. Deshalb hier, an der
        * einzigen Stelle, an der der Fehler entsteht.
        */
-      const { what_worked, what_failed = '', context: ctx = '' } = repariereFelder({
+      const {
+        what_worked: repariertWorked,
+        what_failed: repariertFailed = '',
+        context: repariertCtx = '',
+      } = repariereFelder({
         what_worked: rohWorked,
         what_failed: rohFailed,
         context: rohCtx,
       });
 
       const redis = await getConnection(instance_id);
-      const ts = new Date().toISOString();
+      const jetzt = new Date();
+      const ts = jetzt.toISOString();
+
+      /*
+       * ── Relative Zeitangaben aufloesen, solange der Bezugspunkt noch da ist ──
+       *
+       * Karte 2bfm7dyvjmeh. "gestern" ist am Tag des Schreibens klar und drei
+       * Wochen spaeter wertlos — der Text bleibt gleich, sein Bezugspunkt
+       * verschwindet. Hier ist die EINZIGE Stelle im System, an der der
+       * Bezugspunkt noch zweifelsfrei feststeht.
+       *
+       * Beleg fuer die Wirkung: LoCoMo-Lauf 2 hob mit genau diesem Griff die
+       * Kategorie "Temporal" im Holdout von 23,1 auf 57,7 Prozent (+34,6) —
+       * der groesste Einzeleffekt des Laufs, ohne eine Zeile am Ranking.
+       *
+       * ERGAENZT, ERSETZT NIE: aus "gestern" wird "gestern (2026-08-26)".
+       * Fremde Worte werden nicht umgeschrieben, nur datiert.
+       */
+      const what_worked = normalisiereZeit(repariertWorked, jetzt);
+      const what_failed = normalisiereZeit(repariertFailed, jetzt);
+      const ctx = normalisiereZeit(repariertCtx, jetzt);
+      const datiert =
+        zaehleZeitangaben(repariertWorked, jetzt) +
+        zaehleZeitangaben(repariertFailed, jetzt) +
+        zaehleZeitangaben(repariertCtx, jetzt);
 
       /*
        * ── Der Autor wird HERGELEITET, nicht erwartet ─────────────────────
@@ -1392,6 +1421,12 @@ export async function handleBrainTool(
           : ersetztHinweis,
         ...templateWarnings,
         ...iWasWrongWarning,
+        // Karte 2bfm7dyvjmeh: sichtbar machen, dass hier etwas am Text
+        // ergaenzt wurde. Eine stille Aenderung an fremden Worten waere
+        // genau die Sorte Hilfe, die niemand bestellt hat.
+        datiert > 0
+          ? `🗓️ ${datiert} relative Zeitangabe${datiert === 1 ? '' : 'n'} datiert (z. B. "gestern" → "gestern (${new Date(jetzt.getTime() - 864e5).toISOString().slice(0, 10)})") — der Originaltext bleibt unveraendert, das Datum steht daneben.`
+          : '',
         // GROW-044: Die 100-Zeichen-Regel wird geprueft, nicht geglaubt.
         // Das Briefing der naechsten Sitzung zeigt je Lektion rund 100
         // Zeichen; am 16.08.2026 stand die gesuchte Adresse an Zeichen 323,
