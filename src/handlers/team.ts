@@ -10,6 +10,7 @@ import type { Instance } from './brain.js';
 import { safeJsonParse } from '../utils.js';
 import { ersparteMinuten, istStarterLektion, fmtStunden } from '../wertbeitrag.js';
 import { cachlyUrl } from '../cachly-url.js';
+import { leseVermerke } from '../aussetzer.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -879,6 +880,27 @@ export async function handleTeamTool(
             );
           }
         }
+      }
+
+      // Die GRUENDE zu den Luecken (Karte hcg8neyut0kd): Der Schreibpfad
+      // vermerkt Aussetzer seit 26.08. dauerhaft in Valkey (meldeUndVermerke)
+      // — vorher lebten sie nur im Prozess-Speicher und jeder Neustart
+      // loeschte das Warum. Der Doctor zaehlte Luecken, konnte aber nie sagen,
+      // WOHER sie kamen. Jetzt stehen Grund, Anzahl und letzter Zeitpunkt
+      // direkt neben der Deckungszahl.
+      try {
+        const vermerke = await leseVermerke(redis);
+        for (const v of vermerke ?? []) {
+          checks.push(
+            `⚠️ **Write-path failure noted:** ${v.grund} — ${v.anzahl}× (last: ${v.zuletzt})`
+            + (v.text ? ` · ${String(v.text).slice(0, 140)}` : ''),
+          );
+          issues.push(`write-path failures recorded for "${v.grund}" (${v.anzahl}×) — see check above for the reason.`);
+        }
+      } catch {
+        // Vermerke sind Auskunft, kein Gate — ein Lesefehler hier darf den
+        // Doctor nicht kippen (dieselbe Regel wie beim stillen Rueckfall des
+        // Kartenbezug-Waechters: Auskunftswege duerfen nie selbst ausfallen).
       }
 
       // Quality score (0-100)

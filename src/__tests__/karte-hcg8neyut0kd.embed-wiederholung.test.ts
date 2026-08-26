@@ -25,6 +25,29 @@ const statusfehler = (status: number, retryAfterSek: number | null = null) =>
   Object.assign(new Error(`Cachly embed API error ${status}: x`), { status, retryAfterSek });
 const timeout = () => Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
 
+describe('Schreibpfad-Aussetzer werden DAUERHAFT vermerkt (26.08., Teil 2 der Karte)', () => {
+  // meldeEinmal lebt nur im Prozess-Speicher: nach jedem Neustart war der
+  // GRUND einer Vektor-Luecke weg, und brain_doctor zaehlte Luecken ohne
+  // Warum. Diese Probe liest den Quelltext: die drei OHNE_SCHREIBVEKTOR-
+  // Stellen muessen meldeUndVermerke (Valkey-Vermerk) rufen, und der Doctor
+  // muss die Vermerke lesen.
+  it('brain.ts vermerkt statt nur zu melden — an allen drei Tuer-Stellen', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../handlers/brain.ts', import.meta.url), 'utf8');
+    const vermerkt = src.match(/meldeUndVermerke\(redis, OHNE_SCHREIBVEKTOR/g) ?? [];
+    expect(vermerkt.length).toBeGreaterThanOrEqual(3);
+    expect(src, 'die fluechtige Meldung darf fuer OHNE_SCHREIBVEKTOR nicht zurueckkommen')
+      .not.toContain('meldeEinmal(OHNE_SCHREIBVEKTOR');
+  });
+
+  it('brain_doctor liest die Vermerke und nennt die Gruende', async () => {
+    const { readFileSync } = await import('node:fs');
+    const src = readFileSync(new URL('../handlers/team.ts', import.meta.url), 'utf8');
+    expect(src).toContain('leseVermerke(redis)');
+    expect(src).toContain('Write-path failure noted');
+  });
+});
+
 describe('istVoruebergehend — die Fehlerklassen', () => {
   it('Netzfehler und 429/5xx sind voruebergehend', () => {
     expect(istVoruebergehend(netzfehler())).toBe(true);

@@ -1107,7 +1107,10 @@ export async function handleBrainTool(
             // nicht verlorengehen. Vor dem 22.08.2026 stand hier ein leeres
             // catch, und drei Kundeninstanzen hatten Lektionen ohne Vektoren,
             // ohne dass irgendwo stand, warum (siehe OHNE_SCHREIBVEKTOR).
-            meldeEinmal(OHNE_SCHREIBVEKTOR,
+            // Seit 26.08. DAUERHAFT vermerkt (Karte hcg8neyut0kd): meldeEinmal
+            // lebte nur im Prozess-Speicher — nach jedem Neustart war der
+            // Grund weg, und brain_doctor zaehlte Luecken ohne Warum.
+            await meldeUndVermerke(redis, OHNE_SCHREIBVEKTOR,
               `Volltext-Vektor nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
               + ' — die Lektion ist gespeichert, der Bedeutungsabgleich uebergeht sie.');
           }
@@ -1123,7 +1126,7 @@ export async function handleBrainTool(
             const nv = await computeEmbedding(textFuerNamensVektor(topic), { geduld: 'lang' });
             if (nv?.length) await redis.set(`${NAME_VEKTOR_PRAEFIX}${topic}`, packe(nv));
           } catch (e) {
-            meldeEinmal(OHNE_SCHREIBVEKTOR,
+            await meldeUndVermerke(redis, OHNE_SCHREIBVEKTOR,
               `Namens-Vektor nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
               + ' — siehe oben, die Lektion selbst ist gespeichert.');
           }
@@ -1141,7 +1144,7 @@ export async function handleBrainTool(
           try {
             await schreibeEingaenge(redis, topic, gelesen, (t) => computeEmbedding(t, { geduld: 'lang' }));
           } catch (e) {
-            meldeEinmal(OHNE_SCHREIBVEKTOR,
+            await meldeUndVermerke(redis, OHNE_SCHREIBVEKTOR,
               `Eingaenge nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
               + ' — siehe oben, die Lektion selbst ist gespeichert.');
           }
