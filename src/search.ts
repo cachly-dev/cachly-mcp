@@ -1601,6 +1601,29 @@ interface KeywordMatch {
   score: number;
   matchedWords: string[];
   subQuery?: string;   // which sub-query matched (for multi-topic)
+  /**
+   * Wie viele der GETIPPTEN Woerter wirklich in diesem Treffer stehen.
+   *
+   * Ein exakt getroffenes Wort zaehlt 1, ein unscharfes (Tippfehler-Toleranz,
+   * `~wort`) zaehlt 0,5. Von uns ergaenzte Synonyme zaehlen NICHT mit.
+   *
+   * Bewusst eine ANZAHL und kein Anteil. Ein Anteil bestraft die lange Frage:
+   * "xyzzy api key" auf eine Lektion, die das seltene "xyzzy" exakt enthaelt,
+   * waere ein Drittel — und damit unter jeder brauchbaren Schwelle, obwohl der
+   * Treffer genau richtig ist. Gemessen an der roten Probe `brain-flow` am
+   * 27.08.2026, bevor die Zahl ausgeliefert wurde.
+   *
+   * Warum sie hier entsteht und nicht beim Aufrufer: die Kernwoerter kennt nur
+   * diese Datei (`tokenize` ist nicht ausgefuehrt). Wer sie draussen nachbaut,
+   * baut die Zerlegung nach — genau die Fehlerklasse "Messstand und
+   * Auslieferstand sind zwei Systeme" vom 20.08.2026.
+   *
+   * Wozu sie gebraucht wird: `score` und der daraus abgeleitete `hybridScore`
+   * sind RELATIV (min-max normiert). Der schlechteste Treffer einer Liste
+   * bekommt immer exakt 0, der beste immer 1 — auch wenn beide nicht passen.
+   * Fuer die Frage "taugt das ueberhaupt?" braucht es eine absolute Zahl.
+   */
+  wortBelege: number;
 }
 
 /**
@@ -2101,12 +2124,36 @@ function keywordSearchMitBestand(
       if (score > 0) {
         const existing = allMatches.get(doc.key);
         if (!existing || score > existing.score) {
+          // Absoluter Wortbeleg: wie viele der GETIPPTEN Kernwoerter stehen
+          // wirklich drin? Ergaenzte Synonyme zaehlen hier bewusst nicht mit —
+          // sonst koennte die Bruecke in die andere Sprache einen Beleg
+          // erzeugen, den der Mensch in seiner Frage nie hatte. Der Kommentar
+          // weiter oben sagt, warum: die Bruecke landet bei allgemeinen
+          // Woertern, und `log` steht in hunderten Lektionen.
+          //
+          // Exakt zaehlt 1, unscharf (`~wort`) zaehlt 0,5. Wer "timout" tippt,
+          // meint "timeout" — ihm den Treffer wegen zweier Buchstaben zu
+          // verschweigen waere der teurere Fehler; ihn allein aber auch nicht
+          // als vollen Beleg zu nehmen ist die vorsichtige Mitte.
+          const exakt = new Set<string>();
+          const unscharf = new Set<string>();
+          for (const w of matchedWords) {
+            if (w.startsWith('~')) unscharf.add(w.slice(1));
+            else exakt.add(w);
+          }
+          let wortBelege = 0;
+          for (const kt of kernTokens) {
+            if (exakt.has(kt)) wortBelege += 1;
+            else if (unscharf.has(kt)) wortBelege += 0.5;
+          }
+
           allMatches.set(doc.key, {
             key: doc.key,
             content: doc.content,
             score,
             matchedWords: [...new Set(matchedWords)],
             subQuery: subQueries.length > 1 ? sq : undefined,
+            wortBelege,
           });
         }
       }

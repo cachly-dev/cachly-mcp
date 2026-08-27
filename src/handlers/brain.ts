@@ -10,6 +10,7 @@ import { safeJsonParse, scanKeys } from '../utils.js';
 import { ersparteMinuten, istStarterLektion, zaehltAlsErsparnis } from '../wertbeitrag.js';
 import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
 import { normalisiereZeit, zaehleZeitangaben } from '../zeit-normalisieren.js';
+import { abstentionSatz, beurteileTreffer } from '../abstention.js';
 import { meldeEinmal, meldeUndVermerke, fehlerText, OHNE_VEKTOREN, OHNE_DIENST, OHNE_FRAGEVEKTOR, SINNPFAD_ABBRUCH, OHNE_SCHREIBVEKTOR } from '../aussetzer.js';
 import { versuchStart, neueKennung, wendeZuteilungAn, schliesseVersuchAb,
          type VersuchProtokollTeil } from '../versuch.js';
@@ -1935,7 +1936,9 @@ export async function handleBrainTool(
             if (da) { sortiert.push(da); bekannt.delete(key); continue; }
             const inhalt = await redis.get(key).catch(() => null);
             if (inhalt) {
-              sortiert.push({ key, content: inhalt, score: 0, matchedWords: [], finalScore: 0, qualityBoost: 1 });
+              // Nur der Bedeutungsabgleich hat sie gefunden: kein gemeinsames
+            // Wort, also Deckung 0. Der Beleg kommt dann aus `semScore`.
+            sortiert.push({ key, content: inhalt, score: 0, matchedWords: [], wortBelege: 0, finalScore: 0, qualityBoost: 1 });
             }
           }
           // Alles, was kein Thema war (Kontexteintraege, Index), bleibt hinten
@@ -2103,6 +2106,8 @@ export async function handleBrainTool(
       type HybridResult = {
         key: string; content: string; hybridScore: number;
         bm25Score?: number; semScore?: number; ckgScore?: number; matchedWords?: string[];
+        /** Absoluter Wortbeleg aus search.ts — siehe abstention.ts. */
+        wortBelege?: number;
         matchType: 'keyword' | 'semantic' | 'ckg' | 'hybrid'; subQuery?: string;
         contextBoost?: boolean;
       };
@@ -2119,6 +2124,7 @@ export async function handleBrainTool(
           key: m.key, content: m.content, bm25Score: n,
           hybridScore: n * (semHits.length > 0 ? 0.7 : 1.0),
           matchedWords: m.matchedWords, matchType: 'keyword', subQuery: m.subQuery,
+          wortBelege: m.wortBelege,
         });
       }
       for (const hit of semHits) {
@@ -2369,6 +2375,35 @@ export async function handleBrainTool(
       const subQueries = splitMultiQuery(query);
       if (subQueries.length > 1) {
         lines.push(`_Detected ${subQueries.length} sub-topics:_ ${subQueries.map((s, i) => `${i + 1}. "${s}"`).join(', ')}\n`);
+      }
+
+      /*
+       * ── "Nicht im Bestand" ist eine Antwort (Karte bninni0fimfy) ───────────
+       *
+       * Ein Abruf lieferte bisher IMMER etwas: die Rangfolge sortiert, und was
+       * oben liegt, wird gezeigt — auch wenn der beste Treffer mit der Frage
+       * nichts zu tun hat. Fuer den Leser sieht ein schwacher Treffer genauso
+       * aus wie ein starker; die Zahl daneben liest niemand.
+       *
+       * Gemessen 13.08.2026: 21 Prozent der automatisch eingeblendeten
+       * Lektionen passten nicht zur Aufgabe.
+       *
+       * WICHTIG — hier wird bewusst NICHT `hybridScore` uebergeben. Der ist
+       * min-max normiert und damit relativ: ein einzelner Treffer bekommt
+       * immer 0, der beste einer Liste immer 1. Uebergeben werden die drei
+       * absoluten Belege `wortBelege` (Wortabgleich), `semScore`
+       * (Bedeutungsnaehe) und `ckgScore` (Kante). Herleitung: abstention.ts.
+       *
+       * Die Zurueckhaltung greift NUR, wenn KEIN Treffer belegt ist — sie
+       * filtert nicht die schwachen heraus. Entweder die Liste taugt, oder sie
+       * taugt nicht.
+       */
+      const abstention = beurteileTreffer(
+        hybridResults.map((r) => ({ wortBelege: r.wortBelege, semScore: r.semScore, ckgScore: r.ckgScore })),
+      );
+      if (abstention.schweigen) {
+        lines.push(abstentionSatz(abstention));
+        return lines.join('\n');
       }
 
       if (hybridResults.length > 0) {

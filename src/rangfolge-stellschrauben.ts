@@ -68,3 +68,55 @@ export const EINGANG_SCHWELLE = 0.5;
  * Wer eine Stellschraube dreht, dreht den Satz darueber MIT.
  */
 export const EINGANG_SORTIER_GEWICHT = 0.7;
+
+/**
+ * Wie viele getippte Woerter im Treffer stehen muessen, damit er als Beleg gilt.
+ *
+ * 1 — ein einziges exakt getroffenes Wort genuegt. Bewusst eine ANZAHL und
+ * kein Anteil: ein Anteil bestraft die lange Frage. "xyzzy api key" auf eine
+ * Lektion, die das seltene "xyzzy" exakt enthaelt, waere ein Drittel und damit
+ * unter jeder brauchbaren Schwelle — obwohl der Treffer genau richtig ist.
+ * Genau daran fiel die Probe `brain-flow` am 27.08.2026 rot aus, bevor die
+ * Zahl je ausgeliefert wurde.
+ *
+ * Zwei unscharfe Treffer (Tippfehler-Toleranz, je 0,5) reichen ebenfalls, ein
+ * einzelner nicht.
+ *
+ * Diese Schwelle darf keinen Treffer fressen, der geholfen haette; sie faengt
+ * nur die Faelle ab, in denen KEIN getipptes Wort vorkommt und der Treffer
+ * allein ueber die Synonym-Bruecke nach oben kam. Genau davor warnt der
+ * Kommentar in `search.ts`: die Bruecke landet bei allgemeinen Woertern, und
+ * `log` steht in hunderten Lektionen.
+ *
+ * Sie greift ausserdem nur, wenn KEIN Treffer der Liste belegt ist — nicht als
+ * Filter auf einzelne. Entweder die Liste taugt, oder sie taugt nicht.
+ *
+ * Warum Wortbelege und nicht die Punktzahl: `hybridScore` ist min-max normiert
+ * und damit relativ. Ein einzelner Treffer bekommt dort IMMER 0, der beste
+ * einer Liste IMMER 1 — beides unbrauchbar fuer "taugt das ueberhaupt?".
+ * Die ganze Herleitung steht in abstention.ts.
+ *
+ * Der Anlass: 21 Prozent der automatisch eingeblendeten Lektionen passten am
+ * 13.08.2026 nicht zur Aufgabe. Der Wert selbst ist eine erste, vorsichtige
+ * Setzung und noch NICHT am Bench abgetastet — wer ihn aendert, faehrt beide
+ * Pflicht-Benches (eigener Satz mit Untergrenzen 41/55/71/97 und LoCoMo) und
+ * traegt die Zahl hier ein.
+ */
+export const WORT_BELEG_SCHWELLE = 1;
+
+export const SINN_BELEG_SCHWELLE = 0.35;
+
+/**
+ * Ab welcher Zuversicht eine Ursache-Wirkung-Kante allein als Beleg zaehlt.
+ *
+ * 0,35 — und das ist bewusst KEINE neue Zahl, sondern dieselbe, die der
+ * Graphdurchlauf in `handlers/brain.ts` schon anwendet:
+ *
+ *     if (!edge || edge.edgeType !== 'fixes' || edge.confidence < 0.35) continue;
+ *
+ * Eine Zurueckhaltung, die strenger waere als der Filter davor, wuerde
+ * Treffer verwerfen, die der Abruf gerade erst bewusst durchgelassen hat.
+ * Ein reiner Graph-Treffer haengt ausserdem an einem getippten Wort: der
+ * Durchlauf startet nur an Knoten, deren Name ein Fragewort enthaelt.
+ */
+export const CKG_BELEG_SCHWELLE = 0.35;
