@@ -51,7 +51,8 @@
     "test:e2e:provisioning": "bash scripts/e2e-run.sh provisioning",
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
-    "bench:cost": "tsx src/bench/cost.ts"
+    "bench:cost": "tsx src/bench/cost.ts",
+    "bench:zurueckhaltung": "tsx src/bench/zurueckhaltung-messen.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.0",

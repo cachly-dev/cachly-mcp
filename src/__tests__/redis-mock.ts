@@ -66,11 +66,31 @@ export class MockRedis {
   // hincrby/hgetall, warf schon der AUFRUF — und ein .catch() faengt das nicht,
   // weil der Fehler nicht aus einer Zusage kommt, sondern aus "ist keine
   // Funktion".
-  private hashes = new Map<string, Map<string, number>>();
+  /*
+   * Werte koennen Zahlen ODER Zeichenketten sein.
+   *
+   * Bis zum 27.08.2026 nur Zahlen — die Karte kannte nur `hincrby`. Der
+   * Zurueckhaltungs-Messstand fuellt hier aber die Fehlertext-Tueren ein, und
+   * die sind gepackte Zeichenketten. `hgetall` gibt ohnehin schon `String(v)`
+   * zurueck, der Typ war also enger als das Verhalten.
+   */
+  private hashes = new Map<string, Map<string, string | number>>();
+
+  /** Felder setzen, im Wechsel Feld/Wert — wie ioredis. */
+  async hset(key: string, ...felder: string[]): Promise<number> {
+    const h = this.hashes.get(key) ?? new Map<string, string | number>();
+    let neu = 0;
+    for (let i = 0; i + 1 < felder.length; i += 2) {
+      if (!h.has(felder[i])) neu++;
+      h.set(felder[i], felder[i + 1]);
+    }
+    this.hashes.set(key, h);
+    return neu;
+  }
 
   async hincrby(key: string, field: string, by: number): Promise<number> {
-    const h = this.hashes.get(key) ?? new Map<string, number>();
-    const next = (h.get(field) ?? 0) + by;
+    const h = this.hashes.get(key) ?? new Map<string, string | number>();
+    const next = Number(h.get(field) ?? 0) + by;
     h.set(field, next);
     this.hashes.set(key, h);
     return next;
