@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
+import { IM_MONOREPO } from './im-monorepo.js';
 
 /**
  * GROW-042 — Jede Adresse, die die Befehlszeile ruft, muss es im Server geben.
@@ -30,7 +31,10 @@ const read = (p: string) => readFileSync(root(p), 'utf8');
 // Ohne ihn ist die Pruefung nicht moeglich — dann wird sie uebersprungen,
 // nicht stillschweigend gruen gemeldet.
 const routesPfad = 'api/cmd/server/routes.go';
-const imMonorepo = existsSync(root(routesPfad));
+// Die Entscheidung kommt aus im-monorepo.ts (Karte nbks8m1ty4d7). Vorher
+// hing sie an der Existenz der Routen-Datei: zieht die um, uebersprang sich
+// diese Suite still statt rot zu werden.
+const imMonorepo = IM_MONOREPO;
 
 /** `/api/v1/instances/${x}/brain-stats` → `/instances/:id/brain-stats` */
 function alsServerPfad(clientPfad: string): string {

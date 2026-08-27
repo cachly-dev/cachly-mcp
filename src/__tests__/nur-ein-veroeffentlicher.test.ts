@@ -84,7 +84,13 @@ function alleAblaeufe(ordner: string): string[] {
   return aus;
 }
 
-const IM_MONOREPO = alleAblaeufe(join(WURZEL, ".github", "workflows"))
+// Umbenannt am 27.08.2026 (Karte nbks8m1ty4d7): die Liste hiess IM_MONOREPO
+// und enthaelt keine Ja/Nein-Auskunft ueber das Monorepo, sondern die
+// Ablaufdateien der Wurzel, die veroeffentlichen. Der alte Name kollidierte
+// mit der echten Monorepo-Erkennung in im-monorepo.ts — ein Waechter kann
+// zwei Dinge mit demselben Namen nicht auseinanderhalten, und der Mensch
+// auch nicht.
+const WURZEL_VEROEFFENTLICHER = alleAblaeufe(join(WURZEL, ".github", "workflows"))
   .filter((p) => veroeffentlicht(readFileSync(p, "utf8")))
   .map((p) => p.slice(WURZEL.length + 1).replace(/\\/g, "/"));
 
@@ -109,7 +115,7 @@ describe("Nur ein Ablauf veroeffentlicht das MCP-Paket", () => {
   });
 
   it("im Monorepo gibt es genau einen Veroeffentlicher fuer dieses Paket", () => {
-    const fuerUns = IM_MONOREPO.filter(
+    const fuerUns = WURZEL_VEROEFFENTLICHER.filter(
       (p) => /mcp/i.test(p) && /publish/i.test(p),
     );
     expect(fuerUns).toEqual([".github/workflows/mcp-publish.yml"]);
@@ -123,7 +129,7 @@ describe("Nur ein Ablauf veroeffentlicht das MCP-Paket", () => {
      * mehr", und das waere schlimmer als zwei Veroeffentlicher.
      */
     expect(
-      IM_MONOREPO.length,
+      WURZEL_VEROEFFENTLICHER.length,
       "kein einziger Veroeffentlichungs-Schritt gefunden — die Suche ist kaputt",
     ).toBeGreaterThan(0);
   });

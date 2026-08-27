@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
+import { IM_MONOREPO } from './im-monorepo.js';
 
 const root = (p: string) => new URL(`../../../../${p}`, import.meta.url);
 const read = (p: string) => readFileSync(root(p), 'utf8');
@@ -9,7 +10,12 @@ const read = (p: string) => readFileSync(root(p), 'utf8');
 // and every read() ENOENTs — that broke `npm test` in the mirror's publish
 // workflow five times in a row on 2026-08-12/13. The docs under test are
 // monorepo-only, so the whole suite is skipped where that root is absent.
-const inMonorepo = existsSync(root('CACHLY_CAPABILITIES.json'));
+//
+// Die Entscheidung kommt aus im-monorepo.ts und wird hier NICHT mehr selbst
+// getroffen (Karte nbks8m1ty4d7): sie hing an der Existenz EINER Datei.
+// Zieht die um, hielt sich diese Suite fuer veroeffentlicht und uebersprang
+// sich — der Lauf blieb gruen, zwoelf Pruefungen waren lautlos weg.
+const inMonorepo = IM_MONOREPO;
 
 describe.skipIf(!inMonorepo)('DOC-001: root docs carry generated truth, and the guard watches them', () => {
   // Guarded: describe callbacks run at collection time even when skipped,

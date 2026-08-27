@@ -25,6 +25,8 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+import { IM_MONOREPO } from './im-monorepo.js';
+
 import {
   isTrivialPrompt,
   selectInjectable,
@@ -75,7 +77,11 @@ const VECTORS_PATH = path.join(REPO_ROOT, 'docs/spec/ambient-gate-vectors.json')
 
 // Monorepo-only: the shared spec lives outside this package. When sdk/mcp is
 // published standalone to npm the file doesn't exist — skip instead of failing.
-const monorepo = existsSync(VECTORS_PATH);
+//
+// Die Entscheidung kommt aus im-monorepo.ts (Karte nbks8m1ty4d7). Vorher hing
+// sie an der Existenz der Vektor-Datei — ein Umzug haette die Suite still
+// verschwinden lassen, statt sie rot zu machen.
+const monorepo = IM_MONOREPO;
 const d = monorepo ? describe : describe.skip;
 
 const spec: VectorFile | null = monorepo ? (JSON.parse(readFileSync(VECTORS_PATH, 'utf-8')) as VectorFile) : null;

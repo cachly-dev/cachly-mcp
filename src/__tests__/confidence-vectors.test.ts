@@ -28,6 +28,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import ts from 'typescript';
+import { IM_MONOREPO } from './im-monorepo.js';
 
 // ── Vector schema (mirrors docs/spec/confidence-vectors.json) ─────────────────
 
@@ -59,7 +60,10 @@ const BRAIN_TS_PATH = path.join(REPO_ROOT, 'sdk/openclaw/src/brain.ts');
 // sdk/mcp is published standalone to npm (the @cachly-dev/mcp-server mirror), those
 // paths don't exist — detect that and skip instead of throwing ENOENT at import,
 // which was failing the mirror's publish job.
-const IS_MONOREPO = existsSync(VECTORS_PATH) && existsSync(BRAIN_TS_PATH);
+// Die Entscheidung kommt aus im-monorepo.ts (Karte nbks8m1ty4d7). Vorher hing
+// sie an ZWEI Dateipfaden: zieht einer davon um, hielt sich diese Suite fuer
+// veroeffentlicht und uebersprang sich still — der Lauf blieb gruen.
+const IS_MONOREPO = IM_MONOREPO;
 
 const vectorFile = IS_MONOREPO
   ? (JSON.parse(readFileSync(VECTORS_PATH, 'utf8')) as VectorFile)
