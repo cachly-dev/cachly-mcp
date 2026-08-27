@@ -624,6 +624,7 @@ const TOOLS = [
       properties: {
         instance_id: { type: 'string', description: 'UUID of the cache instance' },
         topic:        { type: 'string', description: 'Topic slug to look up, e.g. "deploy:web". Supports partial match.' },
+        author:       { type: 'string', description: 'Who is asking (optional). Required to read a group-scoped lesson: without it, group-scoped lessons answer like "not found". Team-wide lessons need no author.' },
       },
       required: ['instance_id', 'topic'],
     },

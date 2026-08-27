@@ -58,6 +58,22 @@ export class MockRedis {
     return added;
   }
 
+  /**
+   * Ist dieser Wert in der Menge?
+   *
+   * Ergaenzt am 27.08.2026. Er fehlte, und `getScopes` ruft ihn — mit dem
+   * Ergebnis, dass jede Gruppenzugehoerigkeit in den Proben LEER war. Eine
+   * Probe, die pruefen wollte, ob ein Gruppenmitglied seine Lektion sieht,
+   * fiel deshalb rot aus, obwohl das Produkt richtig lag.
+   *
+   * Genau die Falle, vor der die eigene Regel warnt: erst pruefen, was die
+   * Attrappe wirklich kann, bevor man aus ihrem Verhalten auf das Produkt
+   * schliesst.
+   */
+  async sismember(key: string, member: string): Promise<number> {
+    return this.sets.get(key)?.has(member) ? 1 : 0;
+  }
+
   async smembers(key: string): Promise<string[]> {
     return [...(this.sets.get(key) ?? [])];
   }

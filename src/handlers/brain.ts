@@ -1512,7 +1512,9 @@ export async function handleBrainTool(
     }
 
     case 'recall_best_solution': {
-      const { instance_id, topic } = args as { instance_id: string; topic: string };
+      const { instance_id, topic, author: rbsAuthor } = args as {
+        instance_id: string; topic: string; author?: string;
+      };
       const redis = await getConnection(instance_id);
 
       /*
@@ -1555,6 +1557,43 @@ export async function handleBrainTool(
           recall_count?: number; audit_trail?: unknown[];
         });
         if (!lesson) return `⚠️ Lesson data for \`${topic}\` is corrupted. Re-store it with \`learn_from_attempts\`.`;
+
+        /*
+         * ── Der ZWEITE Lesepfad prueft jetzt auch (Karte pguy341m6u7s) ─────
+         *
+         * Rodrigo Diego am 25.08.2026: "persistence is not permission".
+         *
+         * `smart_recall` zog die Gruppen-Grenze schon (lessonVisibleToScope mit
+         * frisch gelesenen Zuschnitten). Dieser Weg nahm bis heute nur
+         * instance_id und topic entgegen — er konnte gar nicht wissen, WER
+         * fragt, und prueft folgerichtig nichts. Wer den Namen kannte, und der
+         * steht in jeder Trefferliste und in jedem Ersetzt-Banner, las den
+         * vollen Inhalt.
+         *
+         * PRIVATE Lektionen bleiben ausdruecklich erreichbar: die
+         * Werkzeugbeschreibung sagt das seit jeher zu ("only accessible via
+         * exact recall_best_solution"). Wer seine eigene Notiz unter ihrem
+         * Namen sucht, soll sie finden. Nur die GRUPPEN-Grenze war nie als
+         * offen gemeint.
+         *
+         * Ohne `author` wird zugemacht — bei einer Zugriffsgrenze ist "im
+         * Zweifel oeffnen" die falsche Richtung. Team-weite Lektionen (ohne
+         * Gruppe) sind davon nicht betroffen; sie sind der Normalfall.
+         *
+         * Die Absage sieht aus wie "nicht gefunden", und das ist Absicht: eine
+         * Verweigerung, die den Namen bestaetigt, verraet die Existenz. Die
+         * Karte nennt es "Verweigerung = Abwesenheit".
+         */
+        const rbsGruppe = (lesson as { group?: string }).group;
+        if (rbsGruppe) {
+          const rbsScopes = rbsAuthor
+            ? await getScopes(redis, instance_id, rbsAuthor).catch(() => new Set<string>())
+            : new Set<string>();
+          const rbsAdmin = rbsAuthor ? (await getRole(redis, instance_id, rbsAuthor).catch(() => null)) === 'admin' : false;
+          if (!lessonVisibleToScope(rbsGruppe, rbsScopes, rbsAdmin)) {
+            return `📭 No lessons found for \`${topic}\`. Use \`learn_from_attempts\` after solving it.`;
+          }
+        }
 
         // ── Confidence decay check ───────────────────────────────────────────
         const confidence = calculateConfidence(lesson);
