@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "cachly-brain",
+  "displayName": "cachly AI Brain",
+  "version": "0.10.138",
+  "description": "Persistent memory for AI coding assistants over MCP. Your assistant remembers the bug you fixed, why you chose Postgres, and which earlier decision a new one contradicts — across sessions, editors, and models. Hosted in the EU, free tier available.",
+  "author": {
+    "name": "cachly",
+    "url": "https://cachly.dev"
+  },
+  "homepage": "https://cachly.dev/docs/mcp",
+  "repository": "https://github.com/cachly-dev/cachly-mcp",
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "mcp",
+    "brain",
+    "recall",
+    "context",
+    "lessons",
+    "knowledge-graph"
+  ],
+  "userConfig": {
+    "instance_id": {
+      "type": "string",
+      "title": "Brain instance ID",
+      "description": "The UUID of your cachly brain. Create one free at https://cachly.dev/sign-up — it is shown right after sign-up and in the dashboard. Without it the server starts but has no brain to talk to.",
+      "required": true,
+      "sensitive": false
+    },
+    "api_key": {
+      "type": "string",
+      "title": "API key",
+      "description": "Your cachly API key (starts with cky_). Found in the dashboard under API keys. Leave empty to run against a local Redis instead.",
+      "sensitive": true
+    }
+  },
+  "mcpServers": {
+    "cachly": {
+      "command": "npx",
+      "args": ["-y", "@cachly-dev/mcp-server"],
+      "env": {
+        "CACHLY_BRAIN_INSTANCE_ID": "${user_config.instance_id}",
+        "CACHLY_JWT": "${user_config.api_key}"
+      }
+    }
+  }
+}

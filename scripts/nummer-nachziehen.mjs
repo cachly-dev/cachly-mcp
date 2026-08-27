@@ -45,6 +45,12 @@ export const STELLEN = [
   'server.json',
   'glama.json',
   'smithery.yaml',
+  // Das Claude-Code-Plugin (28.08.2026). Es wird mit sdk/mcp nach
+  // cachly-dev/cachly-mcp gespiegelt und ist dort das erste, was ein
+  // Fremder sieht. Seine Nummer IST die des Servers — eine eigene waere
+  // eine weitere Stelle, die von Hand steigen muesste.
+  '.claude-plugin/plugin.json',
+  '.claude-plugin/marketplace.json',
 ];
 
 /**

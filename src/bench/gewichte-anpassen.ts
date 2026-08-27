@@ -253,7 +253,14 @@ async function main(): Promise<void> {
     + `rueckkopplung=${beste.rueckkopplung},seltenheit=${beste.seltenheit}`);
 }
 
-main().catch((e) => {
-  console.error('NICHT GEMESSEN:', e instanceof Error ? e.message : String(e));
-  process.exit(4);
-});
+// Nur beim DIREKTEN Start laufen. `bewerte` ist exportiert und wird von
+// beleg-kaskade-messen.ts als Eichquelle importiert — ohne diesen Schutz
+// feuerte der Import das main() hier mit, verlangte --merkmale und beendete
+// den Importeur mit Exit 2, bevor der eine Zeile gemessen hatte (27.08.2026).
+const direktGestartet = process.argv[1]?.replace(/\\/g, '/').endsWith('gewichte-anpassen.ts');
+if (direktGestartet) {
+  main().catch((e) => {
+    console.error('NICHT GEMESSEN:', e instanceof Error ? e.message : String(e));
+    process.exit(4);
+  });
+}
