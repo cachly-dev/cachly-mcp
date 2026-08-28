@@ -128,7 +128,40 @@ moat no first-party tool can build.
 
 ---
 
-## Setup — one command
+## Setup — pick the shortest path for your editor
+
+### Claude Code — two lines
+
+```
+/plugin marketplace add cachly-dev/cachly-mcp
+/plugin install cachly-brain@cachly
+```
+
+Claude Code declares the MCP server for you; there is no JSON to write and no
+path to set. Paste your brain ID once with `/plugin configure cachly-brain@cachly`
+and you are done. (From v0.10.139 the server sets itself up on first use —
+an anonymous 14-day trial brain, nothing to copy.)
+
+Check it worked with `claude mcp list` — you should see
+`plugin:cachly-brain:cachly … ✔ Connected`. Note that `claude plugin details`
+reports `MCP servers (0)` even when the server is running; it does not count
+them.
+
+### VS Code — one click
+
+Install the **[cachly Brain](https://marketplace.visualstudio.com/items?itemName=cachly-dev.cachly-brain)**
+extension. It signs you in silently and creates your brain — no account form.
+
+### JetBrains — awaiting marketplace approval
+
+The IntelliJ plugin is built and uploaded, but JetBrains has not approved the
+listing yet — so there is no link here, because there is nothing to click.
+The source is at
+[cachly-dev/cachly-intellij](https://github.com/cachly-dev/cachly-intellij);
+until the listing goes live, use the `npx … autopilot` path below, which
+configures JetBrains AI Assistant along with every other editor it finds.
+
+### Anything else — one command
 
 ```bash
 npx @cachly-dev/mcp-server@latest autopilot
