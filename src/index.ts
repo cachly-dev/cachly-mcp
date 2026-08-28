@@ -148,7 +148,33 @@ async function autoProvisionInstance(): Promise<string> {
 
 async function resolveDefaultInstanceId(): Promise<string> {
   if (_defaultInstanceId) return _defaultInstanceId;
-  if (!JWT) return '';
+  /*
+   * ── Kein Schluessel? Dann holen wir einen. (28.08.2026) ──────────────────
+   *
+   * Hier stand `if (!JWT) return ''` — und genau daran endete der Weg fuer den
+   * einen Nutzer, um den es geht: den neuen. Wer schon angemeldet war und nur
+   * keine Instanz hatte, bekam ein paar Zeilen weiter unten automatisch eine.
+   * Wer NICHTS hatte, bekam nichts, still, bei jedem Werkzeugaufruf.
+   *
+   * Das Gegenstueck gibt es seit Juli: POST /auth/instant-trial legt Konto,
+   * Schluessel und Instanz in unter einer Sekunde an, ohne Anmeldung. Die
+   * VS-Code-Erweiterung benutzt es. Ab jetzt auch der MCP-Server — damit ist
+   * die Installation der letzte Schritt und nicht der vorletzte.
+   *
+   * Nur wenn WIRKLICH kein Schluessel da ist. Ein vorhandener, aber kaputter
+   * Schluessel fuehrt NICHT hierher: ein stiller zweiter Account waere
+   * schlimmer als eine Fehlermeldung, der Nutzer suchte seine Daten dann im
+   * falschen Brain.
+   */
+  if (!JWT) {
+    const test = await holeSofortTest({ apiUrl: API_URL, version: CURRENT_VERSION });
+    if (!test) return '';
+    JWT = test.apiKey;
+    _defaultInstanceId = test.instanzId;
+    _defaultInstanceLastAttempt = 0;
+    void persistInstanceIdToConfig(test.instanzId);
+    return _defaultInstanceId;
+  }
   // Coalesce concurrent resolutions so parallel tool calls share one round-trip.
   if (_resolveInFlight) return _resolveInFlight;
   // Cooldown: don't hammer the API on every tool call after a transient failure.
@@ -844,6 +870,7 @@ import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledg
 import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
 import { buildAmbientDeps } from './ambient-deps.js';
 import { resolveApiKey, saveApiKey, type CredentialsHomeOptions } from './credentials.js';
+import { holeSofortTest } from './sofort-test.js';
 import { buildLessonsMarkdown, buildLessonsJsonl, vonRohLektion, type ExportLesson } from './brain-export.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';

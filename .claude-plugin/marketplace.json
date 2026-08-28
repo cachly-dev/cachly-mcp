@@ -11,7 +11,7 @@
       "source": "./",
       "displayName": "cachly AI Brain",
       "description": "Your assistant forgets everything each morning. cachly remembers your system: the bug you fixed, why you chose Postgres, the deploy step that always breaks — and which earlier decision a new one contradicts. Every editor reads the same memory, and every lesson carries the name of whoever learned it.",
-      "version": "0.10.138",
+      "version": "0.10.139",
       "author": {
         "name": "cachly",
         "url": "https://cachly.dev"

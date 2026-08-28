@@ -21,8 +21,32 @@ function defaultHome(): string {
   return process.env.HOME ?? process.env.USERPROFILE ?? process.env.APPDATA ?? '';
 }
 
+/**
+ * Ein nicht ersetzter Platzhalter zaehlt als NICHTS.
+ *
+ * ── Warum (28.08.2026) ────────────────────────────────────────────────────
+ *
+ * Das Claude-Code-Plugin deklariert seine Umgebung so:
+ *
+ *     "CACHLY_JWT": "${user_config.api_key}"
+ *
+ * Setzt der Nutzer den Wert nie, kann bei uns entweder ein leerer String
+ * ankommen (harmlos) oder der Text `${user_config.api_key}` selbst. Der zweite
+ * Fall ist der gefaehrliche: er ist "wahr", also haelt jede Pruefung ihn fuer
+ * einen Schluessel. Der Server wuerde mit einem Unsinns-Schluessel arbeiten,
+ * jede Anfrage mit 401 scheitern — und die Selbsteinrichtung wuerde NICHT
+ * anspringen, weil ja scheinbar ein Schluessel da ist.
+ *
+ * Das waere die stille Variante des Fehlers, den das Plugin gerade beheben
+ * soll. Also faellt der Platzhalter hier heraus, bevor ihn jemand benutzt.
+ */
+export function istPlatzhalter(value: string): boolean {
+  return /^\$\{[^}]*\}$/.test(value.trim());
+}
+
 function nonEmpty(value: string | undefined | null): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  return istPlatzhalter(value) ? undefined : value;
 }
 
 /**
