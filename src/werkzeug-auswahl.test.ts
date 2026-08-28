@@ -16,7 +16,7 @@ const ALLE = TOOLS as unknown as Werkzeug[];
 Gemessen am 28.08.2026 an docs/generated/tool-specs/cachly.anthropic.json:
 
     vorher    123 Werkzeuge   111.014 B   ~27.754 Token
-    nachher    25 Werkzeuge    32.011 B    ~8.003 Token   -71 %
+    nachher    27 Werkzeuge    34.185 B    ~8.546 Token   -69 %
 
 Diese Token gehen in JEDER Anfrage mit. Bei 200k Fenster waren 14 % weg,
 bevor der Nutzer ein Wort gesagt hatte.
@@ -107,11 +107,28 @@ describe('Werkzeug-Auswahl: weniger im Katalog, nichts verloren', () => {
     expect(katalog.some((w) => w.name === VERTEILER)).toBe(false);
   });
 
-  // ── Die Sperrklinke ─────────────────────────────────────────────────────
-  //
-  // Sie darf nur FALLEN. Wer ein Werkzeug in KERNWERKZEUGE aufnimmt,
-  // bezahlt es in jeder Anfrage — und sieht hier, wie viel.
-  const OBERGRENZE_BYTE = 34_000;
+  /*
+   * ── Die Sperrklinke ────────────────────────────────────────────────────
+   *
+   * Wer ein Werkzeug in KERNWERKZEUGE aufnimmt, bezahlt es in JEDER Anfrage
+   * — und sieht hier, wie viel.
+   *
+   * Sie hat sofort funktioniert: der erste Entwurf stand auf 34.000, und die
+   * Aufnahme von cache_get und cache_set (1.877 B) riss sie auf 34.185.
+   *
+   * DIE GRENZE WURDE DARAUFHIN ANGEHOBEN — bewusst, nicht still. Der Zweck
+   * einer Sperrklinke ist, DRIFT zu verhindern, nicht Entscheidungen. Eine
+   * Entscheidung mit Begruendung und gemessener Zahl darf sie bewegen; ein
+   * unbemerktes Anwachsen nicht.
+   *
+   * Die Begruendung steht in werkzeug-auswahl.ts bei den beiden Namen: der
+   * Cache ist das zweite Produkt, und ein Umweg beim naheliegendsten Satz
+   * ("cache das") ist teuer erkauft.
+   *
+   *     34.000  erster Entwurf, 25 Werkzeuge
+   *     35.000  jetzt, 27 Werkzeuge (34.185 gemessen)
+   */
+  const OBERGRENZE_BYTE = 35_000;
 
   it('der Katalog bleibt unter der Obergrenze', () => {
     const { katalog } = sichtbareWerkzeuge(ALLE, {});
@@ -130,5 +147,46 @@ describe('Werkzeug-Auswahl: weniger im Katalog, nichts verloren', () => {
     // Ohne diese Zeile bewiese die Sperrklinke nichts: eine zu grosszuegige
     // Grenze ist gruen und bewacht Luft.
     expect(JSON.stringify(ALLE).length).toBeGreaterThan(OBERGRENZE_BYTE);
+  });
+});
+
+/*
+── Die erzeugten Anleitungen duerfen nur Kernwerkzeuge nennen ───────────────
+
+Ein Werkzeug, das nicht in tools/list steht, bekommt das MODELL gar nicht
+angeboten — der Server wuerde es zwar bedienen, aber niemand ruft es. Nennt
+unsere erzeugte CLAUDE.md also einen Namen, der aus dem Katalog geflogen ist,
+dann steht dort eine Anweisung, die nicht ausfuehrbar ist.
+
+Das faellt nirgends auf: keine Fehlermeldung, kein roter Lauf. Nur eine
+Pflicht, die still nicht mehr erfuellt wird.
+
+Geprueft wird der Text, den buildClaudeMdBlock wirklich erzeugt — nicht eine
+Liste daneben, die auseinanderlaufen kann.
+*/
+describe('Erzeugte Anleitungen nennen nur Werkzeuge, die im Katalog stehen', async () => {
+  const { buildClaudeMdBlock } = await import('./index.js');
+
+  it('jeder genannte Werkzeugname ist ein Kernwerkzeug', () => {
+    const text = buildClaudeMdBlock('00000000-0000-0000-0000-000000000000');
+    const alleNamen = new Set(ALLE.map((w) => w.name));
+    const kern = new Set(KERNWERKZEUGE);
+
+    // Nur echte Werkzeugnamen, nicht jedes Wort mit Unterstrich.
+    const genannt = [...new Set(
+      (text.match(/\b[a-z][a-z0-9_]{4,}\b/g) ?? []).filter((n) => alleNamen.has(n)),
+    )];
+
+    expect(genannt.length, 'die Anleitung nennt gar kein Werkzeug — dann prueft dieser Test nichts')
+      .toBeGreaterThan(3);
+
+    const unerreichbar = genannt.filter((n) => !kern.has(n));
+    expect(
+      unerreichbar,
+      'Diese Namen stehen in der erzeugten Anleitung, aber nicht im Katalog.\n' +
+        'Das Modell bekommt sie nicht angeboten — die Anweisung ist tot, ohne\n' +
+        'dass irgendwo ein Fehler entsteht. Entweder in KERNWERKZEUGE aufnehmen\n' +
+        'oder die Anleitung auf cachly_tool umstellen:\n  ' + unerreichbar.join('\n  '),
+    ).toEqual([]);
   });
 });

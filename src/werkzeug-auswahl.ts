@@ -79,6 +79,15 @@ export const KERNWERKZEUGE: readonly string[] = [
   'team_recall',
   'team_learn',
 
+  // ── Semantischer Cache ───────────────────────────────────────────────
+  //
+  // Der Cache ist das ZWEITE Produkt, nicht ein Nebenwerkzeug. Steht er nur
+  // hinter dem Verteiler, findet ein Modell ihn erst auf Umweg — und ein
+  // Umweg beim naheliegendsten Satz ("cache das") ist teuer erkauft.
+  // Zusammen 1.877 Byte, also rund 470 Token je Anfrage. Bewusst bezahlt.
+  'cache_get',
+  'cache_set',
+
   // ── Roadmap (bleibt vollständig, ausdrücklich gewünscht) ─────────────
   'roadmap_add',
   'roadmap_list',
