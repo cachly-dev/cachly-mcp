@@ -10,6 +10,58 @@ Zwei Zeilen statt einer Konfigurationsdatei:
 Danach fragt Claude Code nach der Brain-Kennung und dem Schlüssel. Der
 MCP-Server wird nicht von Hand eingetragen — das Plugin deklariert ihn.
 
+## Die Falle, gemessen am 28.08.2026
+
+Der `watermarks-remover` dokumentiert für *Hooks*, dass Claude Code sie nicht
+ausführt, wenn sie eine Option referenzieren, die der Nutzer nie gesetzt hat.
+Ob dasselbe für **MCP-Server** gilt, stand in keiner Doku. Jetzt schon:
+
+```
+required: true,  keine Kennung gesetzt   →  claude mcp list zeigt NICHTS
+required: false, keine Kennung gesetzt   →  ✔ Connected
+required: true,  Kennung gesetzt         →  ✔ Connected
+```
+
+**Die Falle gilt auch für MCP-Server.** Mit `required: true` startet der
+Server bei einer frischen Installation gar nicht, solange niemand
+`/plugin configure` geöffnet hat. Ein Plugin, das lautlos nichts tut, ist
+schlechter als gar keins.
+
+Deshalb steht `instance_id` auf `required: false`. Der Server kommt hoch,
+erscheint in `/mcp` und kann selbst sagen, was fehlt. Lautes Scheitern statt
+stiller Abwesenheit.
+
+### Noch eine Falle: `plugin details` zählt MCP-Server nicht
+
+```
+$ claude plugin details cachly-brain
+  MCP servers (0)          <- sagt NICHTS über die Wirklichkeit
+
+$ claude mcp list
+  plugin:cachly-brain:cachly: npx -y @cachly-dev/mcp-server - ✔ Connected
+```
+
+Beide Ausgaben standen gleichzeitig auf dem Bildschirm. Wer mit `details`
+prüft, hält ein laufendes Plugin für kaputt. **Zum Prüfen `claude mcp list`
+nehmen, nie `plugin details`.**
+
+## Wie man es selbst nachprüft
+
+Der `claude`-Befehl liegt nicht im PATH, aber die VS-Code-Erweiterung bringt
+ihn mit:
+
+```bash
+C="$HOME/.vscode/extensions/anthropic.claude-code-*-win32-x64/resources/native-binary/claude.exe"
+
+"$C" plugin validate sdk/mcp                 # Manifeste prüfen
+"$C" plugin marketplace add cachly-dev/cachly-mcp
+"$C" plugin install cachly-brain@cachly -y
+"$C" mcp list                                # <- die Wahrheit steht hier
+```
+
+Ein lokaler Ordner geht auch als Marktplatz: `plugin marketplace add ./sdk/mcp`.
+So lässt sich eine Änderung testen, bevor sie öffentlich ist.
+
 ## Warum es hier liegt und nicht im Monorepo
 
 `/plugin marketplace add <repo>` **klont das Repo**. Das Monorepo
@@ -45,53 +97,6 @@ Eine eigene Plugin-Nummer wäre eine weitere Stelle, die jemand von Hand heben
 müsste — genau der Fehler, der am 20.08.2026 zwei Veröffentlichungen gekostet
 hat.
 
-## Was noch NICHT bewiesen ist
-
-**Die Falle, die den ganzen Weg wertlos machen könnte.** Der
-`watermarks-remover` dokumentiert für *Hooks*:
-
-> Claude Code refuses to run a hook that references an option the user has
-> never opened `/plugin manage` to set — a declared default does not satisfy
-> it — so interpolating it would mean the hook silently never runs on a fresh
-> install.
-
-Ob dasselbe für **MCP-Server-Deklarationen** gilt, steht in keiner Doku. Wenn
-ja, dann startet unser Server bei einer frischen Installation **still gar
-nicht** — und ein Plugin, das lautlos nichts tut, ist schlechter als gar
-keins.
-
-### Der Test, der das entscheidet
-
-Er dauert eine Minute und braucht den Claude-Code-CLI. **Auf diesem Laptop ist
-er nicht installiert** (`claude: command not found`, geprüft am 28.08.2026 —
-Claude Code läuft hier als VS-Code-Erweiterung, die kein `claude` auf den PATH
-legt). Zuerst also:
-
-```bash
-npm install -g @anthropic-ai/claude-code
-```
-
-Dann:
-
-```bash
-# Plugin lokal laden, OHNE vorher /plugin manage zu öffnen
-claude --plugin-dir /c/Users/heinr/Documents/Development/cachly/cachly/sdk/mcp
-
-# In der Sitzung:
-/mcp
-```
-
-**Erwartung, falls die Falle NICHT gilt:** `cachly` erscheint in der Liste —
-verbunden oder mit Fehler, aber vorhanden.
-
-**Erwartung, falls die Falle GILT:** `cachly` fehlt vollständig, ohne Meldung.
-Dann muss `env` ohne `${user_config...}` auskommen, und die Kennung kommt
-anders herein — über eine Umgebungsvariable, die der Nutzer ohnehin setzt,
-oder über einen Einrichtungs-Skill statt über die Deklaration.
-
-Bis dieser Test gefahren ist, gilt das Plugin als **ungeprüft**. Es liegt im
-Repo, es wird nicht beworben, und die Karte `ewzv4gzw3d0k` bleibt offen.
-
 ## Aufbau
 
 ```
@@ -118,4 +123,6 @@ Nicht in dieser Fassung, bewusst:
   `CLAUDE.md` steht, die jemand lesen muss
 - **Agents** — ein Lese-Agent, der gegen das Gedächtnis arbeitet
 
-Alle drei sind erst sinnvoll, wenn der MCP-Server nachweislich hochkommt.
+Bei Hooks gilt die Falle oben **nachweislich** — der watermarks-remover
+dokumentiert sie. Wer einen Hook mit `${user_config...}` schreibt, muss die
+Option optional halten oder in Kauf nehmen, dass er still nie läuft.

@@ -24,8 +24,8 @@
     "instance_id": {
       "type": "string",
       "title": "Brain instance ID",
-      "description": "The UUID of your cachly brain. Create one free at https://cachly.dev/sign-up — it is shown right after sign-up and in the dashboard. Without it the server starts but has no brain to talk to.",
-      "required": true,
+      "description": "The UUID of your cachly brain. Create one free at https://cachly.dev/sign-up — it is shown right after sign-up and in the dashboard. Set it with /plugin configure cachly-brain@cachly. Until you do, the server starts and answers, but has no brain to talk to.",
+      "required": false,
       "sensitive": false
     },
     "api_key": {
