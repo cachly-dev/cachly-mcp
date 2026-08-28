@@ -30,10 +30,53 @@ export function setEmbedJwt(jwt: string): void {
   embedConfig.jwt = jwt;
 }
 
-// Hard timeout for any embedding-provider HTTP call. Embedding is an OPTIONAL boost
-// for semantic recall — a slow/unreachable provider must never hang the agent turn.
-// Callers already treat embedding failures as non-fatal (keyword search still works).
+// Zeitlimit fuer jeden HTTP-Aufruf an einen Einbettungs-Anbieter.
+//
+// ── Warum 8 s zu wenig waren (28.08.2026) ────────────────────────────────
+//
+// Gemessen in den LoCoMo-Durchlaeufen am 25./26.08.2026 auf dem ECHTEN
+// Kundenpfad: bge-m3 auf der node-1-CPU braucht fuer Texte um 1800 Zeichen
+// zwischen 7 und 21 Sekunden. Das Zeitlimit stand auf 8.
+//
+// Folge: jeder grosse Lektionstext riss das Limit, und der Volltext-Vektor
+// fehlte danach STILL. Die Lektion war gespeichert, der Bedeutungsabgleich
+// uebersprang sie fuer immer. Kein Fehler, keine Meldung — nur eine
+// Lektion, die nie wieder gefunden wird.
+//
+// ── Warum es NICHT einfach 30 s sind ─────────────────────────────────────
+//
+// Weil dasselbe Limit auf zwei Wegen gilt. Der Suchpfad ('kurz') laeuft
+// MITTEN im Agenten-Zug: dort waeren 30 s eine halbe Minute Stillstand fuer
+// eine Verbesserung, die auch ausfallen darf (die Wortsuche traegt weiter).
+// Der Schreibpfad ('lang') laeuft fire-and-forget, dort wartet niemand.
+//
+// Also: 'kurz' behaelt die 8 s. 'lang' rechnet nach Laenge.
 const EMBED_TIMEOUT_MS = Number(process.env.CACHLY_EMBED_TIMEOUT_MS ?? 8_000);
+
+/** Obergrenze fuer den Schreibpfad. Auch ein langer Text ist irgendwann tot. */
+const EMBED_TIMEOUT_MAX_MS = Number(process.env.CACHLY_EMBED_TIMEOUT_MAX_MS ?? 45_000);
+
+/**
+ * Zuschlag je Zeichen. 12 ms sind aus der Messung: 1800 Zeichen kosteten im
+ * schlimmsten Fall 21 s, also 8000 + 1800 x 12 = 29,6 s — die gemessene
+ * Spitze plus knapp neun Sekunden Luft.
+ *
+ * GERATEN ist daran nur die Luft. Die 21 s sind gemessen.
+ */
+const MS_JE_ZEICHEN = 12;
+
+/**
+ * Wie lange dieser eine Aufruf hoechstens dauern darf.
+ *
+ * Rein und getestet — dieselbe Regel wie bei wiederholungMs: die Politik
+ * steht an EINER Stelle, nicht verstreut in den Provider-Zweigen.
+ */
+export function zeitlimitMs(text: string, geduld: EmbedGeduld): number {
+  // Der Suchpfad haelt den Agenten-Zug auf. Er wartet nie laenger als die
+  // Grundzeit, egal wie lang der Text ist.
+  if (geduld === 'kurz') return EMBED_TIMEOUT_MS;
+  return Math.min(EMBED_TIMEOUT_MAX_MS, EMBED_TIMEOUT_MS + text.length * MS_JE_ZEICHEN);
+}
 
 // ── Provider auto-detection ───────────────────────────────────────────────────
 
@@ -107,7 +150,8 @@ export const EMBED_PROVIDER = (process.env.CACHLY_EMBED_PROVIDER ?? detectEmbedP
  * Note: Brain works fully WITHOUT embedding (keyword search + exact keys).
  *       Embedding is an OPTIONAL boost for semantic_search and index_project.
  */
-async function embeddingEinmal(text: string): Promise<number[]> {
+async function embeddingEinmal(text: string, geduld: EmbedGeduld): Promise<number[]> {
+  const zeitlimit = zeitlimitMs(text, geduld);
   switch (EMBED_PROVIDER) {
     case 'cachly': {
       // Server-side embedding — the Cachly API computes the embedding
@@ -130,7 +174,7 @@ async function embeddingEinmal(text: string): Promise<number[]> {
           'Authorization': `Bearer ${embedConfig.jwt}`,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
+        signal: AbortSignal.timeout(zeitlimit),
       });
       if (!res.ok) {
         const errBody = await res.text();
@@ -163,7 +207,7 @@ async function embeddingEinmal(text: string): Promise<number[]> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: JSON.stringify({ model, input: [text] }),
-        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
+        signal: AbortSignal.timeout(zeitlimit),
       });
       if (!res.ok) throw new Error(`Mistral embedding error: ${res.statusText}`);
       const json = (await res.json()) as { data: { embedding: number[] }[] };
@@ -179,7 +223,7 @@ async function embeddingEinmal(text: string): Promise<number[]> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: JSON.stringify({ model, texts: [text], input_type: 'search_query', embedding_types: ['float'] }),
-        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
+        signal: AbortSignal.timeout(zeitlimit),
       });
       if (!res.ok) throw new Error(`Cohere embedding error: ${res.statusText}`);
       const json = (await res.json()) as { embeddings: { float: number[][] } };
@@ -193,7 +237,7 @@ async function embeddingEinmal(text: string): Promise<number[]> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ model, prompt: text }),
-        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
+        signal: AbortSignal.timeout(zeitlimit),
       });
       if (!res.ok) throw new Error(`Ollama embedding error: ${res.statusText}`);
       const json = (await res.json()) as { embedding: number[] };
@@ -210,7 +254,7 @@ async function embeddingEinmal(text: string): Promise<number[]> {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ model: `models/${model}`, content: { parts: [{ text }] } }),
-          signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
+          signal: AbortSignal.timeout(zeitlimit),
         },
       );
       if (!res.ok) throw new Error(`Gemini embedding error: ${res.statusText}`);
@@ -232,7 +276,7 @@ async function embeddingEinmal(text: string): Promise<number[]> {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: JSON.stringify({ model, input: text }),
-        signal: AbortSignal.timeout(EMBED_TIMEOUT_MS),
+        signal: AbortSignal.timeout(zeitlimit),
       });
       if (!res.ok) throw new Error(`OpenAI embedding error: ${res.statusText}`);
       const json = (await res.json()) as { data: { embedding: number[] }[] };
@@ -308,7 +352,7 @@ export async function computeEmbedding(text: string, opts?: { geduld?: EmbedGedu
   for (;;) {
     versuch++;
     try {
-      return await embeddingEinmal(text);
+      return await embeddingEinmal(text, geduld);
     } catch (fehler) {
       const warte = wiederholungMs(fehler, versuch, geduld);
       if (warte === null) throw fehler;

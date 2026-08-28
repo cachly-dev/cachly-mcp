@@ -147,3 +147,56 @@ describe('computeEmbedding — der Wrapper am gestubbten fetch', () => {
     expect(rufe).toBe(3);
   });
 });
+
+// ── Teil 3 der Karte: das Zeitlimit war kleiner als die Wirklichkeit ───────
+//
+// Gemessen in denselben LoCoMo-Durchlaeufen (25./26.08.2026) auf dem echten
+// Kundenpfad: bge-m3 auf der node-1-CPU braucht fuer Texte um 1800 Zeichen
+// zwischen 7 und 21 Sekunden. Das Zeitlimit stand auf 8.
+//
+// Jeder grosse Lektionstext riss es, und der Volltext-Vektor fehlte danach
+// STILL — die Lektion war gespeichert, der Bedeutungsabgleich uebersprang sie
+// fuer immer. Kein Fehler, keine Meldung.
+describe('Zeitlimit richtet sich nach der Laenge — aber nur auf dem Schreibpfad', async () => {
+  const { zeitlimitMs } = await import('../embeddings.js');
+
+  it('der SUCHPFAD wartet nie laenger als die Grundzeit', () => {
+    // Er laeuft mitten im Agenten-Zug. Dreissig Sekunden waeren dort eine
+    // halbe Minute Stillstand fuer eine Verbesserung, die ausfallen DARF —
+    // die Wortsuche traegt weiter.
+    const kurz = zeitlimitMs('x'.repeat(1800), 'kurz');
+    expect(kurz).toBe(zeitlimitMs('x', 'kurz'));
+    expect(kurz).toBeLessThanOrEqual(8_000);
+  });
+
+  it('der SCHREIBPFAD deckt die gemessenen 21 s ab', () => {
+    // 1800 Zeichen ist die gemessene Groesse; 21 s die gemessene Spitze.
+    const lang = zeitlimitMs('x'.repeat(1800), 'lang');
+    expect(lang, 'muss ueber der gemessenen Spitze liegen').toBeGreaterThan(21_000);
+  });
+
+  it('das alte Limit von 8 s haette den gemessenen Fall gerissen', () => {
+    // Die Gegenprobe zur Zahl selbst: waere sie so klein wie vorher, laege
+    // sie unter der Messung — und dieser Test waere sinnlos.
+    expect(8_000, 'die gemessene Spitze lag darueber').toBeLessThan(21_000);
+  });
+
+  it('ein kurzer Text bekommt kein aufgeblaehtes Limit', () => {
+    expect(zeitlimitMs('kurz', 'lang')).toBeLessThan(9_000);
+  });
+
+  it('auch ein sehr langer Text hat eine Obergrenze', () => {
+    // Ohne Deckel wuerde ein 100-kB-Text den Schreibpfad zwanzig Minuten
+    // belegen. Auch ein langer Text ist irgendwann tot.
+    expect(zeitlimitMs('x'.repeat(100_000), 'lang')).toBeLessThanOrEqual(60_000);
+  });
+
+  it('laenger heisst nie kuerzer', () => {
+    let vorher = 0;
+    for (const n of [0, 100, 500, 1800, 5000, 50_000]) {
+      const jetzt = zeitlimitMs('x'.repeat(n), 'lang');
+      expect(jetzt, `bei ${n} Zeichen`).toBeGreaterThanOrEqual(vorher);
+      vorher = jetzt;
+    }
+  });
+});
