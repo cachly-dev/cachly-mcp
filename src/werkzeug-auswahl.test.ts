@@ -16,7 +16,14 @@ const ALLE = TOOLS as unknown as Werkzeug[];
 Gemessen am 28.08.2026 an docs/generated/tool-specs/cachly.anthropic.json:
 
     vorher    123 Werkzeuge   111.014 B   ~27.754 Token
-    nachher    27 Werkzeuge    34.185 B    ~8.546 Token   -69 %
+    nachher    27 Werkzeuge    32.422 B    ~8.106 Token   -71 %
+
+Davon 1.763 B aus gekuerzten Feldbeschreibungen: die langen Fassungen
+erklaerten, was wir mit dem Wert SPAETER machen ("Powers brain_service_map",
+"the value only a shared brain delivers"). Das ist Architektur- und
+Werbetext. Er kostete in jeder Anfrage Token und half beim Ausfuellen nicht.
+Geblieben ist Zweck, Format, Beispiel und jede Bedingung. Kein Feld
+entfernt.
 
 Diese Token gehen in JEDER Anfrage mit. Bei 200k Fenster waren 14 % weg,
 bevor der Nutzer ein Wort gesagt hatte.
@@ -126,9 +133,10 @@ describe('Werkzeug-Auswahl: weniger im Katalog, nichts verloren', () => {
    * ("cache das") ist teuer erkauft.
    *
    *     34.000  erster Entwurf, 25 Werkzeuge
-   *     35.000  jetzt, 27 Werkzeuge (34.185 gemessen)
+   *     35.000  angehoben fuer cache_get/cache_set (34.185 gemessen)
+   *     33.000  jetzt, nach dem Kuerzen der Feldprosa (32.422 gemessen)
    */
-  const OBERGRENZE_BYTE = 35_000;
+  const OBERGRENZE_BYTE = 33_000;
 
   it('der Katalog bleibt unter der Obergrenze', () => {
     const { katalog } = sichtbareWerkzeuge(ALLE, {});

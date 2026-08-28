@@ -574,37 +574,37 @@ const TOOLS = [
         depends_on: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Prerequisites this lesson depends on (e.g. ["node:>=20", "docker:running", "wireguard:active"]). When a dependency is marked stale, all dependent lessons get needs_review.',
+          description: 'Prerequisites, e.g. ["node:>=20", "docker:running"]. A stale one flags dependent lessons for review.',
         },
         author: {
           type: 'string',
-          description: 'Name or handle of the person storing this lesson (e.g. "alice", "bob"). Used for Team Telepathy — teammates see each other\'s lessons in session_start. Also powers brain_who_knows and team_expertise_map.',
+          description: 'Who is storing this lesson, e.g. "alice". Enables cross-author reuse tracking.',
         },
         grund: {
           type: 'string',
-          description: 'One line: WHY the previous version was wrong or incomplete (like a commit message). REQUIRED when the topic already exists — an update without it is rejected. Free on first write. Shown in recall_best_solution as the change history that gets read two months later.',
+          description: 'One line: WHY the previous version was wrong, like a commit message. REQUIRED when the topic already exists; optional on first write.',
         },
         ersetzt: {
           type: 'string',
-          description: 'Topic slug of an OLDER lesson (different topic) that this lesson refutes/supersedes. Both sides get linked: the old lesson is suppressed in smart_recall when this one is present (and named, never silently swallowed), and recall_best_solution on the old topic shows a loud "superseded" banner pointing here. The target must exist — a dangling reference is not stored. For corrections within the SAME topic, just update it and pass `grund`.',
+          description: 'Topic slug of an OLDER lesson this one refutes. The old one is suppressed in smart_recall and shows a "superseded" banner.',
         },
         visibility: {
           type: 'string',
           enum: ['team', 'private', 'public'],
-          description: 'Who can see this lesson. "team" (default) = all team members. "private" = only accessible via exact recall_best_solution, never surfaced in smart_recall or team_recall. "public" = same as team (public syndication planned).',
+          description: 'Who can see it: "team" (default) = all members, "private" = only via exact recall_best_solution, "public" = same as team for now.',
         },
         service: {
           type: 'string',
-          description: 'The service or system this lesson concerns (e.g. "prometheus", "cachly-web", "auth-service"). Builds a Service node in the knowledge graph linking the people who operate it and the files that run in it. Powers brain_service_map for instant incident triage.',
+          description: 'Service or system this lesson concerns, e.g. "prometheus", "auth-service".',
         },
         service_kind: {
           type: 'string',
           enum: ['service', 'system'],
-          description: 'Whether `service` is an application service ("service", default) or infrastructure ("system", e.g. prometheus, kubernetes, redis). Shown as 🛰️/🖥️ in brain_service_map.',
+          description: '"service" (default) for an application, "system" for infrastructure like prometheus or redis.',
         },
         group: {
           type: 'string',
-          description: 'Optional team scope — restricts this lesson to a named group/sub-team (e.g. "backend", "security"). Only members of that group (managed via team_grant_scope) and admins see it in smart_recall. Orthogonal to visibility: a team-wide lesson has no group; a private lesson is author-only regardless of group.',
+          description: 'Optional sub-team scope, e.g. "backend". Only that group and admins see it. Independent of visibility.',
         },
       },
       required: ['instance_id', 'topic', 'outcome', 'what_worked'],
@@ -677,11 +677,11 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the cache instance' },
         query: { type: 'string', description: 'Natural language query to find relevant cached context' },
         threshold: { type: 'number', description: 'Similarity threshold 0-1 (default: 0.78)' },
-        author: { type: 'string', description: 'Handle of the person doing the recall (optional). Enables team-knowledge-reuse tracking: when you recall a lesson written by a teammate, cachly counts it as cross-author reuse — the value only a shared brain delivers.' },
+        author: { type: 'string', description: 'Who is recalling (optional). Counts cross-author reuse.' },
         context_files: {
           type: 'array',
           items: { type: 'string' },
-          description: 'File paths you are currently working on (e.g. ["src/auth/service.ts", "src/api/routes.ts"]). When provided, lessons that were learned in the context of these files are boosted in ranking — surfacing file-specific knowledge even when the query does not mention the file name. Pair with author for fully personalized recall.',
+          description: 'Files you are working on, e.g. ["src/auth/service.ts"]. Lessons learned around these files rank higher.',
         },
       },
       required: ['instance_id', 'query'],
@@ -2026,10 +2026,8 @@ const TOOLS = [
           type: 'string',
           enum: ['instance', 'org', 'org+commons'],
           description:
-            'Prediction scope (default "instance"). "instance" = this brain only (today\'s behaviour). ' +
-            '"org" = cross-team Org Knowledge Graph: ranked warnings from failures that recurred in OTHER ' +
-            'teams/repos in your organisation, with proven fixes and confidence. "org+commons" = org graph ' +
-            'plus public syndicated lessons. Falls back to "instance" when the instance has no org.',
+            'Scope: "instance" (default) = this brain, "org" = warnings from failures in other teams of ' +
+            'your organisation, "org+commons" = plus public lessons. Falls back to "instance" without an org.',
         },
       },
       required: ['instance_id', 'context'],
