@@ -226,7 +226,6 @@ using only Claude, alone.** That's not the game we're playing. Here's the honest
 memory is great — use it. If you work on a **team**, switch tools, care about **proof**,
 or need **governance and data residency**, that's a gap Anthropic structurally can't
 close without breaking its own lock-in. **That gap is where cachly wins.**
-*(Full strategic analysis: [STRATEGY.md](./STRATEGY.md).)*
 
 ---
 
