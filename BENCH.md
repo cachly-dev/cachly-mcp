@@ -26,16 +26,16 @@ npm run bench:onboarding # cold vs seeded time-to-first-recall
 All three score over the **same** candidate set, so the comparison isolates
 ranking quality, not retrieval.
 
-## Current results (2026-06-07)
+## Current results (measured 2026-08-28 with `npm run bench:gate`)
 
 ### Home fixture corpus (17 lessons · 13 queries)
 
-| metric       | flatfile | baseline | cachly | vs flat |
-|--------------|----------|----------|--------|---------|
-| Precision@1  | 76.9%    | 69.2%    | 92.3%  | +20.0%  |
-| Recall@3     | 100.0%   | 96.2%    | 100.0% |  +0.0%  |
-| MRR          | 87.2%    | 84.6%    | 96.2%  | +10.3%  |
-| nDCG@5       | 89.9%    | 88.8%    | 97.6%  |  +8.7%  |
+| metric       | cachly | gate floor |
+|--------------|--------|-----------|
+| Precision@1  | 69.2%  | 67.0%     |
+| Recall@3     | 100.0% | 96.0%     |
+| MRR          | 83.3%  | 83.0%     |
+| nDCG@5       | 88.1%  | 87.0%     |
 
 > **Diese Zahl war veraltet und stand hier wie ein aktueller Messwert.**
 >
@@ -55,10 +55,15 @@ ranking quality, not retrieval.
 
 | metric       | cachly | gate floor |
 |--------------|--------|-----------|
-| Precision@1  | 80.4%  | 78.0%     |
-| Recall@3     | 98.2%  | 96.0%     |
-| MRR          | 89.0%  | 87.0%     |
-| nDCG@5       | 91.8%  | 90.0%     |
+| Precision@1  | 78.6%  | 71.0%     |
+| Recall@3     | 92.9%  | 92.0%     |
+| MRR          | 87.4%  | 82.0%     |
+| nDCG@5       | 89.9%  | 85.0%     |
+
+> Die Latten stehen in `src/bench/gate.ts` und sind die einzige Quelle. Bis
+> zum 28.08.2026 stand hier eine Latte von 78.0 % — das Tor pruefte 71.0 %.
+> Zwei Zahlen, eine davon nur in einer Datei. `scripts/bench-zahlen-eine-
+> wahrheit.mjs` haelt sie ab jetzt gegeneinander.
 
 ## How the lift is produced
 
