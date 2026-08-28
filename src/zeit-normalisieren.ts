@@ -84,10 +84,32 @@ const MUSTER: { re: RegExp; versatz: (jetzt: Date, m: RegExpMatchArray) => Date 
   { re: /\blast\s+month\b/gi, versatz: (j) => monateVor(j, 1) },
 ];
 
-/** Bereiche, die unangetastet bleiben: Code in Backticks und Code-Bloecke. */
+/**
+ * Bereiche, die unangetastet bleiben: Code UND wörtliche Zitate.
+ *
+ * ── Warum Zitate dazugehören (28.08.2026) ─────────────────────────────────
+ *
+ * Die Karte 2bfm7dyvjmeh liess die Frage ausdrücklich offen: bleibt
+ * „gestern" in einem wörtlichen Zitat unangetastet? Bis heute nicht — Code
+ * war geschützt, Zitate nicht.
+ *
+ * Sie fällt so aus: ZITAT SCHLÄGT AUFLÖSUNG. Steht „gestern" zwischen
+ * Anführungszeichen, ist es FREMDER Text. Wer dort etwas einfügt, fälscht
+ * ein Zitat — und der Leser kann danach nicht mehr unterscheiden, was
+ * zitiert war und was wir ergänzt haben.
+ *
+ * Das ist dieselbe Regel wie „ergänzen, nie ersetzen", eine Ebene tiefer:
+ * fremde Worte bleiben fremde Worte.
+ */
 function tabuBereiche(text: string): [number, number][] {
   const bereiche: [number, number][] = [];
-  for (const re of [/```[\s\S]*?```/g, /`[^`\n]*`/g]) {
+  for (const re of [
+    /```[\s\S]*?```/g,        // Code-Block
+    /`[^`\n]*`/g,             // Code im Fliesstext
+    /"[^"\n]*"/g,             // gerade Anführungszeichen
+    /„[^“\n]*“/g,             // deutsche: unten, oben
+    /«[^»\n]*»/g,             // Guillemets
+  ]) {
     for (const m of text.matchAll(re)) {
       if (m.index !== undefined) bereiche.push([m.index, m.index + m[0].length]);
     }

@@ -104,3 +104,54 @@ describe('zaehleZeitangaben — was die Rueckmeldung nennen darf', () => {
     expect(zaehleZeitangaben('gestern (2026-08-26)', JETZT)).toBe(0);
   });
 });
+
+/*
+── Zitat schlägt Auflösung (28.08.2026) ────────────────────────────────────
+
+Die Karte 2bfm7dyvjmeh liess die Frage ausdrücklich offen: bleibt „gestern"
+in einem wörtlichen Zitat unangetastet? Code war geschützt, Zitate nicht.
+
+Sie fällt so aus: fremder Text bleibt fremder Text. Wer in einem Zitat etwas
+ergänzt, fälscht es — und danach kann niemand mehr unterscheiden, was zitiert
+war und was wir dazugeschrieben haben.
+*/
+describe("Woertliche Zitate bleiben unangetastet", () => {
+  const BEZUG = new Date(Date.UTC(2026, 7, 28))
+
+  it("in geraden Anfuehrungszeichen", () => {
+    const roh = 'Er schrieb: "gestern lief es noch"'
+    expect(normalisiereZeit(roh, BEZUG)).toBe(roh)
+  })
+
+  it("in deutschen Anfuehrungszeichen", () => {
+    const roh = "Er schrieb: „gestern lief es noch“"
+    expect(normalisiereZeit(roh, BEZUG)).toBe(roh)
+  })
+
+  it("in Guillemets", () => {
+    const roh = "Er schrieb: «gestern lief es noch»"
+    expect(normalisiereZeit(roh, BEZUG)).toBe(roh)
+  })
+
+  it("aber DANEBEN wird ergaenzt", () => {
+    // Sonst waere die Regel eine Ausrede: ein einziges Anfuehrungszeichen
+    // irgendwo im Text wuerde die ganze Aufloesung abschalten.
+    const neu = normalisiereZeit('gestern sagte er: "es lief"', BEZUG)
+    expect(neu).toContain("gestern (")
+    expect(neu).toContain('"es lief"')
+  })
+
+  it("GEGENPROBE: ohne die Anfuehrungszeichen WIRD ergaenzt", () => {
+    // Ohne diese Zeile bewiese die Zitat-Regel nichts: ein Muster, das
+    // "gestern" gar nicht mehr findet, laesst Zitate auch in Ruhe.
+    const imZitat = 'Er schrieb: "gestern lief es noch"'
+    const ohneZitat = imZitat.replace(/"/g, "")
+    expect(normalisiereZeit(imZitat, BEZUG), "im Zitat: unveraendert").toBe(imZitat)
+    expect(normalisiereZeit(ohneZitat, BEZUG), "ohne Zitat: ergaenzt").not.toBe(ohneZitat)
+  })
+
+  it("Code bleibt weiterhin geschuetzt", () => {
+    const roh = "Der Schalter `--since gestern` half nicht"
+    expect(normalisiereZeit(roh, BEZUG)).toBe(roh)
+  })
+})
