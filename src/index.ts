@@ -871,6 +871,7 @@ import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
 import { buildAmbientDeps } from './ambient-deps.js';
 import { resolveApiKey, saveApiKey, type CredentialsHomeOptions } from './credentials.js';
 import { holeSofortTest } from './sofort-test.js';
+import { sichtbareWerkzeuge, VERTEILER } from './werkzeug-auswahl.js';
 import { buildLessonsMarkdown, buildLessonsJsonl, vonRohLektion, type ExportLesson } from './brain-export.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
@@ -1644,7 +1645,31 @@ The Brain instance id comes from the CACHLY_BRAIN_INSTANCE_ID environment variab
  */
 const CAPABILITIES = { tools: {}, resources: {}, prompts: {} } as const;
 
-const listToolsHandler = async () => ({ tools: TOOLS });
+/*
+ * ── Der Katalog traegt nur noch die Kernwerkzeuge (28.08.2026) ────────────
+ *
+ * Vorher gingen alle 123 Werkzeuge in JEDER Anfrage mit: 111.014 Byte,
+ * ~27.750 Token. Bei einem 200k-Fenster sind das 14 %, weg bevor der Nutzer
+ * ein Wort gesagt hat.
+ *
+ * Jetzt stehen die taeglich benutzten eigenstaendig da, der Rest haengt
+ * hinter einem Verteiler — mit Namen, aber ohne Schemata. Aufrufbar bleibt
+ * ALLES: handleTool verteilt nach Namen und schaut nie in TOOLS.
+ *
+ * CACHLY_ALLE_WERKZEUGE=1 stellt den vollen Katalog wieder her.
+ */
+const listToolsHandler = async () => {
+  const { katalog, unbekannteKernnamen } = sichtbareWerkzeuge(TOOLS as unknown as { name: string }[]);
+  // Ein Kernname ohne Werkzeug waere ein STILLER Verlust: er stuende weder
+  // eigenstaendig im Katalog noch in der Liste des Verteilers. Also melden,
+  // nicht verschlucken.
+  if (unbekannteKernnamen.length > 0) {
+    console.error(
+      `cachly: ${unbekannteKernnamen.length} Kernwerkzeug(e) gibt es gar nicht: ${unbekannteKernnamen.join(', ')}`,
+    );
+  }
+  return { tools: katalog };
+};
 
 // Bewusst Funktionsdeklarationen statt const: makeServer() steht weiter oben
 // als callToolHandler, und Deklarationen werden hochgezogen. So gibt es EINE
@@ -1756,7 +1781,44 @@ async function autoEndSession(): Promise<void> {
 }
 
 const callToolHandler = async (request: { params: { name: string; arguments?: unknown } }) => {
-  const { name, arguments: args } = request.params;
+  let { name, arguments: args } = request.params;
+
+  /*
+   * ── Der Verteiler wird ZUERST ausgepackt ───────────────────────────────
+   *
+   * Danach sieht alles darunter den echten Werkzeugnamen — die
+   * Sitzungs-Automatik, die Zaehlung, die Fehlerbehandlung. Wer hier spaeter
+   * auspackt, hat einen zweiten Namensraum, in dem dieselben Regeln NICHT
+   * gelten.
+   */
+  if (name === VERTEILER) {
+    const p = (args ?? {}) as { tool?: unknown; arguments?: unknown; describe?: unknown };
+    const innen = typeof p.tool === 'string' ? p.tool : '';
+    if (!innen) {
+      return {
+        content: [{ type: 'text', text: 'cachly_tool braucht das Feld "tool" — den Namen des Werkzeugs.' }],
+        isError: true,
+      };
+    }
+    const werkzeug = (TOOLS as unknown as { name: string; description?: string; inputSchema?: unknown }[])
+      .find((w) => w.name === innen);
+    if (!werkzeug) {
+      return {
+        content: [{ type: 'text', text: `Kein Werkzeug namens "${innen}". Die Liste steht in der Beschreibung von ${VERTEILER}.` }],
+        isError: true,
+      };
+    }
+    if (p.describe === true) {
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({ name: werkzeug.name, description: werkzeug.description, inputSchema: werkzeug.inputSchema }, null, 2),
+        }],
+      };
+    }
+    name = innen;
+    args = (p.arguments ?? {}) as Record<string, unknown>;
+  }
 
   // Auto-start brain session on first tool call that has an instance_id.
   // Skip session management tools to avoid recursion.
