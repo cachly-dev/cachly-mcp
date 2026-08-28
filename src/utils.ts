@@ -88,3 +88,56 @@ export function normalizeGitPath(raw: string): string {
   // Collapse any double slashes introduced by an empty rename segment.
   return p.replace(/\/{2,}/g, '/').replace(/^\/|\/$/g, '');
 }
+
+/**
+ * Liest eine Lektion und sagt AUSDRÜCKLICH, ob sie überhaupt lesbar war.
+ *
+ * ── Die vierte grün-blinde Fehlerform (28.08.2026) ─────────────────────────
+ *
+ * `safeJsonParse(raw, {})` gibt bei kaputtem JSON ein leeres Objekt zurück.
+ * Wer danach vergleicht, liest Abwesenheit als Aussage:
+ *
+ *     const ld = safeJsonParse<{ visibility?: string }>(raw, {});
+ *     if (ld.visibility === 'private') continue;   // <- undefined !== 'private'
+ *
+ * Eine private Lektion, deren Datensatz beschädigt ist, ist damit NICHT
+ * privat — sie geht heraus. Und für diese Klasse gibt es keinen
+ * Known-Bad-Eingang: von innen sehen beide Welten gleich aus. „Kein
+ * visibility-Feld" und „Feld nicht lesbar" sind dieselbe Beobachtung, und
+ * genau das ist der Fehler.
+ *
+ * Testbar wird sie erst, wenn PRÄSENZ getrennt vom WERT geprüft wird.
+ * Deshalb gibt diese Funktion `null` zurück statt eines Ersatzobjekts: der
+ * Aufrufer MUSS den Fall behandeln, das Typsystem lässt ihm keine Wahl.
+ *
+ * Benannt hat die Klasse Vinh Nguyen unter dem 204er-Artikel am 25.08.2026.
+ */
+export function leseOderNull<T>(raw: string | null | undefined): T | null {
+  if (!raw) return null;
+  try {
+    const x = JSON.parse(raw) as unknown;
+    // Ein JSON-Skalar ist kein Datensatz. `JSON.parse("3")` gelingt und
+    // liefert 3 — jeder Feldzugriff darauf gibt undefined, und wir wären
+    // wieder genau dort, wo wir nicht sein wollen.
+    if (x === null || typeof x !== 'object' || Array.isArray(x)) return null;
+    return x as T;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Darf diese Lektion an den Fragenden heraus?
+ *
+ * `null` heisst NEIN — ein Datensatz, den wir nicht lesen können, ist nicht
+ * „öffentlich", sondern unbekannt. Unbekannt schliesst aus.
+ *
+ * Das ist der Unterschied zwischen einer fehlenden Prüfung und einer
+ * Prüfung, die im Zweifel öffnet.
+ */
+export function darfHeraus<T extends { visibility?: string }>(
+  lektion: T | null,
+): lektion is T {
+  if (lektion === null) return false;
+  return lektion.visibility !== 'private';
+}

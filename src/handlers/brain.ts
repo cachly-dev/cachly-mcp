@@ -6,7 +6,7 @@ import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration,
          ckgUpsertServiceNode } from '../ckg.js';
-import { safeJsonParse, scanKeys } from '../utils.js';
+import { safeJsonParse, scanKeys , leseOderNull, darfHeraus } from '../utils.js';
 import { ersparteMinuten, istStarterLektion, zaehltAlsErsparnis } from '../wertbeitrag.js';
 import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
 import { normalisiereZeit, zaehleZeitangaben } from '../zeit-normalisieren.js';
@@ -1687,8 +1687,13 @@ export async function handleBrainTool(
         // Nachfolger darf hier weder beim Namen genannt noch als Abrufziel
         // ausgewiesen werden — der Banner leakte sonst Existenz + Topic und
         // lieferte die Abruf-Anleitung gleich mit.
+        // Hier zeigt der Absence-Reader in die ANDERE Richtung, und die
+        // Reparatur auch: unlesbar muss PRIVAT ergeben. Sonst leakt der
+        // Banner Name und Thema eines Nachfolgers, dessen Datensatz nur
+        // beschaedigt ist — dieselbe Klasse, dieselbe Regel: im Zweifel
+        // schliessen.
         const nachfolgerPrivat = nachfolgerDa
-          ? safeJsonParse<{ visibility?: string }>(nachfolgerDa, {}).visibility === 'private'
+          ? !darfHeraus(leseOderNull<{ visibility?: string }>(nachfolgerDa))
           : false;
         const ersetztBanner = ersetztDurch
           ? nachfolgerDa
@@ -2266,9 +2271,14 @@ export async function handleBrainTool(
       const hybridResults = [...hybridMap.values()]
         .filter(r => {
           if (!r.key.startsWith('cachly:lesson:best:')) return true;
-          const ld = safeJsonParse<{ visibility?: string; group?: string }>(r.content, {});
-          if (ld.visibility === 'private') return false;
-          if (!lessonVisibleToScope(ld.group, requesterScopes, requesterIsAdmin)) return false;
+          // Unlesbar heisst NEIN. safeJsonParse(x, {}) gab bei kaputtem JSON
+          // ein leeres Objekt zurueck — und undefined !== 'private', also
+          // waere eine private Lektion mit beschaedigtem Datensatz HERAUS
+          // gegangen. Fuer diese Klasse gibt es keinen Known-Bad-Eingang:
+          // "kein Feld" und "nicht lesbar" sehen von innen gleich aus.
+          const ld = leseOderNull<{ visibility?: string; group?: string }>(r.content);
+          if (!darfHeraus(ld)) return false;
+          if (!lessonVisibleToScope(ld?.group, requesterScopes, requesterIsAdmin)) return false;
           return true;
         })
         .sort((a, b) => b.hybridScore - a.hybridScore);
@@ -2300,11 +2310,12 @@ export async function handleBrainTool(
             // Karte pguy341m6u7s: ein privater Nachfolger wird NICHT beim
             // Namen genannt und nicht als Abrufziel ausgewiesen — die alte,
             // sichtbare Fassung bleibt die beste SICHTBARE Antwort.
-            const nf = safeJsonParse<{ visibility?: string }>(
-              (await redis.get(`cachly:lesson:best:${ld.ersetzt_durch}`))!,
-              {},
+            // Unlesbar heisst PRIVAT — sonst nennt die Notiz den Namen
+            // einer Fassung, deren Datensatz nur beschaedigt ist.
+            const nf = leseOderNull<{ visibility?: string }>(
+              await redis.get(`cachly:lesson:best:${ld.ersetzt_durch}`),
             );
-            if (nf.visibility === 'private') {
+            if (!darfHeraus(nf)) {
               ersetzungsNotizen.push(
                 `↷ \`${altThema}\`: von einer nicht team-sichtbaren Fassung ersetzt — diese Fassung bleibt die beste sichtbare Antwort.`,
               );
@@ -4339,11 +4350,12 @@ export async function handleBrainTool(
           try {
             const hits = await keywordSearch(redis, ['cachly:lesson:best:*'], lessonQuery, 4);
             for (const h of hits) {
-              const ld = safeJsonParse<{
+              // Unlesbar heisst NEIN — siehe leseOderNull.
+              const ld = leseOderNull<{
                 topic?: string; outcome?: string; what_worked?: string;
                 severity?: string; author?: string; visibility?: string;
-              }>(h.content, {});
-              if (ld.visibility === 'private') continue;
+              }>(h.content);
+              if (!darfHeraus(ld)) continue;
               const emoji = ld.outcome === 'success' ? '✅' : ld.outcome === 'partial' ? '⚠️' : '❌';
               const sev = ld.severity === 'critical' ? ' 🔴' : ld.severity === 'major' ? ' 🟡' : '';
               const by = ld.author ? ` · 👤 ${ld.author}` : '';
@@ -4358,11 +4370,12 @@ export async function handleBrainTool(
           for (const k of allLessonKeys.slice(0, 300)) {
             const raw = await redis.get(k);
             if (!raw) continue;
-            const ld = safeJsonParse<{
+            // Unlesbar heisst NEIN — siehe leseOderNull.
+            const ld = leseOderNull<{
               topic?: string; outcome?: string; what_worked?: string;
               severity?: string; author?: string; visibility?: string; file_paths?: string[];
-            }>(raw, {});
-            if (ld.visibility === 'private') continue;
+            }>(raw);
+            if (!darfHeraus(ld)) continue;
             if (!(ld.file_paths ?? []).includes(fp)) continue;
             const topic = k.replace('cachly:lesson:best:', '');
             if (relatedLessons.some(l => l.includes(`\`${topic}\``))) continue;
@@ -4487,9 +4500,13 @@ export async function handleBrainTool(
       for (const k of lessonKeys) {
         const raw = await redis.get(k);
         if (!raw) continue;
-        const l = safeJsonParse<{
+        // Kein Leck, aber eine falsche Zahl: ein unlesbarer Datensatz
+        // wurde bisher als "nicht privat" mitgezaehlt. Jetzt faellt er ganz
+        // heraus — nicht gemessen ist besser als falsch gemessen.
+        const l = leseOderNull<{
           topic?: string; outcome?: string; author?: string; visibility?: string;
-        }>(raw, {});
+        }>(raw);
+        if (l === null) continue;
         const domain = (l.topic ?? '').split(':')[0] ?? 'unknown';
         const s = domainMap.get(domain) ?? { successes: 0, failures: 0, attributed: 0, topics: [] };
         if (l.outcome === 'success' || l.outcome === 'partial') s.successes++;
@@ -4861,8 +4878,9 @@ export async function handleBrainTool(
       for (const k of lessonKeys.slice(0, 400)) {
         const raw = await redis.get(k).catch(() => null);
         if (!raw) continue;
-        const ld = safeJsonParse<SvcLesson & { service?: string }>(raw, {} as SvcLesson);
-        if (ld.visibility === 'private') continue;
+        // Unlesbar heisst NEIN — siehe leseOderNull.
+        const ld = leseOderNull<SvcLesson & { service?: string }>(raw);
+        if (!darfHeraus(ld)) continue;
         if ((ld.service ?? '').toLowerCase() !== svcLower) continue;
         lessons.push({ ...ld, topic: k.replace('cachly:lesson:best:', '') });
       }
