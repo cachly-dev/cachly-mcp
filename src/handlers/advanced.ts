@@ -3,6 +3,7 @@ import { ckgSlug } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse } from '../utils.js';
 import { ersparteMinuten, zaehltAlsErsparnis } from '../wertbeitrag.js';
+import { findePaare } from '../zulassung-und-urteil.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -57,7 +58,35 @@ export async function handleAdvancedTool(
         topicGroups.set(prefix, group);
       }
 
-      // Detect contradictions: same exact topic, different outcomes
+      /*
+       * ── Widersprueche: Zulassung VOR Urteil (29.08.2026) ─────────────────
+       *
+       * Bis heute stand hier:
+       *
+       *   const outcomes = new Set(keys.map(k => lessons.get(k)?.outcome));
+       *   if (outcomes.size > 1) contradictions.push({ topic, keys });
+       *
+       * Zwei harte Bedingungen: Themenname BUCHSTABENGLEICH und outcome
+       * verschieden. Gemessen auf 499 Lektionen
+       * (bench/widerspruch-ist-keine-distanz.mjs): **null Funde.**
+       *
+       * Edward Izgorodin hat die Ursache benannt: "Your key gate skips the
+       * admission step and goes straight to identity." Aehnlichkeit ist die
+       * Eintrittskarte, nicht das Urteil.
+       *
+       * Jetzt zwei Stufen (src/zulassung-und-urteil.ts): Zulassung nach
+       * Themen-Ueberlappung, dann ein Urteil mit fuenf moeglichen Werten —
+       * darunter "unverwandt", damit eine Zulassung keine Verurteilung ist.
+       *
+       * Die alte Zaehlung bleibt daneben stehen. Sie kostet nichts und zeigt
+       * den Abstand: waere sie ploetzlich gleich gross, waere entweder die
+       * neue Stufe kaputt oder die Messung von damals falsch.
+       */
+      const alleLektionen = [...lessons.values()];
+      const paare = findePaare(alleLektionen);
+      const widersprueche = paare.filter(p => p.beziehung === 'widerspruch');
+      const ersetzungen = paare.filter(p => p.beziehung === 'ersetzung');
+
       const contradictions: Array<{ topic: string; keys: string[] }> = [];
       const exactTopics = new Map<string, string[]>();
       for (const [k, l] of lessons) {
@@ -100,7 +129,18 @@ export async function handleAdvancedTool(
         ``,
         `📊 **Before:** ${lessonKeys.length} lessons`,
         ``,
-        `🔁 **Contradictions detected:** ${contradictions.length}`,
+        `🔁 **Contradictions — exact topic match (old rule):** ${contradictions.length}`,
+        // Die neue Stufe daneben, nicht statt der alten. Der Abstand ist die
+        // Auskunft: die alte Regel fand am 29.08.2026 auf 499 Lektionen null.
+        `🔎 **Same subject, admitted for judgement:** ${paare.length}` +
+          ` → contradiction ${widersprueche.length} · supersession ${ersetzungen.length}`,
+        ...widersprueche.slice(0, 5).map(p =>
+          `  → \`${p.a.topic}\` vs \`${p.b.topic}\` (${p.naehe.toFixed(2)}): ${p.grund}`),
+        widersprueche.length > 5 ? `  … and ${widersprueche.length - 5} more` : '',
+        // Eine Ersetzung ist KEIN Streit. Wer beides in einen Topf wirft,
+        // macht aus jeder Weiterentwicklung einen Widerspruch.
+        ...ersetzungen.slice(0, 3).map(p =>
+          `  ↻ \`${p.a.topic}\` → \`${p.b.topic}\`: ${p.grund}`),
         ...contradictions.slice(0, 5).map(c => `  → \`${c.topic}\`: ${c.keys.length} conflicting entries (kept: success)`),
         contradictions.length > 5 ? `  … and ${contradictions.length - 5} more` : '',
         ``,

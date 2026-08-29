@@ -36,7 +36,12 @@ import { keywordSearch, type KeywordMatch } from '../search.js';
 import { rerankByQuality } from '../rerank.js';
 import { BENCH_LESSONS, BENCH_QUERIES, type BenchLesson, type BenchQuery } from './fixtures.js';
 
-const LESSON_PREFIX = 'cachly:lesson:best:';
+/*
+ * Exportiert seit dem 29.08.2026 (Karte 591wz6oijnr8): die Irrtumsquote
+ * misst auf DEMSELBEN Weg wie der Bench. Zwei Indizierungen waeren zwei
+ * Wahrheiten, und die zweite haette bald andere Schluessel.
+ */
+export const LESSON_PREFIX = 'cachly:lesson:best:';
 
 // ── Minimal in-memory Redis (only what keywordSearch needs) ──────────────────
 class MiniRedis {
@@ -66,7 +71,7 @@ class MiniRedis {
   }
 }
 
-function indexCorpus(lessons: BenchLesson[]): MiniRedis {
+export function indexCorpus(lessons: BenchLesson[]): MiniRedis {
   const redis = new MiniRedis();
   for (const l of lessons) {
     redis.set(`${LESSON_PREFIX}${l.topic}`, JSON.stringify(l));
@@ -156,7 +161,7 @@ function flatFileRank(lessons: BenchLesson[], query: string): string[] {
     .map(s => s.topic);
 }
 
-const matchTopic = (m: KeywordMatch): string => m.key.replace(LESSON_PREFIX, '');
+export const matchTopic = (m: KeywordMatch): string => m.key.replace(LESSON_PREFIX, '');
 
 function mean(xs: number[]): number {
   return xs.length === 0 ? 0 : xs.reduce((a, b) => a + b, 0) / xs.length;
