@@ -190,6 +190,9 @@ async function main(): Promise<void> {
 
   const korpus = {
     name: `cachly-echtbestand-${new Date().toISOString().slice(0, 10)}`,
+    // Karte tupujdmpjk0q: ohne Datum altert der Korpus, ohne es zu sagen —
+    // echter-korpus.ts druckt es in den Kopf und warnt ab 90 Tagen.
+    erzeugt_am: new Date().toISOString(),
     _hinweis:
       'Lektionen aus dem echten Bestand. Die Fragen muss ein Mensch schreiben, ' +
       'ohne die Lektion abzuschreiben — sonst misst der Bench sich selbst.',

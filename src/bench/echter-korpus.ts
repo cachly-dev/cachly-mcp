@@ -35,6 +35,7 @@
  */
 
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { MiniRedis } from './mini-redis.js';
@@ -154,6 +155,31 @@ async function main(): Promise<void> {
   console.log('');
   console.log('🧠  Cachly-Messstand — am echten Bestand');
   console.log('──────────────────────────────────────────────────────────────────────');
+  /*
+   * ── Das Alter des Korpus steht im Kopf (Karte tupujdmpjk0q) ─────────────
+   *
+   * "Gemessen am echten Bestand" gilt fuer den Bestand des Einfrier-Tags.
+   * Ohne Datum misst die Zahl irgendwann eine Vergangenheit, und nichts
+   * sagt es — die Fehlerklasse des alten Messstands. Quelle: das Feld
+   * erzeugt_am (neue Korpusse), sonst das letzte git-Datum der Datei,
+   * sonst ausdruecklich UNBEKANNT (der dritte Ausgang, keine stille 0).
+   */
+  const erzeugtAm = (korpus as { erzeugt_am?: string }).erzeugt_am ?? (() => {
+    try {
+      return execFileSync('git', ['log', '-1', '--format=%cI', '--', kDatei],
+        { encoding: 'utf8', timeout: 10_000 }).trim() || null;
+    } catch { return null; }
+  })();
+  if (erzeugtAm) {
+    const alterTage = Math.floor((Date.now() - new Date(erzeugtAm).getTime()) / 86_400_000);
+    console.log(`  Korpus eingefroren am ${erzeugtAm.slice(0, 10)} — ${alterTage} Tage alt`);
+    if (alterTage > 90) {
+      console.log('  ⚠️  AELTER ALS 90 TAGE: die Zahlen beschreiben den Bestand von damals.');
+      console.log('     Erneuern: npx tsx src/bench/korpus-aus-brain.ts + korpus-einfrieren.ts');
+    }
+  } else {
+    console.log('  ⚠️  Korpus-Alter UNBEKANNT (kein erzeugt_am, kein git-Datum) — Frische unbewiesen.');
+  }
   console.log(`  Lektionen ${korpus.lektionen.length} · Fragen ${korpus.fragen.length} · Vektoren ${vektorbestand.groesse} Volltext / ${namensbestand.groesse} Namen / ${eingangsbestand.anzahlEingaenge} Eingaenge`);
 
   if (vektorbestand.groesse === 0) {
