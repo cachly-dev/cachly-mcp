@@ -58,6 +58,7 @@ import {
 import { schreibeEingaenge, Eingangsbestand } from '../eingaenge.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { spurLegen } from '../spuren.js';
+import { etikettenFuer, lieferJournalSchluessel, JOURNAL_DECKEL, type Lieferung, type LektionsStand } from '../etiketten.js';
 import {
   bewerteTopf, spreizeImTopf, reichereAn, inhaltsWoerter, grobStamm, GEWICHTE,
   knapperSiegSatz,
@@ -2053,6 +2054,26 @@ export async function handleBrainTool(
 
       // One quota unit for this call, regardless of how many lessons it surfaced.
       void bumpRecallQuota(redis);
+
+      // ── Das Liefer-Journal (Karte kdqyy5syhxqn) ───────────────────────
+      // Was wurde wann herausgegeben — die Grundlage der drei mechanischen
+      // Etiketten (widersprochen/korrigiert/veraltet). Best-effort wie die
+      // Quota: eine Journalzeile stoppt nie die Antwort. Gedeckelt, damit
+      // das Journal kein zweiter Bestand wird.
+      {
+        const geliefert = kwGemischt
+          .filter((m) => m.key.startsWith('cachly:lesson:best:'))
+          .slice(0, 3)
+          .map((m) => m.key.slice('cachly:lesson:best:'.length));
+        if (geliefert.length > 0) {
+          const zeile: Lieferung = { ts: new Date().toISOString(), themen: geliefert };
+          void (async () => {
+            const k = lieferJournalSchluessel(instance_id);
+            await redis.lpush(k, JSON.stringify(zeile));
+            await redis.ltrim(k, 0, JOURNAL_DECKEL - 1);
+          })().catch(() => { /* Messzeile stoppt nie die Antwort */ });
+        }
+      }
 
       // ── Gedaechtniszellen ────────────────────────────────────────────────
       //
@@ -4741,6 +4762,30 @@ export async function handleBrainTool(
         ausgaengeRoh = {};
       }
 
+      // ── Die drei mechanischen Etiketten (Karte kdqyy5syhxqn) ──────────
+      // widersprochen / korrigiert / veraltet je gelieferter Lektion —
+      // berechnet aus Ereignissen im Bestand, NIE aus Selbstauskunft.
+      // Ein Abruf ohne spaetere Ereignisse bekommt KEIN Etikett.
+      const etikettenZaehler = { widersprochen: 0, korrigiert: 0, veraltet: 0, ohneEreignis: 0, lieferungen: 0 };
+      try {
+        const roh = await redis.lrange(lieferJournalSchluessel(instance_id), 0, 499);
+        const standVon = new Map<string, LektionsStand | null>();
+        for (const zeile of roh) {
+          const l = safeJsonParse<Lieferung>(zeile, { ts: '', themen: [] });
+          if (!l.ts || !Array.isArray(l.themen)) continue;
+          for (const thema of l.themen) {
+            etikettenZaehler.lieferungen++;
+            if (!standVon.has(thema)) {
+              const inhalt = await redis.get(`cachly:lesson:best:${thema}`).catch(() => null);
+              standVon.set(thema, inhalt ? safeJsonParse<LektionsStand>(inhalt, {}) : null);
+            }
+            const e = etikettenFuer(l.ts, standVon.get(thema) ?? null);
+            if (e.length === 0) { etikettenZaehler.ohneEreignis++; continue; }
+            for (const x of e) etikettenZaehler[x]++;
+          }
+        }
+      } catch { /* Messzeile stoppt nie das Werkzeug */ }
+
       let werkzeugRoh: Record<string, string> = {};
       try {
         werkzeugRoh = (await redis.hgetall(nutzungsSchluessel(instance_id))) ?? {};
@@ -4889,6 +4934,14 @@ export async function handleBrainTool(
             + 'die Rate hier zaehlt, sie urteilt nicht.)'
           );
         })(),
+        ``,
+        `### 🏷️ Drei Etiketten ohne Selbstauskunft _(widersprochen · korrigiert · veraltet)_`,
+        etikettenZaehler.lieferungen === 0
+          ? '⚪ Noch kein Liefer-Journal — die Etiketten entstehen ab dieser Fassung je smart_recall.'
+          : `**${etikettenZaehler.lieferungen}** gelieferte Lektionen (letzte 500 Abrufe): `
+            + `${etikettenZaehler.widersprochen} widersprochen · ${etikettenZaehler.korrigiert} korrigiert · `
+            + `${etikettenZaehler.veraltet} veraltet · ${etikettenZaehler.ohneEreignis} ohne spaeteres Ereignis. `
+            + '(Kein Etikett heisst: nichts ist passiert — nicht "benutzt". Das vierte Etikett haette nur eine geschmeichelte Fassung.)',
         ``,
         `### 🔧 Werkzeug-Nutzung _(erst messen, dann zusammenlegen)_`,
         nutzungInWorten(nutzung, TOOLS.length),

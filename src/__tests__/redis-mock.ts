@@ -30,6 +30,14 @@ export class MockRedis {
     return next;
   }
 
+  async lpush(key: string, ...values: string[]): Promise<number> {
+    const list = this.lists.get(key) ?? [];
+    // Redis-Semantik: mehrere Werte werden einzeln vorn eingefuegt.
+    for (const v of values) list.unshift(v);
+    this.lists.set(key, list);
+    return list.length;
+  }
+
   async rpush(key: string, ...values: string[]): Promise<number> {
     const list = this.lists.get(key) ?? [];
     list.push(...values);
