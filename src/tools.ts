@@ -550,7 +550,17 @@ const TOOLS = [
         outcome:      { type: 'string', enum: ['success', 'failure', 'partial'], description: 'Did it work?' },
         what_worked:  { type: 'string', description: 'What solved the problem or what approach succeeded' },
         what_failed:  { type: 'string', description: 'What did NOT work (optional but valuable)' },
-        context:      { type: 'string', description: 'Additional context, error messages, root cause (optional)' },
+        // Gemessen am 30.08.2026 (src/bench/symptom-probe.ts): traegt eine
+        // Lektion das SYMPTOM in den Worten des Suchenden, halbiert sich ihr
+        // Rohabstand zur Spitze (2,32x -> 1,30x und 7,27x -> 2,76x). Der Index
+        // liest den rohen Inhalt, dieses Feld ist also mit drin.
+        //
+        // Die alte Beschreibung fragte nach 'error messages, root cause' — der
+        // Sicht dessen, der es schon geloest hat. Gesucht wird aber in den
+        // Worten dessen, der noch mittendrin steckt.
+        //
+        // Null von 499 Lektionen trugen das Feld, als es gemessen wurde.
+        context:      { type: 'string', description: 'The SYMPTOM in the words someone would search for, before they knew the fix ("deploy stuck, rollout not finishing"). Plus error messages and root cause. Optional but high-value: it is what closes the gap between the question and the answer.' },
         severity: {
           type: 'string',
           enum: ['critical', 'major', 'minor'],
