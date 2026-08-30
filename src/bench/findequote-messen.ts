@@ -112,6 +112,42 @@ async function main(): Promise<void> {
   // einem Drittel der Kandidaten. Genau die Fehlerklasse, gegen die
   // rangfolge-stellschrauben.ts gebaut wurde.
   const POOL = Number(flag('pool') ?? String(SINN_TOPF));
+  /*
+   * ── --seltenheit <n>: der dritte Nominierungskanal ──────────────────────
+   *
+   * Naturworkshop 2 (23.08.2026, Oekologe und Verhaltensoekologe unabhaengig):
+   * die Seltenheitsdeckung traegt das hoechste Sortiergewicht (1,3) und kann
+   * niemanden in den Topf holen — sie wird nur fuer Kandidaten gerechnet,
+   * die schon drin sind. Ein Baufehler, kein Gewichtsproblem.
+   *
+   * Gemessen dort: POOL 50 + Seltenheit 25 = 95,0 % Decke bei 81 Kandidaten,
+   * gegen groessengleiche Gegenprobe POOL 60 = 93,0 % bei 78. Bei den vier
+   * Fragen jenseits von Bedeutungsplatz 200 findet Seltenheit 3 von 4.
+   *
+   * UND DIE WARNUNG aus derselben Messung: Decke ist nicht Produkt. Reine
+   * Topfvergroesserung 25 -> 150 hob die Decke um neun Punkte und die
+   * Findequote@3 um zwei. Deshalb steht der Kanal HIER als Schalter und
+   * nicht im Auslieferstand: erst wenn die FINDEQUOTE ihn rechtfertigt,
+   * wird er Produktvorgabe.
+   *
+   * Vorgabe 0: keine eingefrorene Messung verschiebt sich still.
+   *
+   * ── DAS URTEIL (30.08.2026, vorregistrierter A/B-Lauf, 4000 Fragen) ────
+   *
+   * A (seltenheit 0): Platz 1 39 % · @3 52 % · Decke 79 % (3174).
+   * B (seltenheit 25): Platz 1 +1 Antwort · @3 −3 · Decke 81 % (+61).
+   *
+   * Die Vorregistrierung verlangte Decke +2 Punkte UND steigende @3 —
+   * beides verfehlt. Der Kanal hebt die Decke um 1,5 Punkte, die
+   * Sortierung setzt KEINEN der zusaetzlichen Kandidaten nach vorne um.
+   * ER WIRD NICHT PRODUKTVORGABE. Die Kleinmessung oben (POOL50+25) hat
+   * sich bei 4000 Fragen nicht bestaetigt — Kleinstichproben-Warnung.
+   *
+   * Der eigentliche Befund: 1089 richtige Antworten lagen im Topf und
+   * wurden nicht gezeigt. Der Engpass ist die SORTIERUNG, nicht die
+   * Nominierung. Karte f6ytkd1254lh.
+   */
+  const seltenheitTopf = Number(flag('seltenheit') ?? '0');
   const tueren = flag('tueren')?.split(',').map((x) => x.trim()).filter(Boolean);
   const eingangsGewicht = Number(flag('eingang') ?? '0');
   // Optionaler Merkmals-Auszug fuer den Gewichts-Anpasser.
@@ -232,6 +268,22 @@ async function main(): Promise<void> {
     const wortListe = (await keywordSearch(redis as never, [`${PRAEFIX}*`], q.query, POOL) as Array<{ key: string }>)
       .map((h) => h.key.replace(PRAEFIX, ''));
 
+    // Frageworte einmal je Frage — Nominierung und Sortierung lesen dieselbe
+    // Menge. Zwei Zerlegungen waeren zwei Wahrheiten.
+    const fw = inhaltsWoerter(q.query);
+
+    // Der dritte Kanal: wer die seltenen Frageworte deckt, kommt in den
+    // Topf — unabhaengig davon, wo sein Vektor liegt. Genau die Faelle
+    // jenseits von Bedeutungsplatz 200, die kein anderer Kanal erreicht.
+    const seltenheitListe = seltenheitTopf > 0
+      ? themen
+        .map((t) => ({ t, d: seltenheit.deckung(fw, textWoerter.get(t) ?? new Set()) }))
+        .filter((x) => x.d > 0)
+        .sort((a, b) => b.d - a.d)
+        .slice(0, seltenheitTopf)
+        .map((x) => x.t)
+      : [];
+
     const sinnListe = themen
       .map((t) => {
         const vs = tuerVektoren.get(t) ?? [];
@@ -250,7 +302,7 @@ async function main(): Promise<void> {
       ? themen.map((t) => ({ t, n: volltextVektor.has(t) ? kosinus(fv, volltextVektor.get(t)!) : -2 }))
         .sort((a, b) => b.n - a.n).slice(0, POOL).map((x) => x.t)
       : [];
-    const topf = [...new Set([...wortListe, ...sinnListe, ...volltextListe])];
+    const topf = [...new Set([...wortListe, ...sinnListe, ...volltextListe, ...seltenheitListe])];
     // Rueckkopplung genau wie im Auslieferstand: die Frage mit den besten
     // Treffern anreichern und noch einmal vergleichen.
     const besteDrei = sinnListe.slice(0, 3).map((t) => volltextVektor.get(t)).filter(Boolean) as number[][];
@@ -263,7 +315,6 @@ async function main(): Promise<void> {
       return best;
     };
 
-    const fw = inhaltsWoerter(q.query);
     const bewertbar = topf.map((t) => ({
       naeheText: ersetzeText
         ? besterEingangVon(t)
