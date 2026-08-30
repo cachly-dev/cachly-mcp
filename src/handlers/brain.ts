@@ -60,6 +60,7 @@ import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { spurLegen } from '../spuren.js';
 import {
   bewerteTopf, spreizeImTopf, reichereAn, inhaltsWoerter, grobStamm, GEWICHTE,
+  knapperSiegSatz,
 } from '../rangfolge.js';
 import {
   pruefeWirkung, werteAus, lehrwert, leiteAb,
@@ -1820,6 +1821,9 @@ export async function handleBrainTool(
       // Produktion monatelang stumm ausstieg: 0 Vektoren bei 506 Lektionen.
       // Von aussen war das von "alles in Ordnung" nicht zu unterscheiden.
       let sinnAngewandt = false;
+      // Punktabstand Platz 1 zu 2 aus der Topf-Bewertung — das gemessene
+      // Vertrauenssignal fuer den dritten Ausgang (siehe knapperSiegSatz).
+      let spitzenAbstand: number | null = null;
       const kwGemischt = await (async () => {
         if (!hasEmbedProvider()) {
           meldeEinmal(OHNE_DIENST,
@@ -1947,6 +1951,15 @@ export async function handleBrainTool(
             };
           });
           let punkte = bewerteTopf(bewertbar, GEWICHTE);
+
+          // Der Abstand wird HIER gemessen, vor der Fehlertext-Tuer —
+          // denn genau auf diesen fuenf Merkmalen wurde die Ablehnschwelle
+          // eingestellt (Haelfte A) und bestaetigt (Haelfte B). Wer ihn
+          // nach der Tuer misst, misst ein anderes Signal als das geprobte.
+          {
+            const geordnet = [...punkte].sort((x, y) => y - x);
+            spitzenAbstand = geordnet.length > 1 ? geordnet[0] - geordnet[1] : null;
+          }
 
           // Die Fehlertext-Tuer als fuenftes Merkmal — mit Schwelle.
           //
@@ -2455,6 +2468,15 @@ export async function handleBrainTool(
         lines.push(abstentionSatz(abstention));
         return lines.join('\n');
       }
+
+      // Der dritte Ausgang (Fellegi & Sunter 1969): ein knapper Sieg im
+      // Topf ist ein Ratespiel, kein Befund. Die Treffer bleiben sichtbar
+      // — der Satz davor nimmt ihnen nur die falsche Autoritaet.
+      // Schwelle 0,05: auf Haelfte A eingestellt, genau EINMAL auf B
+      // bestaetigt (8,9 falsche je richtiger abgelehnter Antwort).
+      // Zahlen und Werkzeug: rangfolge.ts, dritter-ausgang-messen.ts.
+      const knapp = knapperSiegSatz(spitzenAbstand);
+      if (knapp) lines.push(knapp, '');
 
       if (hybridResults.length > 0) {
         const hasCKG = hybridResults.some(r => r.ckgScore !== undefined);

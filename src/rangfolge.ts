@@ -348,6 +348,58 @@ export const GEWICHTE = {
   zeuge: 0.5,
 } as const;
 
+/**
+ * ══ Der dritte Ausgang: Ablehnen bei knappem Sieg ═════════════════════════
+ *
+ * Fellegi und Sunter (1969): drei Ausgänge, nicht zwei — und der mittlere
+ * ist ein Ergebnis, kein Fehler. Bis zum 30.08.2026 antwortete die Suche
+ * IMMER, auch wenn Platz 1 und Platz 2 punktgleich waren. Ein knapper Sieg
+ * ist aber ein Ratespiel, kein Befund.
+ *
+ * ── Die Schwelle ist gemessen, nicht gesetzt ──────────────────────────────
+ *
+ * Auf den Merkmals-Auszügen der Fremd-Fragen (bewerteTopf mit den
+ * Auslieferungs-GEWICHTEN, Vertrauenssignal = Punktabstand Platz 1 zu 2):
+ *
+ *   Einstellhälfte A (1999 Fragen): P@1 ohne Ablehnen 42,7 %.
+ *     Schwelle 0,05 → Deckung 79,5 %, P@1 unter den Beantworteten 50,1 %,
+ *     abgelehnt 353 falsche gegen 56 richtige Antworten (6,3:1).
+ *
+ *   Prüfhälfte B (2001 Fragen, genau EIN Bestätigungslauf): P@1 32,1 %.
+ *     Schwelle 0,05 → Deckung 76,7 %, P@1 38,8 %,
+ *     abgelehnt 420 falsche gegen 47 richtige (8,9:1).
+ *
+ * Der Gewinn hält auf Fragen, die die Schwelle nie gesehen hat. Werkzeug:
+ * `src/bench/dritter-ausgang-messen.ts` — wer die Schwelle ändern will,
+ * misst dort nach, wählt auf A und bestätigt auf B genau einmal.
+ *
+ * ── Was Ablehnen hier heißt ───────────────────────────────────────────────
+ *
+ * NICHT Schweigen. Die Treffer werden weiter gezeigt — aber mit dem
+ * ehrlichen Satz davor, dass der Bestand hier nichts klar Bestes hat.
+ * Wer die Liste trotzdem lesen will, kann das; wer ihr blind vertraut
+ * hätte, wird gewarnt. Erst der gelesene Wert, dann das Urteil.
+ */
+export const ABLEHN_ABSTAND = 0.05;
+
+/**
+ * Der Satz zum knappen Sieg — oder null, wenn der Sieg deutlich ist.
+ *
+ * Als reine Funktion herausgelöst, damit die Probe sie ohne den ganzen
+ * Recall-Apparat prüfen kann.
+ */
+export function knapperSiegSatz(abstand: number | null): string | null {
+  if (abstand === null || abstand >= ABLEHN_ABSTAND) return null;
+  return (
+    '⚖️ **Kein klarer Bester** — Platz 1 liegt nur '
+    + abstand.toFixed(2)
+    + ` Punkte vor Platz 2 (Schwelle ${ABLEHN_ABSTAND}). Bei so knappem Abstand ist die Reihenfolge `
+    + 'ein Ratespiel: gemessen treffen solche Antworten 6- bis 9-mal häufiger daneben als sonst. '
+    + 'Die Treffer unten sind das Nächstliegende, kein Befund.'
+  );
+}
+
+
 export interface Bewertbar {
   /** Kosinus zur Sicht über den ganzen Text, oder -2 wenn kein Vektor da ist. */
   naeheText: number;

@@ -8,6 +8,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
+  ABLEHN_ABSTAND, knapperSiegSatz,
   inhaltsWoerter, grobStamm, Seltenheit, spreizeImTopf, reichereAn,
   bewerteTopf, naeheOderLuecke, GEWICHTE, type Bewertbar,
 } from './rangfolge.js';
@@ -312,5 +313,40 @@ describe('Lücken', () => {
     expect(naeheOderLuecke([1, 0], null)).toBe(-2);
     expect(naeheOderLuecke([1, 0], [])).toBe(-2);
     expect(naeheOderLuecke([1, 0], [1, 0])).toBeCloseTo(1, 5);
+  });
+});
+
+describe('Der dritte Ausgang: knapper Sieg', () => {
+  /*
+   * Die Schwelle 0,05 ist gemessen (Haelfte A: 6,3 falsche je richtiger
+   * abgelehnter Antwort; Haelfte B: 8,9) — die Probe prueft nicht die Zahl,
+   * sondern das Verhalten an ihren Raendern.
+   */
+  it('deutlicher Sieg: kein Satz', () => {
+    expect(knapperSiegSatz(0.5)).toBeNull();
+  });
+
+  it('knapper Sieg: der Satz nennt den gelesenen Wert', () => {
+    const s = knapperSiegSatz(0.03);
+    // Erst der gelesene Wert, dann das Urteil — ohne den Abstand im Text
+    // kann niemand pruefen, ob die Warnung berechtigt war.
+    expect(s).toContain('0.03');
+    expect(s).toContain('Kein klarer Bester');
+  });
+
+  /*
+   * Der Fall, der ohne Nachdenken falsch wuerde: Abstand GENAU auf der
+   * Schwelle. Die Messung zaehlte "abstand >= schwelle" als beantwortet
+   * (kurvenPunkt in dritter-ausgang-messen.ts) — die Produktion muss
+   * dieselbe Seite waehlen, sonst misst die Kurve ein anderes Tor.
+   */
+  it('genau auf der Schwelle wird geantwortet, nicht gewarnt', () => {
+    expect(knapperSiegSatz(ABLEHN_ABSTAND)).toBeNull();
+  });
+
+  it('ein Topf mit nur einem Kandidaten hat keinen Abstand — kein Satz', () => {
+    // null heisst "nicht messbar", nicht "verdaechtig knapp". Wer null wie 0
+    // behandelt, warnt bei jedem Ein-Treffer-Ergebnis.
+    expect(knapperSiegSatz(null)).toBeNull();
   });
 });
