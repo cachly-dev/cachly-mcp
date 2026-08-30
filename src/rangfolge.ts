@@ -106,13 +106,23 @@ export function grobStamm(w: string): string {
 export class Seltenheit {
   private df = new Map<string, number>();
   private anzahl = 0;
+  /** Mittlere Zahl VERSCHIEDENER Wortstaemme je Text — fuer die Laengenkorrektur. */
+  private mittlereWortzahl = 1;
 
   /** @param texte je ein Text pro Datensatz */
   constructor(texte: string[]) {
     this.anzahl = texte.length;
+    let stammSumme = 0;
     for (const t of texte) {
-      for (const w of inhaltsWoerter(t)) this.df.set(grobStamm(w), (this.df.get(grobStamm(w)) ?? 0) + 1);
+      const staemme = new Set<string>();
+      for (const w of inhaltsWoerter(t)) {
+        const s = grobStamm(w);
+        staemme.add(s);
+        this.df.set(s, (this.df.get(s) ?? 0) + 1);
+      }
+      stammSumme += staemme.size;
     }
+    this.mittlereWortzahl = texte.length > 0 ? Math.max(1, stammSumme / texte.length) : 1;
   }
 
   wert(wort: string): number {
@@ -134,7 +144,24 @@ export class Seltenheit {
       gesamt += g;
       if (textWoerter.has(grobStamm(w))) getroffen += g;
     }
-    return gesamt > 0 ? getroffen / gesamt : 0;
+    const roh = gesamt > 0 ? getroffen / gesamt : 0;
+    if (roh === 0) return 0;
+    /*
+     * ── Die Laengenkorrektur (30.08.2026, Karte evpcpv1oreo4) ─────────────
+     *
+     * Ein langer Text deckt seltene Fragewoerter ZUFAELLIG ab: bei den
+     * Seltenheits-Verlusten war der falsche Sieger im Median 663 Zeichen
+     * lang, die richtige Antwort 306 (Kontrollgruppe text-Verluste: 421
+     * gegen 444 — kein Effekt; verlust-zerlegen.ts). Die BM25-Normierung
+     * teilt durch den Laengenfaktor; kurze Texte duerfen dadurch ueber 1
+     * liegen — spreizeImTopf normiert ohnehin je Topf.
+     *
+     * Auf A gewaehlt, auf B EINMAL bestaetigt: P@1 +1,0, @3 +0,8.
+     * Wert und Messregel: SELTENHEIT_LAENGE_B (Stellschrauben-Datei).
+     */
+    const faktor = 1 - SELTENHEIT_LAENGE_B
+      + (SELTENHEIT_LAENGE_B * textWoerter.size) / this.mittlereWortzahl;
+    return faktor > 0 ? roh / faktor : roh;
   }
 
   /**
@@ -380,7 +407,7 @@ export const GEWICHTE = {
  * Wer die Liste trotzdem lesen will, kann das; wer ihr blind vertraut
  * hätte, wird gewarnt. Erst der gelesene Wert, dann das Urteil.
  */
-import { ABLEHN_ABSTAND } from './rangfolge-stellschrauben.js';
+import { ABLEHN_ABSTAND, SELTENHEIT_LAENGE_B } from './rangfolge-stellschrauben.js';
 export { ABLEHN_ABSTAND };
 
 /**

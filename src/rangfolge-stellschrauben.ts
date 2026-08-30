@@ -136,3 +136,23 @@ export const CKG_BELEG_SCHWELLE = 0.35;
  */
 export const ABLEHN_ABSTAND = 0.05;
 
+/**
+ * Die Laengenkorrektur der Seltenheitsdeckung (BM25-b, Robertson).
+ *
+ * Bewiesener Mechanismus (verlust-zerlegen.ts, 30.08.2026): bei den
+ * Seltenheits-Verlusten war der falsche Sieger im Median 663 Zeichen lang,
+ * die richtige Antwort 306 — lange Texte decken seltene Fragewoerter
+ * zufaellig ab, und das hoechste Gewicht (1,3) belohnte das.
+ *
+ * Wert 1,0: auf Haelfte A aus {0,25, 0,5, 0,75, 1,0} gewaehlt
+ * (P@1 +0,7, Findequote@3 +0,6) und auf Haelfte B genau EINMAL bestaetigt
+ * (P@1 32,1 -> 33,1, @3 41,9 -> 42,7). Ehrlich dazu: die vorregistrierte
+ * Erwartung 4 (Seltenheits-Verluste −20 %) wurde VERFEHLT (−10 %) — die
+ * Korrektur nimmt der Verzerrung die Spitze, loest die Klasse nicht auf.
+ *
+ * 0 schaltet die Korrektur ab (alte Formel). Aenderung nur mit neuem
+ * A-Lauf und einmaliger B-Bestaetigung (laengenkorrektur-messen.ts).
+ */
+export const SELTENHEIT_LAENGE_B = 1.0;
+
+

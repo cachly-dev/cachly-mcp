@@ -50,11 +50,32 @@ describe('Seltenheit', () => {
   it('zählt fehlende seltene Wörter GEGEN den Text', () => {
     // Der Nenner ist die Summe ueber alle Fragewoerter. Ein Text, dem das
     // seltene Wort fehlt, faellt damit zurueck — fehlende Belege zaehlen mit.
+    // Seit der Laengenkorrektur (Karte evpcpv1oreo4) vergleicht die Probe
+    // GLEICH LANGE Texte: die alte Absolutschwelle (< 0,5) gehoerte zur
+    // unkorrigierten Formel, in der kurze Texte nie ueber 1 lagen.
     const frage = inhaltsWoerter('deploy fail2ban');
     const mitBeiden = s.deckung(frage, new Set(['deploy', 'fail2ban']));
-    const nurHaeufiges = s.deckung(frage, new Set(['deploy']));
+    const nurHaeufiges = s.deckung(frage, new Set(['deploy', 'anderswort']));
     expect(mitBeiden).toBeGreaterThan(nurHaeufiges);
-    expect(nurHaeufiges).toBeLessThan(0.5);
+  });
+
+  it('LAENGENKORREKTUR: derselbe Treffer in einem laengeren Text zaehlt weniger', () => {
+    /*
+     * Der bewiesene Mechanismus (verlust-zerlegen.ts): der falsche Sieger
+     * war im Median 663 Zeichen lang, die richtige Antwort 306 — lange
+     * Texte decken seltene Woerter zufaellig ab. Ein Text, der dasselbe
+     * seltene Wort plus zwanzig weitere traegt, darf dafuer nicht denselben
+     * Deckungswert bekommen wie ein kurzer, der nur davon handelt.
+     */
+    const frage = inhaltsWoerter('deploy fail2ban');
+    const kurz = s.deckung(frage, new Set(['deploy', 'fail2ban']));
+    const lang = s.deckung(frage, new Set([
+      'deploy', 'fail2ban',
+      ...Array.from({ length: 20 }, (_, i) => `fuellwort${i}`),
+    ]));
+    expect(kurz).toBeGreaterThan(lang);
+    // Und die Rangordnung bei GLEICHER Laenge bleibt unangetastet.
+    expect(lang).toBeGreaterThan(0);
   });
 
   it('gibt 0 zurück, wenn die Frage keine brauchbaren Wörter hat', () => {
