@@ -51,6 +51,7 @@ import { dirname, join, resolve } from 'node:path';
 import { inhaltsWoerter } from '../rangfolge.js';
 import { pruefePaar } from './fremdernte.js';
 import { abdruck } from './ernten-zusammenfuehren.js';
+import { nachDemStreichen } from './schablone-streichen.js';
 
 type Ernte = {
   lessons: Array<{ topic: string; what_worked: string }>;
@@ -116,7 +117,19 @@ export function uebersetze(
 ): { eintrag: StarterEintrag } | { verworfen: string } {
   const hart = pruefePaar(frage, lektion.what_worked);
   if (hart) return { verworfen: hart };
-  const woerter = inhaltsWoerter(lektion.what_worked).size;
+  /*
+   * Schablone streichen, BEVOR die Woerter gezaehlt werden (Karte
+   * ee7pmtjujucs, gemessen 30.08.2026: 8 % der Paket-Lektionen begannen mit
+   * PR-Schablone statt mit Wissen).
+   *
+   * Die Reihenfolge ist die Aussage: eine Lektion, die nur wegen ihrer
+   * Checkliste ueber die Wortgrenze kam, faellt jetzt darunter — und genau
+   * das soll sie.
+   */
+  const gestrichen = nachDemStreichen(lektion.what_worked);
+  if ('verworfen' in gestrichen) return { verworfen: `Schablone: ${gestrichen.verworfen}` };
+  const sauber = gestrichen.rest;
+  const woerter = inhaltsWoerter(sauber).size;
   if (woerter < MIN_WOERTER) return { verworfen: `unter ${MIN_WOERTER} Inhaltswoertern` };
 
   const projekt = lektion.topic.split(':')[0] ?? 'oss';
@@ -124,7 +137,7 @@ export function uebersetze(
     eintrag: {
       topic: lektion.topic,
       outcome: 'success',
-      what_worked: lektion.what_worked,
+      what_worked: sauber,
       what_failed: alsFehlerbild(frage),
       ctx: `Aus dem oeffentlichen Projekt ${projekt} (Issue mit gemergtem PR). `
         + 'Automatisch geerntet und ausgelesen — Herkunft im Themennamen.',
