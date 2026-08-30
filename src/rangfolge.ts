@@ -380,7 +380,8 @@ export const GEWICHTE = {
  * Wer die Liste trotzdem lesen will, kann das; wer ihr blind vertraut
  * hätte, wird gewarnt. Erst der gelesene Wert, dann das Urteil.
  */
-export const ABLEHN_ABSTAND = 0.05;
+import { ABLEHN_ABSTAND } from './rangfolge-stellschrauben.js';
+export { ABLEHN_ABSTAND };
 
 /**
  * Der Satz zum knappen Sieg — oder null, wenn der Sieg deutlich ist.

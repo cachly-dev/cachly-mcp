@@ -708,6 +708,31 @@ async function bumpRecallQuota(redis: Redis): Promise<void> {
   }
 }
 
+/**
+ * Die drei Ausgaenge der Suche — gezaehlt, nicht behauptet.
+ *
+ * Karte bninni0fimfy verlangt die Abstention-Rate als Kennzahl: wie oft
+ * sagt die Suche Nein (schweigen), wie oft warnt sie vor einem knappen
+ * Sieg (knapp), wie oft antwortet sie mit Vertrauen (beantwortet). Ohne
+ * diese Zaehlung waere jede Rate eine Schaetzung — dieselbe Falle wie die
+ * fest eingebaute "+33.3 %" in brain_metrics, nur eine Tuer weiter.
+ */
+function dreiAusgaengeSchluessel(instanceId: string): string {
+  return `cachly:stats:drei-ausgaenge:${instanceId}`;
+}
+
+async function vermerkeAusgang(
+  redis: Redis,
+  instanceId: string,
+  ausgang: 'beantwortet' | 'knapp' | 'schweigen',
+): Promise<void> {
+  try {
+    await redis.hincrby(dreiAusgaengeSchluessel(instanceId), ausgang, 1);
+  } catch {
+    // Eine Messzeile darf die Antwort nie stoppen (Muster bumpRecallQuota).
+  }
+}
+
 async function getRecallGate(instanceId: string, apiFetch: ApiFetch): Promise<RecallGate> {
   const cached = _recallGateCache.get(instanceId);
   if (cached && cached.expiresAt > Date.now()) return cached.gate;
@@ -2465,6 +2490,7 @@ export async function handleBrainTool(
         hybridResults.map((r) => ({ wortBelege: r.wortBelege, semScore: r.semScore, ckgScore: r.ckgScore })),
       );
       if (abstention.schweigen) {
+        void vermerkeAusgang(redis, instance_id, 'schweigen');
         lines.push(abstentionSatz(abstention));
         return lines.join('\n');
       }
@@ -2477,6 +2503,7 @@ export async function handleBrainTool(
       // Zahlen und Werkzeug: rangfolge.ts, dritter-ausgang-messen.ts.
       const knapp = knapperSiegSatz(spitzenAbstand);
       if (knapp) lines.push(knapp, '');
+      void vermerkeAusgang(redis, instance_id, knapp ? 'knapp' : 'beantwortet');
 
       if (hybridResults.length > 0) {
         const hasCKG = hybridResults.some(r => r.ckgScore !== undefined);
@@ -4703,6 +4730,17 @@ export async function handleBrainTool(
       // Client, anderer Redis-Aufsatz), wirft schon der AUFRUF, und eine
       // Zusagen-Absicherung greift dann nicht. Eine Messzeile darf das
       // Werkzeug nie stoppen.
+      // ── Die drei Ausgaenge der Suche (Karte bninni0fimfy) ────────────
+      // beantwortet / knapp / schweigen — gezaehlt in vermerkeAusgang bei
+      // jedem smart_recall. Erst der gelesene Wert, dann das Urteil: die
+      // Rate steht nur da, wenn es Zaehlungen gibt.
+      let ausgaengeRoh: Record<string, string> = {};
+      try {
+        ausgaengeRoh = (await redis.hgetall(dreiAusgaengeSchluessel(instance_id))) ?? {};
+      } catch {
+        ausgaengeRoh = {};
+      }
+
       let werkzeugRoh: Record<string, string> = {};
       try {
         werkzeugRoh = (await redis.hgetall(nutzungsSchluessel(instance_id))) ?? {};
@@ -4834,6 +4872,23 @@ export async function handleBrainTool(
         recallsTotal === 0
           ? `_Tip: pass \`author="your-handle"\` to \`smart_recall\` so cross-author reuse can be tracked._`
           : `_These numbers compound: every learned lesson and every teammate raises all three._`,
+        ``,
+        `### ⚖️ Die drei Ausgaenge der Suche _(gezaehlt, nicht behauptet)_`,
+        (() => {
+          const beantwortet = Number(ausgaengeRoh.beantwortet ?? 0);
+          const knappN = Number(ausgaengeRoh.knapp ?? 0);
+          const schweigenN = Number(ausgaengeRoh.schweigen ?? 0);
+          const gesamt = beantwortet + knappN + schweigenN;
+          if (gesamt === 0) {
+            return '⚪ Noch keine Zaehlung — die Ausgaenge zaehlen ab dieser Fassung je smart_recall.';
+          }
+          const p = (n: number) => `${Math.round((100 * n) / gesamt)} %`;
+          return (
+            `**${gesamt}** Suchen: ${p(beantwortet)} beantwortet · ${p(knappN)} als knapper Sieg markiert · `
+            + `${p(schweigenN)} ehrliches Nein. (Ob ein Nein stimmt, zeigt nur die Stichprobe — `
+            + 'die Rate hier zaehlt, sie urteilt nicht.)'
+          );
+        })(),
         ``,
         `### 🔧 Werkzeug-Nutzung _(erst messen, dann zusammenlegen)_`,
         nutzungInWorten(nutzung, TOOLS.length),

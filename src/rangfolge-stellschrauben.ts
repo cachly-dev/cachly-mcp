@@ -120,3 +120,19 @@ export const SINN_BELEG_SCHWELLE = 0.35;
  * Durchlauf startet nur an Knoten, deren Name ein Fragewort enthaelt.
  */
 export const CKG_BELEG_SCHWELLE = 0.35;
+
+/**
+ * Ab welchem Punktabstand zwischen Platz 1 und Platz 2 die Suche ihrem
+ * eigenen Ergebnis traut. Unter 0,05 gilt der Sieg als Ratespiel: die
+ * Treffer werden weiter gezeigt, aber mit dem Satz davor, dass der Bestand
+ * nichts klar Bestes hat (`knapperSiegSatz` in rangfolge.ts).
+ *
+ * Gemessen, nicht gesetzt: auf Haelfte A der Fremd-Fragen eingestellt
+ * (bei 0,05: 6,3 falsche je richtiger abgelehnter Antwort), auf Haelfte B
+ * genau EINMAL bestaetigt (8,9:1, Praezision unter den Beantworteten
+ * +6,7 Punkte bei 76,7 % Deckung). Werkzeug und Regel:
+ * `src/bench/dritter-ausgang-messen.ts` — Aenderung nur mit neuem A-Lauf
+ * und einmaliger B-Bestaetigung.
+ */
+export const ABLEHN_ABSTAND = 0.05;
+
