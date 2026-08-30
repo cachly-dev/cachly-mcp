@@ -114,6 +114,13 @@ export interface Optionen {
    */
   punkteNachbearbeitung?: (punkte: number[], topf: string[], fv: number[]) => number[];
   /**
+   * Bekommt je Frage die volle Rangliste (bestes Thema zuerst). Fuer
+   * Messungen, die mehr wissen muessen als den Platz EINER Antwort —
+   * z. B. ob BEIDE Seiten eines Widerspruchspaars vorne stehen
+   * (Karte mco8r4god525). Reine Beobachtung, veraendert nichts.
+   */
+  rangSenke?: (q: Frage, rang: string[]) => void;
+  /**
    * Ein zusaetzliches Merkmal fuer die SORTIERUNG — fuer Experimente am
    * anderen Ende als `sinnNominierung`.
    *
@@ -238,6 +245,7 @@ export async function messe(
 
     const rang = topf.map((t, i) => ({ t, p: punkte[i] }))
       .sort((x, y) => y.p - x.p).map((x) => x.t);
+    o.rangSenke?.(q, rang);
     const platz = bestePlatzierung(rang, q.relevant);
     plaetze.push(platz);
     const art = q.art ?? 'ohne';

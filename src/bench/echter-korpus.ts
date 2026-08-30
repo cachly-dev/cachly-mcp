@@ -50,8 +50,8 @@ import {
 } from '../rangfolge-stellschrauben.js';
 
 interface Lektion { topic: string; [k: string]: unknown }
-interface Korpus { lektionen: Lektion[]; fragen: Frage[] }
-interface Vektoren {
+export interface Korpus { lektionen: Lektion[]; fragen: Frage[] }
+export interface Vektoren {
   volltext: Record<string, string>;
   name: Record<string, string>;
   eingaenge: Record<string, Record<string, string>>;
