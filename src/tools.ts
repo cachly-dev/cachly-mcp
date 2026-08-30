@@ -628,6 +628,7 @@ const TOOLS = [
       'Returns the most recent successful lesson for the topic, with confidence indicator. ' +
       '⚠️ badge = lesson is >5d old (verify before applying). 🔴 = >10d old (likely stale!). ' +
       'Recalling a lesson resets its confidence clock to 1.0 (marks as recently verified). ' +
+      'A superseded lesson shows a banner naming its successor; if the successor was deleted, the banner says so and the lesson counts as the best remaining answer. ' +
       'Example: recall_best_solution(topic="deploy:web") → returns the working deploy command.',
     inputSchema: {
       type: 'object',
