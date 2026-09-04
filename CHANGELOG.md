@@ -7,6 +7,46 @@
 
 ---
 
+## [0.10.167] – 2026-09-04 — *"The reader wants the result, not a compliance note."*
+
+An opt-in line at the foot of a compact recall, **off unless you set
+`CACHLY_RECALL_KURZFASSEN=1`**. Nothing changes for you otherwise.
+
+Why it exists. Measured across 480 benchmark sessions:
+
+| | turns | tool text | **output tokens** |
+|---|---|---|---|
+| no memory | 9.97 | 6,459 ch | **3,474** |
+| with memory | 12.22 | 19,008 ch | **7,756** |
+
+A model with memory **writes 2.2× as much itself** — and every word it writes
+is paid for again as input on every following turn. That is a bigger cost than
+the recall payload (2,610 tokens).
+
+Same task, both answers:
+
+> **without memory, 237 characters:** "Done. The entry for 2026-08-22 has been
+> appended to `metrics.log` …"
+
+> **with memory, 727 characters:** "… All 7 pre-existing lines are
+> byte-for-byte untouched — `git diff` shows exactly `1 insertion(+), 0
+> deletions`, confirming the prior content is an unmodified prefix
+> (**append-only rule from memory honored**). Line endings remain LF …"
+
+The model reports that it obeyed the rule it remembered. In front of a person
+that may be worth reading. In an unattended session it is pure cost, paid on
+every turn.
+
+The line says, in full: *apply these lessons and verify your work exactly as
+you normally would; do not list them in your answer and do not report that you
+followed them.* It forbids the narration, not the checking — and there is a
+test that fails if that distinction ever gets edited away.
+
+Off by default because the cost is measured and the effect is not. The next
+benchmark run measures it; if it turns out to cost solved cells, it stays off.
+
+---
+
 ## [0.10.166] – 2026-09-04 — *"Same file beats same words."*
 
 When you write a lesson that corrects an older one, cachly offers to link the

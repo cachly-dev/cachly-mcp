@@ -3,6 +3,7 @@ import { createRequire } from 'node:module';
 import type { Redis } from 'ioredis';
 import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
          CONFIDENCE_WARN_VALUE, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_DAYS } from '../confidence.js';
+import { kurzfassenHinweis } from '../antwort-hinweis.js';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration,
          ckgUpsertServiceNode } from '../ckg.js';
@@ -3227,6 +3228,20 @@ async function handleBrainToolInner(
               JSON.stringify({ frage: query, themen: angebotene } satisfies LetzterRecall),
             );
           } catch { /* Die Spur darf keine Suche kaputtmachen. */ }
+        }
+      }
+
+      // ── Arm E (009): das Nacherzaehlen abstellen ──────────────────────
+      //
+      // Nur im Kompakt-Modus und nur mit eigenem Schalter, der AUS ist.
+      // Begruendung und Messung stehen in antwort-hinweis.ts; kurz: ein
+      // Modell mit Gedaechtnis schreibt selbst 2,2-mal so viel wie eines
+      // ohne, und jedes Wort wird in jedem folgenden Zug erneut bezahlt.
+      if (kompakt && hybridResults.length > 0) {
+        const hinweis = kurzfassenHinweis();
+        if (hinweis) {
+          lines.push('');
+          lines.push(hinweis);
         }
       }
 
