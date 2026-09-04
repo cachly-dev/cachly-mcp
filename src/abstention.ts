@@ -101,6 +101,12 @@ export type AbstentionUrteil = {
   besteNaehe: number;
   /** Wie viele Treffer es ueberhaupt gab, bevor entschieden wurde. */
   geprueft: number;
+  /**
+   * Wie viele Treffer die Beleg-Schwelle EINZELN passiert haben (eligible_seen,
+   * Karte kdnqoilo1fs7). "3 von 12 belegt" sagt dem Leser, wie duenn die
+   * Population ist — der Unterschied zwischen "gezeigt" und "belegt".
+   */
+  belegte: number;
 };
 
 export type AbstentionSchwellen = {
@@ -120,26 +126,41 @@ const zahl = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v
  * nachzubauen (die Fehlerklasse "Messstand und Auslieferstand sind zwei
  * Systeme", 20.08.2026).
  */
+/**
+ * Hat DIESER Treffer die Beleg-Schwelle passiert?
+ *
+ * EINE Schwellen-Wahrheit fuer Urteil UND Anzeige: der Ausgabepfad
+ * (brain.ts) fragt je Treffer hier nach, statt die Regel zu kopieren —
+ * zwei Kopien derselben Schwelle laufen auseinander, und dann zaehlt die
+ * Population-Zeile andere Treffer als das Urteil.
+ */
+export function istBelegt(t: TrefferBeleg, schwellen: AbstentionSchwellen = {}): boolean {
+  return (
+    zahl(t.wortBelege) >= (schwellen.woerter ?? WORT_BELEG_SCHWELLE) ||
+    zahl(t.semScore) >= (schwellen.naehe ?? SINN_BELEG_SCHWELLE) ||
+    zahl(t.ckgScore) >= (schwellen.kante ?? CKG_BELEG_SCHWELLE)
+  );
+}
+
 export function beurteileTreffer(
   treffer: readonly TrefferBeleg[],
   schwellen: AbstentionSchwellen = {},
 ): AbstentionUrteil {
-  const woerterSchwelle = schwellen.woerter ?? WORT_BELEG_SCHWELLE;
-  const naeheSchwelle = schwellen.naehe ?? SINN_BELEG_SCHWELLE;
-  const kanteSchwelle = schwellen.kante ?? CKG_BELEG_SCHWELLE;
-
   let besteWortBelege = 0;
   let besteNaehe = 0;
   let belegt = false;
+  let belegte = 0;
 
   for (const t of treffer) {
     const w = zahl(t.wortBelege);
     const s = zahl(t.semScore);
-    const k = zahl(t.ckgScore);
     if (w > besteWortBelege) besteWortBelege = w;
     if (s > besteNaehe) besteNaehe = s;
     // EIN Beleg genuegt — und er genuegt fuer die GANZE Liste.
-    if (w >= woerterSchwelle || s >= naeheSchwelle || k >= kanteSchwelle) belegt = true;
+    if (istBelegt(t, schwellen)) {
+      belegt = true;
+      belegte++;
+    }
   }
 
   return {
@@ -149,6 +170,7 @@ export function beurteileTreffer(
     besteWortBelege,
     besteNaehe,
     geprueft: treffer.length,
+    belegte,
   };
 }
 
@@ -173,10 +195,46 @@ export function abstentionSatz(
   return [
     '🔍 **Nichts Passendes im Bestand.**',
     '',
-    `Von ${urteil.geprueft} geprüften Treffern enthielt der beste ${urteil.besteWortBelege} der gesuchten Wörter (nötig: ${woerterSchwelle}), ` +
-      `und die höchste Bedeutungsnähe lag bei ${urteil.besteNaehe.toFixed(2)} (nötig: ${naeheSchwelle.toFixed(2)}).`,
+    // Der benannte Zaehl-Grund zuerst (Karte 4ssv2t1qqlu6): "N betrachtet,
+    // keiner belegt" ist ein strukturiertes Signal, kein weiches Nein. Danach
+    // die gelesenen Werte, damit das Urteil nachpruefbar bleibt.
+    `${urteil.geprueft} Treffer betrachtet, keiner belegt — der beste enthielt ${urteil.besteWortBelege} der gesuchten Wörter (nötig: ${woerterSchwelle}), ` +
+      `höchste Bedeutungsnähe ${urteil.besteNaehe.toFixed(2)} (nötig: ${naeheSchwelle.toFixed(2)}).`,
     'Sie werden bewusst NICHT gezeigt: ein schwacher Treffer sieht wie ein starker aus, und der Unterschied entscheidet.',
     '',
     '_Wenn die Antwort trotzdem im Bestand liegen sollte, hilft eine Frage mit anderen Worten — oder `recall_best_solution(topic="…")`, wenn das Thema bekannt ist._',
   ].join('\n');
+}
+
+/**
+ * Ab wann das Alter der belegten Treffer genannt wird.
+ *
+ * Folgt der Zuversichts-Uhr der Lektionen: nach 5 Tagen ohne Bestaetigung
+ * faellt die Zuversicht (0.7), nach 10 weiter (0.5). Juenger als 5 Tage ist
+ * "bestaetigt genug" — dann schweigt der Zusatz, statt Rauschen zu erzeugen.
+ */
+export const ALTER_NENNEN_AB_TAGEN = 5;
+
+/**
+ * Karte 4z5vk0zdnm00: das Alter gehoert in die ANZEIGE, nie ins Ranking.
+ *
+ * "is this still true?" ist neben "belegt" ein eigener Grund — die
+ * Population-Zeile kann sagen, wie lange die belegten Treffer unbestaetigt
+ * sind. NUR Anzeige: ein Verfall im Ranking hat schon einmal alle
+ * Bench-Floors gerissen (cachly-recall-decay-regresses-bench).
+ *
+ * Gibt einen fertigen Satz zurueck — oder null, wenn es nichts zu sagen
+ * gibt (keine Alter bekannt, oder der juengste belegte ist frisch genug).
+ */
+export function alterssatzFuerBelegte(tage: readonly number[]): string | null {
+  const gueltig = tage.filter((t) => Number.isFinite(t) && t >= 0);
+  if (gueltig.length === 0) return null;
+  const juengster = Math.min(...gueltig);
+  const aeltester = Math.max(...gueltig);
+  // Der JUENGSTE entscheidet: ein einziger frisch bestaetigter Treffer
+  // beantwortet "is this still true?" — dann braucht es keinen Zusatz.
+  if (juengster < ALTER_NENNEN_AB_TAGEN) return null;
+  if (gueltig.length === 1) return `Der belegte Treffer ist ${aeltester} Tage unbestätigt.`;
+  if (juengster === aeltester) return `Die belegten Treffer sind ${aeltester} Tage unbestätigt.`;
+  return `Die belegten Treffer sind seit ${juengster}–${aeltester} Tagen unbestätigt.`;
 }

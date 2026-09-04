@@ -346,7 +346,13 @@ export async function handleFedbrainTool(
         lines.push(`### Git post-commit hook`);
         lines.push(`**Quick install (run once per repo):**`);
         lines.push('```sh');
-        lines.push(`cat > ${repo_path}/.git/hooks/post-commit << 'HOOK'`);
+        // >> statt >: ein bestehender post-commit-Hook (husky, eigene
+        // Skripte) darf nicht stillschweigend geleert werden — dieselbe
+        // Fehlerklasse wie der autopilot-Text, der CLAUDE.md plattmachte
+        // (Bojan Tomic, dev.to, 02.09.2026). Der grep-Waechter davor haelt
+        // den Anhang idempotent: zweimal installieren doppelt nichts.
+        lines.push(`touch ${repo_path}/.git/hooks/post-commit`);
+        lines.push(`grep -q 'cachly CLS' ${repo_path}/.git/hooks/post-commit || cat >> ${repo_path}/.git/hooks/post-commit << 'HOOK'`);
         lines.push(hookScript);
         lines.push(`HOOK`);
         lines.push(`chmod +x ${repo_path}/.git/hooks/post-commit`);

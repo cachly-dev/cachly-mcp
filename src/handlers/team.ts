@@ -845,6 +845,15 @@ export async function handleTeamTool(
       const namensZahl = await zaehleSchluessel('cachly:lesson:vecname:*');
       const eingangZahl = await zaehleSchluessel('cachly:lesson:eing:*');
       const pfadZahl = await zaehleSchluessel('cachly:lesson:pfad:*');
+      // Karte cgf6kcyrg02s: das Zweitmodell sortiert erst ab 80 % Deckung mit.
+      // Darunter ist es AUS — und von aussen nicht von 'an' zu unterscheiden.
+      const zweitZahl = await zaehleSchluessel('cachly:lesson:vec2:*');
+      const zweitDeckungPct = vektorZahl > 0 ? Math.round((zweitZahl / vektorZahl) * 100) : 0;
+      if (vektorZahl > 0) {
+        checks.push(zweitDeckungPct >= 80
+          ? `✅ **Second-model coverage: ${zweitDeckungPct}%** — ${zweitZahl} of ${vektorZahl} embedded lessons also carry the second-model vector; the second ranking feature is ON`
+          : `🟡 **Second-model coverage: ${zweitDeckungPct}%** — ${vektorZahl - zweitZahl} lessons still lack the second-model vector; the second ranking feature stays OFF below 80% and backfills three lessons per recall`);
+      }
       const deckung = lessonKeys.length > 0
         ? Math.round((vektorZahl / lessonKeys.length) * 100)
         : 100;
@@ -925,6 +934,31 @@ export async function handleTeamTool(
 
       checks.push(`${scoreEmoji} **Brain Quality Score: ${score}/100**`);
       checks.push(`${iqEmoji} **Effective IQ Boost: ${iqBoostPct}%** (${totalRecalls} recalls across ${lessons.length} lessons)`);
+      // ── Karte 0u9s8qoopwhr: Rang-Abstand der letzten Abrufe ─────────────
+      // Wenn Rang 1 und Rang 5 gleich scoren, rankt nichts mehr. Die Schwelle
+      // 0,05 ist VORLAEUFIG (uebernommen aus Mudassir Khans Vorschlag) und wird
+      // nach der Kontrollprobe 20 vs. 2.000 Lektionen an eigenen Instanzen
+      // festgelegt — bis dahin warnt sie nur, sie urteilt nicht.
+      try {
+        const spreadRaw = await redis.lrange('cachly:recall:spread', 0, 199);
+        const spreads = spreadRaw
+          .map((e) => safeJsonParse<{ spread?: number } | null>(e, null)?.spread)
+          .filter((v): v is number => typeof v === 'number' && Number.isFinite(v));
+        if (spreads.length === 0) {
+          checks.push('📏 **Rank spread:** not measured yet — recorded from the next `smart_recall` on (score gap rank 1 → rank 5).');
+        } else {
+          const mittel = spreads.reduce((a, b) => a + b, 0) / spreads.length;
+          const flach = spreads.filter((v) => v < 0.05).length;
+          const text = `mean ${mittel.toFixed(3)} over ${spreads.length} recall${spreads.length === 1 ? '' : 's'} (${flach} flat, < 0.05)`;
+          if (spreads.length >= 20 && mittel < 0.05) {
+            checks.push(`🟡 **Rank spread: ${text}** — ranking has stopped separating hits; provisional threshold, see card 0u9s8qoopwhr`);
+            issues.push('Rank spread is flat: the top hits score alike. Check whether the store has grown past what the ranking separates (near-duplicates, one embedding for everything).');
+          } else {
+            checks.push(`📏 **Rank spread:** ${text}`);
+          }
+        }
+      } catch { /* Kennzahl fehlt, Doctor laeuft weiter */ }
+
       checks.push(`📚 **Lessons:** ${lessonKeys.length} (${criticalLessons.length} critical · ${withAudit.length} with audit trail · ${teamLessons.length} from team)`);
       checks.push(`💾 **Context entries:** ${ctxCount}`);
       checks.push(`🎯 **Confidence:** ${lessons.length - staleLessons.length - warnLessons.length} fresh · ${warnLessons.length} warn · ${staleLessons.length} stale`);

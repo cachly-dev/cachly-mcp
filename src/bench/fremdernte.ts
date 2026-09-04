@@ -474,6 +474,7 @@ async function main(): Promise<void> {
    */
   const rohPaare: Array<{
     frage: string; lektion: string; topic: string; wert: number;
+    issue: number; pr: number;
   }> = [];
   const abgelehnt = new Map<string, number>();
   const gesehen = new Set<string>();
@@ -545,6 +546,7 @@ async function main(): Promise<void> {
 
         rohPaare.push({
           frage, lektion, topic: `${repo.split('/')[1]}:pr-${pr.number}`, wert: b.wert,
+          issue: issue.number, pr: pr.number,
         });
       }
 
@@ -588,7 +590,14 @@ async function main(): Promise<void> {
       + 'wuerde die Antwort in die Frage bauen. Ausgewaehlt nach bewertePaar: '
       + 'geringe Ueberlappung, wenige geaenderte Dateien, diskutiertes Issue. '
       + 'Vor jeder Nutzung mit zirkel-messen.ts pruefen.',
-    lessons: genommen.map((p) => ({ topic: p.topic, what_worked: p.lektion })),
+    // Der Verweis macht jedes Paar OHNE die fremden Texte veroeffentlichbar
+    // (Karte ndh1p2mv5mgy): Issue- und PR-Text gehoeren ihren Autoren, die
+    // Nummern nicht. Wer den Satz nachbauen will, braucht nur repo+issue+pr
+    // und dieses Werkzeug — reproduzierbar statt eingefroren.
+    lessons: genommen.map((p) => ({
+      topic: p.topic, what_worked: p.lektion,
+      quelle: { repo, issue: p.issue, pr: p.pr },
+    })),
     queries: genommen.map((p) => ({ query: p.frage, relevant: [p.topic] })),
   };
   writeFileSync(resolve(nach), JSON.stringify(ergebnis, null, 1));

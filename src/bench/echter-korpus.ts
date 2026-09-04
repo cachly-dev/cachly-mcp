@@ -147,7 +147,33 @@ async function main(): Promise<void> {
   await seltenheitsbestand.aktualisiere(redis as never);
 
   const bestaende = { vektorbestand, namensbestand, eingangsbestand, seltenheitsbestand };
+
+  // --zweitvektoren: ein ZWEITES Embedding als siebtes Sortier-Merkmal messen
+  // (Karte cgf6kcyrg02s; auf Einstell- und Pruefsatz bestaetigt: +79/+74 @3,
+  // VORREGISTRIERUNG-zweitembedding.md). Die Datei traegt ROHE Vektoren je
+  // Lektion (volltext[topic]) und Frage (fragen[query]).
+  //
+  // Der Kniff mit `aktuelleZweitFrage`: zusatzMerkmal.werte bekommt nur den
+  // bge-Fragevektor, das Zweitmerkmal braucht aber den qwen-Vektor DERSELBEN
+  // Frage. messe() ruft frageVektor je Frage genau einmal und verarbeitet
+  // die Fragen nacheinander — der Seitenkanal ist deshalb eindeutig.
+  const zi = process.argv.indexOf('--zweitvektoren');
+  const zweit = zi > -1
+    ? JSON.parse(readFileSync(process.argv[zi + 1], 'utf8')) as {
+      volltext: Record<string, number[]>; fragen: Record<string, number[]>;
+    }
+    : null;
+  if (zweit) console.log(`\n  Zweitvektoren: ${process.argv[zi + 1]} (Merkmal aktiv, Gewicht 1.0)`);
+  let aktuelleZweitFrage: number[] | null = null;
+  const zweitKosinus = (a: number[], b: number[]): number => {
+    let s = 0; let na = 0; let nb = 0;
+    for (let k = 0; k < a.length; k++) { s += a[k] * b[k]; na += a[k] * a[k]; nb += b[k] * b[k]; }
+    const nenner = Math.sqrt(na) * Math.sqrt(nb);
+    return nenner > 0 ? s / nenner : -2;
+  };
+
   const frageVektor = (q: Frage): number[] | null => {
+    if (zweit) aktuelleZweitFrage = zweit.fragen[q.query] ?? null;
     const gepackt = v.fragen[q.query];
     return gepackt ? entpacke(gepackt) : null;
   };
@@ -208,15 +234,25 @@ async function main(): Promise<void> {
   // dem heutigen Speicher schadet — Begruendung mit Zahlen in handlers/brain.ts
   // ueber dem Tuer-Block. Wer ihn hier aufnimmt, ohne ihn dort einzubauen,
   // misst wieder eine andere Suchmaschine als die ausgelieferte.
+  const tuerMerkmal = {
+    werte: (fv: number[], topic: string) => {
+      const n = eingangsbestand.besteNaehe(fv, topic);
+      return n >= EINGANG_SCHWELLE ? n : -2;
+    },
+    gewicht: EINGANG_SORTIER_GEWICHT,
+  };
+  const zweitMerkmal = zweit
+    ? {
+      werte: (_fv: number[], topic: string) => {
+        const vt = zweit.volltext[topic];
+        return aktuelleZweitFrage && vt ? zweitKosinus(aktuelleZweitFrage, vt) : -2;
+      },
+      gewicht: 1.0,
+    }
+    : null;
   const voll = await messe(redis, korpus.fragen, frageVektor, bestaende, {
     pool: POOL,
-    zusatzMerkmal: {
-      werte: (fv, topic) => {
-        const n = eingangsbestand.besteNaehe(fv, topic);
-        return n >= EINGANG_SCHWELLE ? n : -2;
-      },
-      gewicht: EINGANG_SORTIER_GEWICHT,
-    },
+    zusatzMerkmal: zweitMerkmal ? [tuerMerkmal, zweitMerkmal] : tuerMerkmal,
   });
   const mitTueren = await messe(redis, korpus.fragen, frageVektor, bestaende, { eingaenge: 'voll', pool: POOL });
 

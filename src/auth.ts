@@ -184,5 +184,14 @@ export function handleApiError(status: number, detail: string): never {
       `Access denied (403): ${detail}\n\nCheck that your CACHLY_JWT belongs to an account with access to this resource.`,
     );
   }
+  // Der Fehlertext ist die halbe Reparatur: ein Agent, der eine instance_id
+  // GERATEN hat (Bench-Fund 02.09.2026 — 400er mitten in echten Sitzungen),
+  // liest hier den Ausweg, statt weiterzuraten.
+  if (status === 400 && /invalid instance id/i.test(detail)) {
+    throw new McpError(
+      ErrorCode.InvalidRequest,
+      `cachly API error 400: ${detail}\n\nTip: omit the instance_id parameter entirely — the configured instance of this session is used automatically. Never guess an id.`,
+    );
+  }
   throw new McpError(ErrorCode.InternalError, `cachly API error ${status}: ${detail}`);
 }

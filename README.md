@@ -153,14 +153,20 @@ them.
 Install the **[cachly Brain](https://marketplace.visualstudio.com/items?itemName=cachly-dev.cachly-brain)**
 extension. It signs you in silently and creates your brain — no account form.
 
-### JetBrains — awaiting marketplace approval
+### JetBrains — one click
 
-The IntelliJ plugin is built and uploaded, but JetBrains has not approved the
-listing yet — so there is no link here, because there is nothing to click.
-The source is at
-[cachly-dev/cachly-intellij](https://github.com/cachly-dev/cachly-intellij);
-until the listing goes live, use the `npx … autopilot` path below, which
-configures JetBrains AI Assistant along with every other editor it finds.
+Install **[Cachly Brain](https://plugins.jetbrains.com/plugin/32059-cachly-brain)**
+from the JetBrains Marketplace (IntelliJ, PyCharm, GoLand, WebStorm, Rider).
+Status bar, brain health and the lessons view live in the IDE; the source is
+at [cachly-dev/cachly-intellij](https://github.com/cachly-dev/cachly-intellij).
+The `npx … autopilot` path below also configures JetBrains AI Assistant.
+
+### MCP Registry — for any client that reads it
+
+The server is listed in the official **[MCP Registry](https://registry.modelcontextprotocol.io/v0/servers?search=cachly)**
+as `io.github.cachly-dev/mcp-server`, every release, same day. Clients that
+browse the registry (Claude Desktop, Goose, VS Code's MCP gallery and others)
+find it there by name; the entry points at this npm package.
 
 ### Anything else — one command
 

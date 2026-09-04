@@ -150,7 +150,7 @@ export const EMBED_PROVIDER = (process.env.CACHLY_EMBED_PROVIDER ?? detectEmbedP
  * Note: Brain works fully WITHOUT embedding (keyword search + exact keys).
  *       Embedding is an OPTIONAL boost for semantic_search and index_project.
  */
-async function embeddingEinmal(text: string, geduld: EmbedGeduld): Promise<number[]> {
+async function embeddingEinmal(text: string, geduld: EmbedGeduld, modell?: string): Promise<number[]> {
   const zeitlimit = zeitlimitMs(text, geduld);
   switch (EMBED_PROVIDER) {
     case 'cachly': {
@@ -166,12 +166,24 @@ async function embeddingEinmal(text: string, geduld: EmbedGeduld): Promise<numbe
       );
       const url = `${embedConfig.apiUrl}/api/v1/embed`;
       const body: Record<string, string> = { text };
-      if (embedConfig.model) body.model = embedConfig.model;
+      // `modell` gewinnt: das Zweitmerkmal der Rangfolge fragt gezielt ein
+      // ANDERES Modell an als das konfigurierte (rangfolge-stellschrauben.ts,
+      // ZWEIT_MODELL). Der Server reicht das Feld an seinen Anbieter durch.
+      if (modell ?? embedConfig.model) body.model = modell ?? embedConfig.model;
+      // Mess- und Migrationslaeufe (Karte n9s5dt3h29qz): Die API hat seit dem
+      // 19.08. einen dokumentierten Bypass-Schalter fuer genau diesen Verkehr
+      // (X-Admin-Key -> middleware.IsAdminBypass) — aber dieser Client konnte
+      // ihn nie senden. Gemessen am 01./02.09.: jeder Massen-Ingest lief in
+      // 200-300 429er je Welle, der Wachhund meldete die eigene Adresse als
+      // Angreifer. Gesetzt wird der Header NUR, wenn CACHLY_ADMIN_KEY in der
+      // Umgebung liegt — normale Sessions bleiben normal gedrosselt.
+      const adminKey = process.env.CACHLY_ADMIN_KEY ?? '';
       const res = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${embedConfig.jwt}`,
+          ...(adminKey ? { 'X-Admin-Key': adminKey } : {}),
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(zeitlimit),
@@ -232,7 +244,7 @@ async function embeddingEinmal(text: string, geduld: EmbedGeduld): Promise<numbe
 
     case 'ollama': {
       const base = process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
-      const model = embedConfig.model !== 'text-embedding-3-small' ? embedConfig.model : 'nomic-embed-text';
+      const model = modell ?? (embedConfig.model !== 'text-embedding-3-small' ? embedConfig.model : 'nomic-embed-text');
       const res = await fetch(`${base}/api/embeddings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -346,13 +358,23 @@ export function wiederholungMs(fehler: unknown, versuch: number, geduld: EmbedGe
 }
 
 /** Siehe embeddingEinmal fuer die Provider; hier sitzt NUR die Wiederholung. */
-export async function computeEmbedding(text: string, opts?: { geduld?: EmbedGeduld }): Promise<number[]> {
+/**
+ * `modell` fragt gezielt ein anderes Modell an als das konfigurierte —
+ * gebraucht vom Zweitmerkmal der Rangfolge (ZWEIT_MODELL). Nur die Anbieter
+ * `cachly` und `ollama` reichen es durch; bei allen anderen wirft der Aufruf,
+ * statt still einen Vektor des FALSCHEN Modells zu liefern (der landete sonst
+ * unter dem Zweit-Schluessel und macht jeden Vergleich dort wertlos).
+ */
+export async function computeEmbedding(text: string, opts?: { geduld?: EmbedGeduld; modell?: string }): Promise<number[]> {
   const geduld = opts?.geduld ?? 'kurz';
+  if (opts?.modell && EMBED_PROVIDER !== 'cachly' && EMBED_PROVIDER !== 'ollama') {
+    throw new Error(`Anbieter "${EMBED_PROVIDER}" kann kein abweichendes Modell anfragen (verlangt: ${opts.modell}).`);
+  }
   let versuch = 0;
   for (;;) {
     versuch++;
     try {
-      return await embeddingEinmal(text, geduld);
+      return await embeddingEinmal(text, geduld, opts?.modell);
     } catch (fehler) {
       const warte = wiederholungMs(fehler, versuch, geduld);
       if (warte === null) throw fehler;

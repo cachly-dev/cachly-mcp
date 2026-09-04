@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { setzeClientKennung } from './herkunft.js';
 import { jwtExpiryMs, checkJwt, handleApiError, diagnoseAuth, planAuthHeal,
          readClientCredentialsFromEnv, buildClientCredentialsBody, clientCredentialsTokenUrl } from './auth.js';
 import { cachlyUrl } from './cachly-url.js';
@@ -871,6 +872,8 @@ import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
 import { buildAmbientDeps } from './ambient-deps.js';
 import { resolveApiKey, saveApiKey, type CredentialsHomeOptions } from './credentials.js';
 import { holeSofortTest } from './sofort-test.js';
+import { beiStdinEnde } from './stdin-ende.js';
+import { merkeWerkzeugAufruf, starteBrandWachhund } from './brand-wachhund.js';
 import { sichtbareWerkzeuge, VERTEILER } from './werkzeug-auswahl.js';
 import { buildLessonsMarkdown, buildLessonsJsonl, vonRohLektion, type ExportLesson } from './brain-export.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
@@ -1701,13 +1704,24 @@ function makeServer(): Server {
     { capabilities: CAPABILITIES, instructions: CACHLY_MCP_INSTRUCTIONS }
   );
   registriereHandler(s);
+  merkeClientNachHandshake(s);
   return s;
+}
+
+/** Karte y48oajjojklf: nach dem Handshake weiss der Server, WER schreibt (Client-Name/Version). */
+function merkeClientNachHandshake(s: Server): void {
+  const vorher = s.oninitialized;
+  s.oninitialized = () => {
+    try { const c = s.getClientVersion(); setzeClientKennung(c?.name, c?.version); } catch { /* ohne Kennung bleibt 'unbekannt' */ }
+    vorher?.();
+  };
 }
 
 const server = new Server(
   { name: 'cachly-mcp', version: CURRENT_VERSION },
   { capabilities: CAPABILITIES, instructions: CACHLY_MCP_INSTRUCTIONS }
 );
+merkeClientNachHandshake(server);
 
 server.setRequestHandler(ListToolsRequestSchema, listToolsHandler);
 server.setRequestHandler(ListResourcesRequestSchema, listResourcesHandler);
@@ -1837,6 +1851,7 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
   if (!sessionTools.has(name)) _autoSessionToolCount++;
 
   try {
+    merkeWerkzeugAufruf();
     const text = await handleTool(name, (args ?? {}) as Record<string, unknown>);
     return { content: [{ type: 'text', text }] };
   } catch (err) {
@@ -4448,6 +4463,7 @@ if (process.argv[2] === 'doctor') {
     checkApiReachable,
     checkAuthAccepted,
     checkInstance,
+    checkVectorCoverage,
     inspectAmbientHooks,
     checkHooks,
     checkLedger,
@@ -4460,6 +4476,9 @@ if (process.argv[2] === 'doctor') {
     await checkApiReachable(API_URL),
     await checkAuthAccepted(API_URL, JWT),
     checkInstance(process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId),
+    // Karte hcg8neyut0kd: der stumme Bedeutungspfad (0 Vektoren bei 506
+    // Lektionen, monatelang unbemerkt) bekommt seinen doctor-Check.
+    await checkVectorCoverage(API_URL, JWT, process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId),
     checkHooks(inspectAmbientHooks(process.cwd())),
     checkLedger(await readLedger(), defaultLedgerPath()),
   ];
@@ -4677,6 +4696,33 @@ if (httpPort) {
   // ── stdio mode (default for local editor use) ───────────────────────────
   const transport = new StdioServerTransport();
   await server.connect(transport);
+
+  // Der Server stirbt mit seiner Session (Karte xm54lkjujmyi, 31.08.2026):
+  // drei verwaiste Server, je ~26.700 CPU-Sekunden in 7,4 h — ein Kern pro
+  // Waise, dauerhaft. Das SDK hoert auf stdin nur 'data'/'error'; endet der
+  // Client, erfaehrt der Server es nie. Deshalb hier: derselbe geordnete
+  // Abgang wie bei SIGTERM, sobald stdin endet, bricht oder schliesst —
+  // auf Windows schickt beim Fenster-Schliessen niemand ein Signal, die
+  // sterbende stdin-Pipe ist das einzige Lebenszeichen, das wir bekommen.
+  // NUR im echten Serve-Betrieb (kein CLI-Befehl in argv). Die CLI-Befehle
+  // (tool-specs, badge, doctor …) laufen mit stdin=EOF und beenden sich
+  // selbst im stdout-Flush-Callback — ein stdin-Ende-Abgang exitete hier
+  // DAZWISCHEN und schnitt den JSON-Dump ab. Beleg 31.08.2026: der
+  // Drift-Guard fiel auf main ("Expected property name … at position
+  // 291823"), weil tool-spec-snapshots genau so rendert.
+  const cliBefehl = typeof process.argv[2] === 'string' && !process.argv[2].startsWith('-');
+  if (!cliBefehl) {
+    starteBrandWachhund();
+    beiStdinEnde(process.stdin, (grund) => {
+      process.stderr.write(`[cachly-mcp] ${grund} — Session zu Ende, Server geht mit
+`);
+      void (async () => {
+        await autoEndSession().catch(() => undefined);
+        for (const [, client] of pool) await client.quit().catch(() => undefined);
+        process.exit(0);
+      })();
+    });
+  }
 }
 
 notify('cachly', 'startup', { version: CURRENT_VERSION, mode: process.env.MCP_HTTP_PORT ? 'http' : 'stdio' }).catch(() => undefined);

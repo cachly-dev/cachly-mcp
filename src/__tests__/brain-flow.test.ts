@@ -539,8 +539,17 @@ describe('Brain lesson flow', () => {
           tags: [],
           file_paths: [],
         });
-        // Tiny delay to ensure different timestamps
-        await new Promise(r => setTimeout(r, 5));
+      }
+      // AUSDRUECKLICHE Zeitstempel statt eines 5-ms-Schlafs: unter CI-Last
+      // landeten zwei Lektionen im selben Millisekunden-Tick, die Sortierung
+      // wurde ein Muenzwurf, und der Test fiel an fremden PRs um (30.08.,
+      // zweimal am selben Tag). Ein Test, der die ZEITSORTIERUNG prueft,
+      // setzt seine Zeiten selbst.
+      for (let i = 0; i < topics.length; i++) {
+        const key = `cachly:lesson:best:${topics[i]}`;
+        const roh = JSON.parse((await redis.get(key))!) as LessonObj;
+        roh.ts = new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString();
+        await redis.set(key, JSON.stringify(roh));
       }
 
       // Simulate what session_start does: scan all lesson keys, sort by ts descending

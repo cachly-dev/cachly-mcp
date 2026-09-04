@@ -82,8 +82,37 @@ export class MockRedis {
     return this.sets.get(key)?.has(member) ? 1 : 0;
   }
 
+  // Karte 8jnckd2stesi: der write-ahead-Vermerk traegt sich nach Erfolg mit
+  // srem wieder aus — der Doppelgaenger muss koennen, was der Code benutzt.
+  async srem(key: string, ...members: string[]): Promise<number> {
+    const s = this.sets.get(key);
+    if (!s) return 0;
+    let removed = 0;
+    for (const m of members) { if (s.delete(m)) removed++; }
+    return removed;
+  }
+
+  async spop(key: string, count?: number): Promise<string[] | string | null> {
+    const s = this.sets.get(key);
+    if (!s || s.size === 0) return count === undefined ? null : [];
+    const n = count ?? 1;
+    const raus: string[] = [];
+    for (const m of [...s].slice(0, n)) { s.delete(m); raus.push(m); }
+    return count === undefined ? (raus[0] ?? null) : raus;
+  }
+
   async smembers(key: string): Promise<string[]> {
     return [...(this.sets.get(key) ?? [])];
+  }
+
+  // 0.10.151: der Heiler LIEST jetzt (srandmember) statt zu entnehmen (spop)
+  // — der Vermerk faellt erst nach nachweislich geschriebenem Vektor.
+  async srandmember(key: string, count?: number): Promise<string[] | string | null> {
+    const s = this.sets.get(key);
+    if (!s || s.size === 0) return count === undefined ? null : [];
+    const n = count ?? 1;
+    const raus = [...s].slice(0, n);
+    return count === undefined ? (raus[0] ?? null) : raus;
   }
 
   // GROW-046: Der Doppelgaenger muss koennen, was der Code benutzt. Fehlte
@@ -162,16 +191,36 @@ export class MockRedis {
     return emitter;
   }
 
-  /** Minimal pipeline: batches GET calls, returns [err, value][] */
+  /**
+   * Simplified cursor scan: `scan(cursor, 'MATCH', pattern, 'COUNT', n)`.
+   * Gibt alle Treffer auf einer Seite zurueck (Cursor '0' = fertig), wie
+   * scanStream. Reicht fuer die Tests; die echte Redis paginiert.
+   */
+  async scan(_cursor: string | number, ...rest: Array<string | number>): Promise<[string, string[]]> {
+    let match = '*';
+    for (let i = 0; i < rest.length - 1; i++) {
+      if (String(rest[i]).toUpperCase() === 'MATCH') match = String(rest[i + 1]);
+    }
+    const pattern = match.replace(/\*/g, '.*').replace(/\?/g, '.');
+    const regex = new RegExp(`^${pattern}$`);
+    const matches = [...this.store.keys()].filter((k) => regex.test(k));
+    return ['0', matches];
+  }
+
+  /** Minimal pipeline: batches GET/SET/SADD calls, returns [err, value][] */
   pipeline() {
-    const commands: Array<{ cmd: string; key: string }> = [];
-    const store = this.store;
+    const commands: Array<{ cmd: string; key: string; wert?: string }> = [];
+    const selbst = this;
     return {
       get(key: string) { commands.push({ cmd: 'get', key }); return this; },
-      async exec(): Promise<Array<[null, string | null]>> {
-        const out: Array<[null, string | null]> = [];
+      set(key: string, wert: string) { commands.push({ cmd: 'set', key, wert }); return this; },
+      sadd(key: string, wert: string) { commands.push({ cmd: 'sadd', key, wert }); return this; },
+      async exec(): Promise<Array<[null, unknown]>> {
+        const out: Array<[null, unknown]> = [];
         for (const c of commands) {
-          out.push([null, store.get(c.key) ?? null]);
+          if (c.cmd === 'get') out.push([null, selbst.store.get(c.key) ?? null]);
+          else if (c.cmd === 'set') { selbst.store.set(c.key, c.wert as string); out.push([null, 'OK']); }
+          else out.push([null, await selbst.sadd(c.key, c.wert as string)]);
         }
         return out;
       },

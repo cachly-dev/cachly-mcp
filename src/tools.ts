@@ -48,7 +48,7 @@ const TOOLS = [
       properties: {
         instance_id: { type: 'string', description: 'UUID of the instance (from list_instances)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -59,9 +59,9 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the instance' },
+        instance_id: { type: 'string', description: 'UUID of the instance.' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -75,7 +75,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the instance to delete' },
         confirm: { type: 'boolean', description: 'Must be true to confirm deletion' },
       },
-      required: ['instance_id', 'confirm'],
+      required: ['confirm'],
     },
   },
 
@@ -92,11 +92,11 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the instance' },
+        instance_id: { type: 'string', description: 'UUID of the instance.' },
         key: { type: 'string', description: 'Cache key to retrieve' },
         org_id: { type: 'string', description: 'Optional org ID — if the direct key misses, falls back to the shared org namespace org:{org_id}:sem:{key}' },
       },
-      required: ['instance_id', 'key'],
+      required: ['key'],
     },
   },
   {
@@ -117,7 +117,7 @@ const TOOLS = [
         ttl: { type: 'number', description: 'Time-to-live in seconds (optional, omit for no expiry)' },
         org_id: { type: 'string', description: 'Optional org ID — also writes the key to the shared org namespace org:{org_id}:sem:{key} with the same TTL' },
       },
-      required: ['instance_id', 'key', 'value'],
+      required: ['key', 'value'],
     },
   },
   {
@@ -139,7 +139,7 @@ const TOOLS = [
           description: 'One or more cache keys to delete. Accepts exact keys only (no glob patterns — use cache_keys to list first).',
         },
       },
-      required: ['instance_id', 'keys'],
+      required: ['keys'],
     },
   },
   {
@@ -157,7 +157,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the cache instance to check (get from list_instances)' },
         keys: { type: 'array', items: { type: 'string' }, description: 'Keys to check for existence. Accepts exact keys only (no glob patterns).' },
       },
-      required: ['instance_id', 'keys'],
+      required: ['keys'],
     },
   },
   {
@@ -173,7 +173,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the cache instance (from list_instances)' },
         key: { type: 'string', description: 'Cache key to inspect' },
       },
-      required: ['instance_id', 'key'],
+      required: ['key'],
     },
   },
   {
@@ -188,7 +188,7 @@ const TOOLS = [
         pattern: { type: 'string', description: 'Glob pattern (default: *)' },
         count: { type: 'number', description: 'Max keys to return (default: 50, max: 500)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -205,7 +205,7 @@ const TOOLS = [
       properties: {
         instance_id: { type: 'string', description: 'UUID of the cache instance (from list_instances)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -251,7 +251,7 @@ const TOOLS = [
             'Returns results only from the matching domain (code/translation/summary/qa/creative).',
         },
       },
-      required: ['instance_id', 'query'],
+      required: ['query'],
     },
   },
   {
@@ -281,7 +281,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         entries: {
           type: 'array',
           description: 'List of prompt/value pairs to pre-warm into the cache',
@@ -310,7 +310,7 @@ const TOOLS = [
             'Overrides `namespace` when no per-entry namespace is set.',
         },
       },
-      required: ['instance_id', 'entries'],
+      required: ['entries'],
     },
   },
   {
@@ -352,7 +352,7 @@ const TOOLS = [
           description: 'Semantic namespace to store under (default: cachly:sem:code)',
         },
       },
-      required: ['instance_id', 'dir'],
+      required: ['dir'],
     },
   },
   // ── Bulk operations ──────────────────────────────────────────────────────
@@ -369,7 +369,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         items: {
           type: 'array',
           description: 'Key-value pairs to set',
@@ -384,7 +384,7 @@ const TOOLS = [
           },
         },
       },
-      required: ['instance_id', 'items'],
+      required: ['items'],
     },
   },
   {
@@ -395,10 +395,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string',  description: 'UUID of the cache instance' },
+        instance_id: { type: 'string',  description: 'UUID of the cache instance.' },
         keys:        { type: 'array', items: { type: 'string' }, description: 'List of keys to fetch' },
       },
-      required: ['instance_id', 'keys'],
+      required: ['keys'],
     },
   },
   // ── Distributed lock ──────────────────────────────────────────────────────
@@ -411,13 +411,13 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id:    { type: 'string', description: 'UUID of the cache instance' },
+        instance_id:    { type: 'string', description: 'UUID of the cache instance.' },
         key:            { type: 'string', description: 'Lock resource identifier' },
         ttl_ms:         { type: 'number', description: 'Safety TTL in milliseconds (e.g. 5000)' },
         retries:        { type: 'number', description: 'Max acquire attempts (default: 3)' },
         retry_delay_ms: { type: 'number', description: 'Milliseconds between retries (default: 50)' },
       },
-      required: ['instance_id', 'key', 'ttl_ms'],
+      required: ['key', 'ttl_ms'],
     },
   },
   {
@@ -428,11 +428,11 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         key:         { type: 'string', description: 'Lock resource identifier (same as in cache_lock_acquire)' },
         token:       { type: 'string', description: 'Fencing token returned by cache_lock_acquire' },
       },
-      required: ['instance_id', 'key', 'token'],
+      required: ['key', 'token'],
     },
   },
   // ── Auth & API-Status ─────────────────────────────────────────────────────
@@ -462,7 +462,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         key: { type: 'string', description: 'Descriptive key like "project_overview", "auth_architecture", "file:src/index.ts"' },
         content: { type: 'string', description: 'The context/summary/analysis to remember' },
         category: {
@@ -472,7 +472,7 @@ const TOOLS = [
         },
         ttl: { type: 'number', description: 'Time-to-live in seconds (default: 86400 = 24h, use 0 for no expiry)' },
       },
-      required: ['instance_id', 'key', 'content'],
+      required: ['key', 'content'],
     },
   },
   {
@@ -486,10 +486,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         key: { type: 'string', description: 'The key to look up (supports glob pattern like "file:*")' },
       },
-      required: ['instance_id', 'key'],
+      required: ['key'],
     },
   },
   {
@@ -502,7 +502,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         category: {
           type: 'string',
           enum: ['overview', 'architecture', 'file_summary', 'dependency', 'thinking', 'custom', 'all'],
@@ -510,7 +510,7 @@ const TOOLS = [
         },
         limit: { type: 'number', description: 'Max entries to return (default: 50)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -522,33 +522,34 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         keys: { type: 'array', items: { type: 'string' }, description: 'Keys to delete (supports glob)' },
       },
-      required: ['instance_id', 'keys'],
+      required: ['keys'],
     },
   },
   {
     name: 'learn_from_attempts',
     description:
-      'Store a lesson learned from a failed or successful attempt. ' +
-      'Call this AFTER completing any non-trivial task (deploy, debug, fix, architecture decision). ' +
-      'The lesson will be recalled automatically in future sessions via recall_best_solution. ' +
-      'Fields: topic (short slug like "deploy:web"), outcome ("success"|"failure"), ' +
-      'what_worked (what solved it), what_failed (what did NOT work), context (extra details). ' +
-      'Supports structured metadata: severity, file_paths (files involved), commands (working commands), tags. ' +
-      'Deduplication: if a lesson for this topic already exists, it is updated with full audit trail — ' +
-      'an UPDATE then REQUIRES the field `grund` (one line: WHY the previous version was wrong); without it the update is rejected. ' +
-      'Contradiction detection: warns if new outcome conflicts with existing lesson outcome. ' +
-      'Confidence: lesson starts at 1.0, decays after 5d (→0.7) and 10d (→0.5) without recall. ' +
-      'Example: learn_from_attempts(topic="deploy:api", outcome="success", what_worked="nohup docker compose up -d --build", what_failed="docker compose up hangs on SSH timeout", severity="critical", commands=["nohup docker compose up -d --build"])',
+      'Store a lesson AFTER any non-trivial task (deploy, debug, fix, decision); future sessions recall it. ' +
+      'instance_id may be omitted; the configured instance is used — never guess one. ' +
+      'If the topic already exists, the write is an UPDATE and REQUIRES `grund` ' +
+      '(one line: WHY the previous version was wrong) — without it the update is rejected. ' +
+      'A conflicting outcome triggers a contradiction warning. ' +
+      'Example: learn_from_attempts(topic="deploy:api", outcome="success", ' +
+      'what_worked="PORT 3095 SERVES WHISPER — nohup docker compose up -d", severity="critical")',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         topic:        { type: 'string', description: 'Short slug, e.g. "deploy:web", "debug:redis-tls", "fix:generate-series"' },
         outcome:      { type: 'string', enum: ['success', 'failure', 'partial'], description: 'Did it work?' },
-        what_worked:  { type: 'string', description: 'What solved the problem or what approach succeeded' },
+        // Die 100-Zeichen-Regel stand bisher nur in unserer eigenen CLAUDE.md
+        // — jede fremde Installation lernte sie nie. Briefings kappen bei 100
+        // Zeichen; eine Lektion, die mit Vorgeschichte beginnt, ist dort
+        // unlesbar (Beleg 16.08.2026: die gesuchte Adresse stand bei Zeichen
+        // 323). Das Werkzeug selbst muss es sagen.
+        what_worked:  { type: 'string', description: 'What solved it. LEAD WITH THE DECISIVE FACT (the number, address, command) in the first 100 characters — briefings truncate there.' },
         what_failed:  { type: 'string', description: 'What did NOT work (optional but valuable)' },
         // Gemessen am 30.08.2026 (src/bench/symptom-probe.ts): traegt eine
         // Lektion das SYMPTOM in den Worten des Suchenden, halbiert sich ihr
@@ -598,6 +599,10 @@ const TOOLS = [
           type: 'string',
           description: 'Topic slug of an OLDER lesson this one refutes. The old one is suppressed in smart_recall and shows a "superseded" banner.',
         },
+        gilt_ab: {
+          type: 'string',
+          description: 'ISO date since when the FACT is true (vs. when written). Omit if unknown. A replacement sets gilt_bis on the old lesson (then shown as history). About the fact, NOT an age decay.',
+        },
         visibility: {
           type: 'string',
           enum: ['team', 'private', 'public'],
@@ -617,7 +622,7 @@ const TOOLS = [
           description: 'Optional sub-team scope, e.g. "backend". Only that group and admins see it. Independent of visibility.',
         },
       },
-      required: ['instance_id', 'topic', 'outcome', 'what_worked'],
+      required: ['topic', 'outcome', 'what_worked'],
     },
   },
   {
@@ -633,11 +638,11 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         topic:        { type: 'string', description: 'Topic slug to look up, e.g. "deploy:web". Supports partial match.' },
         author:       { type: 'string', description: 'Who is asking (optional). Required to read a group-scoped lesson: without it, group-scoped lessons answer like "not found". Team-wide lessons need no author.' },
       },
-      required: ['instance_id', 'topic'],
+      required: ['topic'],
     },
   },
   {
@@ -652,7 +657,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         query: {
           type: 'string',
           description: 'The question you asked, as you asked it. Not a summary — the ranking has to learn from the real wording.',
@@ -672,20 +677,20 @@ const TOOLS = [
         note: { type: 'string', description: 'Optional: what was missing, or why it did not fit.' },
         author: { type: 'string', description: 'Optional: your handle.' },
       },
-      required: ['instance_id', 'query', 'topic', 'helped', 'rank'],
+      required: ['query', 'topic', 'helped', 'rank'],
     },
   },
   {
     name: 'smart_recall',
     description:
-      'Semantically search cached context using natural language. ' +
+      'Semantically search cached context using natural language. instance_id may be omitted; the configured instance is used — never guess one.'  +
       'Instead of exact key matching, finds context by meaning. ' +
       'Example: smart_recall("how does authentication work") → returns cached auth architecture summary. ' +
       'Falls back to remember_context keys if no semantic match is found.',
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         query: { type: 'string', description: 'Natural language query to find relevant cached context' },
         threshold: { type: 'number', description: 'Similarity threshold 0-1 (default: 0.78)' },
         author: { type: 'string', description: 'Who is recalling (optional). Counts cross-author reuse.' },
@@ -695,7 +700,7 @@ const TOOLS = [
           description: 'Files you are working on, e.g. ["src/auth/service.ts"]. Lessons learned around these files rank higher.',
         },
       },
-      required: ['instance_id', 'query'],
+      required: ['query'],
     },
   },
   {
@@ -709,7 +714,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         focus: {
           type: 'string',
           description: 'Keywords for what you plan to work on today (e.g. "deploy infra api"). Used to surface relevant lessons at the top.',
@@ -727,7 +732,7 @@ const TOOLS = [
           description: 'Absolute path to the project root. If no session_end was found (e.g. context limit hit), reads git log to reconstruct what happened since last session.',
         },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -740,7 +745,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         focus: {
           type: 'string',
           description: 'The topic or task you are about to work on (e.g. "deploy infra", "api auth"). Used to score and rank lessons by relevance.',
@@ -754,7 +759,7 @@ const TOOLS = [
           description: 'Your name or handle (optional). Same as session_start — used for team lesson filtering.',
         },
       },
-      required: ['instance_id', 'focus'],
+      required: ['focus'],
     },
   },
   {
@@ -768,7 +773,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         summary: {
           type: 'string',
           description: 'Brief summary of what was accomplished this session (2-3 sentences)',
@@ -787,7 +792,7 @@ const TOOLS = [
           description: 'Absolute path to the project root (e.g. "/Users/you/myproject"). Enables Ambient Learning — reads git log since session start and auto-learns from commit messages.',
         },
       },
-      required: ['instance_id', 'summary'],
+      required: ['summary'],
     },
   },
   // ── Session Handoff — cross-window continuity ─────────────────────────────
@@ -803,7 +808,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         completed_tasks: {
           type: 'array',
           items: { type: 'string' },
@@ -840,7 +845,7 @@ const TOOLS = [
           description: 'If work is blocked, describe what is needed to unblock (e.g. "waiting for API deploy", "needs user input on design")',
         },
       },
-      required: ['instance_id', 'completed_tasks', 'remaining_tasks'],
+      required: ['completed_tasks', 'remaining_tasks'],
     },
   },
   // ── session_ping — lightweight in-session checkpoint ─────────────────────
@@ -855,7 +860,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         task: {
           type: 'string',
           description: 'What you are currently working on (e.g. "Implementing invite handler in handler/invite.go")',
@@ -874,7 +879,7 @@ const TOOLS = [
           description: 'Current AI provider (e.g. "claude-code", "copilot", "cursor", "windsurf")',
         },
       },
-      required: ['instance_id', 'task'],
+      required: ['task'],
     },
   },
   // ── AI Brain — Extended features ─────────────────────────────────────────
@@ -888,7 +893,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         observations: {
           type: 'array',
           description: 'List of observations from this session',
@@ -905,7 +910,7 @@ const TOOLS = [
           },
         },
       },
-      required: ['instance_id', 'observations'],
+      required: ['observations'],
     },
   },
   {
@@ -919,11 +924,11 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         topic:       { type: 'string', description: 'Topic or question to find experts for' },
         limit:       { type: 'number', description: 'Max number of experts to return (default: 10)' },
       },
-      required: ['instance_id', 'topic'],
+      required: ['topic'],
     },
   },
   {
@@ -937,14 +942,14 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         file_paths: {
           type: 'array',
           items: { type: 'string' },
           description: 'File paths to look up (max 10)',
         },
       },
-      required: ['instance_id', 'file_paths'],
+      required: ['file_paths'],
     },
   },
   {
@@ -957,10 +962,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         top_n: { type: 'number', description: 'Max contributors to show (default: 20)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -975,10 +980,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         min_weight:  { type: 'number', description: 'Minimum collaboration events to show a pair (default: 1)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -993,9 +998,9 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1009,10 +1014,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        instance_id:  { type: 'string', description: 'UUID of the cache instance.' },
         min_failures: { type: 'number', description: 'Min failure count to flag a domain as a gap (default: 1)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1026,10 +1031,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         repo_path:   { type: 'string', description: 'Path to the git repository (default: current directory)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1043,9 +1048,9 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1058,12 +1063,12 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         days: { type: 'number', description: 'How many days back to include (default: 7)' },
         max_lessons: { type: 'number', description: 'Maximum number of lessons to include (default: 30)' },
         include_failures: { type: 'boolean', description: 'Include failure-outcome lessons (default: true)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1078,10 +1083,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         service: { type: 'string', description: 'Name of the service/system to map (e.g. "prometheus", "cachly-web", "auth-service"). Matches the `service` tag on stored lessons.' },
       },
-      required: ['instance_id', 'service'],
+      required: ['service'],
     },
   },
   {
@@ -1094,12 +1099,12 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id:   { type: 'string', description: 'UUID of the cache instance' },
+        instance_id:   { type: 'string', description: 'UUID of the cache instance.' },
         changed_files: { type: 'array', items: { type: 'string' }, description: 'List of changed file paths' },
         git_diff_stat: { type: 'string', description: 'Output of `git diff --stat` (optional)' },
         commit_msg:    { type: 'string', description: 'Commit message (optional)' },
       },
-      required: ['instance_id', 'changed_files'],
+      required: ['changed_files'],
     },
   },
   {
@@ -1122,7 +1127,7 @@ const TOOLS = [
         commands:     { type: 'array', items: { type: 'string' }, description: 'Commands that worked' },
         tags:         { type: 'array', items: { type: 'string' }, description: 'Tags for categorization' },
       },
-      required: ['instance_id', 'author', 'topic', 'outcome', 'what_worked'],
+      required: ['author', 'topic', 'outcome', 'what_worked'],
     },
   },
   {
@@ -1141,7 +1146,7 @@ const TOOLS = [
         level:       { type: 'string', enum: ['senior', 'peer'], description: 'Review weight — "senior" ranks higher than "peer" (default: peer)' },
         note:        { type: 'string', description: 'Optional review note (kept in the lesson audit trail)' },
       },
-      required: ['instance_id', 'topic', 'reviewer'],
+      required: ['topic', 'reviewer'],
     },
   },
   {
@@ -1165,7 +1170,7 @@ const TOOLS = [
         },
         assigned_by:  { type: 'string', description: 'Handle of the admin performing the assignment (required after governance bootstrap)' },
       },
-      required: ['instance_id', 'handle', 'role'],
+      required: ['handle', 'role'],
     },
   },
   {
@@ -1180,7 +1185,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
         handle:      { type: 'string', description: 'Your handle or name' },
       },
-      required: ['instance_id', 'handle'],
+      required: ['handle'],
     },
   },
   {
@@ -1194,7 +1199,7 @@ const TOOLS = [
       properties: {
         instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1212,7 +1217,7 @@ const TOOLS = [
         requester:   { type: 'string', description: 'Your handle — must be an admin once governance is active' },
         limit:       { type: 'number', description: 'Max events to show, newest first (default: 50, max: 200)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1232,7 +1237,7 @@ const TOOLS = [
         action:      { type: 'string', enum: ['add', 'remove'], description: 'add (default) or remove the member from the group' },
         assigned_by: { type: 'string', description: 'Handle of the admin performing the change (required after governance bootstrap)' },
       },
-      required: ['instance_id', 'handle', 'group'],
+      required: ['handle', 'group'],
     },
   },
   {
@@ -1247,7 +1252,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
         handle:      { type: 'string', description: 'Optional — show only this person\'s group memberships' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1265,7 +1270,7 @@ const TOOLS = [
         author:      { type: 'string', description: 'Filter by author name (optional)' },
         limit:       { type: 'number', description: 'Max lessons to return (default: 10)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1281,7 +1286,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the shared team brain instance' },
         topic:       { type: 'string', description: 'Topic slug to synthesize (e.g. "deploy:api")' },
       },
-      required: ['instance_id', 'topic'],
+      required: ['topic'],
     },
   },
   {
@@ -1295,13 +1300,13 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         label: {
           type: 'string',
           description: 'Optional label for this crystal (e.g. "Q1 2026", "v2 launch"). Auto-generated from date if omitted.',
         },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1321,7 +1326,7 @@ const TOOLS = [
         min_authors: { type: 'number', description: 'Min distinct authors that must converge for a pattern to crystallize (default: 2, min: 2)' },
         label:       { type: 'string', description: 'Optional label (e.g. "Q1 2026"). Auto-generated from date if omitted.' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   // ── Roadmap — Persistent project plan tracker ───────────────────────────
@@ -1335,7 +1340,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         title: { type: 'string', description: 'Short title of the task/feature (3–10 words)' },
         description: { type: 'string', description: 'What needs to be done, acceptance criteria, context' },
         priority: {
@@ -1350,7 +1355,7 @@ const TOOLS = [
         },
         milestone: { type: 'string', description: 'Milestone/epic this belongs to (optional)' },
       },
-      required: ['instance_id', 'title'],
+      required: ['title'],
     },
   },
   {
@@ -1362,7 +1367,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         id: { type: 'string', description: 'Item ID returned by roadmap_add or roadmap_list' },
         status: {
           type: 'string',
@@ -1378,7 +1383,7 @@ const TOOLS = [
         title: { type: 'string', description: 'Updated title (optional)' },
         description: { type: 'string', description: 'Updated description (optional)' },
       },
-      required: ['instance_id', 'id'],
+      required: ['id'],
     },
   },
   {
@@ -1390,7 +1395,7 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         status: {
           type: 'string',
           enum: ['planned', 'in-progress', 'done', 'blocked', 'cancelled', 'open'],
@@ -1404,7 +1409,7 @@ const TOOLS = [
           description: 'Filter by minimum priority (optional)',
         },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1416,10 +1421,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         tag: { type: 'string', description: 'Filter by tag (optional)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1431,13 +1436,13 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         workspace_path: {
           type: 'string',
           description: 'Absolute path to workspace root — enables package.json analysis for openclaw cross-promo (optional)',
         },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1454,7 +1459,7 @@ const TOOLS = [
       properties: {
         instance_id: {
           type: 'string',
-          description: 'UUID of the cache instance',
+          description: 'UUID of the cache instance.',
         },
         dry_run: {
           type: 'boolean',
@@ -1469,7 +1474,7 @@ const TOOLS = [
           description: 'Days after which a provisional low-recall lesson is archived (default 30)',
         },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1491,7 +1496,7 @@ const TOOLS = [
         severity:    { type: 'string', enum: ['critical', 'major', 'minor'], description: 'Severity (default: minor)' },
         tags:        { type: 'array', items: { type: 'string' }, description: 'Optional tags' },
       },
-      required: ['instance_id', 'topic', 'lesson'],
+      required: ['topic', 'lesson'],
     },
   },
   {
@@ -1509,7 +1514,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the cache instance (used for connection)' },
         topic:       { type: 'string', description: 'Topic or keyword filter (optional)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1525,13 +1530,13 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         topic:       { type: 'string', description: 'Topic key (used as public category)' },
         lesson:      { type: 'string', description: 'Lesson to publish (PII will be stripped)' },
         framework:   { type: 'string', description: 'Framework/platform tag (nextjs, fastapi, go, docker, etc.)' },
         severity:    { type: 'string', enum: ['critical', 'major', 'minor'], description: 'Severity' },
       },
-      required: ['instance_id', 'topic', 'lesson'],
+      required: ['topic', 'lesson'],
     },
   },
   {
@@ -1551,7 +1556,7 @@ const TOOLS = [
         framework:   { type: 'string', description: 'Framework/platform to import lessons for' },
         limit:       { type: 'number', description: 'Max lessons to import (default: 20)' },
       },
-      required: ['instance_id', 'framework'],
+      required: ['framework'],
     },
   },
   // ── Brain Archaeology + Causal Chain ────────────────────────────────────
@@ -1566,11 +1571,11 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         topic:       { type: 'string', description: 'Topic slug to look up, e.g. "deploy:api"' },
         date:        { type: 'string', description: 'ISO date string (e.g. "2026-01-15") — returns entries stored BEFORE this date' },
       },
-      required: ['instance_id', 'topic', 'date'],
+      required: ['topic', 'date'],
     },
   },
   {
@@ -1583,11 +1588,11 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         dependency:  { type: 'string', description: 'Dependency to trace (e.g. "node:>=20", "docker:running", "wireguard:active")' },
         mark_review: { type: 'boolean', description: 'If true, marks all dependent lessons as needs_review (default: false)' },
       },
-      required: ['instance_id', 'dependency'],
+      required: ['dependency'],
     },
   },
   // ── Team / Org Management ────────────────────────────────────────────────
@@ -1688,7 +1693,7 @@ const TOOLS = [
           description: 'Short description of the project (used in the generated instructions)',
         },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1700,12 +1705,12 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string',  description: 'UUID of the cache instance' },
+        instance_id: { type: 'string',  description: 'UUID of the cache instance.' },
         key:         { type: 'string',  description: 'Cache key' },
         chunks:      { type: 'array', items: { type: 'string' }, description: 'Ordered list of string chunks' },
         ttl:         { type: 'number',  description: 'TTL in seconds for the stored list (optional)' },
       },
-      required: ['instance_id', 'key', 'chunks'],
+      required: ['key', 'chunks'],
     },
   },
   {
@@ -1717,10 +1722,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         key:         { type: 'string', description: 'Cache key' },
       },
-      required: ['instance_id', 'key'],
+      required: ['key'],
     },
   },
   {
@@ -1735,10 +1740,10 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         org_id: { type: 'string', description: 'Org ID to inspect (e.g. "acme", "my-company")' },
       },
-      required: ['instance_id', 'org_id'],
+      required: ['org_id'],
     },
   },
 
@@ -1755,13 +1760,13 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         cost_per_call_usd: {
           type: 'number',
           description: 'Cost per LLM API call in USD. Common values: 0.02 (claude-opus-4.8), 0.015 (gpt-5.5), 0.009 (claude-sonnet-4.6), 0.002 (gpt-5.5-mini), 0.001 (claude-haiku-4.5).',
         },
       },
-      required: ['instance_id', 'cost_per_call_usd'],
+      required: ['cost_per_call_usd'],
     },
   },
 
@@ -1779,11 +1784,11 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id:   { type: 'string', description: 'UUID of the cache instance' },
+        instance_id:   { type: 'string', description: 'UUID of the cache instance.' },
         dry_run:       { type: 'boolean', description: 'If true, report what would change without writing (default: false)' },
         stale_days:    { type: 'number',  description: 'Lessons not recalled in this many days are flagged stale (default: 90)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1797,11 +1802,11 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         since:       { type: 'string', description: 'Time window: "1d", "7d", "30d", or ISO-8601 date (default: "7d")' },
         format:      { type: 'string', enum: ['summary', 'detailed'], description: 'Output format (default: summary)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1820,12 +1825,12 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id: { type: 'string', description: 'UUID of the cache instance' },
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
         problem:     { type: 'string', description: 'Describe the problem or error you are seeing right now' },
         max_depth:   { type: 'number', description: 'Max causal chain depth to trace (default: 5)' },
         tags:        { type: 'array', items: { type: 'string' }, description: 'Optional: narrow search to these tags' },
       },
-      required: ['instance_id', 'problem'],
+      required: ['problem'],
     },
   },
   {
@@ -1839,11 +1844,11 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        instance_id:  { type: 'string', description: 'UUID of the cache instance.' },
         min_age_days: { type: 'number', description: 'Only include lessons older than N days (default: 0 = all)' },
         show_top:     { type: 'number', description: 'Number of entries to return, sorted by lowest confidence first (default: 20)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -1862,12 +1867,12 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        instance_id:  { type: 'string', description: 'UUID of the cache instance.' },
         editor:       { type: 'string', enum: ['claude', 'cursor', 'copilot', 'windsurf', 'gemini', 'continue', 'all'], description: 'Target editor (default: claude)' },
         project_name: { type: 'string', description: 'Your project name (used in generated instructions)' },
         style:        { type: 'string', enum: ['minimal', 'full'], description: 'minimal = just the hooks, full = full ruleset with examples (default: full)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   // ── v0.7 Knowledge Syndication ────────────────────────────────────────────
@@ -1973,13 +1978,13 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        instance_id:  { type: 'string', description: 'UUID of the cache instance' },
+        instance_id:  { type: 'string', description: 'UUID of the cache instance.' },
         slug:         { type: 'string', description: 'Domain brain slug from brain_marketplace (e.g. "k8s", "auth", "db")' },
         min_confirms: { type: 'number', description: 'Only install lessons with at least this many community confirmations (default: 1)' },
         limit:        { type: 'number', description: 'Max lessons to install (default: 200, max: 500)' },
         dry_run:      { type: 'boolean', description: 'Preview what would be installed without writing anything (default: false)' },
       },
-      required: ['instance_id', 'slug'],
+      required: ['slug'],
     },
   },
   // ── Layer 1: Causal Knowledge Graph ────────────────────────────────────────
@@ -1996,7 +2001,7 @@ const TOOLS = [
         query: { type: 'string', description: 'What to search for' },
         limit: { type: 'number', description: 'Max results (default: 15)' },
       },
-      required: ['instance_id', 'query'],
+      required: ['query'],
     },
   },
   {
@@ -2012,7 +2017,7 @@ const TOOLS = [
         concept: { type: 'string', description: 'Concept to inspect, e.g. "fix:clickhouse-ipv6" or "docker"' },
         max_hops: { type: 'number', description: 'Traversal depth (default: 2)' },
       },
-      required: ['instance_id', 'concept'],
+      required: ['concept'],
     },
   },
   {
@@ -2041,7 +2046,7 @@ const TOOLS = [
             'your organisation, "org+commons" = plus public lessons. Falls back to "instance" without an org.',
         },
       },
-      required: ['instance_id', 'context'],
+      required: ['context'],
     },
   },
   {
@@ -2062,7 +2067,7 @@ const TOOLS = [
         task: { type: 'string', description: 'The change you are about to make, e.g. "migrate auth from sessions to JWT"' },
         top_k: { type: 'number', description: 'Max items per section (default: 5)' },
       },
-      required: ['instance_id', 'task'],
+      required: ['task'],
     },
   },
   {
@@ -2077,7 +2082,7 @@ const TOOLS = [
       properties: {
         instance_id: { type: 'string', description: 'Brain instance ID' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -2095,7 +2100,7 @@ const TOOLS = [
         winner: { type: 'string', enum: ['success', 'failure'], description: 'Which side wins the arbitration' },
         resolved_by: { type: 'string', description: 'Who resolved it (agent name or "human"); default "human"' },
       },
-      required: ['instance_id', 'topic', 'winner'],
+      required: ['topic', 'winner'],
     },
   },
   // ── v4 Move 1: Closed-loop CI learning ───────────────────────────────────
@@ -2122,7 +2127,7 @@ const TOOLS = [
         },
         source: { type: 'string', description: 'Optional: "github_actions", "gitlab_ci", etc.' },
       },
-      required: ['instance_id', 'job_status', 'topics'],
+      required: ['job_status', 'topics'],
     },
   },
   // ── v4 Move 2: Proactive briefing ─────────────────────────────────────────
@@ -2152,7 +2157,7 @@ const TOOLS = [
           description: 'Minimum confidence (0–1) for a warning to be surfaced. Default 0.6 — raise it to reduce noise.',
         },
       },
-      required: ['instance_id', 'event_type', 'context'],
+      required: ['event_type', 'context'],
     },
   },
   // ── Move 5: Privacy-preserving federation ────────────────────────────────
@@ -2171,7 +2176,7 @@ const TOOLS = [
         outcome: { type: 'string', enum: ['success', 'failure', 'partial'], description: 'Outcome of the pattern' },
         confidence: { type: 'number', description: 'Confidence 0–1 (bucketed before sending; default 0.5)' },
       },
-      required: ['instance_id', 'topic_category', 'outcome'],
+      required: ['topic_category', 'outcome'],
     },
   },
   {
@@ -2188,7 +2193,7 @@ const TOOLS = [
         category: { type: 'string', description: 'Optional filter, e.g. "auth" or "deploy"' },
         limit: { type: 'number', description: 'Max meta-lessons to import (default 20, max 200)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   // ── Layer 3: MADC ────────────────────────────────────────────────────────
@@ -2207,7 +2212,7 @@ const TOOLS = [
         topic: { type: 'string', description: 'Topic to deliberate, e.g. "fix:jwks-rotation"' },
         context: { type: 'string', description: 'Optional context for the deliberation' },
       },
-      required: ['instance_id', 'topic'],
+      required: ['topic'],
     },
   },
   // ── Layer 5: CLS ─────────────────────────────────────────────────────────
@@ -2235,7 +2240,7 @@ const TOOLS = [
             'ide_diagnostic: {error, fix, file?}',
         },
       },
-      required: ['instance_id', 'source', 'payload'],
+      required: ['source', 'payload'],
     },
   },
   {
@@ -2258,7 +2263,7 @@ const TOOLS = [
           description: 'Which hooks to output (default: ["git", "ci"])',
         },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   // ── Layer 6: FedBrain ────────────────────────────────────────────────────
@@ -2280,7 +2285,7 @@ const TOOLS = [
           description: 'Visibility (default: public)',
         },
       },
-      required: ['instance_id', 'lesson_key'],
+      required: ['lesson_key'],
     },
   },
   {
@@ -2301,7 +2306,7 @@ const TOOLS = [
         },
         limit: { type: 'number', description: 'Max results (default: 10)' },
       },
-      required: ['instance_id', 'query'],
+      required: ['query'],
     },
   },
   {
@@ -2328,7 +2333,7 @@ const TOOLS = [
           description: 'Did the lesson work for you?',
         },
       },
-      required: ['instance_id', 'id', 'outcome'],
+      required: ['id', 'outcome'],
     },
   },
   {
@@ -2341,7 +2346,7 @@ const TOOLS = [
       properties: {
         instance_id: { type: 'string', description: 'Brain instance ID' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -2362,7 +2367,7 @@ const TOOLS = [
         min_confidence: { type: 'number', description: 'Minimum edge confidence to transfer (default: 0.6)' },
         dry_run: { type: 'boolean', description: 'Preview what would be transferred without writing (default: false)' },
       },
-      required: ['instance_id', 'source', 'domain'],
+      required: ['source', 'domain'],
     },
   },
   {
@@ -2377,7 +2382,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'Brain instance ID' },
         show_raw: { type: 'boolean', description: 'Include raw JSON crystal data (default: false)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -2392,7 +2397,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'Brain instance ID' },
         focus: { type: 'string', description: 'What you were working on (helps filter relevant context)' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -2412,7 +2417,7 @@ const TOOLS = [
         since: { type: 'string', description: 'Only commits after this date, e.g. "2024-01-01" (optional)' },
         incremental: { type: 'boolean', description: 'Only process commits since last run (default: true). Set false to reprocess all.' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -2440,7 +2445,7 @@ const TOOLS = [
           },
         },
       },
-      required: ['instance_id', 'outcomes'],
+      required: ['outcomes'],
     },
   },
   {
@@ -2478,7 +2483,7 @@ const TOOLS = [
         top_k: { type: 'number', description: 'Number of failure predictions to return (default: 5)' },
         format: { type: 'string', enum: ['brief', 'detailed'], description: 'Output format (default: detailed)' },
       },
-      required: ['instance_id', 'context'],
+      required: ['context'],
     },
   },
 
@@ -2504,7 +2509,7 @@ const TOOLS = [
         max_lessons:  { type: 'number', description: 'Maximum number of lessons to include (default 100, max 500).' },
         dry_run:      { type: 'boolean', description: 'If true, preview what would be shared without creating the public link.' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
 
@@ -2526,7 +2531,7 @@ const TOOLS = [
         overwrite:      { type: 'boolean', description: 'Replace existing lessons with the same topic. Default false.' },
         dry_run:        { type: 'boolean', description: 'Preview what would be imported without writing to the Brain.' },
       },
-      required: ['instance_id', 'share_id'],
+      required: ['share_id'],
     },
   },
 
@@ -2542,7 +2547,7 @@ const TOOLS = [
       properties: {
         instance_id: { type: 'string', description: 'UUID of the Brain instance that created the shares.' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
 
@@ -2559,7 +2564,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the Brain instance that owns the share.' },
         share_id:    { type: 'string', description: 'Share ID to revoke (from brain_share or brain_share_list).' },
       },
-      required: ['instance_id', 'share_id'],
+      required: ['share_id'],
     },
   },
 
@@ -2598,7 +2603,7 @@ const TOOLS = [
         force: { type: 'boolean', description: 'Re-seed even if already seeded; also overwrites same-topic lessons. Default false.' },
         dry_run: { type: 'boolean', description: 'Preview which starter lessons would be seeded without writing.' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   {
@@ -2619,7 +2624,7 @@ const TOOLS = [
         min_confidence: { type: 'number', description: 'Drop edges below this confidence 0..1 (default 0 = keep all).' },
         format: { type: 'string', enum: ['json', 'summary'], description: '"json" (default) emits the full renderable payload; "summary" emits a human-readable overview.' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
   // ── New Power Tools ──────────────────────────────────────────────────────────
@@ -2636,7 +2641,7 @@ const TOOLS = [
         key:         { type: 'string', description: 'Preference key (e.g. "auto_changelog").' },
         value:       { type: 'string', description: 'Value to set (e.g. "false" to disable, "true" to re-enable).' },
       },
-      required: ['instance_id', 'key', 'value'],
+      required: ['key', 'value'],
     },
   },
   {
@@ -2652,7 +2657,7 @@ const TOOLS = [
         instance_id: { type: 'string', description: 'UUID of the Brain instance.' },
         key:         { type: 'string', description: 'Preference key to read. Omit to list all preferences.' },
       },
-      required: ['instance_id'],
+      required: [],
     },
   },
 ] as const;

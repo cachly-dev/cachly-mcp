@@ -606,6 +606,14 @@ export async function handleShareTool(
         });
 
         await redis.set(bestKey, lessonToStore);
+        // Write-ahead-Vermerk (0.10.153): die Saat kam bisher OHNE Vektor und
+        // OHNE Heil-Vermerk — fuer den Lese-Heiler unsichtbar, fuer immer.
+        // Gemessen 02.09.2026 (Bulk-Loader-Rauchtest): 16 Saat-Lektionen
+        // deckelten die semantische Deckung einer frischen Instanz bei 16 %.
+        // Mit Vermerk bettet der naechste smart_recall sie nach — dieselbe
+        // Zusage wie im learn-Pfad: gespeichert heisst vermerkt, bis der
+        // Vektor nachweislich steht.
+        await redis.sadd('cachly:vek:nachtrag', lesson.topic).catch(() => { /* still */ });
         const listKey = `cachly:lessons:${lesson.topic}`;
         await redis.rpush(listKey, lessonToStore);
         await redis.ltrim(listKey, -100, -1);

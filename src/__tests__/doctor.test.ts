@@ -15,6 +15,7 @@ import {
   doctorExitCode,
   type DoctorCheck,
 } from '../doctor.js';
+import { checkVectorCoverage } from '../doctor.js';
 import { AMBIENT_HOOK_VERSION } from '../ambient-hooks.js';
 
 const okFetch = (status = 200) => (async () => ({ ok: status < 400, status })) as never;
@@ -151,5 +152,32 @@ describe('ledger check + report rendering', () => {
   it('exit code stays 0 on warnings only (CI-safe)', () => {
     expect(doctorExitCode([{ name: 'Hooks', status: 'warn', detail: 'x' }])).toBe(0);
     expect(doctorExitCode([{ name: 'Hooks', status: 'ok', detail: 'x' }])).toBe(0);
+  });
+});
+
+
+describe('checkVectorCoverage (Karte hcg8neyut0kd)', () => {
+  const antwort = (body: unknown, status = 200) =>
+    (async () => ({ ok: status === 200, status, json: async () => body })) as never;
+
+  it('0 Vektoren bei vorhandenen Lektionen ist ein FAIL — der stumme Bedeutungspfad', async () => {
+    const c = await checkVectorCoverage('http://api', 'jwt', 'i1',
+      antwort({ lessons: 506, vectors: 0, percent: 0, status: 'aus' }));
+    expect(c.status).toBe('fail');
+    expect(c.detail).toContain('506');
+  });
+
+  it('eine Luecke unter 90 Prozent warnt mit den gelesenen Zahlen', async () => {
+    const c = await checkVectorCoverage('http://api', 'jwt', 'i1',
+      antwort({ lessons: 100, vectors: 70, percent: 70, status: 'luecke' }));
+    expect(c.status).toBe('warn');
+    expect(c.detail).toContain('70/100');
+  });
+
+  it('DER DRITTE AUSGANG: HTTP-Fehler heisst NICHT GEMESSEN, nie 0 Prozent', async () => {
+    const c = await checkVectorCoverage('http://api', 'jwt', 'i1', antwort({}, 502));
+    expect(c.status).toBe('warn');
+    expect(c.detail).toContain('not measured');
+    expect(c.detail).not.toContain('0%');
   });
 });

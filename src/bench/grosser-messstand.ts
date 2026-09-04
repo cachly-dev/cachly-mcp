@@ -73,6 +73,7 @@
  */
 
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { pathToFileURL } from 'node:url';
 import { join } from 'node:path';
 import type { BenchLesson, BenchQuery } from './fixtures.js';
 import { runBenchmarkOn } from './cachly-bench.js';
@@ -216,7 +217,13 @@ DER EINGEFRORENE ZEHNER-SCHNITT BLEIBT unangetastet — er ist die Referenz,
 gegen die alles bisher gemessen wurde.`);
 }
 
-main().catch((e) => {
-  console.error(`NICHT GEMESSEN: ${e instanceof Error ? e.message : String(e)}`);
-  process.exit(2);
-});
+// Nur beim direkten Aufruf laufen — als Modul importiert (haelfteFuer,
+// paareAus) darf hier NICHTS starten. Beleg 31.08.2026: der blosse Import
+// in longmemeval.ts liess diesen main() mitlaufen und brach mit
+// '--ordner ist Pflicht' ab.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => {
+    console.error(`NICHT GEMESSEN: ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(2);
+  });
+}

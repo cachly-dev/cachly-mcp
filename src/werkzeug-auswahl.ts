@@ -98,6 +98,47 @@ export const KERNWERKZEUGE: readonly string[] = [
   'session_handoff',
 ];
 
+/**
+ * Das SCHLANK-Profil: die Werkzeuge, ohne die eine Gedächtnis-Sitzung
+ * nicht auskommt — und sonst nichts.
+ *
+ * Anlass ist eine Messung von aussen (Bojan Tomic, dev.to 02.09.2026):
+ * die 27 Kernwerkzeuge kosten 32.778 Byte ≈ 8.860 Token JE ANFRAGE — sein
+ * Datei-Ansatz 579. Sein Schluss "a broad tool surface is a permanent tax"
+ * ist richtig, und dieses Profil ist die Antwort: acht Werkzeuge,
+ * ~12.000 Byte ≈ 3.200 Token. Alles andere bleibt über den Verteiler
+ * aufrufbar — unsichtbarer, nicht unbrauchbar.
+ *
+ * Einschalten: CACHLY_PROFILE=lean (englisch, weil es in fremden
+ * mcp.json-Dateien steht). Voller Katalog weiterhin: CACHLY_ALLE_WERKZEUGE=1.
+ */
+export const SCHLANK_WERKZEUGE: readonly string[] = [
+  'session_start',
+  'session_end',
+  'smart_recall',
+  'recall_best_solution',
+  'learn_from_attempts',
+  'remember_context',
+  'causal_trace',
+  'brain_doctor',
+];
+
+/**
+ * Das RECALL-Profil: nur lesen. Fuer Sitzungen, die ein fertiges Gedaechtnis
+ * befragen und nichts schreiben — Messlaeufe (agent-memory-bench: writes
+ * withheld), Nur-Lese-Clients, Review-Bots. Drei Werkzeuge, kein Verteiler:
+ * gemessen ~3.500 Byte ≈ 1.000 Token je Anfrage statt 8.860 (Kern) bzw.
+ * 3.560 (lean). Anlass 02.09.2026: 133.000 der 210.000 Input-Token einer
+ * Bench-Sitzung waren allein der Katalog, 15 Runden lang neu gesendet.
+ *
+ * Einschalten: CACHLY_PROFILE=recall.
+ */
+export const RECALL_WERKZEUGE: readonly string[] = [
+  'smart_recall',
+  'recall_best_solution',
+  'causal_trace',
+];
+
 /** Der Name des Verteilers. Englisch, weil er im Produkt sichtbar ist. */
 export const VERTEILER = 'cachly_tool';
 
@@ -163,7 +204,18 @@ export function sichtbareWerkzeuge(
     return { katalog: [...alle], uebrige: [], unbekannteKernnamen };
   }
 
-  const kern = new Set(KERNWERKZEUGE);
+  // Profil 'recall': drei Lese-Werkzeuge, KEIN Verteiler — wer nur liest,
+  // braucht keinen Weg zu den 120 anderen; jedes Byte ist Katalogmiete.
+  if (env.CACHLY_PROFILE === 'recall') {
+    const lese = new Set(RECALL_WERKZEUGE);
+    const katalog = alle.filter((w) => lese.has(w.name));
+    return { katalog, uebrige: alle.filter((w) => !lese.has(w.name)).map((w) => w.name), unbekannteKernnamen };
+  }
+
+  // Profil 'lean': acht Werkzeuge statt 27 — ~3.200 statt ~8.860 Token je
+  // Anfrage. Der Verteiler traegt den Rest, aufrufbar bleibt alles.
+  const auswahl = env.CACHLY_PROFILE === 'lean' ? SCHLANK_WERKZEUGE : KERNWERKZEUGE;
+  const kern = new Set(auswahl);
   const katalog = alle.filter((w) => kern.has(w.name));
   const uebrige = alle.filter((w) => !kern.has(w.name)).map((w) => w.name);
 

@@ -357,65 +357,81 @@ async function main(): Promise<void> {
   const gegenGesamt = [...gegen.values()].reduce((n, vs) => n + vs.length, 0);
   console.log(`  Gegenfragen      ${gegenGesamt} (${anzahlGegen} je Lektion, aus fremden Tueren — keine neue Einbettung)`);
 
-  const grundFrisch = await miss(satz.queries, null, 0);
-  const grundAlt = await miss(einstell.queries, null, 0);
+  /*
+   * ── Messdisziplin (Karte op7ucs58m5mp): auf A einstellen, auf B EINMAL ────
+   *
+   * Die erste Fassung fuhr den Lambda-Sweep auf dem PRUEFSATZ und stellte
+   * damit auf der Haelfte ein, die die Bestaetigung liefern sollte — das
+   * bestaetigt dann die eigene Anpassung, nicht den Kandidaten. Jetzt:
+   * alle vier Lambdas laufen auf dem EINSTELLSATZ (Haelfte A), das beste
+   * davon laeuft GENAU EINMAL auf dem Pruefsatz (Haelfte B), zusammen mit
+   * der Zufallskontrolle beim selben Lambda.
+   */
+  const grundA = await miss(einstell.queries, null, 0);
+  const grundB = await miss(satz.queries, null, 0);
+  const decke = (m: { imTopf: number }, n: number): string => `${((m.imTopf / n) * 100).toFixed(1)} %`.padStart(9);
+  const zeile = (name: string, m: { plaetze: number[]; imTopf: number }, n: number): void => {
+    console.log(`  ${name.padEnd(30)}${p(q(m.plaetze, 1))}${p(q(m.plaetze, 3))}${p(q(m.plaetze, 10))}${decke(m, n)}`);
+  };
 
-  console.log('\n  Findequote auf dem FRISCHEN Satz (ungesehene Fragen)');
+  console.log('\n  Haelfte A (Einstellsatz) — HIER wird eingestellt');
   console.log('  ────────────────────────────────────────────────────────────────');
   console.log(`  ${'Variante'.padEnd(30)}${'Platz 1'.padStart(9)}${'@3'.padStart(9)}${'@10'.padStart(9)}${'Decke'.padStart(9)}`);
-  const decke = (m: { imTopf: number }, n: number): string => `${((m.imTopf / n) * 100).toFixed(1)} %`.padStart(9);
-  console.log(`  ${'ohne Gegenauslese'.padEnd(30)}${p(q(grundFrisch.plaetze, 1))}${p(q(grundFrisch.plaetze, 3))}${p(q(grundFrisch.plaetze, 10))}${decke(grundFrisch, satz.queries.length)}`);
+  zeile('ohne Gegenauslese', grundA, einstell.queries.length);
 
   let besterLambda = 0;
-  let bestes3 = q(grundFrisch.plaetze, 3);
+  let bestes3 = q(grundA.plaetze, 3);
   const ergebnisse: Array<{ lambda: number; m: Awaited<ReturnType<typeof miss>> }> = [];
 
   for (const lambda of [0.15, 0.3, 0.5, 0.8]) {
-    const m = await miss(satz.queries, gegen, lambda);
+    const m = await miss(einstell.queries, gegen, lambda);
     ergebnisse.push({ lambda, m });
-    console.log(`  ${`nach Naehe, lambda=${lambda}`.padEnd(30)}${p(q(m.plaetze, 1))}${p(q(m.plaetze, 3))}${p(q(m.plaetze, 10))}${decke(m, satz.queries.length)}`);
+    zeile(`nach Naehe, lambda=${lambda}`, m, einstell.queries.length);
     if (q(m.plaetze, 3) > bestes3) { bestes3 = q(m.plaetze, 3); besterLambda = lambda; }
   }
-
-  // KONTROLLE: derselbe Abzug, aber zufaellig gewaehlte Gegenfragen.
-  const lambdaFuerKontrolle = besterLambda || 0.3;
-  const kontrolle = await miss(satz.queries, zufall, lambdaFuerKontrolle);
-  console.log(`  ${`KONTROLLE zufaellig, l=${lambdaFuerKontrolle}`.padEnd(30)}${p(q(kontrolle.plaetze, 1))}${p(q(kontrolle.plaetze, 3))}${p(q(kontrolle.plaetze, 10))}${decke(kontrolle, satz.queries.length)}`);
-
   const besterLauf = ergebnisse.find((e) => e.lambda === (besterLambda || 0.3))!;
-  const altBest = await miss(einstell.queries, gegen, besterLambda || 0.3);
 
-  console.log('\n  Zum Vergleich, EINSTELL-Satz');
+  // Haelfte B: GENAU EIN Lauf beim eingestellten Lambda, plus die
+  // Zufallskontrolle beim selben Lambda — sonst vergleicht man Aepfel.
+  const lambdaB = besterLambda || 0.3;
+  const bestB = await miss(satz.queries, gegen, lambdaB);
+  const kontrolle = await miss(satz.queries, zufall, lambdaB);
+
+  console.log('\n  Haelfte B (Pruefsatz) — GENAU EIN Bestaetigungslauf');
   console.log('  ────────────────────────────────────────────────────────────────');
-  console.log(`  ${'ohne Gegenauslese'.padEnd(30)}${p(q(grundAlt.plaetze, 1))}${p(q(grundAlt.plaetze, 3))}${p(q(grundAlt.plaetze, 10))}${decke(grundAlt, einstell.queries.length)}`);
-  console.log(`  ${`nach Naehe, lambda=${besterLambda || 0.3}`.padEnd(30)}${p(q(altBest.plaetze, 1))}${p(q(altBest.plaetze, 3))}${p(q(altBest.plaetze, 10))}${decke(altBest, einstell.queries.length)}`);
+  console.log(`  ${'Variante'.padEnd(30)}${'Platz 1'.padStart(9)}${'@3'.padStart(9)}${'@10'.padStart(9)}${'Decke'.padStart(9)}`);
+  zeile('ohne Gegenauslese', grundB, satz.queries.length);
+  zeile(`nach Naehe, lambda=${lambdaB}`, bestB, satz.queries.length);
+  zeile(`KONTROLLE zufaellig, l=${lambdaB}`, kontrolle, satz.queries.length);
 
-  const d3Frisch = q(besterLauf.m.plaetze, 3) - q(grundFrisch.plaetze, 3);
-  const d3Alt = q(altBest.plaetze, 3) - q(grundAlt.plaetze, 3);
-  const d3Zufall = q(kontrolle.plaetze, 3) - q(grundFrisch.plaetze, 3);
-  const deckeFrisch = (besterLauf.m.imTopf / satz.queries.length) * 100;
+  const d3Alt = q(besterLauf.m.plaetze, 3) - q(grundA.plaetze, 3);
+  const d3Frisch = q(bestB.plaetze, 3) - q(grundB.plaetze, 3);
+  const d3Zufall = q(kontrolle.plaetze, 3) - q(grundB.plaetze, 3);
+  const grundFrisch = grundB;
+  const deckeFrisch = (bestB.imTopf / satz.queries.length) * 100;
 
   console.log('\n  Urteil');
   console.log('  ════════════════════════════════════════════════════════════════');
   console.log('  Widerlegt, wenn @3 auf BEIDEN Saetzen um weniger als 2 Punkte steigt,');
   console.log('  ODER die Decke unter 95 Prozent faellt.');
   console.log('');
-  console.log(`  bestes lambda                        ${besterLambda || '(keins besser als 0)'}`);
-  console.log(`  @3 frisch                            ${vz(d3Frisch)} Punkte`);
-  console.log(`  @3 Einstell                          ${vz(d3Alt)} Punkte`);
-  console.log(`  @3 frisch, KONTROLLE zufaellig       ${vz(d3Zufall)} Punkte`);
-  console.log(`  Decke frisch                         ${((grundFrisch.imTopf / satz.queries.length) * 100).toFixed(1)} % → ${deckeFrisch.toFixed(1)} %`);
-  console.log(`  Abzuege im besten Lauf               ${besterLauf.m.abzuege}`);
+  console.log(`  bestes lambda (auf A gewaehlt)       ${besterLambda || '(keins besser als 0)'}`);
+  console.log(`  @3 auf A (eingestellt)               ${vz(d3Alt)} Punkte`);
+  console.log(`  @3 auf B (EINMAL bestaetigt)         ${vz(d3Frisch)} Punkte`);
+  console.log(`  @3 auf B, KONTROLLE zufaellig        ${vz(d3Zufall)} Punkte`);
+  console.log(`  Decke B                              ${((grundFrisch.imTopf / satz.queries.length) * 100).toFixed(1)} % → ${deckeFrisch.toFixed(1)} %`);
+  console.log(`  Abzuege im Bestaetigungslauf B       ${bestB.abzuege}`);
   console.log('');
 
   // Platz 1 wird eigens genannt: der Kandidat kann die SPITZE verbessern und
-  // @3 trotzdem verschlechtern. Wer nur auf @3 sieht, uebersieht das.
-  const d1FrischBest = q(besterLauf.m.plaetze, 1) - q(grundFrisch.plaetze, 1);
+  // @3 trotzdem verschlechtern — Spitze und Breite sind getrennte Mengen.
+  // Wer nur auf @3 sieht, uebersieht das.
+  const d1B = q(bestB.plaetze, 1) - q(grundB.plaetze, 1);
   const bestesPlatz1 = ergebnisse.reduce(
     (b, e) => (q(e.m.plaetze, 1) > q(b.m.plaetze, 1) ? e : b), ergebnisse[0],
   );
-  console.log(`  Platz 1 frisch, bei lambda=${besterLambda || 0.3}          ${vz(d1FrischBest)} Punkte`);
-  console.log(`  Platz 1 frisch, BESTES lambda=${bestesPlatz1.lambda}       ${vz(q(bestesPlatz1.m.plaetze, 1) - q(grundFrisch.plaetze, 1))} Punkte`);
+  console.log(`  Platz 1 auf B, lambda=${lambdaB}            ${vz(d1B)} Punkte`);
+  console.log(`  Platz 1 auf A, BESTES lambda=${bestesPlatz1.lambda}      ${vz(q(bestesPlatz1.m.plaetze, 1) - q(grundA.plaetze, 1))} Punkte`);
   console.log('');
 
   /*
@@ -423,7 +439,7 @@ async function main(): Promise<void> {
    * "Kandidat widerlegt" gegolten. Zeigt der Zaehler null Abzuege, ist nicht
    * der Kandidat widerlegt, sondern das Werkzeug kaputt.
    */
-  if (besterLauf.m.abzuege === 0) {
+  if (bestB.abzuege === 0) {
     console.log('  NICHT GEMESSEN: es wurde kein einziger Abzug vorgenommen.');
     console.log('  Dann greift die Gegenauslese gar nicht, und keine Zahl oben bedeutet etwas.');
     return;

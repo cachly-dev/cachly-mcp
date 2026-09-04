@@ -57,7 +57,9 @@ import { fileURLToPath } from 'node:url';
 // bleibt: gegen den eigenen echten Bestand messen, siehe
 // src/bench/korpus-aus-brain.ts.
 // ─────────────────────────────────────────────────────────────────────────────
-const FLOORS: Record<string, Partial<BenchMetrics>> = {
+// Exportiert fuer das Schwellen-Buch (Karte nvouhp2o4ib8): jede Aenderung
+// dieser Zahlen muss im Buch begruendet werden, sonst wird die Probe rot.
+export const FLOORS: Record<string, Partial<BenchMetrics>> = {
   home: { precisionAt1: 0.67, recallAt3: 0.96, mrr: 0.83, ndcgAt5: 0.87 },
   // external.recallAt3 von 0,93 auf 0,92: der Wortabgleich loest unscharfe
   // Treffer seit dem 19.08.2026 EINMAL je Frage gegen den Gesamtwortschatz auf

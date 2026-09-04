@@ -67,6 +67,10 @@ export const VEKTOR_PRAEFIX = 'cachly:lesson:vec:';
  * rangfolge.ts war deshalb auch gar nicht verdrahtet.
  */
 export const NAME_VEKTOR_PRAEFIX = 'cachly:lesson:vecname:';
+/** Zweitmodell-Vektoren (ZWEIT_MODELL, rangfolge-stellschrauben.ts) —
+ *  gleicher Text wie vec:, anderes Modell. Nie mischen: Vektoren
+ *  verschiedener Modelle sind nicht vergleichbar. */
+export const ZWEIT_VEKTOR_PRAEFIX = 'cachly:lesson:vec2:';
 
 /** Der Text, aus dem der Namensvektor gebildet wird: Trennzeichen zu Wörtern. */
 export function textFuerNamensVektor(topic: string): string {
@@ -237,6 +241,16 @@ export class Vektorbestand {
   }
 
   get groesse(): number { return this.vektoren.size; }
+
+  /** Hat diese Lektion in DIESER Sicht einen Vektor? (Nur der geladene Bestand.) */
+  hat(topic: string): boolean {
+    return this.vektoren.has(`${this.praefix}${topic}`);
+  }
+
+  /** Alle Themen mit Vektor in dieser Sicht — fuer den Abgleich zweier Sichten. */
+  themen(): string[] {
+    return [...this.vektoren.keys()].map((k) => k.slice(this.praefix.length));
+  }
 
   /** Lädt fehlende Vektoren nach. Tut nichts, wenn kürzlich geladen wurde. */
   async aktualisiere(redis: Redis, jetzt = Date.now()): Promise<void> {

@@ -10,7 +10,7 @@ import { safeJsonParse, scanKeys , leseOderNull, darfHeraus } from '../utils.js'
 import { ersparteMinuten, istStarterLektion, zaehltAlsErsparnis } from '../wertbeitrag.js';
 import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
 import { normalisiereZeit, zaehleZeitangaben } from '../zeit-normalisieren.js';
-import { abstentionSatz, beurteileTreffer } from '../abstention.js';
+import { abstentionSatz, alterssatzFuerBelegte, beurteileTreffer, istBelegt } from '../abstention.js';
 import { meldeEinmal, meldeUndVermerke, fehlerText, OHNE_VEKTOREN, OHNE_DIENST, OHNE_FRAGEVEKTOR, SINNPFAD_ABBRUCH, OHNE_SCHREIBVEKTOR } from '../aussetzer.js';
 import { versuchStart, neueKennung, wendeZuteilungAn, schliesseVersuchAb,
          type VersuchProtokollTeil } from '../versuch.js';
@@ -52,13 +52,34 @@ import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rer
 import { computeEmbedding, hasEmbedProvider, EMBED_PROVIDER } from '../embeddings.js';
 import { repariereFelder } from '../feldreparatur.js';
 import {
-  VEKTOR_PRAEFIX, NAME_VEKTOR_PRAEFIX, packe, textFuerVektor, textFuerNamensVektor,
+  VEKTOR_PRAEFIX, NAME_VEKTOR_PRAEFIX, ZWEIT_VEKTOR_PRAEFIX, packe, textFuerVektor, textFuerNamensVektor,
   Vektorbestand,
 } from '../bedeutung.js';
 import { schreibeEingaenge, Eingangsbestand } from '../eingaenge.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { spurLegen } from '../spuren.js';
+import { schlageErsetzungVor } from '../ersetzung-vorschlag.js';
+
+// Themen, deren Volltext-Vektor beim Schreiben scheiterte — Nachtrag beim
+// naechsten Schreiben (Karte hcg8neyut0kd Teil c).
+const VEK_NACHTRAG = 'cachly:vek:nachtrag';
+
+/**
+ * Wie lange die VORFASSUNGEN einer Lektion aufgehoben werden (Karte
+ * aboul7puomq7, aufgeworfen von pm25coder: bei Git ist "was stand hier
+ * vorher" ein git log entfernt — bei uns verfiel es nach 90 Tagen).
+ *
+ * Entscheidung 31.08.2026: EIN JAHR. Begruendung: 49 % unserer Lektionen
+ * sind mindestens einmal ueberschrieben; eine Korrektur, die man nicht
+ * nachlesen kann, ist keine. Die Groesse ist doppelt gedeckelt (100
+ * Eintraege je Thema, TTL) — und die ehrliche Grenze steht dazu: die
+ * Kundeninstanzen laufen mit allkeys-lru; unter Speicherdruck faellt die
+ * Historie VOR den Lektionen, egal welcher TTL hier steht. Richtig so.
+ */
+const VORFASSUNGEN_TAGE = 365;
 import { etikettenFuer, lieferJournalSchluessel, JOURNAL_DECKEL, type Lieferung, type LektionsStand } from '../etiketten.js';
+import { klassifiziereFehlschlag, suchProtokollSchluessel, trichterSchluessel, SUCH_DECKEL, type TrichterSuche } from '../recall-trichter.js';
+import { leiteEntscheidungAb, entscheidungsZeile } from '../entscheidung-ableiten.js';
 import {
   bewerteTopf, spreizeImTopf, reichereAn, inhaltsWoerter, grobStamm, GEWICHTE,
   knapperSiegSatz,
@@ -67,11 +88,16 @@ import {
   pruefeWirkung, werteAus, lehrwert, leiteAb,
   type Wirkungseintrag, type WirkungsEingabe, type LetzterRecall,
 } from '../wirkungsspur.js';
+import { merkeSuchlauf } from "../suchstatistik.js";
+import { schreibeTopfNotiz, topfProtokollAktiv } from "../topf-protokoll.js";
 import {
   SINN_TOPF as STELLSCHRAUBE_SINN_TOPF,
   EINGANG_SCHWELLE as STELLSCHRAUBE_EINGANG_SCHWELLE,
   EINGANG_SORTIER_GEWICHT as STELLSCHRAUBE_EINGANG_SORTIER_GEWICHT,
+  ZWEIT_MODELL, ZWEIT_GEWICHT, ZWEIT_MINDESTDECKUNG, NAHDUPLIKAT_SCHWELLE,
 } from '../rangfolge-stellschrauben.js';
+import { ermittleQuelle, quelleZeile, type LektionsQuelle } from '../herkunft.js';
+import { merkeRecall, sitzungsKosten, vergissSitzungsKosten, kostenZeilen } from '../sitzungs-kosten.js';
 
 /**
  * Ein Vektorbestand fuer den ganzen Prozess.
@@ -83,6 +109,8 @@ import {
 const vektorbestand = new Vektorbestand();
 /** Dieselbe Mechanik, andere Sicht: die Vektoren der Themennamen. */
 const namensbestand = new Vektorbestand(60_000, NAME_VEKTOR_PRAEFIX);
+/** Das Zweitmodell (ZWEIT_MODELL) — sortiert mit, sobald die Deckung reicht. */
+const zweitbestand = new Vektorbestand(60_000, ZWEIT_VEKTOR_PRAEFIX);
 /** Die Fehlertext-Eingaenge, je Lektion ihr bester. Sortiert mit, nominiert nicht. */
 const eingangsbestand = new Eingangsbestand();
 /** Die Wortstatistik des Bestands — stehend, nicht je Frage neu. */
@@ -709,6 +737,7 @@ async function bumpRecallQuota(redis: Redis): Promise<void> {
   }
 }
 
+
 /**
  * Die drei Ausgaenge der Suche — gezaehlt, nicht behauptet.
  *
@@ -761,7 +790,31 @@ async function getRecallGate(instanceId: string, apiFetch: ApiFetch): Promise<Re
   }
 }
 
+/** Lese-Werkzeuge, deren Aufrufe als Gedaechtnis-Kosten der Sitzung zaehlen. */
+const RECALL_WERKZEUGE_FUER_KOSTEN: Record<string, string> = {
+  smart_recall: 'query',
+  recall_best_solution: 'topic',
+  causal_trace: 'problem',
+};
+
 export async function handleBrainTool(
+  name: string,
+  args: Record<string, unknown>,
+  getConnection: GetConnection,
+  apiFetch: ApiFetch,
+): Promise<string | null> {
+  const ergebnis = await handleBrainToolInner(name, args, getConnection, apiFetch);
+  // Karte eutmy0ly93ch: jeder Recall zaehlt — im Prozess, nie in Redis.
+  const feld = RECALL_WERKZEUGE_FUER_KOSTEN[name];
+  if (feld && typeof ergebnis === 'string') {
+    try {
+      merkeRecall(String(args.instance_id ?? ''), String(args[feld] ?? ''), ergebnis.length);
+    } catch { /* Zaehlen darf nie einen Abruf brechen */ }
+  }
+  return ergebnis;
+}
+
+async function handleBrainToolInner(
   name: string,
   args: Record<string, unknown>,
   getConnection: GetConnection,
@@ -788,6 +841,7 @@ export async function handleBrainTool(
         group = '',
         grund = '',
         ersetzt = '',
+        gilt_ab = '',
       } = args as {
         instance_id: string;
         topic: string;
@@ -803,6 +857,7 @@ export async function handleBrainTool(
         author?: string;
         grund?: string;
         ersetzt?: string;
+        gilt_ab?: string;
         visibility?: 'public' | 'team' | 'private';
         service?: string;
         service_kind?: 'service' | 'system';
@@ -855,13 +910,22 @@ export async function handleBrainTool(
        * ERGAENZT, ERSETZT NIE: aus "gestern" wird "gestern (2026-08-26)".
        * Fremde Worte werden nicht umgeschrieben, nur datiert.
        */
-      const what_worked = normalisiereZeit(repariertWorked, jetzt);
-      const what_failed = normalisiereZeit(repariertFailed, jetzt);
-      const ctx = normalisiereZeit(repariertCtx, jetzt);
+      // Bezugspunkt ist das Datum der TATSACHE, wenn der Aufrufer eines
+      // mitgibt (gilt_ab), sonst der Schreibzeitpunkt. Gemessen 03.09.2026 am
+      // LoCoMo-Import: ein Gespraech vom 8. Mai 2023 mit "yesterday" wurde
+      // beim Einlesen auf 2026-09-01 datiert — richtig fuer Live-Notizen,
+      // falsch fuer importierte Historie. Wer alte Gespraeche einliest, gibt
+      // gilt_ab mit, und "yesterday" wird zum 7. Mai 2023.
+      const zeitBezug = gilt_ab && !Number.isNaN(Date.parse(String(gilt_ab)))
+        ? new Date(String(gilt_ab))
+        : jetzt;
+      const what_worked = normalisiereZeit(repariertWorked, zeitBezug);
+      const what_failed = normalisiereZeit(repariertFailed, zeitBezug);
+      const ctx = normalisiereZeit(repariertCtx, zeitBezug);
       const datiert =
-        zaehleZeitangaben(repariertWorked, jetzt) +
-        zaehleZeitangaben(repariertFailed, jetzt) +
-        zaehleZeitangaben(repariertCtx, jetzt);
+        zaehleZeitangaben(repariertWorked, zeitBezug) +
+        zaehleZeitangaben(repariertFailed, zeitBezug) +
+        zaehleZeitangaben(repariertCtx, zeitBezug);
 
       /*
        * ── Der Autor wird HERGELEITET, nicht erwartet ─────────────────────
@@ -897,6 +961,7 @@ export async function handleBrainTool(
           topic, outcome, what_worked, what_failed, context: ctx, severity,
           file_paths, commands, tags, depends_on,
           ...(autorFeld ? { author: autorFeld } : {}),
+          source: ermittleQuelle(),
           ...(service ? { service } : {}),
           ...(group ? { group: String(group).toLowerCase().trim() } : {}),
           visibility, recall_count: 0, ts, confidence: 1.0, version: 3,
@@ -1058,11 +1123,20 @@ export async function handleBrainTool(
         // Auch hier der hergeleitete Name — sonst traegt die gespeicherte
         // Lektion selbst keinen Autor, waehrend der Kausalgraph einen hat.
         ...(autorFeld ? { author: autorFeld } : {}),
+        // Karte y48oajjojklf: WER schrieb — Agent und Konto, nie der Schluessel.
+        source: ermittleQuelle(),
         ...(service ? { service } : {}),
         ...(group ? { group: String(group).toLowerCase().trim() } : {}),
         visibility,
         recall_count: recallCount,
         ...(lastRecalledAt ? { last_recalled_at: lastRecalledAt } : {}),
+        // Karte 4l030ay5xtj9 (Mads Hansen): ab wann die TATSACHE gilt —
+        // etwas anderes als ts (wann sie aufgeschrieben wurde). Fehlt das
+        // Feld, gilt ts. AUSDRUECKLICH KEIN Verfall: Alter im Ranking riss
+        // am 19.08. alle Bench-Floors — relevante Lektionen sind oft alt.
+        ...(gilt_ab && !Number.isNaN(Date.parse(String(gilt_ab)))
+          ? { gilt_ab: new Date(String(gilt_ab)).toISOString() }
+          : {}),
         ts,
         verified_at: outcome === 'success' || outcome === 'partial' ? ts : undefined,
         confidence: 1.0,
@@ -1092,21 +1166,87 @@ export async function handleBrainTool(
         ersetztAltRaw = await redis.get(`cachly:lesson:best:${ersetztZiel}`);
         if (!ersetztAltRaw) {
           ersetztHinweis = `⚠️ Die zu ersetzende Lektion \`${ersetztZiel}\` existiert nicht — der Verweis wurde NICHT gespeichert. Themennamen zeigt \`smart_recall\`.`;
+        } else if (
+          safeJsonParse<{ ersetzt?: string }>(ersetztAltRaw, {}).ersetzt === topic
+        ) {
+          // ── Kein Ring ─────────────────────────────────────────────────
+          // Gemessen 03.09.2026: von 735 Lektionen trugen ZWEI eine Kante,
+          // und die zwei zeigten aufeinander — A ersetzt B, B ersetzt A.
+          // Beide koennen nicht die aktuelle Fassung sein. Ein Ring ist
+          // keine Reihenfolge, und die Verdraengung im Abruf haengt genau
+          // an dieser Reihenfolge: sie wuerde je nach Lesepfad mal die eine
+          // und mal die andere Fassung unterdruecken.
+          ersetztAltRaw = null;
+          ersetztHinweis = `⚠️ \`${ersetztZiel}\` ersetzt bereits \`${topic}\` — zwei Lektionen koennen sich nicht gegenseitig ersetzen. Der Verweis wurde NICHT gespeichert. Wenn diese Fassung die neuere ist: die Kante in \`${ersetztZiel}\` entfernen und danach hier setzen.`;
         } else {
           (lessonObj as Record<string, unknown>).ersetzt = ersetztZiel;
         }
       }
+
+      // ── Der Ersetzungs-Vorschlag (Karte i3zn0u2e1kf8) ───────────────────
+      // 642 Lektionen, 0 gesetzte Kanten: das Feld wird nie benutzt, wenn
+      // niemand daran erinnert. NUR ein Vorschlag mit Beleg, nie Automatik —
+      // eine falsche Kante verdraengt eine richtige Lektion.
+      let ersetzungsVorschlag = '';
+      if (!ersetztZiel) {
+        try {
+          const naheTreffer = (await keywordSearch(
+            redis, ['cachly:lesson:best:*'], `${topic} ${what_worked}`.slice(0, 300), 5,
+          ) as Array<{ key: string; content: string }>)
+            .filter((h) => h.key.startsWith('cachly:lesson:best:'))
+            .map((h) => {
+              const ld = safeJsonParse<{ topic?: string; what_worked?: string }>(h.content, {});
+              return { topic: ld.topic ?? h.key.slice('cachly:lesson:best:'.length), what_worked: ld.what_worked };
+            });
+          ersetzungsVorschlag = schlageErsetzungVor(topic, what_worked, naheTreffer) ?? '';
+        } catch { /* ein Vorschlag darf das Schreiben nie stoeren */ }
+      }
+      // ── Recall-Trichter: WORAN scheiterte es (Karte oy6vyq7egtkj) ──────
+      // Am Schreibzeitpunkt eines Fehlschlags steht alles beisammen: das
+      // Suchprotokoll (mit Schweigen), der Bestand VOR dieser Lektion (der
+      // best-Key wird erst weiter unten geschrieben) und das Thema. Die
+      // Zuordnung ist Heuristik; die VERTEILUNG ueber viele Sessions ist
+      // die Zahl, um die es geht — brain_metrics zeigt sie.
+      if (outcome === 'failure') {
+        try {
+          const suchenRoh = await redis.lrange(suchProtokollSchluessel(instance_id), 0, 199);
+          const suchen = suchenRoh
+            .map((z) => safeJsonParse<TrichterSuche>(z, { ts: '', frage: '', geliefert: [] }))
+            .filter((s) => s.ts !== '');
+          const kandidaten = (await keywordSearch(
+            redis, ['cachly:lesson:best:*'], `${topic} ${what_failed || what_worked}`.slice(0, 300), 5,
+          ) as Array<{ key: string; content: string }>)
+            .filter((h) => h.key.startsWith('cachly:lesson:best:'))
+            .map((h) => {
+              const ld = safeJsonParse<{ topic?: string; what_worked?: string }>(h.content, {});
+              return { topic: ld.topic ?? h.key.slice('cachly:lesson:best:'.length), what_worked: ld.what_worked };
+            });
+          const klasse = klassifiziereFehlschlag(topic, String(what_failed || ''), suchen, kandidaten);
+          await redis.hincrby(trichterSchluessel(instance_id), klasse, 1);
+        } catch { /* eine Messzeile stoppt nie das Schreiben */ }
+      }
+
+      // ── Entscheidungs-Gedaechtnis (WOW #2, Karte a3d59bbfcf52) ─────────
+      // Abgeleitet beim Schreiben, nie geraten: nur woertliche
+      // "entschieden gegen X"-Formen werden zur Entscheidung. Der Recall
+      // zeigt sie als eigene Zeile — ein Kollege, der dabei war.
+      const entscheidung = leiteEntscheidungAb(
+        [what_worked, what_failed, rohCtx].filter(Boolean).join(' ').slice(0, 2000),
+      );
+      if (entscheidung) (lessonObj as Record<string, unknown>).entscheidung = entscheidung;
+
       const lesson = JSON.stringify(lessonObj);
 
       // Metric 1 (time-to-first-recall): mark the moment the Brain first gained
       // knowledge. SET NX so only the very first learn wins. Fire-and-forget.
       redis.set(`cachly:stats:born_at:${instance_id}`, ts, 'EX', 365 * 86400, 'NX').catch(() => {});
 
-      // Always append to the history list (audit log); keep last 100 entries, 90-day TTL
+      // Vorfassungen: letzte 100 je Thema, Aufbewahrung VORFASSUNGEN_TAGE
+      // (Entscheidung und Begruendung an der Konstante).
       const listKey = `cachly:lessons:${topic}`;
       await redis.rpush(listKey, lesson);
       await redis.ltrim(listKey, -100, -1);
-      await redis.expire(listKey, 90 * 86400);
+      await redis.expire(listKey, VORFASSUNGEN_TAGE * 86400);
 
       // Update best key for success/partial; for failure only update if no success exists
       let bestGeschrieben = false;
@@ -1125,7 +1265,15 @@ export async function handleBrainTool(
         try {
           const alt = JSON.parse(ersetztAltRaw) as Record<string, unknown>;
           alt.ersetzt_durch = topic;
+          // Karte 4l030ay5xtj9: die Tatsache der alten Fassung ENDET, wenn
+          // die Korrektur eintrifft — gilt_bis ist ihr Ablaufdatum.
+          (alt as Record<string, unknown>).gilt_bis = ts;
           alt.ersetzt_am = ts;
+          // Karte rekvh30prcet: das Warum wandert MIT auf die alte Seite.
+          // Wer die alte Fassung trifft, liest in einer Zeile, warum sie
+          // fiel — statt einem Verweis blind zu folgen. Ohne grund bleibt
+          // das Feld leer und der Abruf sagt 'Grund nicht erfasst'.
+          if (warumZeile) alt.ersetzt_grund = warumZeile.slice(0, 200);
           await redis.set(`cachly:lesson:best:${ersetztZiel}`, JSON.stringify(alt));
         } catch { /* kaputtes JSON repariert brain_doctor, nicht dieser Pfad */ }
       }
@@ -1150,6 +1298,14 @@ export async function handleBrainTool(
       // Das ist der Preis dafuer, dass Lernen immer funktioniert, auch ohne
       // Netz. Wie viele Lektionen einen Vektor haben, meldet brain_doctor.
       if (bestGeschrieben && hasEmbedProvider()) {
+        // Der Vermerk entsteht SYNCHRON, vor dem fire-and-forget-Block
+        // (0.10.149, Standalone-Beweis 02.09.2026): Die Heilung von
+        // adjacent-2 blieb bei 72 % stehen, weil Lektionen, deren
+        // async-Block der Prozess-Tod nie erreichte, auch keinen
+        // write-ahead-Vermerk hatten — unvermerkt heisst unheilbar.
+        // Ab hier gilt: gespeicherte Lektion => Vermerk steht, bis der
+        // Vektor nachweislich geschrieben ist (srem im Erfolgspfad).
+        await redis.sadd(VEK_NACHTRAG, topic).catch(() => { /* still */ });
         void (async () => {
           const gelesen = safeJsonParse(lesson, {} as Record<string, unknown>);
           try {
@@ -1157,8 +1313,30 @@ export async function handleBrainTool(
             // Client ein 429-Fenster absitzen und Netz-Blips wiederholen,
             // statt die Lektion dauerhaft ohne Vektor zu lassen (Beleg
             // 26.08.2026: ein einzelnes "fetch failed" im LoCoMo-Smoke).
+            // Der Vermerk steht bereits — SYNCHRON gesetzt, bevor dieser
+            // Block ueberhaupt eingeplant wurde (siehe oben). Nach Erfolg
+            // wird er ausgetragen.
             const v = await computeEmbedding(textFuerVektor(gelesen), { geduld: 'lang' });
-            if (v?.length) await redis.set(`${VEKTOR_PRAEFIX}${topic}`, packe(v));
+            if (v?.length) {
+              await redis.set(`${VEKTOR_PRAEFIX}${topic}`, packe(v));
+              await redis.srem(VEK_NACHTRAG, topic).catch(() => { /* still */ });
+            }
+            // Das Zweitmerkmal (rangfolge-stellschrauben.ts): derselbe Text
+            // durch ZWEIT_MODELL, eigener Schluesselraum. Nur die Anbieter
+            // cachly/ollama koennen ein abweichendes Modell anfragen — bei
+            // allen anderen bleibt vec2 leer, und der Lesepfad laesst das
+            // Merkmal wegen ZWEIT_MINDESTDECKUNG von selbst aus. Ein Fehler
+            // hier kostet nur das Zweitmerkmal, nie den Erstvektor.
+            if (EMBED_PROVIDER === 'cachly' || EMBED_PROVIDER === 'ollama') {
+              try {
+                const v2 = await computeEmbedding(textFuerVektor(gelesen), { geduld: 'lang', modell: ZWEIT_MODELL });
+                if (v2?.length) await redis.set(`${ZWEIT_VEKTOR_PRAEFIX}${topic}`, packe(v2));
+              } catch {
+                // Selbstheilend: der naechste Schreib- oder Nachrechenlauf
+                // fuellt die Luecke; der Lesepfad bleibt bis dahin beim
+                // Fuenf-Merkmal-Stand dieser Instanz.
+              }
+            }
           } catch (e) {
             // Kein Vektor ist besser als keine Lektion — aber der GRUND darf
             // nicht verlorengehen. Vor dem 22.08.2026 stand hier ein leeres
@@ -1167,6 +1345,12 @@ export async function handleBrainTool(
             // Seit 26.08. DAUERHAFT vermerkt (Karte hcg8neyut0kd): meldeEinmal
             // lebte nur im Prozess-Speicher — nach jedem Neustart war der
             // Grund weg, und brain_doctor zaehlte Luecken ohne Warum.
+            // Karte hcg8neyut0kd Teil (c): das Thema wird ZUERST vermerkt
+            // (der Nachtrag ist wichtiger als die Meldung — wirft die
+            // Meldung, darf der Vermerk nicht mit ihr sterben) und beim
+            // naechsten Schreiben nachgebettet. Vorher blieb die Luecke
+            // fuer immer (drei Kundeninstanzen, monatelang).
+            await redis.sadd(VEK_NACHTRAG, topic).catch(() => { /* still */ });
             await meldeUndVermerke(redis, OHNE_SCHREIBVEKTOR,
               `Volltext-Vektor nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
               + ' — die Lektion ist gespeichert, der Bedeutungsabgleich uebergeht sie.');
@@ -1205,6 +1389,10 @@ export async function handleBrainTool(
               `Eingaenge nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
               + ' — siehe oben, die Lektion selbst ist gespeichert.');
           }
+
+          // ── Der Nachtrag (Karte hcg8neyut0kd Teil c, seit 02.09.2026 als
+          // eigene Funktion, damit auch der LESEpfad heilt) ─────────────────
+          await heileVektorNachtrag(redis, topic, 3);
         })();
       }
 
@@ -1444,8 +1632,11 @@ export async function handleBrainTool(
         depends_on.length > 0
           ? `🔗 Depends on: ${depends_on.map(d => `\`${d}\``).join(', ')} → trace with \`trace_dependency\``
           : '',
+        ersetzungsVorschlag,
         ersetztAltRaw && bestGeschrieben
-          ? `↷ Ersetzt \`${ersetztZiel}\` — die alte Fassung wird im Abruf verdraengt und nennt ihre Nachfolgerin.`
+          ? warumZeile
+            ? `↷ Ersetzt \`${ersetztZiel}\` — die alte Fassung wird im Abruf verdraengt und nennt ihre Nachfolgerin samt Grund.`
+            : `↷ Ersetzt \`${ersetztZiel}\` — die alte Fassung wird im Abruf verdraengt und nennt ihre Nachfolgerin. Ohne \`grund\` steht dort 'Grund nicht erfasst' — eine Zeile (warum die alte falsch war) macht den Verweis pruefbar.`
           : ersetztHinweis,
         ...templateWarnings,
         ...iWasWrongWarning,
@@ -1539,6 +1730,8 @@ export async function handleBrainTool(
     }
 
     case 'recall_best_solution': {
+      // Startzeit fuer die Suchstatistik des Dashboards (merkeSuchlauf).
+      const rbsStart = Date.now();
       const { instance_id, topic, author: rbsAuthor } = args as {
         instance_id: string; topic: string; author?: string;
       };
@@ -1626,23 +1819,46 @@ export async function handleBrainTool(
         const confidence = calculateConfidence(lesson);
         const ref = lesson.verified_at ?? lesson.ts;
         const ageDays = (Date.now() - new Date(ref).getTime()) / 86400000;
-        const badge = confidenceBadge(confidence, ageDays);
+        // Der erste gespeicherte Befehl ist der Pruefbefehl: bei
+        // Betriebslektionen steht dort der Aufruf, der die Behauptung
+        // nachweist. Er wird nur GEZEIGT, nie ausgefuehrt.
+        const probe = (lesson as { commands?: unknown }).commands;
+        const badge = confidenceBadge(
+          confidence, ageDays,
+          Array.isArray(probe) && typeof probe[0] === 'string' ? probe[0] : undefined,
+        );
 
-        // Recall resets verified_at (confidence clock restart) and stamps
-        // last_recalled_at so the recall-quality dashboard can measure recency.
+        // ── Lesen ist kein Pruefen ────────────────────────────────────────
+        //
+        // Bis zum 04.09.2026 setzte jeder Abruf `verified_at` auf jetzt und
+        // `confidence` auf 1,0. Das Feld heisst "geprueft" und wurde von
+        // einer Handlung gesetzt, die nichts nachprueft: etwas zu lesen macht
+        // es nicht wahr.
+        //
+        // Gemessen am eigenen Bestand: 471 von 735 Lektionen (64,1 %) trugen
+        // ein `verified_at`, das NACH dem Schreibdatum lag — ihre Frische kam
+        // vom Lesen. 120 davon waeren nach Alter ueberholt gewesen und
+        // standen auf gruen. Das Medianalter des Bestands sah dadurch 14 statt
+        // 21 Tage alt aus.
+        //
+        // Jetzt zaehlt der Abruf nur noch sich selbst. `verified_at` bleibt,
+        // was es behauptet: der Zeitpunkt, an dem die Lektion zuletzt
+        // GESCHRIEBEN oder wirklich nachgeprueft wurde. calculateConfidence
+        // faellt ohne das Feld auf `ts` zurueck, also auf das Schreibdatum.
         const recalledAt = new Date().toISOString();
         const updatedLesson = {
           ...lesson,
           recall_count: (lesson.recall_count ?? 0) + 1,
-          verified_at: recalledAt,
           last_recalled_at: recalledAt,
-          confidence: 1.0,
         };
         await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
 
         // A targeted lookup is a recall too, and costs the same one quota unit
         // as a broad smart_recall — the user asked the brain a question either way.
         void bumpRecallQuota(redis);
+        // Ein gezielter Griff ist auch eine Suche und gehoert in dieselbe
+        // Statistik — sonst zeigt das Dashboard weniger, als stattgefunden hat.
+        void merkeSuchlauf(redis, String(topic ?? ''), Date.now() - rbsStart);
 
         // Track estimated time saved (30m minor · 60m major · 240m critical).
         // Nur der ERSTE Abruf zaehlt, und der Startvorrat gar nicht — die
@@ -1710,6 +1926,9 @@ export async function handleBrainTool(
           ? ` (am ${(lesson as { ersetzt_am?: string }).ersetzt_am!.slice(0, 10)})`
           : '';
         const nachfolgerDa = ersetztDurch ? await redis.get(`cachly:lesson:best:${ersetztDurch}`) : null;
+        // Karte rekvh30prcet: der Grund der Ersetzung steht AM Verweis.
+        const ersetztGrund = String((lesson as { ersetzt_grund?: string }).ersetzt_grund ?? '').trim();
+        const ersetztGrundText = ersetztGrund ? ` Grund: ${ersetztGrund}` : ' Grund nicht erfasst.';
         // Karte pguy341m6u7s ("persistence is not permission"): ein PRIVATER
         // Nachfolger darf hier weder beim Namen genannt noch als Abrufziel
         // ausgewiesen werden — der Banner leakte sonst Existenz + Topic und
@@ -1726,15 +1945,31 @@ export async function handleBrainTool(
           ? nachfolgerDa
             ? nachfolgerPrivat
               ? `🚫 **DIESE FASSUNG IST ERSETZT**${ersetztAmText} — die Nachfolge-Lektion ist nicht team-sichtbar (privat). Der Text unten bleibt als Vorgeschichte lesbar; die gueltige Fassung kennt ihr Autor.`
-              : `🚫 **DIESE FASSUNG IST ERSETZT**${ersetztAmText} — die gueltige Antwort steht in \`recall_best_solution(topic="${ersetztDurch}")\`. Der Text unten bleibt als Vorgeschichte lesbar.`
+              : `🚫 **DIESE FASSUNG IST ERSETZT**${ersetztAmText} — die gueltige Antwort steht in \`recall_best_solution(topic="${ersetztDurch}")\`.${ersetztGrundText} Der Text unten bleibt als Vorgeschichte lesbar.`
             : `⚠️ **ERSETZT-VERWEIS INS LEERE**${ersetztAmText} — der Nachfolger \`${ersetztDurch}\` wurde inzwischen geloescht. Diese Fassung gilt wieder als beste VORHANDENE Antwort; bei Gelegenheit neu bestaetigen (learn_from_attempts mit grund).`
+          : '';
+
+        // Karte 4l030ay5xtj9: gilt_ab ist eine Aussage ueber die TATSACHE,
+        // kein Abschlag auf das Alter. Eine abgelaufene Tatsache (gilt_bis
+        // in der Vergangenheit) wird laut markiert, bleibt aber lesbar.
+        const giltAb = (lesson as { gilt_ab?: string }).gilt_ab;
+        const giltBis = (lesson as { gilt_bis?: string }).gilt_bis;
+        const giltZeile = giltAb ? `📅 Gilt seit ${String(giltAb).slice(0, 10)}.` : '';
+        const ent = (lesson as { entscheidung?: { gegen: string; grund?: string | null } }).entscheidung;
+        const entZeile = ent?.gegen ? entscheidungsZeile({ gegen: ent.gegen, grund: ent.grund ?? null }) : '';
+        const abgelaufen = giltBis && Date.parse(String(giltBis)) < Date.now()
+          ? `⏳ **DIESE TATSACHE GALT BIS ${String(giltBis).slice(0, 10)}** — sie ist Geschichte, keine aktuelle Auskunft.`
           : '';
 
         return [
           ersetztBanner,
+          abgelaufen,
+          giltZeile,
+          entZeile,
           rememberWhen,
           trustBadge,
           `${badge} **Best solution for \`${topic}\`** ${sevEmoji}${lesson.severity ? ` (${lesson.severity})` : ''} · recalled ${updatedLesson.recall_count}×`,
+          quelleZeile((lesson as { author?: string }).author, (lesson as { source?: LektionsQuelle }).source),
           ``,
           // what_worked may be empty for unresolved failure lessons (the API
           // accepts empty what_worked when outcome=failure) — skip the line.
@@ -1771,19 +2006,24 @@ export async function handleBrainTool(
         return `📭 No lessons found for \`${topic}\`. Use \`learn_from_attempts\` after solving it.`;
       }
 
-      // Return all partial matches
+      // Return all partial matches — 400 statt 200 Zeichen (03.09.2026,
+      // Bench-Zelle ts-retry-cap): der Schnitt traf die Entscheidung mitten
+      // im Satz, das Modell verwarf den halben Hinweis. Dieselbe Klasse wie
+      // die 220-Kappung im Kompakt-Modus (0.10.157).
       const results: string[] = [];
       for (const k of matching.slice(0, 5)) {
         const raw = await redis.get(k);
         if (!raw) continue;
         const lesson = safeJsonParse(raw, null as null | { topic: string; what_worked: string; context?: string; ts: string });
         if (!lesson) continue;
-        results.push(`**\`${lesson.topic}\`** — ${lesson.what_worked.slice(0, 200)}`);
+        results.push(`**\`${lesson.topic}\`** — ${lesson.what_worked.slice(0, 400)}${lesson.what_worked.length > 400 ? ' …' : ''}`);
       }
       return `🔍 **Partial matches for \`${topic}\`:**\n\n${results.join('\n\n')}`;
     }
 
     case 'smart_recall': {
+      // Startzeit fuer die Suchstatistik des Dashboards (merkeSuchlauf).
+      const suchStart = Date.now();
       const {
         instance_id,
         query,
@@ -1796,6 +2036,12 @@ export async function handleBrainTool(
         : [];
 
       const redis = await getConnection(instance_id);
+
+      // Lesend heilen (Karte 8jnckd2stesi): eine Instanz, in die niemand mehr
+      // schreibt, blieb bis zum 02.09.2026 dauerhaft blind — der Nachtrag
+      // wurde nur im Schreibpfad abgearbeitet. Fire-and-forget und begrenzt;
+      // die Antwort dieser Anfrage wartet nie auf die Heilung.
+      void heileVektorNachtrag(redis, undefined, 2);
 
       // Team-level visibility scopes: resolve the requester's group memberships +
       // admin status once, so group-scoped lessons only surface for members/admins.
@@ -1875,6 +2121,27 @@ export async function handleBrainTool(
           await namensbestand.aktualisiere(redis);
           await eingangsbestand.aktualisiere(redis);
           await seltenheitsbestand.aktualisiere(redis);
+
+          // Das Zweitmerkmal (rangfolge-stellschrauben.ts): erst ab
+          // ZWEIT_MINDESTDECKUNG — die Schwelle erzwingt die
+          // Einbau-Reihenfolge "Schreibpfad, Bestand, DANN Lesepfad" im Code.
+          // Die Frage-Einbettung startet hier und laeuft PARALLEL zum
+          // Topf-Bau weiter unten; ein Fehler des Zweitmodells kostet nur
+          // das Merkmal, nie den Recall (.catch -> null).
+          await zweitbestand.aktualisiere(redis);
+          const zweitDeckung = vektorbestand.groesse > 0 ? zweitbestand.groesse / vektorbestand.groesse : 0;
+          // Karte cgf6kcyrg02s, Schritt 'Bestand nachrechnen': Lektionen aus
+          // der Zeit VOR dem Zweitmodell haben einen Erstvektor, aber keinen
+          // zweiten — und der Heiler oben sieht nur Erstvektor-Luecken. Ohne
+          // diesen Pfad bliebe das Merkmal fuer jede aeltere Instanz fuer immer
+          // unter ZWEIT_MINDESTDECKUNG, also aus. Drei je Abruf, nie blockierend:
+          // eine Instanz, die gelesen wird, rechnet sich beim Lesen nach.
+          if (zweitDeckung < ZWEIT_MINDESTDECKUNG && vektorbestand.groesse > 0) {
+            void heileZweitVektoren(redis, 3);
+          }
+          const zweitFrageVersprechen = zweitDeckung >= ZWEIT_MINDESTDECKUNG
+            ? computeEmbedding(query, { modell: ZWEIT_MODELL }).catch(() => null)
+            : null;
 
           const wortThemen = kwMatches
             .filter((m) => m.key.startsWith('cachly:lesson:best:'))
@@ -2004,6 +2271,19 @@ export async function handleBrainTool(
             punkte = punkte.map((pkt, i) => pkt + EINGANG_SORTIER_GEWICHT * gespreizt[i]);
           }
 
+          // Der zweite Zeuge: Naehe im Zweitmodell, additiv und gespreizt wie
+          // die Tuer. Dreifach bestaetigt (Zahlen an ZWEIT_MODELL in
+          // rangfolge-stellschrauben.ts); steht NACH der spitzenAbstand-
+          // Messung, weil die Ablehnschwelle auf den fuenf alten Merkmalen
+          // eingestellt und bestaetigt wurde — genau wie die Tuer.
+          if (zweitFrageVersprechen) {
+            const fv2 = await zweitFrageVersprechen;
+            if (fv2?.length) {
+              const gespreizt = spreizeImTopf(topf.map((t) => zweitbestand.naehe(fv2, t)));
+              punkte = punkte.map((pkt, i) => pkt + ZWEIT_GEWICHT * gespreizt[i]);
+            }
+          }
+
           const reihenfolge = topf
             .map((t, i) => ({ t, p: punkte[i] }))
             .sort((a, b) => b.p - a.p)
@@ -2027,6 +2307,22 @@ export async function handleBrainTool(
           // Alles, was kein Thema war (Kontexteintraege, Index), bleibt hinten
           // erhalten statt still zu verschwinden.
           sortiert.push(...bekannt.values());
+
+          // Nur bei eingeschaltetem Messlauf (CACHLY_TOPF_PROTOKOLL). Schreibt
+          // auf, WER ueberhaupt bewertet wurde — die Frage des Oekologen aus
+          // Naturworkshop 6: der Topf ist ein endlicher Raum, und wir haben nie
+          // gemessen, ob das entscheidende Stueck ihn ueberhaupt erreicht.
+          if (topfProtokollAktiv) {
+            schreibeTopfNotiz({
+              frage: query.slice(0, 200),
+              themen: topf,
+              ausWortsuche: wortThemen.length,
+              ausSinnsuche: sinnThemen.length,
+              obergrenze: SINN_TOPF,
+              gezeigt: reihenfolge.slice(0, 10),
+            });
+          }
+
           sinnAngewandt = true;
           return sortiert;
         } catch (e) {
@@ -2054,6 +2350,10 @@ export async function handleBrainTool(
 
       // One quota unit for this call, regardless of how many lessons it surfaced.
       void bumpRecallQuota(redis);
+      // Und die Zahlen, die das Dashboard anzeigt. Bis zum 03.09.2026 schrieb
+      // sie nur der gRPC-Pfad; ein Konto mit 3.467 Abrufen sah deshalb
+      // "0 Suchen".
+      void merkeSuchlauf(redis, String(query ?? ''), Date.now() - suchStart);
 
       // ── Das Liefer-Journal (Karte kdqyy5syhxqn) ───────────────────────
       // Was wurde wann herausgegeben — die Grundlage der drei mechanischen
@@ -2071,6 +2371,23 @@ export async function handleBrainTool(
             const k = lieferJournalSchluessel(instance_id);
             await redis.lpush(k, JSON.stringify(zeile));
             await redis.ltrim(k, 0, JOURNAL_DECKEL - 1);
+          })().catch(() => { /* Messzeile stoppt nie die Antwort */ });
+        }
+
+        // ── Suchprotokoll fuer den Recall-Trichter (Karte oy6vyq7egtkj) ──
+        // Anders als das Liefer-Journal schreibt es auch das SCHWEIGEN mit:
+        // "gesucht, nichts geliefert" ist eine eigene Fehlerklasse
+        // (Nominierung) und darf nicht mit "nie gesucht" verschmelzen.
+        {
+          const suche: TrichterSuche = {
+            ts: new Date().toISOString(),
+            frage: query.slice(0, 200),
+            geliefert,
+          };
+          void (async () => {
+            const k = suchProtokollSchluessel(instance_id);
+            await redis.lpush(k, JSON.stringify(suche));
+            await redis.ltrim(k, 0, SUCH_DECKEL - 1);
           })().catch(() => { /* Messzeile stoppt nie die Antwort */ });
         }
       }
@@ -2114,7 +2431,10 @@ export async function handleBrainTool(
           if (lesson?.state === 'archived') continue;
           if (lesson) {
             const recalledAt = new Date().toISOString();
-            const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, verified_at: recalledAt, last_recalled_at: recalledAt };
+            // Lesen ist kein Pruefen — `verified_at` bleibt unangetastet.
+            // Begruendung und Zahlen stehen an der gleichen Stelle in
+            // recall_best_solution.
+            const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, last_recalled_at: recalledAt };
             redis.set(m.key, JSON.stringify(updated)).catch(() => {});
             // Nur der ERSTE Abruf zaehlt — siehe wertbeitrag.ts. Diese
             // Schleife lief ueber bis zu FUENF Lektionen je Aufruf und schrieb
@@ -2126,11 +2446,15 @@ export async function handleBrainTool(
 
             // Metric 3 (team-knowledge-reuse): a recall of a lesson authored by
             // someone OTHER than the requester is cross-author reuse — the value
-            // only cachly delivers. Track total proven recalls + cross-author ones.
-            redis.incr(`cachly:stats:recalls_total:${instance_id}`).catch(() => {});
+            // only cachly delivers. GEZAEHLT WIRD NACH DER SCHLEIFE, EINMAL JE
+            // ABRUF (03.09.2026): bis hierher lief `incr` INNERHALB der Schleife
+            // ueber bis zu fuenf Treffer, und das Dashboard zeigte 7.306
+            // "Recalls" neben 2.628 auf der Startseite. Dieselbe Fehlerklasse
+            // wie die Ersparnis-Rechnung eine Ebene darueber (wertbeitrag.ts)
+            // und wie PR #158: eine Schleife inkrementiert einen Zaehler, der
+            // ein Ereignis meint.
             if (lesson.author && requester && lesson.author !== requester) {
               crossAuthorThisCall++;
-              redis.incr(`cachly:stats:cross_author_recalls:${instance_id}`).catch(() => {});
               redis.sadd(`cachly:stats:reuse_pairs:${instance_id}`, `${requester}<-${lesson.author}`).catch(() => {});
               // W5: wire person↔person CKG collaborates edges from knowledge-reuse events.
               // This feeds brain_collab_pairs and enriches brain_who_knows with reuse-based edges.
@@ -2169,6 +2493,18 @@ export async function handleBrainTool(
       // and inflate every TTFR percentile derived from it.
       if (successRecallsThisCall > 0) {
         redis.set(`cachly:stats:first_recall_at:${instance_id}`, new Date().toISOString(), 'EX', 365 * 86400, 'NX').catch(() => {});
+      }
+
+      // EIN Abruf, EINE Zaehlung (03.09.2026). Ein Abruf, der Lektionen
+      // geliefert hat, zaehlt einmal — egal wie viele Treffer er zeigte. Und
+      // ein Abruf, in dem mindestens eine fremde Lektion stand, zaehlt einmal
+      // als geteiltes Wissen. Nur so bedeutet "Knowledge reuse" einen Anteil
+      // von Abrufen und nicht ein Verhaeltnis zweier Trefferzahlen.
+      if (lessonMatches.length > 0) {
+        redis.incr(`cachly:stats:recalls_total:${instance_id}`).catch(() => {});
+        if (crossAuthorThisCall > 0) {
+          redis.incr(`cachly:stats:cross_author_recalls:${instance_id}`).catch(() => {});
+        }
       }
 
       // ── Layer 2: Semantic search (parallel, optional) ────────────────────────
@@ -2352,18 +2688,32 @@ export async function handleBrainTool(
        * dem Mischen ein stilles Verschlucken geworden (Gegenprobe im Test).
        */
       const ersetzungsNotizen: string[] = [];
+      // Karte 4l030ay5xtj9: eine Tatsache mit gilt_bis in der Vergangenheit
+      // wird nicht mehr als AKTUELL angeboten — die Notiz sagt es, der
+      // Treffer bleibt auffindbar. KEIN Ranking-Eingriff (Alter im Ranking
+      // riss am 19.08. alle Bench-Floors).
+      for (const r of hybridResults) {
+        if (!r.key.startsWith('cachly:lesson:best:')) continue;
+        const ld = safeJsonParse<{ gilt_bis?: string }>(r.content, {});
+        if (ld.gilt_bis && Date.parse(String(ld.gilt_bis)) < Date.now()) {
+          ersetzungsNotizen.push(
+            `⏳ \`${r.key.replace('cachly:lesson:best:', '')}\` galt bis ${String(ld.gilt_bis).slice(0, 10)} — Geschichte, keine aktuelle Tatsache.`,
+          );
+        }
+      }
       {
         const daKeys = new Set(hybridResults.map((r) => r.key));
         for (let i = hybridResults.length - 1; i >= 0; i--) {
           const r = hybridResults[i];
           if (!r.key.startsWith('cachly:lesson:best:')) continue;
-          const ld = safeJsonParse<{ ersetzt_durch?: string; ersetzt_am?: string }>(r.content, {});
+          const ld = safeJsonParse<{ ersetzt_durch?: string; ersetzt_am?: string; ersetzt_grund?: string }>(r.content, {});
           if (!ld.ersetzt_durch) continue;
+          const grundText = String(ld.ersetzt_grund ?? '').trim();
           const altThema = r.key.replace('cachly:lesson:best:', '');
           if (daKeys.has(`cachly:lesson:best:${ld.ersetzt_durch}`)) {
             hybridResults.splice(i, 1);
             ersetzungsNotizen.push(
-              `↷ \`${altThema}\` verdraengt — ersetzt durch \`${ld.ersetzt_durch}\`${ld.ersetzt_am ? ` am ${ld.ersetzt_am.slice(0, 10)}` : ''}`,
+              `↷ \`${altThema}\` verdraengt — ersetzt durch \`${ld.ersetzt_durch}\`${ld.ersetzt_am ? ` am ${ld.ersetzt_am.slice(0, 10)}` : ''}${grundText ? ` — Grund: ${grundText}` : ' — Grund nicht erfasst'}`,
             );
           } else if (await redis.get(`cachly:lesson:best:${ld.ersetzt_durch}`)) {
             // Karte pguy341m6u7s: ein privater Nachfolger wird NICHT beim
@@ -2394,12 +2744,79 @@ export async function handleBrainTool(
         }
       }
 
+      /*
+       * ── Beinahe-Duplikate benennen, nicht aufloesen (01.09.2026) ─────────
+       *
+       * Die Ersetzungs-Mechanik oben greift nur bei EXPLIZITEM Verweis
+       * (ersetzt_durch) oder Ablaufdatum (gilt_bis). Zwei fast gleiche
+       * Eintraege ohne Verweis — der haeufigste Fall, wenn ein Fakt neu
+       * gelernt wird, ohne den alten zu kennen — standen bis heute
+       * unkommentiert nebeneinander, und der Leser hat geraten.
+       *
+       * Der Hinweis nennt beide mit Datum und WAEHLT NICHT: neuer heisst
+       * nicht gueltiger (Zeitstempel-Falle), aber wer beide Daten sieht,
+       * kann pruefen statt raten. Verglichen werden nur die ANGEZEIGTEN
+       * Treffer (kleines Fenster, quadratischer Vergleich bleibt billig),
+       * ueber die vorhandenen Volltext-Vektoren des Bestands.
+       */
+      const nahduplikatNotizen: string[] = [];
+      {
+        // Selbstversorgend: der Bestand hat einen 60-s-Zwischenspeicher —
+        // im Normalfall ist das ein No-op, im Nur-Wort-Pfad (kein
+        // Einbettungsdienst fuer die FRAGE, aber Vektoren im Bestand) laedt
+        // es die Vektoren, ohne die der Vergleich stumm bliebe.
+        await vektorbestand.aktualisiere(redis).catch(() => {});
+        const fenster = hybridResults.slice(0, 8).filter((r) => r.key.startsWith('cachly:lesson:best:'));
+        for (let i = 0; i < fenster.length; i++) {
+          for (let j = i + 1; j < fenster.length; j++) {
+            const a = fenster[i].key.replace('cachly:lesson:best:', '');
+            const b = fenster[j].key.replace('cachly:lesson:best:', '');
+            const va = vektorbestand.rohvektor(a);
+            const vb = vektorbestand.rohvektor(b);
+            if (!va || !vb) continue;
+            let s = 0; let na = 0; let nb = 0;
+            for (let k = 0; k < va.length; k++) { s += va[k] * vb[k]; na += va[k] * va[k]; nb += vb[k] * vb[k]; }
+            const naehe = na > 0 && nb > 0 ? s / (Math.sqrt(na) * Math.sqrt(nb)) : 0;
+            if (naehe < NAHDUPLIKAT_SCHWELLE) continue;
+            const tsVon = (inhalt: string | undefined): string => {
+              const ld = safeJsonParse<{ ts?: string; verified_at?: string }>(inhalt ?? '', {});
+              return String(ld.verified_at ?? ld.ts ?? '').slice(0, 10) || 'ohne Datum';
+            };
+            nahduplikatNotizen.push(
+              `⚠️ \`${a}\` (${tsVon(fenster[i].content)}) und \`${b}\` (${tsVon(fenster[j].content)}) sagen fast dasselbe — `
+              + 'prueft, welche Fassung fuer euren Fall gilt; die neuere ist nicht automatisch die richtige.',
+            );
+          }
+        }
+        if (nahduplikatNotizen.length > 3) nahduplikatNotizen.length = 3;
+      }
+      ersetzungsNotizen.push(...nahduplikatNotizen);
+
       // ── Versuch (Messtechnik, siehe versuch.ts) ───────────────────────────────
       //
       // Standardmaessig AUS: `versuchStart()` gibt dann `null` zurueck, und
       // dieser ganze Block tut nichts — `hybridResults` bleibt unangetastet,
       // nichts wird nach Redis geschrieben, kein Zeichen im Text aendert sich.
       // Erst mit `CACHLY_VERSUCH=an` UND gesetztem Salz greift die Zuteilung.
+      // ── Karte 0u9s8qoopwhr: Rang-Abstand festhalten ─────────────────────
+      // Mit wachsendem Bestand ruecken die Punktzahlen zusammen, bis die
+      // Reihenfolge kein Signal mehr traegt — nichts wird rot, die Antworten
+      // werden nur schlechter (Mudassir Khan, 02.09.2026: "score spread is
+      // the one people skip"). Festgehalten wird der Abstand zwischen Rang 1
+      // und Rang 5 (oder dem letzten Treffer); brain_doctor mittelt ueber die
+      // letzten 200 Abrufe. Ein Schreibvorgang je Abruf, nie blockierend.
+      if (hybridResults.length >= 2) {
+        const erster = hybridResults[0].hybridScore;
+        const fuenfter = hybridResults[Math.min(4, hybridResults.length - 1)].hybridScore;
+        const abstand = Math.max(0, erster - fuenfter);
+        void (async () => {
+          try {
+            await redis.lpush('cachly:recall:spread', JSON.stringify({ ts: new Date().toISOString(), spread: Number(abstand.toFixed(4)), n: hybridResults.length }));
+            await redis.ltrim('cachly:recall:spread', 0, 199);
+          } catch { /* die Kennzahl darf nie einen Abruf brechen */ }
+        })();
+      }
+
       const versuchSalz = versuchStart();
       let versuchKennung = '';
       let versuchTeil: VersuchProtokollTeil | null = null;
@@ -2441,7 +2858,38 @@ export async function handleBrainTool(
       // only in a comment while the branch said `? 0 :` and returned nothing.
       const gateActive = recallGate.reached;
       const tiefe = recallTiefe({ ueberLimit: gateActive, gesamt: hybridResults.length, volleTiefe: TIEFE_VOLL });
-      const visibleCount = tiefe.sichtbar;
+      // Kompakt-Modus (CACHLY_RECALL_COMPACT=1, 02.09.2026): Bench-Sitzungen
+      // trugen ~24.000 Zeichen Werkzeugtext je Sitzung, in JEDER Folgerunde
+      // neu gesendet — 210.000 Input-Token gegen 40.000 ohne Gedaechtnis. Der
+      // Modus zeigt die drei besten Treffer ohne Score-Prosa, ohne Beleg-
+      // Statistik und ohne Feedback-Bitte. Rangfolge und Abstention bleiben
+      // unveraendert; nur die Darstellung wird schmaler.
+      // Fuenf statt drei Treffer (Widerlegungsauftrag 02.09.2026, Einwand 3):
+      // die Bench wertet den TEXT der Antwort, und aus den Aufzeichnungen
+      // laesst sich der Gold-Rang nicht rekonstruieren — fuenf halbiert das
+      // Risiko eines Treffers auf Rang 4/5 und spart trotzdem gut ein Drittel.
+      const kompakt = process.env.CACHLY_RECALL_COMPACT === '1';
+      // Wie viele Treffer der Kompakt-Modus zeigt. Fuenf ist die Voreinstellung;
+      // CACHLY_RECALL_COMPACT_HITS setzt sie um, begrenzt auf 1 bis 20.
+      //
+      // Warum das verstellbar wurde (03.09.2026): Gemessen an den Mitschriften
+      // beider Bench-Laeufe sieht eine Antwort im teuren Stand 15,7 verschiedene
+      // Sitzungen, im schlanken nur 6,3 — und in vier von zehn Zellen kommt gar
+      // kein Stueck der richtigen Sitzung an. Das ist der groesste gemessene
+      // Einzelposten. 86 % der gezeigten Stuecke stammen ohnehin aus je eigener
+      // Sitzung, die Vielfalt ist also ausgereizt; es fehlt schlicht Menge.
+      //
+      // Der Preis ist gerechnet, nicht geschaetzt: ein Treffer kostet 400
+      // Zeichen Vorschau, also rund 100 Token. Fuenf zusaetzliche Treffer sind
+      // 500 Token je Abruf — bei 68.329 Token je Bench-Zelle unter einem
+      // Prozent. Die Vorschaulaenge bleibt bei 400 und wird ausdruecklich NICHT
+      // angetastet: kuerzere Vorschau ist gemessen und verworfen (bei 3 von 11
+      // unloesbaren Zellen stand die Tatsache bei Zeichen 288 bis 370).
+      const kompaktTreffer = (() => {
+        const roh = Number.parseInt(process.env.CACHLY_RECALL_COMPACT_HITS ?? '', 10);
+        return Number.isFinite(roh) ? Math.min(20, Math.max(1, roh)) : 5;
+      })();
+      const visibleCount = kompakt ? Math.min(kompaktTreffer, tiefe.sichtbar) : tiefe.sichtbar;
 
       // ── Build output ──────────────────────────────────────────────────────────
       const lines: string[] = [`🧠 **Smart Recall** for: _"${query}"_\n`];
@@ -2536,6 +2984,39 @@ export async function handleBrainTool(
           ? `keyword + CKG hybrid`
           : `keyword`;
         lines.push(`### 🔍 Results (${hybridResults.length} — ${modeLabel})\n`);
+        // Population ausweisen (Karte kdnqoilo1fs7, eligible_seen): wie viele
+        // der gezeigten Treffer die Beleg-Schwelle EINZELN passiert haben.
+        // Mikhails count:0-Fall an unserem Recall — "gezeigt" ist nicht
+        // "belegt". Reine Anzeige aus der schon berechneten Abstention, KEIN
+        // Eingriff in die Rangfolge: die Bench-Floors bleiben unberuehrt.
+        // Die Beleg-Zeile bleibt AUCH im Kompakt-Modus (Widerlegungsauftrag
+        // 02.09.2026, Einwand 6): bei zwei aehnlich klingenden Lektionen ist
+        // sie der einzige Hinweis, welche Treffer einen Beleg tragen und welche
+        // nur Nachbarschaft sind — in superseded/contradictory entscheidend.
+        if (abstention.belegte < hybridResults.length) {
+          // Karte 4z5vk0zdnm00: das ALTER der belegten Treffer gehoert mit in
+          // den Grund ("is this still true?"). Der Zeitstempel wird NUR fuer
+          // die Anzeige gezogen — die Rangfolge sieht ihn nie (ein Verfall im
+          // Ranking hat schon einmal alle Bench-Floors gerissen). Datenquelle:
+          // verified_at ?? ts aus dem gespeicherten Lektions-JSON; Eintraege
+          // ohne Lektions-Form (ctx/idx) bleiben aussen vor.
+          const belegteAlter: number[] = [];
+          for (const r of hybridResults) {
+            if (!r.key.startsWith('cachly:lesson:best:')) continue;
+            if (!istBelegt({ wortBelege: r.wortBelege, semScore: r.semScore, ckgScore: r.ckgScore })) continue;
+            const l = safeJsonParse<{ ts?: string; verified_at?: string }>(r.content, {});
+            const stand = Date.parse(l.verified_at ?? l.ts ?? '');
+            if (Number.isFinite(stand)) belegteAlter.push(Math.floor((Date.now() - stand) / 86_400_000));
+          }
+          const alter = alterssatzFuerBelegte(belegteAlter);
+          lines.push(
+            `> 📊 ${abstention.belegte} von ${hybridResults.length} belegt ` +
+              `(mind. ein getroffenes Wort, Bedeutungsnähe oder Kante). ` +
+              `Die übrigen sind das Nächstliegende, kein Beleg.` +
+              (alter ? ` ⏳ ${alter}` : '') +
+              `\n`,
+          );
+        }
         if (ersetzungsNotizen.length > 0) {
           lines.push(...ersetzungsNotizen.map((n) => `> ${n}`), '');
         }
@@ -2551,7 +3032,9 @@ export async function handleBrainTool(
           }
           for (const [sq, results] of grouped) {
             lines.push(`**Topic: "${sq}"** (${results.length} results)\n`);
-            for (const r of results.slice(0, 4)) {
+            // Mehrthemen-Zweig kompakt wie der einthemige (Einwand 4): sonst
+            // bliebe jede Mehrthemen-Anfrage bei voller Zeichenlast.
+            for (const r of results.slice(0, kompakt ? 2 : 4)) {
               const label = r.key.replace('cachly:ctx:', '📝 ').replace('cachly:lesson:best:', '💡 ').replace('cachly:idx:', '📂 ');
               const scorePart = r.matchType === 'ckg'
                 ? `CKG: ${(r.ckgScore ?? 0).toFixed(2)}, 🕸️ causal graph`
@@ -2563,7 +3046,7 @@ export async function handleBrainTool(
                 ? `sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🎯 semantic`
                 : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
               const vorschau = recallVorschau(r.key, r.content, 300);
-              lines.push(`  **${label}** _(${scorePart})_`);
+              lines.push(kompakt ? `  **${label}**` : `  **${label}** _(${scorePart})_`);
               // Lesbares Brain (docs/produkt/team-puls.md P1): plain-language layer
               // stored at lesson:human:<topic> — display-only, ranking untouched.
               if (r.key.startsWith('cachly:lesson:best:')) {
@@ -2595,8 +3078,19 @@ export async function handleBrainTool(
               : r.matchType === 'semantic'
               ? `sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🎯 semantic`
               : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
+            // Kuerzer NUR bei Lektionen (Feld-Vorschau); ctx/idx-Eintraege
+            // wuerden sonst mitten im rohen JSON gekappt (Einwand 5).
             const vorschau = recallVorschau(r.key, r.content, 400);
-            lines.push(`**${label}**${authorBadge}${contextBadge} _(${scorePart})_`);
+            lines.push(kompakt ? `**${label}**` : `**${label}**${authorBadge}${contextBadge} _(${scorePart})_`);
+            // Entscheidungs-Gedaechtnis (WOW #2): eine gemerkte Entscheidung
+            // steht VOR dem Auszug — sie ist der Grund, warum diese Lektion
+            // mehr ist als ein aehnlicher Text.
+            {
+              const entRoh = safeJsonParse<{ entscheidung?: { gegen?: string; grund?: string | null } }>(r.content ?? '', {});
+              if (entRoh.entscheidung?.gegen) {
+                lines.push(entscheidungsZeile({ gegen: entRoh.entscheidung.gegen, grund: entRoh.entscheidung.grund ?? null }));
+              }
+            }
             // Lesbares Brain (docs/produkt/team-puls.md P1): plain-language layer.
             if (r.key.startsWith('cachly:lesson:best:')) {
               const hRaw = (await redis.get(r.key.replace('lesson:best:', 'lesson:human:')).catch(() => null))
@@ -2667,7 +3161,7 @@ export async function handleBrainTool(
        * genau der Entwurfsfehler, den die Spur vermeiden soll: der wertvollste
        * Eintrag ist der, bei dem die richtige Lektion GAR NICHT dabei war.
        */
-      if (hybridResults.length > 0) {
+      if (!kompakt && hybridResults.length > 0) {
         lines.push('');
         lines.push(
           '↩︎ Hat eine davon geholfen? `recall_feedback(query=…, topic=…, helped=true, rank=N)` — '
@@ -3800,10 +4294,15 @@ export async function handleBrainTool(
         await redis.del('cachly:session:decision-log');
       } catch { /* non-critical */ }
 
+      // Karte eutmy0ly93ch: was hat das Gedaechtnis diese Sitzung gekostet?
+      const kosten = sitzungsKosten(instance_id);
+      vergissSitzungsKosten(instance_id);
+
       const sessionRecord = {
         ts: now.toISOString(),
         summary,
         files_changed,
+        ...(kosten.recalls > 0 ? { memory_cost: kosten } : {}),
         ...(lessons_learned !== undefined ? { lessons_learned } : {}),
         ...(durationMin !== undefined ? { duration_min: durationMin } : {}),
         ...(decisionLog.length > 0 ? { decision_log: decisionLog } : {}),
@@ -4000,6 +4499,7 @@ export async function handleBrainTool(
         `📋 **Summary:** ${summary}`,
         files_changed.length > 0 ? `📁 **Files changed:** ${files_changed.map(f => `\`${f}\``).join(', ')}` : '',
         lessons_learned !== undefined ? `🧠 **Lessons stored:** ${lessons_learned}` : '',
+        ...kostenZeilen(kosten),
         autoLearned.length > 0 ? `🤖 **Auto-learned:** ${autoLearned.length} lessons extracted from summary (${autoLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${autoLearned.length > 3 ? '…' : ''})` : '',
         ambientLearned.length > 0 ? `🌿 **Ambient git learning:** ${ambientLearned.length} commit${ambientLearned.length > 1 ? 's' : ''} auto-learned (${ambientLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${ambientLearned.length > 3 ? '…' : ''})` : '',
         sessionCard,
@@ -4762,6 +5262,14 @@ export async function handleBrainTool(
         ausgaengeRoh = {};
       }
 
+      // ── Recall-Trichter (Karte oy6vyq7egtkj) ──────────────────────────
+      let trichterRoh: Record<string, string> = {};
+      try {
+        trichterRoh = (await redis.hgetall(trichterSchluessel(instance_id))) ?? {};
+      } catch {
+        trichterRoh = {};
+      }
+
       // ── Die drei mechanischen Etiketten (Karte kdqyy5syhxqn) ──────────
       // widersprochen / korrigiert / veraltet je gelieferter Lektion —
       // berechnet aus Ereignissen im Bestand, NIE aus Selbstauskunft.
@@ -4783,6 +5291,25 @@ export async function handleBrainTool(
             if (e.length === 0) { etikettenZaehler.ohneEreignis++; continue; }
             for (const x of e) etikettenZaehler[x]++;
           }
+        }
+      } catch { /* Messzeile stoppt nie das Werkzeug */ }
+
+      // ── Netto-verhinderter-Schaden (Karte 2jq46i2rqhjh, Mads Hansen) ──
+      // "confirmed useful recalls minus corrections and incidents caused by
+      // bad recalls." Nutzen = Wirkungsspur-Eintraege mit geholfen=true
+      // (gemeldet oder abgeleitet). Schaden = gelieferte Lektionen, die
+      // SPAETER widerlegt wurden oder zur Lieferung SCHON ersetzt waren
+      // (die zwei harten Etiketten; 'korrigiert' zaehlt NICHT als Schaden —
+      // eine Nachbesserung ist kein Vorfall). Die Zahl KANN negativ werden;
+      // eine Zahl, die nur steigen kann, misst nichts.
+      let wirkungGeholfen = 0;
+      let wirkungGesamt = 0;
+      try {
+        const spur = await redis.lrange(`cachly:wirkung:${instance_id}`, 0, -1);
+        for (const zeile of spur) {
+          const e = safeJsonParse<{ geholfen?: boolean }>(zeile, {});
+          wirkungGesamt++;
+          if (e.geholfen === true) wirkungGeholfen++;
         }
       } catch { /* Messzeile stoppt nie das Werkzeug */ }
 
@@ -4935,6 +5462,31 @@ export async function handleBrainTool(
           );
         })(),
         ``,
+        `### 🔽 Recall-Trichter _(je Fehlschlag: WORAN scheiterte der Abruf)_`,
+        (() => {
+          const n = (k: string) => Number(trichterRoh[k] ?? 0);
+          const klassen: Array<[string, string]> = [
+            ['nicht-gesucht', 'nicht gesucht'],
+            ['nominierung', 'Nominierung (gesucht, nichts geliefert)'],
+            ['ranking', 'Ranking (geliefert, das Richtige fehlte)'],
+            ['anwendung', 'Anwendung (das Richtige lag vor)'],
+            ['ohne-vorwissen', 'ohne Vorwissen (es gab nichts zu finden)'],
+          ];
+          const gesamt = klassen.reduce((s, [k]) => s + n(k), 0);
+          if (gesamt === 0) {
+            return '⚪ Noch keine Zaehlung — jeder learn_from_attempts-Fehlschlag wird ab dieser Fassung klassifiziert.';
+          }
+          const groesste = klassen
+            .filter(([k]) => k !== 'ohne-vorwissen')
+            .sort((x, y) => n(y[0]) - n(x[0]))[0];
+          return (
+            `**${gesamt}** klassifizierte Fehlschlaege: `
+            + klassen.map(([k, name]) => `${n(k)} ${name}`).join(' · ')
+            + `. Die groesste vermeidbare Klasse ist **${groesste[1]}** (${n(groesste[0])}) — dorthin gehoert das naechste Investment. `
+            + '(Heuristik je Einzelfall; erst die Verteilung ueber viele Sessions traegt.)'
+          );
+        })(),
+        ``,
         `### 🏷️ Drei Etiketten ohne Selbstauskunft _(widersprochen · korrigiert · veraltet)_`,
         etikettenZaehler.lieferungen === 0
           ? '⚪ Noch kein Liefer-Journal — die Etiketten entstehen ab dieser Fassung je smart_recall.'
@@ -4942,6 +5494,20 @@ export async function handleBrainTool(
             + `${etikettenZaehler.widersprochen} widersprochen · ${etikettenZaehler.korrigiert} korrigiert · `
             + `${etikettenZaehler.veraltet} veraltet · ${etikettenZaehler.ohneEreignis} ohne spaeteres Ereignis. `
             + '(Kein Etikett heisst: nichts ist passiert — nicht "benutzt". Das vierte Etikett haette nur eine geschmeichelte Fassung.)',
+        ``,
+        `### ⚖️ Netto-verhinderter-Schaden _(kann negativ werden — sonst misst es nichts)_`,
+        (() => {
+          const schaden = Number(etikettenZaehler.widersprochen) + Number(etikettenZaehler.veraltet);
+          if (wirkungGesamt === 0 && schaden === 0) {
+            return '⚪ Noch keine Wirkungs- oder Schadens-Daten — die Zahl entsteht aus Wirkungsspur und Etiketten.';
+          }
+          const netto = wirkungGeholfen - schaden;
+          return (
+            `**${netto >= 0 ? '+' : ''}${netto}** = ${wirkungGeholfen} bestaetigt geholfen (Wirkungsspur, ${wirkungGesamt} Eintraege) `
+            + `− ${schaden} Schadenslieferungen (${etikettenZaehler.widersprochen} spaeter widerlegt + ${etikettenZaehler.veraltet} schon ersetzt geliefert). `
+            + `'korrigiert' zaehlt nicht als Schaden — eine Nachbesserung ist kein Vorfall.`
+          );
+        })(),
         ``,
         `### 🔧 Werkzeug-Nutzung _(erst messen, dann zusammenlegen)_`,
         nutzungInWorten(nutzung, TOOLS.length),
@@ -5526,4 +6092,99 @@ export async function handleBrainTool(
     default:
       return null;
   }
+}
+
+/**
+ * Bis zu `max` Lektionen mit Erst-, aber ohne Zweitvektor nachrechnen
+ * (Karte cgf6kcyrg02s). Nur fuer Anbieter, die ein abweichendes Modell
+ * koennen; wirft nie. Der Lesepfad ruft hierher, solange die Zweit-Deckung
+ * unter ZWEIT_MINDESTDECKUNG liegt — ab der Schwelle schaltet sich das
+ * Merkmal von selbst ein (Reihenfolge: Schreibpfad, Bestand, DANN Lesepfad).
+ */
+async function heileZweitVektoren(redis: Redis, max: number): Promise<number> {
+  try {
+    if (!hasEmbedProvider()) return 0;
+    if (EMBED_PROVIDER !== 'cachly' && EMBED_PROVIDER !== 'ollama') return 0;
+    let geheilt = 0;
+    for (const t of vektorbestand.themen()) {
+      if (geheilt >= max) break;
+      if (zweitbestand.hat(t)) continue;
+      if (await redis.exists(`${ZWEIT_VEKTOR_PRAEFIX}${t}`)) continue; // frisch geschrieben, Bestand nur veraltet
+      const inhalt = await redis.get(`cachly:lesson:best:${t}`);
+      if (!inhalt) continue;
+      const gel = safeJsonParse(inhalt, {} as Record<string, unknown>);
+      try {
+        const v2 = await computeEmbedding(textFuerVektor(gel), { geduld: 'lang', modell: ZWEIT_MODELL });
+        if (v2?.length) {
+          await redis.set(`${ZWEIT_VEKTOR_PRAEFIX}${t}`, packe(v2));
+          geheilt++;
+        }
+      } catch { /* die naechste Lesung versucht es wieder */ }
+    }
+    return geheilt;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Bis zu `max` vermerkte Vektorluecken nachbetten (Karte 8jnckd2stesi).
+ *
+ * Warum eine eigene Funktion: Bis zum 02.09.2026 heilte NUR der Schreibpfad —
+ * eine Instanz, in die niemand mehr schreibt, blieb blind. Gemessen im
+ * Wett-Probelauf: 276 Lektionen, 22 % mit Erstvektor, weil der Massen-Ingest
+ * unter 429-Drosselung lief und der Prozess direkt nach dem letzten Schreiben
+ * endete. Jetzt ruft auch smart_recall hierher — eine Instanz, die gelesen
+ * wird, heilt sich beim Lesen.
+ *
+ * Steht am MODULENDE, nicht bei ihrer Konstante: der Quelltext-Waechter
+ * karte-2bfm7dyvjmeh liest die Reihenfolge "Normalisierung VOR Speichern"
+ * ueber indexOf, und der Lesezugriff hier hatte die erste Fundstelle von
+ * cachly:lesson:best: nach vorn gezogen. Hoisting macht die Position egal.
+ *
+ * `ausnahmeTopic`: das Thema, das GERADE EBEN gescheitert ist — sofort noch
+ * einmal versuchen waere sinnlos; es geht zurueck in den Vermerk. Was wieder
+ * scheitert, geht ebenfalls zurueck. Ein geloeschtes Thema erledigt seinen
+ * Nachtrag von selbst. Wirft nie: Heilung stoert weder Schreiben noch Lesen.
+ */
+async function heileVektorNachtrag(redis: Redis, ausnahmeTopic: string | undefined, max: number): Promise<void> {
+  try {
+    if (!hasEmbedProvider()) return;
+    // srandmember statt spop (0.10.151): spop NAHM den Vermerk aus dem Set,
+    // und starb der Prozess zwischen Entnahme und Vektor-Schreiben, war er
+    // WEG — unvermerkt heisst unheilbar. Gemessen 02.09.2026: 29 von 290
+    // Lektionen einer frischen Instanz so verloren, Deckungs-Decke 90 %.
+    // Jetzt gilt das write-ahead-Prinzip auch hier: der Vermerk faellt erst
+    // mit dem srem NACH dem nachweislich geschriebenen Vektor. Doppelte
+    // Heilversuche zweier paralleler Aufrufer sind idempotent und billig.
+    const nachtrag = await redis.srandmember(VEK_NACHTRAG, max);
+    const liste = Array.isArray(nachtrag) ? nachtrag : (nachtrag ? [nachtrag] : []);
+    for (const t of liste) {
+      if (t === ausnahmeTopic) continue;
+      const inhalt = await redis.get(`cachly:lesson:best:${t}`);
+      if (!inhalt) {
+        // Die Lektion selbst ist weg — ein ewiger Vermerk heilt niemanden.
+        await redis.srem(VEK_NACHTRAG, t);
+        continue;
+      }
+      const gel = safeJsonParse(inhalt, {} as Record<string, unknown>);
+      try {
+        const v = await computeEmbedding(textFuerVektor(gel), { geduld: 'lang' });
+        if (v?.length) {
+          await redis.set(`${VEKTOR_PRAEFIX}${t}`, packe(v));
+          await redis.srem(VEK_NACHTRAG, t);
+        } else continue;
+        // Das Zweitmerkmal gleich mit — dieselbe Provider-Bedingung wie im
+        // Schreibpfad; ein Fehler hier kostet nur vec2, nie die Heilung.
+        if (EMBED_PROVIDER === 'cachly' || EMBED_PROVIDER === 'ollama') {
+          try {
+            const v2 = await computeEmbedding(textFuerVektor(gel), { geduld: 'lang', modell: ZWEIT_MODELL });
+            if (v2?.length) await redis.set(`${ZWEIT_VEKTOR_PRAEFIX}${t}`, packe(v2));
+          } catch { /* vec2-Luecke heilt ein spaeterer Lauf */ }
+        }
+      } catch {
+        // Fehlgeschlagen — der Vermerk steht noch im Set, nichts zu tun.
+      }
+    }
+  } catch { /* der Nachtrag stoert nie */ }
 }

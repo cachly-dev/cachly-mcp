@@ -41,7 +41,7 @@ import { mitLektionen } from './mini-redis.js';
 import { schluessel } from './eingaenge-einbetten.js';
 import type { Eingang } from './eingaenge-b.js';
 import type { BenchLesson } from './fixtures.js';
-import { SINN_TOPF } from '../rangfolge-stellschrauben.js';
+import { SINN_TOPF, EINGANG_SCHWELLE, EINGANG_SORTIER_GEWICHT } from '../rangfolge-stellschrauben.js';
 
 // Der 3000er-Pool (22.08.2026) traegt fuenf Achsen je Frage. Sie sind optional:
 // die beiden alten eingefrorenen Saetze haben sie nicht, und die Messung muss
@@ -112,6 +112,11 @@ async function main(): Promise<void> {
   // einem Drittel der Kandidaten. Genau die Fehlerklasse, gegen die
   // rangfolge-stellschrauben.ts gebaut wurde.
   const POOL = Number(flag('pool') ?? String(SINN_TOPF));
+  // Getrennte Kanal-Tiefen wie in decke-messen.ts (Karte 3utwghaycu3g):
+  // das Produkt sucht mit wortpool 25 und sinnpool 75 — ohne die Flags
+  // bleibt ALLES beim alten POOL-Verhalten.
+  const WORTPOOL = Number(flag('wortpool') ?? String(POOL));
+  const SINNPOOL = Number(flag('sinnpool') ?? String(POOL));
   /*
    * ── --seltenheit <n>: der dritte Nominierungskanal ──────────────────────
    *
@@ -149,21 +154,36 @@ async function main(): Promise<void> {
    */
   const seltenheitTopf = Number(flag('seltenheit') ?? '0');
   const tueren = flag('tueren')?.split(',').map((x) => x.trim()).filter(Boolean);
-  const eingangsGewicht = Number(flag('eingang') ?? '0');
+  // Standard = die AUSGELIEFERTE Maschine (rangfolge-stellschrauben.ts).
+  // Bis 01.09.2026 war der Standard 0 — jede Messung ohne --eingang beschrieb
+  // damit eine Sortierung OHNE das Tuer-Merkmal, das brain.ts seit dem
+  // 23.08. mitsortiert (Lauffamilie, Kontobuch, Anatomie der 884 inklusive).
+  // Wer die alte Welt will, sagt es jetzt ausdruecklich: --eingang 0.
+  const eingangsGewicht = Number(flag('eingang') ?? String(EINGANG_SORTIER_GEWICHT));
   // Optionaler Merkmals-Auszug fuer den Gewichts-Anpasser.
   const merkmalPfad = flag('merkmale-nach');
   const merkmalStrom = merkmalPfad ? createWriteStream(resolve(merkmalPfad)) : null;
   const dreifach = argv.includes('--dreifach');
 
-  // --rrf: den AUSGELIEFERTEN Pfad messen statt des Sortierers aus rangfolge.ts.
+  // --rrf: den ALTEN Auslieferpfad messen (mischeRangfolgen, bis 20.08.2026).
   //
-  // Das ist keine Feinheit, sondern der Unterschied zwischen zwei Systemen.
-  // brain.ts mischt Wortpfad und Bedeutungspfad mit `mischeRangfolgen`
-  // (Reciprocal Rank Fusion) und benutzt bewerteTopf gar nicht. Wer die
-  // gemessenen +6 Punkte in den Auslieferstand uebernimmt, ohne DIESE
-  // Anordnung zu messen, behauptet einen Gewinn an einer Stelle, an der er
-  // nie gemessen wurde.
+  // VERALTET SEIT 20.08.2026: brain.ts sortiert seither selbst mit
+  // bewerteTopf (+ Tuer-Merkmal mit Schwelle seit 23.08.). Dieser Schalter
+  // bleibt als Vergleichsanker: am 01.09.2026 gemessen kostet RRF auf dem
+  // Einstellsatz 181 @3-Antworten (1706 statt 1887) — das ist der Wert, den
+  // der 20.08.-Umbau geholt hat. Wer diesen Kommentar liest, weil er wissen
+  // will, was ausliefert: brain.ts ab "Die Sortierung", und die geteilten
+  // Zahlen stehen in rangfolge-stellschrauben.ts.
   const rrf = argv.includes('--rrf');
+
+  // --zweitvektoren: ein ZWEITES Embedding als Sortier-Signal messen
+  // (VORREGISTRIERUNG-zweitembedding.md). Der Topf bleibt unberuehrt —
+  // das Zweitmodell bewertet nur, es nominiert nie (Koopman-Sperre).
+  // --zweitgewicht: Gewicht des sechsten Merkmals (additiv, gespreizt).
+  // --zweitersatz: statt additiv ersetzt naeheZweit das Merkmal naeheText.
+  const zweitPfad = flag('zweitvektoren');
+  const zweitGewicht = Number(flag('zweitgewicht') ?? '1');
+  const zweitErsatz = argv.includes('--zweitersatz');
 
   // --ersetzeText: das Merkmal "Naehe zum ganzen Text" wird durch "Naehe zum
   // BESTEN Eingang" ersetzt, statt es zu ergaenzen.
@@ -191,6 +211,9 @@ async function main(): Promise<void> {
   const satz = JSON.parse(readFileSync(satzPfad, 'utf8')) as Korpus;
   const { lektionen } = JSON.parse(readFileSync(eingPfad, 'utf8')) as { lektionen: Lektionseingaenge[] };
   const { vektoren } = JSON.parse(readFileSync(vekPfad, 'utf8')) as { vektoren: Record<string, number[]> };
+  const zweit = zweitPfad
+    ? (JSON.parse(readFileSync(resolve(zweitPfad), 'utf8')) as { vektoren: Record<string, number[]> }).vektoren
+    : null;
   if (satz.queries.length === 0) fehlt('Fragen im Pruefsatz', satzPfad);
 
   // --tuerfilter <datei> --schwelle <x>: Tueren unter der Trennschaerfe-Schwelle
@@ -204,6 +227,7 @@ async function main(): Promise<void> {
   let gestrichen = 0;
 
   const volltextVektor = new Map<string, number[]>();
+  const volltextZweit = new Map<string, number[]>();
   const themaVektor = new Map<string, number[]>();
   const tuerVektoren = new Map<string, number[][]>();
   // Tueren ohne Vektor wurden bis zum 22.08.2026 STILL uebersprungen. Was das
@@ -220,6 +244,10 @@ async function main(): Promise<void> {
       const v = vektoren[key];
       if (!v) { ohneVektor.set(e.art, (ohneVektor.get(e.art) ?? 0) + 1); continue; }
       if (e.art === 'volltext') volltextVektor.set(l.topic, v);
+      if (zweit && e.art === 'volltext') {
+        const v2 = zweit[key];
+        if (v2) volltextZweit.set(l.topic, v2);
+      }
       if (e.art === 'name') themaVektor.set(l.topic, v);
       if (tuerfilter && e.art !== 'volltext') {
         const w = tuerfilter.tueren[key];
@@ -261,12 +289,40 @@ async function main(): Promise<void> {
   const diagnosePfad = flag('diagnose');
   const diagnose: Array<Record<string, unknown>> = [];
 
+  /*
+   * ── --kontobuch <datei>: das Verlust-Kontobuch (Karte 3utwghaycu3g) ─────
+   *
+   * Elf Altmeister-Funde verlangen dieselbe Vorarbeit: je FRAGE der volle
+   * Wort- und Sinn-Rang der richtigen Lektion (nicht nur drin/nicht drin),
+   * die gemeinsamen seltenen Staemme, die Tuer-Naehe und die Achsen.
+   * Klassengrenzen: VORREGISTRIERUNG-kontobuch.md im Altmeister-Laufordner
+   * (Grenze 200, vorab gewaehlt). Am ECHTEN Messweg erhoben — eine zweite
+   * Fassung dieser Schleife waere eine zweite Wahrheit.
+   */
+  const kontobuchPfad = flag('kontobuch');
+  const kontobuch: Array<Record<string, unknown>> = [];
+  const KLASSENGRENZE = 200;
+  // Dokumenthaeufigkeit je Stamm, einmal ueber den Bestand — fuer die
+  // df<=2-Zaehlung (Kryptograph F2). Nur im Kontobuch-Modus gerechnet.
+  const dfJeStamm = new Map<string, number>();
+  if (kontobuchPfad) {
+    for (const ws of textWoerter.values()) {
+      for (const w of ws) dfJeStamm.set(w, (dfJeStamm.get(w) ?? 0) + 1);
+    }
+  }
+
   for (const q of satz.queries) {
     const fv = vektoren[schluessel('frage', q.query)];
     if (!fv) fehlt(`Vektor fuer "${q.query.slice(0, 40)}"`, vekPfad);
+    const fv2 = zweit ? zweit[schluessel('frage', q.query)] : null;
+    if (zweit && !fv2) fehlt(`Zweitvektor fuer "${q.query.slice(0, 40)}"`, String(zweitPfad));
 
-    const wortListe = (await keywordSearch(redis as never, [`${PRAEFIX}*`], q.query, POOL) as Array<{ key: string }>)
-      .map((h) => h.key.replace(PRAEFIX, ''));
+    // Im Kontobuch-Modus wird die VOLLE Wort-Rangfolge geholt und fuer den
+    // Topf auf WORTPOOL geschnitten — derselbe Suchweg, ein Aufruf.
+    const wortVoll = (await keywordSearch(
+      redis as never, [`${PRAEFIX}*`], q.query, kontobuchPfad ? themen.length : WORTPOOL,
+    ) as Array<{ key: string }>).map((h) => h.key.replace(PRAEFIX, ''));
+    const wortListe = wortVoll.slice(0, WORTPOOL);
 
     // Frageworte einmal je Frage — Nominierung und Sortierung lesen dieselbe
     // Menge. Zwei Zerlegungen waeren zwei Wahrheiten.
@@ -284,14 +340,15 @@ async function main(): Promise<void> {
         .map((x) => x.t)
       : [];
 
-    const sinnListe = themen
+    const sinnVoll = themen
       .map((t) => {
         const vs = tuerVektoren.get(t) ?? [];
         let best = -2;
         for (const v of vs) { const k = kosinus(fv, v); if (k > best) best = k; }
         return { t, n: best };
       })
-      .sort((a, b) => b.n - a.n).slice(0, POOL).map((x) => x.t);
+      .sort((a, b) => b.n - a.n);
+    const sinnListe = sinnVoll.slice(0, SINNPOOL).map((x) => x.t);
 
     // --dreifach: die Vorauswahl ist die Vereinigung aus DREI Listen statt zwei.
     // Gemessen 20.08.: Eingaenge SCHADEN der Decke (89 % auf 86 %), HELFEN aber
@@ -316,9 +373,11 @@ async function main(): Promise<void> {
     };
 
     const bewertbar = topf.map((t) => ({
-      naeheText: ersetzeText
-        ? besterEingangVon(t)
-        : (volltextVektor.has(t) ? kosinus(fv, volltextVektor.get(t)!) : -2),
+      naeheText: zweitErsatz
+        ? (fv2 && volltextZweit.has(t) ? kosinus(fv2, volltextZweit.get(t)!) : -2)
+        : ersetzeText
+          ? besterEingangVon(t)
+          : (volltextVektor.has(t) ? kosinus(fv, volltextVektor.get(t)!) : -2),
       naeheThema: themaVektor.has(t) ? kosinus(fv, themaVektor.get(t)!) : -2,
       naeheRueckkopplung: volltextVektor.has(t) ? kosinus(angereichert, volltextVektor.get(t)!) : -2,
       seltenheitsDeckung: seltenheit.deckung(fw, textWoerter.get(t) ?? new Set()),
@@ -327,8 +386,25 @@ async function main(): Promise<void> {
     }));
     let punkte = bewerteTopf(bewertbar, eigeneGewichte as typeof GEWICHTE);
 
+    // Das sechste Merkmal: Naehe im Zweitmodell, additiv und gespreizt wie
+    // das Tuer-Merkmal. Fehlender Vektor = -2 ("kein Wert"), nie Abzug.
+    if (zweit && !zweitErsatz) {
+      const naehen = topf.map((t) => (fv2 && volltextZweit.has(t) ? kosinus(fv2, volltextZweit.get(t)!) : -2));
+      const gespreizt = spreizeImTopf(naehen);
+      punkte = punkte.map((p, i) => p + zweitGewicht * gespreizt[i]);
+    }
+
     if (eingangsGewicht > 0) {
-      const gespreizt = spreizeImTopf(topf.map(besterEingangVon));
+      // Exakt wie brain.ts: unterhalb der Schwelle meldet das Merkmal -2
+      // ("kein Wert"), nicht einen schlechten Wert — sonst bekaemen
+      // Lektionen ohne Fehlertext systematisch Abzug. Bis 01.09.2026 fehlte
+      // die Schwelle hier; der Bench mass damit ein Merkmal, das im Produkt
+      // so nie sortiert hat.
+      const naehen = topf.map((t) => {
+        const n = besterEingangVon(t);
+        return n >= EINGANG_SCHWELLE ? n : -2;
+      });
+      const gespreizt = spreizeImTopf(naehen);
       punkte = punkte.map((p, i) => p + eingangsGewicht * gespreizt[i]);
     }
 
@@ -412,11 +488,52 @@ async function main(): Promise<void> {
         besterEingang: gewinner ? besterEingangVon(gewinner.t) : -2,
       });
     }
+
+    if (kontobuchPfad && !rrf) {
+      // Die richtige Lektion: erste akzeptable — dieselbe Wahl wie
+      // bestePlatzierung. Raenge 1-basiert, 0 = im jeweiligen Kanal gar
+      // nicht vorhanden (Wort: nicht gefunden; Sinn: ohne Tuervektoren).
+      const rel = q.relevant.find((r) => themen.includes(r)) ?? q.relevant[0] ?? '';
+      const wortRang = wortVoll.indexOf(rel) + 1;
+      const sinnRang = sinnVoll.findIndex((x) => x.t === rel) + 1;
+      const relWoerter = textWoerter.get(rel) ?? new Set<string>();
+      const gemeinsame = [...fw].map(grobStamm).filter((s) => relWoerter.has(s));
+      const seltene = gemeinsame.filter((s) => (dfJeStamm.get(s) ?? 0) <= 2);
+      const imTopf = topf.includes(rel);
+      // Klasse NUR fuer Decken-Verluste (Vorregistrierung, Grenze 200).
+      let klasse = imTopf ? 'im-topf' : 'beide-blind';
+      if (!imTopf) {
+        const wortKnapp = wortRang > 0 && wortRang <= KLASSENGRENZE;
+        const sinnKnapp = sinnRang > 0 && sinnRang <= KLASSENGRENZE;
+        if (wortKnapp || sinnKnapp) {
+          klasse = wortKnapp && sinnKnapp ? 'knapp-verpasst'
+            : wortKnapp ? 'sinn-graben' : 'wortschatz-graben';
+        }
+      }
+      kontobuch.push({
+        query: q.query, art, guete: q.guete ?? null, leck: q.leck ?? null,
+        form: q.form ?? null, sprache: q.sprache ?? null, tippform: q.tippform ?? null,
+        relevant: rel, imTopf, klasse, platz,
+        wortRang, sinnRang,
+        gemeinsameStaemme: gemeinsame.length, davonDfMax2: seltene.length,
+        tuerNaehe: besterEingangVon(rel),
+        bestPunkt: (() => { const g = topf.map((t, i) => ({ p: punkte[i] })).sort((a, b) => b.p - a.p)[0]; return g?.p ?? 0; })(),
+      });
+    }
   }
 
   if (diagnosePfad && diagnose.length > 0) {
     writeFileSync(resolve(diagnosePfad), diagnose.map((d) => JSON.stringify(d)).join('\n') + '\n', 'utf8');
     console.log(`  Diagnose: ${diagnose.length} Zeilen nach ${resolve(diagnosePfad)}`);
+  }
+
+  if (kontobuchPfad && kontobuch.length > 0) {
+    writeFileSync(resolve(kontobuchPfad), kontobuch.map((d) => JSON.stringify(d)).join('\n') + '\n', 'utf8');
+    const verluste = kontobuch.filter((k) => !k.imTopf);
+    const jeKlasse = new Map<string, number>();
+    for (const k of verluste) jeKlasse.set(String(k.klasse), (jeKlasse.get(String(k.klasse)) ?? 0) + 1);
+    console.log(`  Kontobuch: ${kontobuch.length} Zeilen (${verluste.length} Decken-Verluste) nach ${resolve(kontobuchPfad)}`);
+    console.log(`  Verlustklassen (Grenze ${KLASSENGRENZE}): ${[...jeKlasse.entries()].map(([k, n]) => `${k}=${n}`).join(' · ')}`);
   }
   if (merkmalStrom) merkmalStrom.end();
 

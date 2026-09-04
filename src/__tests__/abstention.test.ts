@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { abstentionSatz, beurteileTreffer } from '../abstention.js';
+import {
+  ALTER_NENNEN_AB_TAGEN,
+  abstentionSatz,
+  alterssatzFuerBelegte,
+  beurteileTreffer,
+  istBelegt,
+} from '../abstention.js';
 import {
   CKG_BELEG_SCHWELLE,
   SINN_BELEG_SCHWELLE,
@@ -97,6 +103,23 @@ describe('beurteileTreffer — wann geschwiegen wird', () => {
     expect(u.geprueft).toBe(2);
   });
 
+  it('belegte zaehlt, wie viele Treffer die Schwelle EINZELN passieren (eligible_seen)', () => {
+    // Karte kdnqoilo1fs7: "gezeigt" ist nicht "belegt". Ein belegter Treffer
+    // in einer langen Liste liefert zwar (schweigen=false), aber belegte sagt,
+    // wie duenn die Population wirklich ist.
+    const einer = beurteileTreffer([{ wortBelege: 2 }, { wortBelege: 0 }, { wortBelege: 0 }]);
+    expect(einer.schweigen).toBe(false);
+    expect(einer.belegte).toBe(1);
+    expect(einer.geprueft).toBe(3);
+
+    const zwei = beurteileTreffer([{ wortBelege: 2 }, { semScore: 0.9 }, { wortBelege: 0 }]);
+    expect(zwei.belegte).toBe(2);
+
+    // Kein Beleg -> 0; leere Liste -> 0.
+    expect(beurteileTreffer([{ wortBelege: 0 }, { semScore: 0.1 }]).belegte).toBe(0);
+    expect(beurteileTreffer([]).belegte).toBe(0);
+  });
+
   it('GEGENPROBE: kaputte Zahlen kippen das Urteil nicht ins Liefern', () => {
     // `NaN >= schwelle` ist FALSCH, `Infinity >= schwelle` ist WAHR — ohne das
     // Aussortieren haette eine einzige kaputte Rechnung jede Zurueckhaltung
@@ -121,7 +144,9 @@ describe('abstentionSatz — das Nein traegt seine Zahlen', () => {
     const satz = abstentionSatz(beurteileTreffer([{ wortBelege: 0.5, semScore: 0.11 }]));
     expect(satz).toContain('0.5');
     expect(satz).toContain('0.11');
-    expect(satz).toContain('1 geprüften');
+    // Der benannte Zaehl-Grund zuerst (Karte 4ssv2t1qqlu6).
+    expect(satz).toContain('1 Treffer betrachtet');
+    expect(satz).toContain('keiner belegt');
     expect(satz).toContain(`nötig: ${WORT_BELEG_SCHWELLE}`);
     expect(satz).toContain(SINN_BELEG_SCHWELLE.toFixed(2));
   });
@@ -136,10 +161,82 @@ describe('abstentionSatz — das Nein traegt seine Zahlen', () => {
   it('GEGENPROBE: der Satz behauptet nie, der Bestand sei leer, wenn es Treffer GAB', () => {
     const satz = abstentionSatz(beurteileTreffer([{ wortBelege: 0.5 }]));
     expect(satz).not.toContain('noch keine Lektion');
-    expect(satz).toContain('geprüften');
+    expect(satz).toContain('betrachtet');
   });
 
   it('nennt einen Weg weiter, statt nur abzulehnen', () => {
     expect(abstentionSatz(beurteileTreffer([{ wortBelege: 0.5 }]))).toContain('recall_best_solution');
+  });
+});
+
+/**
+ * ABNAHME Karte 4z5vk0zdnm00 — istBelegt ist DIESELBE Schwellen-Wahrheit
+ * wie beurteileTreffer.
+ *
+ * Die Population-Zeile fragt je Treffer nach; zaehlte sie mit einer eigenen
+ * Kopie der Regel, koennte sie andere Treffer "belegt" nennen als das
+ * Urteil — und niemand saehe es.
+ */
+describe('istBelegt — eine Schwellen-Wahrheit fuer Urteil und Anzeige', () => {
+  it('zaehlt exakt die Treffer, die beurteileTreffer als belegte zaehlt', () => {
+    const liste = [
+      { wortBelege: WORT_BELEG_SCHWELLE },
+      { wortBelege: 0, semScore: SINN_BELEG_SCHWELLE },
+      { ckgScore: CKG_BELEG_SCHWELLE },
+      { wortBelege: 0.5, semScore: 0.1 },
+      {},
+    ];
+    const einzeln = liste.filter((t) => istBelegt(t)).length;
+    expect(einzeln).toBe(beurteileTreffer(liste).belegte);
+  });
+
+  it('GEGENPROBE: knapp unter jeder Schwelle ist NICHT belegt', () => {
+    expect(
+      istBelegt({
+        wortBelege: WORT_BELEG_SCHWELLE - 0.01,
+        semScore: SINN_BELEG_SCHWELLE - 0.01,
+        ckgScore: CKG_BELEG_SCHWELLE - 0.01,
+      }),
+    ).toBe(false);
+  });
+
+  it('nimmt dieselben Schwellen-Argumente wie das Urteil', () => {
+    expect(istBelegt({ wortBelege: 1 }, { woerter: 2 })).toBe(false);
+    expect(istBelegt({ wortBelege: 1 }, { woerter: 1 })).toBe(true);
+  });
+});
+
+/**
+ * ABNAHME Karte 4z5vk0zdnm00 — das Alter gehoert in die ANZEIGE.
+ *
+ * Der Satz ist reine Anzeige; dass die Rangfolge keinen Zeitstempel sieht,
+ * beweist der Bench-Gate-Lauf, nicht dieser Test.
+ */
+describe('alterssatzFuerBelegte — "is this still true?" als eigener Grund', () => {
+  it('schweigt ohne bekannte Alter', () => {
+    expect(alterssatzFuerBelegte([])).toBeNull();
+    expect(alterssatzFuerBelegte([Number.NaN])).toBeNull();
+  });
+
+  it('schweigt, wenn der JUENGSTE belegte frisch genug ist', () => {
+    // Ein einziger frisch bestaetigter Treffer beantwortet die Frage
+    // "gilt das noch?" — dann waere der Zusatz nur Rauschen.
+    expect(alterssatzFuerBelegte([ALTER_NENNEN_AB_TAGEN - 1, 40])).toBeNull();
+  });
+
+  it('nennt bei EINEM belegten Treffer dessen Alter', () => {
+    expect(alterssatzFuerBelegte([40])).toBe('Der belegte Treffer ist 40 Tage unbestätigt.');
+  });
+
+  it('nennt bei mehreren die Spanne vom juengsten zum aeltesten', () => {
+    expect(alterssatzFuerBelegte([12, 40])).toBe('Die belegten Treffer sind seit 12–40 Tagen unbestätigt.');
+  });
+
+  it('gleiche Alter werden nicht als Spanne verkauft', () => {
+    expect(alterssatzFuerBelegte([40, 40])).toBe('Die belegten Treffer sind 40 Tage unbestätigt.');
+  });
+
+  it('GEGENPROBE: genau an der Schwelle wird genannt, nicht geschwiegen', () => {
+    expect(alterssatzFuerBelegte([ALTER_NENNEN_AB_TAGEN])).toContain('unbestätigt');
   });
 });

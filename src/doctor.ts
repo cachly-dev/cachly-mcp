@@ -112,6 +112,55 @@ export async function checkAuthAccepted(apiUrl: string, jwt: string, fetchFn: Fe
   }
 }
 
+/**
+ * Vektor-Deckung der eigenen Instanz (Karte hcg8neyut0kd).
+ *
+ * Gemessen am 20.08.2026: der Bedeutungspfad lief in Produktion monatelang
+ * stumm aus — 0 Vektoren bei 506 Lektionen, von aussen nicht von "alles in
+ * Ordnung" zu unterscheiden. Die Messung gab es nur hinter der Admin-Route;
+ * dieser Check fragt den neuen Eigentuemer-Endpunkt.
+ */
+export async function checkVectorCoverage(
+  apiUrl: string,
+  jwt: string,
+  instanceId: string | undefined,
+  fetchFn: FetchLike = fetch,
+): Promise<DoctorCheck> {
+  if (!jwt || !instanceId) {
+    return { name: 'Vektoren', status: 'warn', detail: 'skipped — no credential or instance' };
+  }
+  try {
+    const res = await (fetchFn as unknown as typeof fetch)(
+      `${apiUrl}/api/v1/instances/${instanceId}/vector-coverage`,
+      { headers: { Authorization: `Bearer ${jwt}` }, signal: AbortSignal.timeout(12_000) } as RequestInit,
+    );
+    if (!res.ok) {
+      // Der dritte Ausgang: nicht erreichbar heisst NICHT GEMESSEN, nie "0 %".
+      return { name: 'Vektoren', status: 'warn', detail: `coverage not measured (HTTP ${res.status})` };
+    }
+    const j = await res.json() as { lessons: number; vectors: number; percent: number; status: string };
+    if (j.status === 'leer') return { name: 'Vektoren', status: 'ok', detail: 'no lessons yet' };
+    if (j.status === 'nicht-gemessen') return { name: 'Vektoren', status: 'warn', detail: 'instance not running — not measured' };
+    if (j.status === 'aus') {
+      return {
+        name: 'Vektoren', status: 'fail',
+        detail: `semantic search is OFF: ${j.lessons} lessons, 0 vectors`,
+        hint: 'Embeddings never ran for this instance. Check the embed provider; recall runs word-only until fixed.',
+      };
+    }
+    if (j.status === 'luecke') {
+      return {
+        name: 'Vektoren', status: 'warn',
+        detail: `${j.vectors}/${j.lessons} lessons have vectors (${j.percent.toFixed(0)}%)`,
+        hint: 'Some lessons are invisible to semantic search. Large writes under the rate limit can skip embedding.',
+      };
+    }
+    return { name: 'Vektoren', status: 'ok', detail: `${j.vectors}/${j.lessons} vectors (${j.percent.toFixed(0)}%)` };
+  } catch {
+    return { name: 'Vektoren', status: 'warn', detail: 'could not verify (network error)' };
+  }
+}
+
 /** Brain instance configured (env or auto-provisioned default). */
 export function checkInstance(instanceId: string | undefined): DoctorCheck {
   if (!instanceId) {

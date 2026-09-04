@@ -28,11 +28,44 @@ export function calculateConfidence(lesson: { verified_at?: string; ts: string; 
   return 1.0 - (ageDays / CONFIDENCE_WARN_DAYS) * (1.0 - CONFIDENCE_WARN_VALUE);
 }
 
-/** Render a confidence badge string. */
-export function confidenceBadge(confidence: number, ageDays: number): string {
+/**
+ * Render a confidence badge string.
+ *
+ * ── Warum der Badge einen Befehl mitbringt (04.09.2026) ───────────────────
+ *
+ * "verify before applying" sagte bis heute nicht, WIE. Der Leser bekam eine
+ * Warnung ohne Handlung und klickt sie nach dem dritten Mal weg.
+ *
+ * Am selben Tag gemessen: die Frage "gilt OLLAMA_KEEP_ALIVE=-1 oder =30m?"
+ * war nicht durch Textanalyse zu beantworten (Wertkollision fand 0 von 735
+ * echten Ueberholungen, ein NLI-Vergleicher kam auf 62 % Genauigkeit), aber
+ * ein einziger Aufruf hat sie beantwortet: `docker inspect cachly-ollama-1`
+ * zeigt 30m. Fuer einen Bestand aus Betriebslektionen — Adressen, Ports,
+ * Pfade, Schalter — ist der Befehl das direkte Verfahren.
+ *
+ * Der Befehl wird NICHT ausgefuehrt, weder hier noch sonst wo im Server.
+ * Ein gespeicherter Befehl, den ein Server selbst startet, ist eine
+ * Hintertuer in jedem geteilten Brain. Er wird gezeigt; laufen laesst ihn
+ * der Mensch oder der Agent in seiner Sitzung.
+ *
+ * @param probe Ein Befehl aus der Lektion, mit dem sich ihre Behauptung
+ *              nachpruefen laesst. Fehlt er, bleibt der Badge wie bisher.
+ */
+export function confidenceBadge(confidence: number, ageDays: number, probe?: string): string {
   if (confidence >= 0.9) return '✅';
-  if (confidence >= 0.7) return `⚠️ (${Math.round(ageDays)}d old, confidence ${(confidence * 100).toFixed(0)}% — verify before applying)`;
-  return `🔴 STALE (${Math.round(ageDays)}d old, confidence ${(confidence * 100).toFixed(0)}% — likely outdated!)`;
+  const wie = probeHinweis(probe);
+  if (confidence >= 0.7) return `⚠️ (${Math.round(ageDays)}d old, confidence ${(confidence * 100).toFixed(0)}% — verify before applying${wie})`;
+  return `🔴 STALE (${Math.round(ageDays)}d old, confidence ${(confidence * 100).toFixed(0)}% — likely outdated!${wie})`;
+}
+
+/** Der Zusatz `, e.g. \`<befehl>\`` — oder nichts, wenn kein brauchbarer da ist. */
+function probeHinweis(probe?: string): string {
+  const b = (probe ?? '').trim();
+  if (!b) return '';
+  // Ein mehrzeiliger Block ist kein Pruefbefehl, sondern ein Rezept; und ein
+  // sehr langer macht die Zeile unlesbar, ohne mehr zu sagen.
+  if (b.includes('\n') || b.length > 120) return '';
+  return `, e.g. \`${b}\``;
 }
 
 /** Category-specific required fields for structured lessons. */

@@ -36,6 +36,16 @@ class MockRedis {
   async rpush(key: string, ...values: string[]): Promise<number> {
     const l = this.lists.get(key) ?? []; l.push(...values); this.lists.set(key, l); return l.length;
   }
+  // 0.10.153: die Saat pflanzt write-ahead-Heilvermerke (sadd auf
+  // cachly:vek:nachtrag) — der Stummel muss koennen, was der Code benutzt.
+  public sets = new Map<string, Set<string>>();
+  async sadd(key: string, ...members: string[]): Promise<number> {
+    const s = this.sets.get(key) ?? new Set<string>();
+    let neu = 0;
+    for (const m of members) { if (!s.has(m)) { s.add(m); neu++; } }
+    this.sets.set(key, s);
+    return neu;
+  }
   async lrange(key: string, start: number, stop: number): Promise<string[]> {
     const l = this.lists.get(key) ?? [];
     return l.slice(start < 0 ? l.length + start : start, stop < 0 ? l.length + stop + 1 : stop + 1);
@@ -124,6 +134,14 @@ describe('brain_seed_starter', () => {
     for (const l of STARTER_CORPUS) {
       expect(redis._store().has(`cachly:lesson:best:${l.topic}`)).toBe(true);
       expect(redis._lists().has(`cachly:lessons:${l.topic}`)).toBe(true);
+    }
+
+    // 0.10.153: jede gesaete Lektion traegt einen Heil-Vermerk — sonst ist
+    // sie fuer den Lese-Heiler unsichtbar und deckelt die semantische
+    // Deckung jeder frischen Instanz (gemessen 02.09.2026: bei 16 %).
+    const vermerke = redis.sets.get('cachly:vek:nachtrag') ?? new Set();
+    for (const l of STARTER_CORPUS) {
+      expect(vermerke.has(l.topic), `Vermerk fehlt: ${l.topic}`).toBe(true);
     }
   });
 

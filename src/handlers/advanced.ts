@@ -1,9 +1,22 @@
 import type { Redis } from 'ioredis';
 import { ckgSlug } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
-import { safeJsonParse } from '../utils.js';
+import { safeJsonParse, darfHeraus } from '../utils.js';
 import { ersparteMinuten, zaehltAlsErsparnis } from '../wertbeitrag.js';
 import { findePaare } from '../zulassung-und-urteil.js';
+
+/**
+ * Der dritte Lesepfad (Karte lr9c9h26kmb5). `causal_trace` kennt den Fragenden
+ * NICHT (kein author-Argument) — es kann also nicht beweisen, wer fragt. Bei
+ * einer Zugriffsgrenze ist "im Zweifel zu" die richtige Richtung: private UND
+ * gruppen-beschraenkte Lektionen fallen aus der Spur (fail-closed), team-weite
+ * bleiben. Dieselbe Grenze, die smart_recall und recall_best_solution ziehen
+ * (Karte pguy341m6u7s) — hier ohne Autor, also strenger. `darfHeraus(null)` ist
+ * schon NEIN, ein beschaedigter Datensatz faellt damit ebenfalls heraus.
+ */
+function offenInSpur(l: { visibility?: string; group?: string } | null): boolean {
+  return darfHeraus(l) && !l.group;
+}
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -326,8 +339,9 @@ export async function handleAdvancedTool(
               if (edge.edgeType !== 'fixes' && edge.edgeType !== 'requires') continue;
               // Find lesson for this concept
               const lessonRaw = await redis.get(`cachly:lesson:best:${edge.from.replace(/-/g, ':').replace(/^fix:/, 'fix:')}`);
-              const lesson = lessonRaw ? safeJsonParse<{ topic: string; what_worked?: string; ts: string; outcome: string; recall_count?: number; severity?: string } | null>(lessonRaw, null) ?? undefined : undefined;
-              ckgResults.push({ conceptId: node.id, edge, lesson: lesson ?? undefined });
+              const lesson = lessonRaw ? safeJsonParse<{ topic: string; what_worked?: string; ts: string; outcome: string; recall_count?: number; severity?: string; visibility?: string; group?: string } | null>(lessonRaw, null) ?? undefined : undefined;
+              // Geschuetzte Lektionen nicht ueber die Spur herausgeben (dritter Lesepfad).
+              ckgResults.push({ conceptId: node.id, edge, lesson: lesson && offenInSpur(lesson) ? lesson : undefined });
             }
           }
           for (const ek of [...fromKeys, ...toKeys].slice(0, 20)) {
@@ -336,8 +350,8 @@ export async function handleAdvancedTool(
             const edge = safeJsonParse<CKGEdge | null>(edgeRaw, null);
             if (!edge) continue;
             const lessonRaw = await redis.get(`cachly:lesson:best:${edge.from}`);
-            const lesson = lessonRaw ? safeJsonParse<{ topic: string; what_worked?: string; ts: string; outcome: string; recall_count?: number; severity?: string } | null>(lessonRaw, null) ?? undefined : undefined;
-            ckgResults.push({ conceptId: edge.from, edge, lesson: lesson ?? undefined });
+            const lesson = lessonRaw ? safeJsonParse<{ topic: string; what_worked?: string; ts: string; outcome: string; recall_count?: number; severity?: string; visibility?: string; group?: string } | null>(lessonRaw, null) ?? undefined : undefined;
+            ckgResults.push({ conceptId: edge.from, edge, lesson: lesson && offenInSpur(lesson) ? lesson : undefined });
           }
         }
       } catch { /* CKG traversal non-critical */ }
@@ -363,7 +377,7 @@ export async function handleAdvancedTool(
       type Lesson = {
         topic: string; outcome: string; what_worked?: string; what_failed?: string;
         ts: string; recall_count?: number; severity?: string; tags?: string[];
-        context?: string;
+        context?: string; visibility?: string; group?: string;
       };
 
       // Score each lesson by token overlap with problem description
@@ -374,6 +388,8 @@ export async function handleAdvancedTool(
         {
           const l = safeJsonParse<Lesson | null>(raw, null);
           if (!l) continue;
+          // Geschuetzte Lektionen nicht ueber die Textsuche herausgeben (dritter Lesepfad).
+          if (!offenInSpur(l)) continue;
           if (filterTags.length > 0 && !(l.tags ?? []).some((t: string) => filterTags.includes(t))) continue;
           const haystack = [l.topic, l.what_failed ?? '', l.what_worked ?? '', l.context ?? '']
             .join(' ').toLowerCase();
@@ -677,16 +693,15 @@ smart_recall(
       return [
         `🤖 **Autopilot instructions generated** for **${editor === 'all' ? 'all editors' : editor}**`,
         ``,
-        `**File to create:** \`${filename}\``,
+        `**File:** \`${filename}\` — create it, or APPEND to your existing one`,
         ``,
         `\`\`\`markdown`,
         content,
         `\`\`\``,
         ``,
-        `**How to apply:**`,
+        `**How to apply** (\`>>\` appends — an existing ${filename} keeps every line you wrote):`,
         `\`\`\`bash`,
-        `# Copy to your project root:`,
-        `cat > ${filename} << 'EOF'`,
+        `cat >> ${filename} << 'EOF'`,
         content,
         `EOF`,
         `\`\`\``,

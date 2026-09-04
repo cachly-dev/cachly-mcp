@@ -70,6 +70,52 @@ export const EINGANG_SCHWELLE = 0.5;
 export const EINGANG_SORTIER_GEWICHT = 0.7;
 
 /**
+ * ── Das Zweitmerkmal: ein zweites Embedding als unabhaengiger Zeuge ────────
+ *
+ * Dreifach bestaetigt am 01.09.2026 (Vorregistrierung und Befund im
+ * Werkstatt-Repo, VORREGISTRIERUNG-zweitembedding.md):
+ *
+ *   Einstellsatz (2997 Fragen)   @3  1985 -> 2064  (+79)
+ *   Pruefsatz    (3003 Fragen)   @3  1977 -> 2051  (+74)
+ *   Eingefrorener Korpus         @3    53 -> 65 %   Platz 1  37 -> 47 %
+ *   (100 menschgeschriebene Fragen; alle Untergrenzen gehalten)
+ *
+ * ADDITIV schlaegt Ersatz (2064 gegen 2021): die beiden Modelle irren an
+ * verschiedenen Stellen — zwei Zeugen, nicht ein besserer. Die Gewichtskurve
+ * ist flach zwischen 1,0 und 1,5 (2064/2063), der Wert ist also kein
+ * Abtast-Glueck. Groessere Modellstufen sind erledigt: qwen3-4b braucht auf
+ * unserer CPU 42 s je Text (VORREGISTRIERUNG-zweitembedding-4b.md, Abbruch).
+ */
+export const ZWEIT_MODELL = 'qwen3-embedding:0.6b';
+export const ZWEIT_GEWICHT = 1.0;
+
+/**
+ * Ab welcher Deckung des Zweitbestands der Lesepfad das Merkmal nutzt.
+ *
+ * Die Einbau-Reihenfolge (Karte cgf6kcyrg02s) verlangt: erst Schreibpfad,
+ * dann Bestand nachrechnen, DANN Lesepfad. Die Schwelle von 0,8 erzwingt das
+ * im Code statt im Gedaechtnis: ein halb gefuellter Zweitbestand wuerde die
+ * wenigen Lektionen MIT Vektor systematisch nach vorn spreizen (fehlender
+ * Wert wird erst nach dem Spreizen neutral) — das Merkmal saehe schlechter
+ * aus, als es ist, und die Instanz sortierte schief, bis jemand es merkt.
+ */
+export const ZWEIT_MINDESTDECKUNG = 0.8;
+
+/**
+ * Ab welcher Vektor-Naehe zwei ANGEZEIGTE Treffer als Beinahe-Duplikat
+ * gelten und ihre Daten nebeneinander genannt werden.
+ *
+ * Fuellt die Luecke NEBEN der Ersetzungs-Mechanik (ersetzt_durch/gilt_bis):
+ * zwei fast gleiche Eintraege OHNE expliziten Verweis standen bis zum
+ * 01.09.2026 unkommentiert nebeneinander — der Leser musste raten, welcher
+ * gilt. Der Hinweis nennt beide Daten und WAEHLT NICHT (die
+ * Zeitstempel-Falle: neuer heisst nicht gueltiger — ein anderer
+ * Geltungsbereich kann beide wahr machen). 0,9 liegt bewusst hoch: nur
+ * wirklich austauschbar klingende Paare, keine thematischen Nachbarn.
+ */
+export const NAHDUPLIKAT_SCHWELLE = 0.9;
+
+/**
  * Wie viele getippte Woerter im Treffer stehen muessen, damit er als Beleg gilt.
  *
  * 1 — ein einziges exakt getroffenes Wort genuegt. Bewusst eine ANZAHL und

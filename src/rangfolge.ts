@@ -109,8 +109,19 @@ export class Seltenheit {
   /** Mittlere Zahl VERSCHIEDENER Wortstaemme je Text — fuer die Laengenkorrektur. */
   private mittlereWortzahl = 1;
 
+  /** Lesend fuer Messwerkzeuge, die die Laengenkorrektur zurueckrechnen. */
+  get mittlereStammzahl(): number { return this.mittlereWortzahl; }
+
+  /**
+   * Optionale Gewichtskurve ueber df — NUR fuer Messwerkzeuge (Naturworkshop
+   * K3, Zipf-Mandelbrot). Ohne Angabe gilt die ausgelieferte IDF-Kurve;
+   * kein Produktpfad setzt diesen Parameter.
+   */
+  private kurve: ((df: number, anzahl: number) => number) | null = null;
+
   /** @param texte je ein Text pro Datensatz */
-  constructor(texte: string[]) {
+  constructor(texte: string[], kurve?: (df: number, anzahl: number) => number) {
+    this.kurve = kurve ?? null;
     this.anzahl = texte.length;
     let stammSumme = 0;
     for (const t of texte) {
@@ -126,7 +137,9 @@ export class Seltenheit {
   }
 
   wert(wort: string): number {
-    return Math.log((this.anzahl + 1) / ((this.df.get(grobStamm(wort)) ?? 0) + 1));
+    const df = this.df.get(grobStamm(wort)) ?? 0;
+    if (this.kurve) return this.kurve(df, this.anzahl);
+    return Math.log((this.anzahl + 1) / (df + 1));
   }
 
   /**

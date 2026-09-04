@@ -42,6 +42,11 @@ ranking quality, not retrieval.
 > Gemessen am 20.08.2026 mit `npm run bench` auf demselben Pruefstand:
 > `vs BM25 baseline: MRR +0.0% · Precision@1 +0.0%`.
 >
+> **Die Grundlinie ist unsere EIGENE Wortsuche** (BM25-artige Gewichtung in
+> `keywordSearch`), keine fremde BM25-Bibliothek. Wer "gegen reinen
+> Wortabgleich" liest, koennte "gegen den Stand der Technik" verstehen —
+> gemeint ist ein Vergleich mit uns selbst (Karte 6cvi2qss85mg).
+>
 > Die alten Werte stammen aus einer Formel, die am 19.08.2026 abgeloest wurde,
 > weil sie auf 498 ECHTEN Lektionen nur 15 % Precision@1 erreichte. Die
 > Nachfolgerin erreicht dort 30 % — und auf diesem kleinen Pruefstand weniger.

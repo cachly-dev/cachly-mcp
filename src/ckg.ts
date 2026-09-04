@@ -118,9 +118,12 @@ export async function ckgUpsertServiceNode(redis: Redis, name: string, domain: s
   return id;
 }
 
-export async function ckgUpdateEdge(redis: Redis, from: string, edgeType: string, to: string, success: boolean, partial = false): Promise<void> {
-  const key = `cachly:ckg:edge:${from}:${edgeType}:${to}`;
-  const raw = await redis.get(key);
+/**
+ * Die EINE Fortschreibungs-Rechnung fuer eine Kante — vom Einzelweg und vom
+ * Buendelweg geteilt. Zwei Rechnungen waeren zwei Wahrheiten (die
+ * Fehlerklasse, die uns am haeufigsten trifft).
+ */
+export function schreibeKanteFort(raw: string | null, from: string, edgeType: string, to: string, success: boolean, partial = false): CKGEdge {
   const edge: CKGEdge = raw ? JSON.parse(raw) : { from, to, edgeType, successes: 0, trials: 0, confidence: 0, last_updated: '' };
   edge.trials = (edge.trials || 0) + 1;
   if (success) edge.successes = (edge.successes || 0) + 1;
@@ -128,10 +131,65 @@ export async function ckgUpdateEdge(redis: Redis, from: string, edgeType: string
   // Beta distribution smoothed confidence: (successes+1) / (trials+2)
   edge.confidence = (edge.successes + 1) / (edge.trials + 2);
   edge.last_updated = new Date().toISOString();
+  return edge;
+}
+
+export async function ckgUpdateEdge(redis: Redis, from: string, edgeType: string, to: string, success: boolean, partial = false): Promise<void> {
+  const key = `cachly:ckg:edge:${from}:${edgeType}:${to}`;
+  const raw = await redis.get(key);
+  const edge = schreibeKanteFort(raw, from, edgeType, to, success, partial);
   await redis.set(key, JSON.stringify(edge));
   // Index: set of edge keys per source node (for fast traversal)
   await redis.sadd(`cachly:ckg:idx:from:${from}`, key);
   await redis.sadd(`cachly:ckg:idx:to:${to}`, key);
+}
+
+export interface KantenAenderung { from: string; edgeType: string; to: string; success: boolean; partial?: boolean }
+
+/**
+ * Viele Kanten, VIER Netz-Runden statt vier je Kante (Karte 3u4skv7w35kq).
+ *
+ * Der Einzelweg macht je Kante get+set+sadd+sadd — ueber einen Cloud-Redis
+ * sind das vier Round-Trips mal N. ckgRecordCollaboration erreichte damit
+ * bis zu ~200 Runden je Datei (25 Co-Toucher, symmetrische Kanten). Hier:
+ * EIN mget, Fortschreibung im Speicher (Duplikate im Buendel werden
+ * SEQUENZIELL fortgeschrieben, kein verlorenes Update), EIN pipeline-exec
+ * fuer alle set/sadd.
+ *
+ * Faellt auf den Einzelweg zurueck, wenn die Verbindung kein pipeline kann
+ * (aeltere Mocks) — Verhalten vor Geschwindigkeit.
+ */
+export async function ckgUpdateEdgesGebuendelt(redis: Redis, aenderungen: readonly KantenAenderung[]): Promise<void> {
+  if (aenderungen.length === 0) return;
+  // Nicht nur OB es eine pipeline gibt, sondern ob sie set/sadd KANN —
+  // aeltere Test-Mocks haben eine Nur-get-Pipeline (Beleg: brain-flow).
+  const roheVerbindung = redis as unknown as { pipeline?: () => Record<string, unknown>; mget?: unknown };
+  const probe = typeof roheVerbindung.pipeline === 'function' ? roheVerbindung.pipeline() : null;
+  const kannBuendeln = probe !== null
+    && typeof probe.set === 'function'
+    && typeof probe.sadd === 'function'
+    && typeof roheVerbindung.mget === 'function';
+  if (!kannBuendeln) {
+    for (const a of aenderungen) await ckgUpdateEdge(redis, a.from, a.edgeType, a.to, a.success, a.partial ?? false);
+    return;
+  }
+  const schluesselFuer = (a: KantenAenderung) => `cachly:ckg:edge:${a.from}:${a.edgeType}:${a.to}`;
+  const einmalige = [...new Set(aenderungen.map(schluesselFuer))];
+  const rohe = await redis.mget(...einmalige);
+  const stand = new Map<string, string | null>(einmalige.map((k, i) => [k, rohe[i] ?? null]));
+  for (const a of aenderungen) {
+    const k = schluesselFuer(a);
+    const edge = schreibeKanteFort(stand.get(k) ?? null, a.from, a.edgeType, a.to, a.success, a.partial ?? false);
+    stand.set(k, JSON.stringify(edge));
+  }
+  const p = probe as unknown as { set: (k: string, v: string) => unknown; sadd: (k: string, m: string) => unknown; exec: () => Promise<unknown> };
+  for (const a of aenderungen) {
+    const k = schluesselFuer(a);
+    p.set(k, stand.get(k) as string);
+    p.sadd(`cachly:ckg:idx:from:${a.from}`, k);
+    p.sadd(`cachly:ckg:idx:to:${a.to}`, k);
+  }
+  await p.exec();
 }
 
 /**
@@ -145,11 +203,13 @@ const MAX_CO_TOUCHERS = 25;
 export async function ckgRecordCollaboration(redis: Redis, fileId: string, personId: string): Promise<void> {
   const touchersKey = `cachly:ckg:file:touchers:${fileId}`;
   const priorTouchers = await redis.smembers(touchersKey);
+  const aenderungen: KantenAenderung[] = [];
   for (const other of priorTouchers.slice(0, MAX_CO_TOUCHERS)) {
     if (other === personId) continue;
     // Symmetric edges so traversal works from either node.
-    await ckgUpdateEdge(redis, personId, 'collaborates', other, true);
-    await ckgUpdateEdge(redis, other, 'collaborates', personId, true);
+    aenderungen.push({ from: personId, edgeType: 'collaborates', to: other, success: true });
+    aenderungen.push({ from: other, edgeType: 'collaborates', to: personId, success: true });
   }
+  await ckgUpdateEdgesGebuendelt(redis, aenderungen);
   await redis.sadd(touchersKey, personId);
 }

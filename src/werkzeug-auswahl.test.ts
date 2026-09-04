@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   KERNWERKZEUGE,
+  RECALL_WERKZEUGE,
+  SCHLANK_WERKZEUGE,
   VERTEILER,
   sichtbareWerkzeuge,
   verteilerBeschreibung,
@@ -155,6 +157,60 @@ describe('Werkzeug-Auswahl: weniger im Katalog, nichts verloren', () => {
     // Ohne diese Zeile bewiese die Sperrklinke nichts: eine zu grosszuegige
     // Grenze ist gruen und bewacht Luft.
     expect(JSON.stringify(ALLE).length).toBeGreaterThan(OBERGRENZE_BYTE);
+  });
+
+  /**
+   * Das lean-Profil (0.10.152, Anlass: Bojan Tomics 8.866-Token-Messung):
+   * acht Werkzeuge plus Verteiler, eigene Sperrklinke. Dieselbe Regel wie
+   * oben: eine Anhebung braucht Begruendung und Zahl, nie Drift.
+   *
+   *     14.000  erster Entwurf (geschaetzt)
+   *     15.000  gemessen 14.848 — learn_from_attempts traegt allein 4.303
+   *             Byte Feldprosa; die zu kuerzen ist eine EIGENE Aufgabe
+   *             (Beschreibungen steuern Modellverhalten), keine Zeile hier.
+   */
+  const LEAN_OBERGRENZE_BYTE = 15_000;
+
+  it('lean-Profil: acht Werkzeuge plus Verteiler, unter der eigenen Grenze', () => {
+    const { katalog, uebrige } = sichtbareWerkzeuge(ALLE, { CACHLY_PROFILE: 'lean' });
+    const gross = JSON.stringify(katalog).length;
+    console.log(`[werkzeuge:lean] ${katalog.length} im Katalog, ${gross} Byte (~${Math.round(gross / 4)} Token), Grenze ${LEAN_OBERGRENZE_BYTE}`);
+    expect(katalog.length).toBe(SCHLANK_WERKZEUGE.length + 1);
+    expect(gross).toBeLessThanOrEqual(LEAN_OBERGRENZE_BYTE);
+    // Nichts geht verloren: alles Uebrige haengt am Verteiler.
+    expect(uebrige.length + SCHLANK_WERKZEUGE.length).toBe(ALLE.length);
+  });
+
+  it('lean-Profil: jedes Schlank-Werkzeug existiert wirklich', () => {
+    const vorhanden = new Set(ALLE.map((w) => w.name));
+    for (const name of SCHLANK_WERKZEUGE) expect(vorhanden.has(name), name).toBe(true);
+  });
+
+  it('GEGENPROBE: ohne CACHLY_PROFILE bleibt der Katalog der bisherige Kern', () => {
+    const normal = sichtbareWerkzeuge(ALLE, {});
+    const lean = sichtbareWerkzeuge(ALLE, { CACHLY_PROFILE: 'lean' });
+    expect(normal.katalog.length).toBeGreaterThan(lean.katalog.length);
+  });
+
+  /**
+   * Das recall-Profil (Anlass 02.09.2026: 133.000 von 210.000 Input-Token
+   * einer Bench-Sitzung waren Katalog). Drei Lese-Werkzeuge, kein Verteiler,
+   * eigene Sperrklinke bei 4.000 Byte (~1.000 Token).
+   */
+  const RECALL_OBERGRENZE_BYTE = 4_000;
+
+  it('recall-Profil: genau die drei Lese-Werkzeuge, kein Verteiler, unter 4.000 Byte', () => {
+    const { katalog } = sichtbareWerkzeuge(ALLE, { CACHLY_PROFILE: 'recall' });
+    const gross = JSON.stringify(katalog).length;
+    console.log(`[werkzeuge:recall] ${katalog.length} im Katalog, ${gross} Byte (~${Math.round(gross / 4)} Token), Grenze ${RECALL_OBERGRENZE_BYTE}`);
+    expect(katalog.map((w) => w.name).sort()).toEqual([...RECALL_WERKZEUGE].sort());
+    expect(katalog.some((w) => w.name === VERTEILER)).toBe(false);
+    expect(gross).toBeLessThanOrEqual(RECALL_OBERGRENZE_BYTE);
+  });
+
+  it('CACHLY_ALLE_WERKZEUGE=1 schlaegt das lean-Profil', () => {
+    const { katalog } = sichtbareWerkzeuge(ALLE, { CACHLY_ALLE_WERKZEUGE: '1', CACHLY_PROFILE: 'lean' });
+    expect(katalog.length).toBe(ALLE.length);
   });
 });
 

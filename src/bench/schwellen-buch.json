@@ -1,0 +1,68 @@
+{
+  "_regel": "Jede Bench-Schwelle steht hier mit Wert, Datum und Begruendung. Wer eine Schwelle aendert, aendert sie AUCH hier — mit neuem Datum und einer Begruendung, die die Messung nennt. Die Probe schwellen-buch.test.ts vergleicht Code gegen Buch: weichen sie ab, ist die CI rot. So wird aus einer stillen Senkung ein Diff, den niemand uebersehen kann (Karte nvouhp2o4ib8: home.precisionAt1 fiel am 19.08. von 0,90 auf 0,67 als PR wie jeder andere).",
+  "gate.home.precisionAt1": {
+    "wert": 0.67,
+    "seit": "2026-08-19",
+    "begruendung": "PR #417: die alte 0,90 belohnte die schlechtere Rangfolge-Formel (der Spielzeug-Bench sortierte die Formeln verkehrt herum); nach dem Formeltausch ist 0,67 der ehrliche Stand des Beispielsatzes."
+  },
+  "gate.home.recallAt3": {
+    "wert": 0.96,
+    "seit": "2026-08-19",
+    "begruendung": "Stand des Beispielsatzes nach dem Formeltausch (PR #417)."
+  },
+  "gate.home.mrr": {
+    "wert": 0.83,
+    "seit": "2026-08-19",
+    "begruendung": "Stand des Beispielsatzes nach dem Formeltausch (PR #417, vorher 0,94)."
+  },
+  "gate.home.ndcgAt5": {
+    "wert": 0.87,
+    "seit": "2026-08-19",
+    "begruendung": "Stand des Beispielsatzes nach dem Formeltausch (PR #417)."
+  },
+  "gate.external.precisionAt1": {
+    "wert": 0.71,
+    "seit": "2026-08-19",
+    "begruendung": "Stand des externen Beispielkorpus nach dem Formeltausch (PR #417)."
+  },
+  "gate.external.recallAt3": {
+    "wert": 0.92,
+    "seit": "2026-08-19",
+    "begruendung": "Von 0,93 auf 0,92: der Wortabgleich loest unscharfe Treffer seit 19.08. EINMAL je Frage gegen den Gesamtwortschatz auf (788 ms -> 262 ms); Preis gemessen 0,1 Punkte auf dem Beispielkorpus, nichts auf 499 echten Lektionen."
+  },
+  "gate.external.mrr": {
+    "wert": 0.82,
+    "seit": "2026-08-19",
+    "begruendung": "Stand des externen Beispielkorpus nach dem Formeltausch (PR #417)."
+  },
+  "gate.external.ndcgAt5": {
+    "wert": 0.85,
+    "seit": "2026-08-19",
+    "begruendung": "Stand des externen Beispielkorpus nach dem Formeltausch (PR #417)."
+  },
+  "korpus.platz1": {
+    "wert": 0.36,
+    "seit": "2026-08-21",
+    "begruendung": "Dreimal angehoben am 21.08., jede Stufe einzeln gemessen (Tueren-Ausbau); 0,36 ist ein Punkt unter dem gemessenen 37-Prozent-Stand, als Puffer gegen Rundungsrauschen."
+  },
+  "korpus.findequote3": {
+    "wert": 0.5,
+    "seit": "2026-08-21",
+    "begruendung": "Angehoben am 21.08. mit dem Tueren-Ausbau; gemessener Stand 53 Prozent, Untergrenze mit Rauschpuffer."
+  },
+  "korpus.top10": {
+    "wert": 0.66,
+    "seit": "2026-08-21",
+    "begruendung": "Angehoben am 21.08. mit dem Tueren-Ausbau; gemessener Stand 71 Prozent."
+  },
+  "korpus.imTopf": {
+    "wert": 0.92,
+    "seit": "2026-08-21",
+    "begruendung": "Die wichtigste Untergrenze: die Decke jeder kuenftigen Sortierung. Gemessener Stand 97 Prozent."
+  },
+  "korpus.vorsprungGegenWorteFindequote3": {
+    "wert": 0.05,
+    "seit": "2026-08-21",
+    "begruendung": "Der Bedeutungsabgleich muss den reinen Wortabgleich schlagen, sonst ist er nur teuer — 5 Punkte Mindestvorsprung auf Findequote@3."
+  }
+}
