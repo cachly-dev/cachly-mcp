@@ -7,6 +7,40 @@
 
 ---
 
+## [0.10.166] – 2026-09-04 — *"Same file beats same words."*
+
+When you write a lesson that corrects an older one, cachly offers to link the
+two. It found the old one by **word overlap** — which is exactly what a
+correction does not have. "Now runs on TEI" supersedes "runs on Ollama" and
+shares almost no words. Of 29 reachable pairs in our own store, 2 made it
+through.
+
+There is now a second key: **the same file**. If your new lesson lists
+`file_paths`, cachly also looks at earlier lessons touching those files.
+
+Measured on 735 real lessons before building it, with a stop rule fixed in
+advance (abort below 50 %):
+
+| | |
+|---|---|
+| Correction lessons carrying `file_paths` | 61 / 90 (67.8 %) |
+| Candidates per lesson | median 1, mean 3.0, **max 19** |
+| Candidate sets above 50 | 0 |
+| Most common path (`ci.yml`) | 26 lessons — no magnet |
+
+Max 19 is the number that matters. A key that returns 300 candidates blocks
+nothing.
+
+**What it does not fix:** 23 of those 61 lessons have no earlier lesson
+sharing a path at all. For them nothing changes. This raises the gate; it does
+not open it.
+
+Only the `file_paths` field counts, never a path mentioned in prose — a path
+in a sentence is not evidence that the lesson is about that file. No tool
+schema changed; no action needed on your side.
+
+---
+
 ## [0.10.165] – 2026-09-04 — *"Reading a lesson does not make it true."*
 
 Three changes to the same question: **how old is what the brain just told you,

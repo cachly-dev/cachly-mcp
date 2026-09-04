@@ -46,8 +46,8 @@ export function recallVorschau(key: string, content: string, maxChars: number): 
 import type { CKGEdge, CKGNode, PersonNode, ServiceNode } from '../ckg.js';
 import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
-import { keywordSearch, wortindexEntwerten, tokenize, splitMultiQuery, levenshtein,
-         indexVocab as _indexVocab } from '../search.js';
+import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
+         splitMultiQuery, levenshtein, indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider, EMBED_PROVIDER } from '../embeddings.js';
 import { repariereFelder } from '../feldreparatur.js';
@@ -1187,17 +1187,39 @@ async function handleBrainToolInner(
       // 642 Lektionen, 0 gesetzte Kanten: das Feld wird nie benutzt, wenn
       // niemand daran erinnert. NUR ein Vorschlag mit Beleg, nie Automatik —
       // eine falsche Kante verdraengt eine richtige Lektion.
+      //
+      // ZWEI Sperrschluessel, nicht einer (04.09.2026). Bis dahin sah der
+      // Vorschlag nur die fuenf besten WORT-Treffer — und Wortueberlappung ist
+      // genau das, was ein Ueberholungspaar NICHT hat: "laeuft jetzt ueber
+      // TEI" ersetzt "laeuft ueber Ollama" und teilt kaum ein Wort. Von 29
+      // erreichbaren Paaren kamen 2 durch das Tor.
+      //
+      // Der zweite Schluessel ist die gemeinsame Datei. Gemessen VOR dem Bau
+      // an 735 Lektionen: 61 der 90 Korrektur-Lektionen tragen `file_paths`,
+      // und der Kandidatenkreis bleibt klein (Median 1, Max 19) — er sperrt
+      // also wirklich, statt alles durchzulassen. Belege in
+      // `.agent/cachly/VERFAHREN-ueberholung-erkennen.md`, Stufe 1.
       let ersetzungsVorschlag = '';
       if (!ersetztZiel) {
         try {
-          const naheTreffer = (await keywordSearch(
-            redis, ['cachly:lesson:best:*'], `${topic} ${what_worked}`.slice(0, 300), 5,
-          ) as Array<{ key: string; content: string }>)
+          const zuKandidat = (h: { key: string; content: string }) => {
+            const ld = safeJsonParse<{ topic?: string; what_worked?: string }>(h.content, {});
+            return {
+              topic: ld.topic ?? h.key.slice('cachly:lesson:best:'.length),
+              what_worked: ld.what_worked,
+            };
+          };
+          const [nachWort, nachPfad] = await Promise.all([
+            keywordSearch(
+              redis, ['cachly:lesson:best:*'], `${topic} ${what_worked}`.slice(0, 300), 5,
+            ),
+            treffeUeberDateipfad(redis, ['cachly:lesson:best:*'], file_paths ?? []),
+          ]);
+          const gesehen = new Set<string>();
+          const naheTreffer = [...nachWort, ...nachPfad]
             .filter((h) => h.key.startsWith('cachly:lesson:best:'))
-            .map((h) => {
-              const ld = safeJsonParse<{ topic?: string; what_worked?: string }>(h.content, {});
-              return { topic: ld.topic ?? h.key.slice('cachly:lesson:best:'.length), what_worked: ld.what_worked };
-            });
+            .filter((h) => !gesehen.has(h.key) && gesehen.add(h.key))
+            .map(zuKandidat);
           ersetzungsVorschlag = schlageErsetzungVor(topic, what_worked, naheTreffer) ?? '';
         } catch { /* ein Vorschlag darf das Schreiben nie stoeren */ }
       }

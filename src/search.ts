@@ -1812,19 +1812,26 @@ export function wortindexStand(): number {
   return _wortbestandZaehler;
 }
 
-async function keywordSearch(
+/**
+ * Baut den Wortbestand oder gibt den stehenden zurueck.
+ *
+ * Herausgeloest aus `keywordSearch` am 04.09.2026, unveraendert: dieselben
+ * Schritte, dieselbe Reihenfolge, derselbe Zwischenspeicher. Der Grund ist der
+ * Sperrschluessel Dateipfad — er braucht denselben Satz Lektionen wie die
+ * Wortsuche, aber keine Bewertung. Ohne diese Trennung haette er ein zweites
+ * Mal alle Schluessel gelesen: 735 Lektionen, jedes Mal.
+ */
+async function bestandHolen(
   redis: Redis,
   patterns: string[],
-  query: string,
-  topK = 10,
-): Promise<KeywordMatch[]> {
+): Promise<Wortbestand | null> {
   const bestandsSchluessel = patterns.slice().sort().join('|');
   const jeVerbindung = _wortbestand.get(redis as unknown as object);
   const stehend = jeVerbindung?.get(bestandsSchluessel);
   if (stehend
     && stehend.gebaut > _entwertetAb
     && Date.now() - stehend.gebaut < WORTBESTAND_FRISCHE_MS) {
-    return keywordSearchMitBestand(stehend, query, topK);
+    return stehend;
   }
 
   // ── Step 1: Collect all matching keys — patterns scanned in parallel ──
@@ -1842,7 +1849,7 @@ async function keywordSearch(
   // Deduplicate across patterns (a key may match multiple globs)
   const allKeys = [...new Set(keyBatches.flat())];
 
-  if (allKeys.length === 0) return [];
+  if (allKeys.length === 0) return null;
 
   // Pipeline GET for speed
   const pipeline = redis.pipeline();
@@ -1897,7 +1904,7 @@ async function keywordSearch(
     totalTokens += tokens.length;
   }
 
-  if (docs.length === 0) return [];
+  if (docs.length === 0) return null;
   const avgDL = totalTokens / docs.length;
 
   // ── Step 2: IDF (inverse document frequency) ──
@@ -1916,7 +1923,82 @@ async function keywordSearch(
   if (!fach.has(bestandsSchluessel)) _wortbestandZaehler++;
   fach.set(bestandsSchluessel, gebauter);
   _wortbestand.set(redis as unknown as object, fach);
-  return keywordSearchMitBestand(gebauter, query, topK);
+  return gebauter;
+}
+
+async function keywordSearch(
+  redis: Redis,
+  patterns: string[],
+  query: string,
+  topK = 10,
+): Promise<KeywordMatch[]> {
+  const bestand = await bestandHolen(redis, patterns);
+  if (!bestand) return [];
+  return keywordSearchMitBestand(bestand, query, topK);
+}
+
+/** Wie viele Pfad-Treffer der Sperrschluessel hoechstens zurueckgibt. */
+export const PFAD_TREFFER_GRENZE = 20;
+
+/**
+ * Der zweite Sperrschluessel: welche Lektionen betreffen DIESELBE DATEI?
+ *
+ * Warum es ihn gibt (gemessen am 04.09.2026 an 735 Lektionen): der
+ * Ersetzungs-Vorschlag sah bis dahin nur die fuenf besten WORT-Treffer. Genau
+ * das ist die falsche Auswahl — eine Lektion, die eine aeltere ueberholt,
+ * benutzt typischerweise ANDERE Woerter ("laeuft jetzt ueber TEI" ersetzt
+ * "laeuft ueber Ollama"). Von 29 erreichbaren Paaren kamen 2 durch.
+ *
+ * Die drei Zahlen, die den Schluessel tragen — vor dem Bau erhoben:
+ *   - 534 von 735 Lektionen (72,7 %) tragen ueberhaupt `file_paths`,
+ *     bei den Korrektur-Lektionen 61 von 90 (67,8 %).
+ *   - Der Kandidatenkreis je Korrektur-Lektion: Median 1, Mittel 3,0, Max 19.
+ *     Ein Sperrschluessel, der 300 Kandidaten liefert, sperrt nichts — dieser
+ *     bleibt selbst im schlimmsten Fall unter zwanzig.
+ *   - Kein einziger Pfad ist ein Magnet: der haeufigste
+ *     (`.github/workflows/ci.yml`) steht in 26 Lektionen.
+ *
+ * Was er NICHT loest: 23 der 61 Korrektur-Lektionen haben gar keinen
+ * Vorgaenger mit gemeinsamem Pfad. Fuer die bleibt es beim Wort-Treffer.
+ *
+ * Geprueft wird gegen das Feld `file_paths`, nicht gegen den ganzen Text. Ein
+ * Pfad, der irgendwo in der Prosa vorkommt, ist kein Beleg dafuer, dass die
+ * Lektion diese Datei betrifft. Der Substring-Test davor ist nur ein billiger
+ * Vorfilter, damit nicht 735 JSON-Dokumente geparst werden muessen.
+ */
+export async function treffeUeberDateipfad(
+  redis: Redis,
+  patterns: string[],
+  pfade: readonly string[],
+  grenze = PFAD_TREFFER_GRENZE,
+): Promise<KeywordMatch[]> {
+  const gesucht = [...new Set(
+    pfade.map((p) => String(p ?? '').trim().toLowerCase()).filter(Boolean),
+  )];
+  if (gesucht.length === 0) return [];
+
+  const bestand = await bestandHolen(redis, patterns);
+  if (!bestand) return [];
+
+  const treffer: KeywordMatch[] = [];
+  for (const doc of bestand.docs) {
+    const klein = doc.content.toLowerCase();
+    if (!gesucht.some((p) => klein.includes(p))) continue; // billiger Vorfilter
+    let eigene: unknown;
+    try {
+      eigene = (JSON.parse(doc.content) as { file_paths?: unknown }).file_paths;
+    } catch { continue; }
+    const liste = Array.isArray(eigene) ? eigene : typeof eigene === 'string' ? [eigene] : [];
+    const meine = liste.map((p) => String(p).trim().toLowerCase()).filter(Boolean);
+    if (!meine.some((p) => gesucht.includes(p))) continue;
+    // score/wortBelege bleiben 0: dieser Treffer kommt nicht aus der
+    // Wortsuche, und eine erfundene Bewertung waere schlimmer als keine.
+    treffer.push({
+      key: doc.key, content: doc.content, score: 0, matchedWords: [], wortBelege: 0,
+    });
+    if (treffer.length >= grenze) break;
+  }
+  return treffer;
 }
 
 /**
