@@ -7,6 +7,75 @@
 
 ---
 
+## [0.10.165] – 2026-09-04 — *"Reading a lesson does not make it true."*
+
+Three changes to the same question: **how old is what the brain just told you,
+and can you check it?**
+
+### Reading is not verifying
+
+Every recall used to stamp `verified_at` with the current time and reset
+`confidence` to 1.0. A field named "verified" was being set by an action that
+verifies nothing.
+
+Measured on a real store of 735 lessons:
+
+```
+471  (64.1 %)  carried a verified_at LATER than their write date
+120            would have been stale by age and showed as fresh
+ 21 days       median age by write date
+ 14 days       median age by "verified"
+```
+
+Reading shaved a week off the apparent age of the entire store, and the
+confidence badge in the session briefing hangs on exactly that field.
+
+A recall now counts only itself: `recall_count` and `last_recalled_at`.
+`verified_at` keeps its meaning — the moment the lesson was written or really
+re-checked. Affects both read paths, `recall_best_solution` and `smart_recall`.
+
+**Visible consequence, accepted on purpose:** lessons that were only ever read,
+never re-verified, now show their true age. On the store above that is roughly
+120 lessons moving from ⚠️ to 🔴.
+
+### The badge names the command that would settle it
+
+A warning without an action gets clicked away. `verify before applying` never
+said *how*.
+
+The badge now carries the lesson's first stored command:
+
+```
+before  🔴 STALE (21d old, confidence 50% — likely outdated!)
+after   🔴 STALE (21d old, confidence 50% — likely outdated!,
+                  e.g. `curl -s http://10.8.0.7:3095/health`)
+```
+
+No new field: `commands` has been there all along, and for operational lessons
+it holds exactly that call. **The server never runs it** — a stored command a
+server executes by itself is a back door in any shared brain. It is shown; the
+human or the agent runs it.
+
+### Two lessons cannot supersede each other
+
+On the same store, two lessons carried a supersession edge — and the two
+pointed at each other. Both cannot be the current version, and the ordering
+decides which one gets suppressed on recall, so a cycle silently hides
+whichever the read path reaches second.
+
+The back-edge is now refused, with the way out in the message: remove the
+existing edge first, then set the new one. Never guess, never flip
+automatically — only the writer knows which is newer. A chain `A → B → C`
+stays allowed.
+
+### Verification
+
+22 new tests, 10 of them counter-checks: a fresh write does stamp
+`verified_at`; without the field the ageing falls back to the write date;
+without a command the badge reads word for word as before; the green badge
+stays a checkmark; a multi-line block is a recipe and not a probe; the chain
+`A → B → C` stays allowed. Full suite green: 1969 tests in 151 files.
+
 ## [0.10.129] – 2026-08-22 — *"The briefing claimed more hours than had passed."*
 
 The session briefing greeted every start with **"Brain saved you ~1664h total"**.
