@@ -681,6 +681,38 @@ const TOOLS = [
     },
   },
   {
+    name: 'lesson_verified',
+    description:
+      'Report that you RAN the check for a lesson and what came back. This is the only way a lesson gets fresh again — ' +
+      'reading one does not verify it, and since 0.10.165 recall no longer pretends otherwise. ' +
+      'The server never runs the command itself: you run it, you report the result. ' +
+      'holds=true refreshes verified_at and clears any earlier failed check. ' +
+      'holds=false marks the lesson as questionable and REQUIRES `befund` — it deletes nothing, ' +
+      'because a check can fail for reasons that have nothing to do with the lesson. ' +
+      'Example: lesson_verified(topic="deploy:web", holds=true, geprueft_mit="curl -s http://127.0.0.1:3220/bereit")',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        instance_id: { type: 'string', description: 'UUID of the cache instance.' },
+        topic: { type: 'string', description: 'Topic slug of the lesson you checked.' },
+        haelt: {
+          type: 'boolean',
+          description: 'Did the check confirm the lesson? true or false. There is deliberately no "not sure": guessing true makes an unchecked lesson look fresh, guessing false flags a correct one.',
+        },
+        geprueft_mit: {
+          type: 'string',
+          description: 'The command you actually ran, one line. Shown in later recalls so the next reader can repeat it.',
+        },
+        befund: {
+          type: 'string',
+          description: 'What you saw instead. REQUIRED when haelt=false — a warning without content is noise.',
+        },
+        author: { type: 'string', description: 'Optional: your handle.' },
+      },
+      required: ['topic', 'haelt'],
+    },
+  },
+  {
     name: 'smart_recall',
     description:
       'Semantically search cached context using natural language. instance_id may be omitted; the configured instance is used — never guess one.'  +

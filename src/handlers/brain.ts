@@ -4,6 +4,7 @@ import type { Redis } from 'ioredis';
 import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
          CONFIDENCE_WARN_VALUE, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_DAYS } from '../confidence.js';
 import { kurzfassenHinweis } from '../antwort-hinweis.js';
+import { pruefeMeldung, wendeAn, type Pruefmeldung } from '../pruefung-melden.js';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration,
          ckgUpsertServiceNode } from '../ckg.js';
@@ -659,6 +660,7 @@ type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 
 export const BRAIN_TOOL_NAMES = new Set([
   'learn_from_attempts', 'recall_best_solution', 'smart_recall', 'recall_feedback',
+  'lesson_verified',
   'session_start', 'session_start_summary', 'session_end', 'session_ping', 'session_handoff', 'auto_learn_session',
   'brain_who_knows', 'brain_file_map', 'team_expertise_map',
   'skill_gaps', 'brain_coverage', 'brain_metrics', 'brain_service_map',
@@ -1694,6 +1696,68 @@ async function handleBrainToolInner(
      *
      * Angehaengt, nie ueberschrieben: das hier sind Trainingsdaten.
      */
+    /*
+     * ── „Ich habe nachgeprueft" ────────────────────────────────────────
+     *
+     * Die Gegenrichtung zu „Lesen ist kein Pruefen" (0.10.165). Dort wurde
+     * entfernt, dass ein Abruf `verified_at` setzt — richtig, aber halb: seither
+     * liess sich das Feld NUR NOCH beim Schreiben setzen. Jede Lektion verfiel
+     * unaufhaltsam, und der einzige Ausweg war ein vollstaendiger Neuschrieb
+     * mit `grund`, also eine Begruendung fuer eine Aenderung, die keine ist.
+     *
+     * Der Server fuehrt den gespeicherten Befehl NIEMALS selbst aus. Er nimmt
+     * nur das Ergebnis entgegen, das jemand mitbringt, der ohnehin Rechte auf
+     * der betreffenden Maschine hat. Ein Befehl, den ein Server aus einem
+     * geteilten Speicher heraus ausfuehrt, ist eine Hintertuer.
+     */
+    case 'lesson_verified': {
+      const { instance_id } = args as { instance_id: string };
+      const redis = await getConnection(instance_id);
+      const jetzt = new Date().toISOString();
+
+      const geprueft = pruefeMeldung(args as Pruefmeldung, jetzt);
+      if (!geprueft.ok) {
+        return [
+          `⚠️ ${geprueft.grund}`,
+          '',
+          'Beispiel:',
+          '```',
+          'lesson_verified(topic="deploy:bau-hero-node1", haelt=true,',
+          '  geprueft_mit="curl -s http://127.0.0.1:3220/bereit")',
+          '```',
+          'Bei haelt=false gehoert `befund` dazu: was hast du stattdessen gesehen?',
+        ].join('\n');
+      }
+      const eintrag = geprueft.eintrag;
+
+      const schluessel = `cachly:lesson:best:${eintrag.topic}`;
+      const roh = await redis.get(schluessel);
+      if (!roh) {
+        return `📭 Keine Lektion \`${eintrag.topic}\` — nichts zu pruefen. `
+          + 'Tippfehler im Themennamen?';
+      }
+      const lektion = safeJsonParse<Record<string, unknown>>(roh, {});
+      await redis.set(schluessel, JSON.stringify(wendeAn(lektion, eintrag)));
+      wortindexEntwerten();
+
+      if (eintrag.haelt) {
+        return [
+          `✅ \`${eintrag.topic}\` ist wieder frisch — geprueft am ${jetzt.slice(0, 10)}.`,
+          eintrag.geprueft_mit ? `   geprueft mit: \`${eintrag.geprueft_mit}\`` : '',
+          '',
+          'Das ist die einzige Handlung, die `verified_at` setzt. Ein Abruf tut es nicht.',
+        ].filter(Boolean).join('\n');
+      }
+      return [
+        `⚠️ \`${eintrag.topic}\` ist als fraglich markiert.`,
+        `   Befund: ${eintrag.befund}`,
+        '',
+        'Geloescht wurde nichts — eine Pruefung kann aus Gruenden fehlschlagen,',
+        'die mit der Lektion nichts zu tun haben. Wenn du weisst, was jetzt gilt:',
+        `\`learn_from_attempts(topic="${eintrag.topic}", …, grund="…")\`.`,
+      ].join('\n');
+    }
+
     case 'recall_feedback': {
       const { instance_id } = args as { instance_id: string };
       const redis = await getConnection(instance_id);

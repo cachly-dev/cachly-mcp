@@ -1,18 +1,18 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cachly-dev/mcp-server",
-  "description": "Persistent memory + causal root-cause analysis for AI coding agents. 123 MCP tools. EU, GDPR.",
+  "description": "Persistent memory + causal root-cause analysis for AI coding agents. 124 MCP tools. EU, GDPR.",
   "repository": {
     "url": "https://github.com/cachly-dev/cachly-mcp",
     "source": "github"
   },
-  "version": "0.10.167",
+  "version": "0.10.168",
   "packages": [
     {
       "registryType": "npm",
       "name": "@cachly-dev/mcp-server",
       "identifier": "@cachly-dev/mcp-server",
-      "version": "0.10.167",
+      "version": "0.10.168",
       "transport": {
         "type": "stdio"
       }

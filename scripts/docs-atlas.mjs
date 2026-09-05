@@ -49,6 +49,9 @@ const AREAS = [
       // Die Rueckmeldung gehoert neben den Abruf, nicht in eine eigene Ecke:
       // sie ist der zweite Halbsatz derselben Bewegung ("hat es geholfen?").
       'recall_feedback',
+      // Und die Pruefung gehoert dazu: 'hat es geholfen?' und 'gilt es noch?'
+      // sind dieselbe Bewegung, einmal nach innen und einmal nach aussen.
+      'lesson_verified',
       'causal_trace',
       'remember_context',
       'recall_context',

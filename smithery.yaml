@@ -1,11 +1,11 @@
 name: cachly AI Brain
-version: 0.10.167
+version: 0.10.168
 description: >
   Persistent AI memory for Claude Code, Cursor, Copilot, Windsurf, Cline & Zed.
   Your AI remembers every lesson, fix, and architecture decision — forever.
   Features: causal root-cause analysis (causal_trace), failure prediction (brain_predict),
   git-ambient learning (brain_from_git), team knowledge sharing, Memory Crystals,
-  BM25+ search in 11 languages. 123 MCP tools. Free tier. GDPR. German servers.
+  BM25+ search in 11 languages. 124 MCP tools. Free tier. GDPR. German servers.
   Zero-config: sign in once via browser, auto-provisions your Brain instance.
 
 startCommand:

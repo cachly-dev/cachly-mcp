@@ -7,6 +7,45 @@
 
 ---
 
+## [0.10.168] – 2026-09-05 — *"I checked it."*
+
+New tool: **`lesson_verified`**. You ran the check for a lesson; you tell the
+Brain what came back.
+
+This finishes something 0.10.165 left half-done. That release removed the
+pretence that reading a lesson verifies it — correct, and incomplete: it left
+`verified_at` settable **only at write time**. Every lesson decayed with no
+honest way to refresh it, and the only escape was rewriting the whole lesson
+with a `grund` explaining why the previous version was wrong. There was
+nothing wrong with it. It had just been checked.
+
+```
+lesson_verified(topic="deploy:web", holds=true,
+                geprueft_mit="curl -s http://127.0.0.1:3220/bereit")
+```
+
+- **holds=true** refreshes `verified_at`, restores confidence, and clears any
+  earlier failed check.
+- **holds=false** marks the lesson questionable and **requires `befund`** —
+  what you saw instead. It deletes nothing and changes no text: a check can
+  fail for reasons that have nothing to do with the lesson. A human decides
+  what replaces it.
+- **`holds` is never guessed.** Omit it and the call is refused. Defaulting to
+  true would make an unchecked lesson look fresh; defaulting to false would
+  flag a correct one.
+
+**The server never runs the stored command.** A command a server executes out
+of a shared store is a back door: whoever can write, runs code on someone
+else's machine. The command is shown; you run it.
+
+Measured on our own 735 lessons before building this: 101 carry a read-only
+check command, 37 of them older than 30 days — old operational claims with a
+runnable proof, exactly the kind that rots silently.
+
+(124 tools.)
+
+---
+
 ## [0.10.167] – 2026-09-04 — *"The reader wants the result, not a compliance note."*
 
 An opt-in line at the foot of a compact recall, **off unless you set
