@@ -7,6 +7,34 @@
 
 ---
 
+## [0.10.169] – 2026-09-05 — *"A warning nobody reads is silence."*
+
+0.10.168 let you report a failed check. It wrote `pruefung_gefallen_am` — and
+**nothing read it back**. The lesson was flagged and every reader still got it
+clean. That is the same half-change 0.10.165 left behind, one level down, and
+it was caught by asking the blunt question: does anyone read this field?
+
+Now a failed check is visible in both read paths:
+
+```
+recall_best_solution → ❌ CHECK FAILED on 2026-09-05 — Port 3095 answers no more
+
+smart_recall         → ❌ `whisper:node4` — Pruefung am 2026-09-05
+                          FEHLGESCHLAGEN: Port 3095 answers no more
+```
+
+**A failed check outranks confidence, including a perfect one.** A lesson
+written yesterday has confidence 1.0 and would otherwise show a green tick —
+on something a human demonstrably could not find any more. Fresh and doubtful
+are not mutually exclusive. There is a test that fails if that ordering is
+ever reversed.
+
+In `smart_recall` the note sits **above** the hits and does not touch the
+ranking. The lesson stays findable; nobody reads it unaware. (Age in the
+ranking broke every benchmark floor on 19.08. — that lesson still holds.)
+
+---
+
 ## [0.10.168] – 2026-09-05 — *"I checked it."*
 
 New tool: **`lesson_verified`**. You ran the check for a lesson; you tell the

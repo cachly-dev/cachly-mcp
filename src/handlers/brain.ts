@@ -1862,6 +1862,9 @@ async function handleBrainToolInner(
           context?: string; ts: string; verified_at?: string; severity?: string;
           file_paths?: string[]; commands?: string[]; tags?: string[];
           recall_count?: number; audit_trail?: unknown[];
+          // Der Lesepfad zu lesson_verified(haelt=false). Ohne diese beiden
+          // Felder waere die Markierung geschrieben und unsichtbar.
+          pruefung_gefallen_am?: string; pruefung_befund?: string;
         });
         if (!lesson) return `⚠️ Lesson data for \`${topic}\` is corrupted. Re-store it with \`learn_from_attempts\`.`;
 
@@ -1913,6 +1916,9 @@ async function handleBrainToolInner(
         const badge = confidenceBadge(
           confidence, ageDays,
           Array.isArray(probe) && typeof probe[0] === 'string' ? probe[0] : undefined,
+          lesson.pruefung_gefallen_am
+            ? { am: lesson.pruefung_gefallen_am, befund: lesson.pruefung_befund }
+            : undefined,
         );
 
         // ── Lesen ist kein Pruefen ────────────────────────────────────────
@@ -2785,6 +2791,25 @@ async function handleBrainToolInner(
         if (ld.gilt_bis && Date.parse(String(ld.gilt_bis)) < Date.now()) {
           ersetzungsNotizen.push(
             `⏳ \`${r.key.replace('cachly:lesson:best:', '')}\` galt bis ${String(ld.gilt_bis).slice(0, 10)} — Geschichte, keine aktuelle Tatsache.`,
+          );
+        }
+        // Der Lesepfad zu lesson_verified(haelt=false). Jemand hat den
+        // Pruefbefehl laufen lassen und etwas anderes vorgefunden. Das gehoert
+        // UEBER die Treffer, nicht in die Rangfolge: der Treffer bleibt
+        // auffindbar, aber niemand liest ihn mehr ahnungslos.
+        //
+        // Ohne diesen Pfad waere die Markierung geschrieben und unsichtbar —
+        // genau die Bauform, gegen die das Feld angetreten ist.
+        const gefallen = safeJsonParse<{
+          pruefung_gefallen_am?: string; pruefung_befund?: string;
+        }>(r.content, {});
+        if (gefallen.pruefung_gefallen_am) {
+          const thema = r.key.replace('cachly:lesson:best:', '');
+          const wann = String(gefallen.pruefung_gefallen_am).slice(0, 10);
+          const was = String(gefallen.pruefung_befund ?? '').trim().slice(0, 200);
+          ersetzungsNotizen.push(
+            `❌ \`${thema}\` — Pruefung am ${wann} FEHLGESCHLAGEN`
+            + (was ? `: ${was}` : ''),
           );
         }
       }

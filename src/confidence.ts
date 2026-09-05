@@ -51,7 +51,30 @@ export function calculateConfidence(lesson: { verified_at?: string; ts: string; 
  * @param probe Ein Befehl aus der Lektion, mit dem sich ihre Behauptung
  *              nachpruefen laesst. Fehlt er, bleibt der Badge wie bisher.
  */
-export function confidenceBadge(confidence: number, ageDays: number, probe?: string): string {
+export function confidenceBadge(
+  confidence: number,
+  ageDays: number,
+  probe?: string,
+  gefallen?: { am?: string; befund?: string },
+): string {
+  /*
+   * Eine gefallene Pruefung schlaegt ALLES andere.
+   *
+   * Sie steht vor der Zuversicht, auch vor `>= 0.9`: eine Lektion, die
+   * gestern geschrieben wurde und deren Pruefung heute fehlschlaegt, ist
+   * frisch UND fraglich. Wer nur auf das Alter sieht, bekommt ein gruenes
+   * Haekchen auf etwas, das jemand nachweislich nicht mehr vorgefunden hat.
+   *
+   * Das ist der Lesepfad zu `lesson_verified(haelt=false)`. Ohne ihn waere
+   * die Markierung geschrieben und unsichtbar — genau die Bauform, gegen die
+   * dieses Feld angetreten ist (0.10.169).
+   */
+  const am = (gefallen?.am ?? '').slice(0, 10);
+  if (am) {
+    const was = (gefallen?.befund ?? '').trim();
+    const dazu = was ? ` — ${was.slice(0, 160)}` : '';
+    return `❌ CHECK FAILED on ${am}${dazu}`;
+  }
   if (confidence >= 0.9) return '✅';
   const wie = probeHinweis(probe);
   if (confidence >= 0.7) return `⚠️ (${Math.round(ageDays)}d old, confidence ${(confidence * 100).toFixed(0)}% — verify before applying${wie})`;
