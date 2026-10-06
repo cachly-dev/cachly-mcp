@@ -7,6 +7,21 @@
 
 ---
 
+## [0.10.171] – 2026-10-07 — *"The reader now says whose lesson it is reading."*
+
+0.10.170 added the reader. This release sends the **instance id** along with
+every reader call, so the server can pick the reader that is allowed to see
+this instance's lessons: the in-house cross-encoder for everyone, or — only
+for instances explicitly allow-listed on the server — the decision model Jev
+(TypeSafe). Lessons of other instances never leave the in-house service.
+
+Why it matters: on the frozen 3,003-question test set Jev lifts place 1 from
+48.8 to **63.7 %** and top 3 from 64.9 to **75.7 %**; on 2,001 real GitHub
+questions place 1 goes from 33.5 to **51.4 %**. Shuffled-text counter-checks
+collapse in both cases. 40 ms per question, no training.
+
+No behaviour change for a client whose server has no reader configured.
+
 ## [0.10.170] – 2026-10-06 — *"Read the question and the answer together."*
 
 Every ranking signal so far compared the question with a lesson **separately**:
