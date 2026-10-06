@@ -240,3 +240,52 @@ export const LESER_ZEITLIMIT_MS = 2500;
 export const LESER_MAX_ZEICHEN = 1500;
 
 
+
+/**
+ * ══ Die Gewichte der automatischen Einblendung (ohne Vektoren) ═════════════
+ *
+ * Die Einblendung (`tools/ambient-recall/`) feuert bei jedem Prompt und darf
+ * deshalb nicht einbetten. Ihr fehlen also drei der fuenf Merkmale, mit denen
+ * `GEWICHTE` in rangfolge.ts eingestellt wurde. Eine Stellschraube gilt fuer
+ * die Umgebung, in der sie gemessen wurde — diese hier ist die Umgebung ohne
+ * Vektoren, und sie braucht eigene Zahlen.
+ *
+ * ── Wie viel die Vektoren wirklich tragen (06.09.2026) ─────────────────────
+ *
+ * Erst musste eine falsche Zahl weg. Die Uebergabe vom 06.09. schrieb, der
+ * Wortpfad allein trage 45 % Platz 1 — gemessen mit `--sinnpool 0`. Der
+ * Schalter nimmt den Vektoren aber nur die NOMINIERUNG, nicht die SORTIERUNG.
+ * Derselbe Messstand, dieselben 3003 Fragen, dieselbe Vorauswahl:
+ *
+ *   --sinnpool 0 (Vektoren sortieren mit)      Platz 1 45 %   @3 60 %
+ *   Vektorgewichte auf 0 (wirklich nur Worte)  Platz 1 28 %   @3 43 %
+ *
+ * Die Vektoren tragen 17 Punkte, nicht null.
+ *
+ * ── Was ohne sie am besten traegt ──────────────────────────────────────────
+ *
+ * Ohne Vektoren ist `bewerteTopf` SCHLECHTER als die blosse Wortsuche: seine
+ * beiden verbleibenden Merkmale wurden als ERGAENZUNG zu den Vektoren
+ * gewichtet, nicht als Sortierung fuer sich. Gemessen auf 800 Fragen des
+ * eingefrorenen Pruefsatzes, Topf 75, Platz 1 / @3:
+ *
+ *   bewerteTopf mit GEWICHTE, ohne Vektoren      25,8 %  44,3 %
+ *   nur die Wortsuche (BM25)                     32,8 %  48,8 %
+ *   BM25 + 0,5 Deckung + 0,5 Zeuge               36,5 %  49,3 %   <- hier
+ *
+ * Gewaehlt auf Haelfte A (0,5/0,5 ist dort das Beste aus neun Verdrahtungen),
+ * auf Haelfte B genau EINMAL bestaetigt: Platz 1 32,8 -> 36,8 %,
+ * @3 49,8 -> 53,3 %. Der Gewinn haelt auf Fragen, die die Wahl nie gesehen hat.
+ *
+ * Werkzeug: `src/bench/einblendung-messen.ts`. Aenderung nur mit neuem
+ * A-Lauf und einmaliger B-Bestaetigung.
+ */
+export const EINBLENDUNG_DECKUNG = 0.5;
+/**
+ * Der beste Zeuge in der Einblendung, Wert 0,5.
+ *
+ * Dieselbe Messung wie EINBLENDUNG_DECKUNG (auf Haelfte A gewaehlt, auf B
+ * einmal bestaetigt), dieselbe Aenderungsregel: neuer A-Lauf, eine
+ * B-Bestaetigung, Werkzeug `src/bench/einblendung-messen.ts`.
+ */
+export const EINBLENDUNG_ZEUGE = 0.5;

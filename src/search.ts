@@ -1595,7 +1595,7 @@ interface DocEntry {
   timestamp?: number;              // epoch ms, extracted from content if present
 }
 
-interface KeywordMatch {
+export interface KeywordMatch {
   key: string;
   content: string;
   score: number;
@@ -1765,7 +1765,7 @@ function recencyBoost(timestampMs: number | undefined): number {
  * `Seltenheitsbestand` schon eingehen; er steht hier, damit niemand ihn
  * spaeter fuer einen Fehler haelt.
  */
-interface Wortbestand {
+export interface Wortbestand {
   docs: DocEntry[];
   avgDL: number;
   docFreq: Map<string, number>;
@@ -1856,12 +1856,45 @@ async function bestandHolen(
   for (const key of allKeys) pipeline.get(key);
   const results = await pipeline.exec();
 
+  const paare: Array<{ key: string; content: string }> = [];
+  for (let i = 0; i < allKeys.length; i++) {
+    const content = results?.[i]?.[1] as string | null;
+    if (content) paare.push({ key: allKeys[i], content });
+  }
+  const gebauter = bestandAusDokumenten(paare);
+  if (!gebauter) return null;
+
+  const fach = _wortbestand.get(redis as unknown as object) ?? new Map<string, Wortbestand>();
+  if (!fach.has(bestandsSchluessel)) _wortbestandZaehler++;
+  fach.set(bestandsSchluessel, gebauter);
+  _wortbestand.set(redis as unknown as object, fach);
+  return gebauter;
+}
+
+/**
+ * Der Wortbestand aus fertig gelesenen (Schluessel, Inhalt)-Paaren — OHNE Redis.
+ *
+ * Herausgeloest aus `bestandHolen` am 06.09.2026, Zeile fuer Zeile unveraendert:
+ * dieselbe Zerlegung, dieselben Bigramme, dieselbe Dokumenthaeufigkeit. Getrennt
+ * wurde nur das LESEN vom BAUEN.
+ *
+ * Der Grund ist die automatische Einblendung (`tools/ambient-recall/`). Sie hat
+ * keine Redis-Verbindung, haelt den Bestand aber lokal vor und braucht dieselbe
+ * Vorauswahl wie das Produkt. Ohne diese Trennung haette der Hook eine zweite
+ * Wortsuche bekommen — und zwei Wortsuchen sind zwei Wahrheiten. Gemessen am
+ * 06.09.2026: eine eigene, rohe Wortzaehlung als Vorauswahl kostet gegenueber
+ * dieser hier 11 Punkte auf Platz 1.
+ *
+ * Gibt `null` zurueck, wenn nichts Zerlegbares dabei war.
+ */
+export function bestandAusDokumenten(
+  paare: Array<{ key: string; content: string }>,
+): Wortbestand | null {
   const docs: DocEntry[] = [];
   let totalTokens = 0;
 
-  for (let i = 0; i < allKeys.length; i++) {
-    const content = results?.[i]?.[1] as string | null;
-    if (!content) continue;
+  for (let i = 0; i < paare.length; i++) {
+    const { key, content } = paare[i];
 
     // Indiziert wird der ROHE Inhalt, nicht eine Auswahl von Feldern.
     //
@@ -1882,7 +1915,7 @@ async function bestandHolen(
     // Steht hier, damit es niemand — auch ich nicht — ein zweites Mal fuer eine
     // gute Idee haelt. Das Argument war plausibel und falsch, und genau diese
     // Sorte Aenderung hat uns die `score^0.3`-Stauchung eingebracht.
-    const tokens = tokenize(`${allKeys[i]} ${content}`, { crossLingualExpand: false });
+    const tokens = tokenize(`${key} ${content}`, { crossLingualExpand: false });
     if (tokens.length === 0) continue;
 
     // Term frequency map
@@ -1899,8 +1932,8 @@ async function bestandHolen(
 
     const timestamp = extractTimestamp(content);
     // Key tokens for title-boost: terms appearing in the Redis key get extra weight
-    const keyTokens = new Set(tokenize(allKeys[i]));
-    docs.push({ key: allKeys[i], content, tokens, tokenFreq, bigrams, keyTokens, timestamp });
+    const keyTokens = new Set(tokenize(key));
+    docs.push({ key, content, tokens, tokenFreq, bigrams, keyTokens, timestamp });
     totalTokens += tokens.length;
   }
 
@@ -1918,12 +1951,7 @@ async function bestandHolen(
       }
     }
   }
-  const gebauter: Wortbestand = { docs, avgDL, docFreq, gebaut: Date.now() };
-  const fach = _wortbestand.get(redis as unknown as object) ?? new Map<string, Wortbestand>();
-  if (!fach.has(bestandsSchluessel)) _wortbestandZaehler++;
-  fach.set(bestandsSchluessel, gebauter);
-  _wortbestand.set(redis as unknown as object, fach);
-  return gebauter;
+  return { docs, avgDL, docFreq, gebaut: Date.now() };
 }
 
 async function keywordSearch(
@@ -2262,6 +2290,8 @@ export { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp,
          katakanaToRomaji, arabicLightStem, expandCrossLingual, CROSS_LINGUAL_MAP };
 
 // ── Exported for use in index.ts ──────────────────────────────────────────────
-export type { KeywordMatch };
-export { keywordSearch, ZERO_RESULTS_LOG, logZeroResult, _indexVocab as indexVocab, zeroResultsTotal };
+export {
+  keywordSearch, keywordSearchMitBestand, ZERO_RESULTS_LOG, logZeroResult,
+  _indexVocab as indexVocab, zeroResultsTotal,
+};
 
