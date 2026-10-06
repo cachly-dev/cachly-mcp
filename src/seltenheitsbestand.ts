@@ -35,17 +35,32 @@ export function lektionsText(l: Record<string, unknown>): string {
   return [s(l.topic), s(l.what_worked), s(l.what_failed)].filter(Boolean).join(' ');
 }
 
+/**
+ * Der Text, den der LESER sieht — genau der Zuschnitt des Trainings
+ * (bench/leser/leser-trainieren.py: Thema, Zeilenumbruch, what_worked,
+ * hoechstens maxZeichen). what_failed bleibt draussen, weil es im Training
+ * draussen blieb: ein anders zugeschnittener Text ist ein anderes Modell.
+ */
+export function leserText(l: Record<string, unknown>, maxZeichen: number): string {
+  const s = (v: unknown): string => (typeof v === 'string' ? v : '');
+  return `${s(l.topic)}\n${s(l.what_worked)}`.slice(0, maxZeichen);
+}
+
 export class Seltenheitsbestand {
   private seltenheit: Seltenheit | null = null;
   private texte = new Map<string, string>();
+  private leserTexte = new Map<string, string>();
   private geladen = 0;
 
-  constructor(private readonly frischeMs = 60_000) {}
+  constructor(private readonly frischeMs = 60_000, private readonly leserMaxZeichen = 1500) {}
 
   get groesse(): number { return this.texte.size; }
 
   /** Der Wortschatz einer Lektion, oder ein leerer Text, wenn sie fehlt. */
   textVon(topic: string): string { return this.texte.get(topic) ?? ''; }
+
+  /** Der Text fuer den Leser (Thema + what_worked, Trainingszuschnitt). */
+  leserTextVon(topic: string): string { return this.leserTexte.get(topic) ?? ''; }
 
   /**
    * Alle Themen des Bestands.
@@ -76,6 +91,7 @@ export class Seltenheitsbestand {
     if (schluessel.length === 0) return; // Lieber die alte Statistik als gar keine.
 
     const texte = new Map<string, string>();
+    const leserTexte = new Map<string, string>();
     for (let i = 0; i < schluessel.length; i += 100) {
       const block = schluessel.slice(i, i + 100);
       const werte = await redis.mget(...block);
@@ -86,12 +102,16 @@ export class Seltenheitsbestand {
           const topic = typeof o.topic === 'string' && o.topic
             ? o.topic
             : block[j].slice(LEKTION_PRAEFIX.length);
-          if (topic) texte.set(topic, lektionsText(o));
+          if (topic) {
+            texte.set(topic, lektionsText(o));
+            leserTexte.set(topic, leserText(o, this.leserMaxZeichen));
+          }
         } catch { /* eine kaputte Zeile ist ein Thema fuer doctor, nicht fuer den Recall */ }
       }
     }
 
     this.texte = texte;
+    this.leserTexte = leserTexte;
     this.seltenheit = new Seltenheit([...texte.values()]);
     this.geladen = jetzt;
   }

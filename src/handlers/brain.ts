@@ -52,6 +52,7 @@ import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
          splitMultiQuery, levenshtein, indexVocab as _indexVocab } from '../search.js';
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider, EMBED_PROVIDER } from '../embeddings.js';
+import { leserAktiv, leserPunkte, mischeMitLeser } from '../leser.js';
 import { repariereFelder } from '../feldreparatur.js';
 import {
   VEKTOR_PRAEFIX, NAME_VEKTOR_PRAEFIX, ZWEIT_VEKTOR_PRAEFIX, packe, textFuerVektor, textFuerNamensVektor,
@@ -97,6 +98,7 @@ import {
   EINGANG_SCHWELLE as STELLSCHRAUBE_EINGANG_SCHWELLE,
   EINGANG_SORTIER_GEWICHT as STELLSCHRAUBE_EINGANG_SORTIER_GEWICHT,
   ZWEIT_MODELL, ZWEIT_GEWICHT, ZWEIT_MINDESTDECKUNG, NAHDUPLIKAT_SCHWELLE,
+  LESER_TIEFE,
 } from '../rangfolge-stellschrauben.js';
 import { ermittleQuelle, quelleZeile, type LektionsQuelle } from '../herkunft.js';
 import { merkeRecall, sitzungsKosten, vergissSitzungsKosten, kostenZeilen } from '../sitzungs-kosten.js';
@@ -2377,10 +2379,27 @@ async function handleBrainToolInner(
             }
           }
 
-          const reihenfolge = topf
+          let reihenfolge = topf
             .map((t, i) => ({ t, p: punkte[i] }))
             .sort((a, b) => b.p - a.p)
             .map((x) => x.t);
+          // Der Leser als achtes Signal: liest Frage und Lektion GEMEINSAM.
+          // Nur die besten LESER_TIEFE werden gelesen und untereinander neu
+          // gemischt — Hauspunkt und Leserpunkt gespreizt, 1:1 addiert, genau
+          // die gemessene Mischung (Arm L4, Zahlen an LESER_GEWICHT in
+          // rangfolge-stellschrauben.ts). Alles dahinter behaelt die Hausordnung.
+          // Antwortet der Dienst nicht, bleibt die Hausordnung stehen: der
+          // Leser ist gemessen ein Zusatz, kein Ersatz.
+          if (leserAktiv() && reihenfolge.length > 1) {
+            const kopf = reihenfolge.slice(0, LESER_TIEFE);
+            const rest = reihenfolge.slice(LESER_TIEFE);
+            const hausPunkt = new Map(topf.map((t, i) => [t, punkte[i]] as const));
+            const lp = await leserPunkte(query, kopf.map((t) => seltenheitsbestand.leserTextVon(t)));
+            if (lp) {
+              const neu = mischeMitLeser(kopf.map((t) => hausPunkt.get(t) ?? 0), lp);
+              reihenfolge = [...neu.map((i) => kopf[i]), ...rest];
+            }
+          }
           const bekannt = new Map(kwMatches.map((m) => [m.key, m]));
 
           // Lektionen, die NUR der Bedeutungsabgleich gefunden hat, muessen

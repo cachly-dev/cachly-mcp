@@ -201,4 +201,42 @@ export const ABLEHN_ABSTAND = 0.05;
  */
 export const SELTENHEIT_LAENGE_B = 1.0;
 
+/**
+ * Der Leser (Cross-Encoder) als achtes Signal — liest Frage und Lektion
+ * GEMEINSAM, statt zwei Vektoren zu vergleichen. Laeuft als Dienst hinter
+ * POST /api/v1/rerank (api/internal/handler/rerank_handler.go).
+ *
+ * Gemessen (GPU-Naechte 07./08.09. und 16.09.2026, Befund
+ * .agent/BEFUND-gpu-nacht-2026-09-08.md; Pruefsatz 3003 · eingaenge-b ·
+ * 25/75 · mit Zweitmodell): kleiner Leser (MiniLM-L12, am Einstellsatz
+ * gelernt) ADDITIV ueber die besten 25 Kandidaten — Platz 1 48,8 -> 54,9 %,
+ * Findequote@3 64,9 -> 69,3 % (+132); Gegenprobe mit vertauschten Texten
+ * bricht auf 240 ein. Auf 99 nie gesehenen Lektionen +3,9 Punkte Platz 1.
+ * Als ERSATZ der Hausordnung verliert er (Nominator-Decke 3a: 64,5 % = Haus) —
+ * deshalb wird nur die Reihenfolge der besten LESER_TIEFE neu gemischt:
+ * Hauspunkt und Leserpunkt je im Topf gespreizt, 1:1 addiert (Arm L4).
+ *
+ * Gewicht 1,0 = die gemessene 1:1-Mischung. 0 schaltet den Leser ab;
+ * CACHLY_LESER=0 in der Umgebung ebenso. Ohne konfigurierten Dienst (503)
+ * oder nach dem Zeitlimit sortiert der Topf wie bisher — der Leser darf nie
+ * eine Antwort verzoegern, die ohne ihn da waere.
+ */
+export const LESER_GEWICHT = 1.0;
+/**
+ * So viele der besten Kandidaten liest der Leser: 25, der Topf der Messung
+ * (Arm L4, T25). Aenderung nur mit Messung auf dem Pruefsatz
+ * (leser-arme-offline.py auf einer punkte.jsonl); auf CPU kosten 25 Paare
+ * x 256 Token 1,2 s, 10 Paare x 128 Token 230 ms (node-4, 06.10.2026).
+ */
+export const LESER_TIEFE = 25;
+/** Zeitlimit des Anrufs beim Dienst: 2500 ms, dann bleibt die Hausordnung. */
+export const LESER_ZEITLIMIT_MS = 2500;
+/**
+ * Zuschnitt des Lesertexts: 1500 Zeichen — der Zuschnitt des Trainings
+ * (bench/leser/leser-trainieren.py MAX_ZEICHEN); Text = Thema + Zeilenumbruch
+ * + what_worked, genau wie dort. Ein anders zugeschnittener Text ist ein
+ * anderes Modell.
+ */
+export const LESER_MAX_ZEICHEN = 1500;
+
 
