@@ -29,6 +29,15 @@ describe('leserPunkte — der Anruf beim Dienst', () => {
     const p = await leserPunkte('frage', ['a', 'b'], { fetchFn: antwort(200, { scores: [0.2, 0.9] }) });
     expect(p).toEqual([0.2, 0.9]);
   });
+  it('schickt die Instanz-Kennung mit, damit die API den Anbieter waehlen kann', async () => {
+    let gesendet: unknown = null;
+    const merkt: typeof fetch = (async (_u: unknown, init?: RequestInit) => {
+      gesendet = JSON.parse(String(init?.body));
+      return new Response(JSON.stringify({ scores: [0.5] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    await leserPunkte('frage', ['a'], { fetchFn: merkt, instanceId: 'inst-1' });
+    expect(gesendet).toEqual({ query: 'frage', texts: ['a'], instance_id: 'inst-1' });
+  });
   it('liefert null bei falscher Laenge, Fehlern und Zeitueberschreitung — wirft nie', async () => {
     expect(await leserPunkte('f', ['a', 'b'], { fetchFn: antwort(200, { scores: [0.2] }) })).toBeNull();
     expect(await leserPunkte('f', ['a'], { fetchFn: antwort(500, { error: 'kaputt' }) })).toBeNull();

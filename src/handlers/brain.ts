@@ -2394,7 +2394,7 @@ async function handleBrainToolInner(
             const kopf = reihenfolge.slice(0, LESER_TIEFE);
             const rest = reihenfolge.slice(LESER_TIEFE);
             const hausPunkt = new Map(topf.map((t, i) => [t, punkte[i]] as const));
-            const lp = await leserPunkte(query, kopf.map((t) => seltenheitsbestand.leserTextVon(t)));
+            const lp = await leserPunkte(query, kopf.map((t) => seltenheitsbestand.leserTextVon(t)), { instanceId: instance_id });
             if (lp) {
               const neu = mischeMitLeser(kopf.map((t) => hausPunkt.get(t) ?? 0), lp);
               reihenfolge = [...neu.map((i) => kopf[i]), ...rest];
