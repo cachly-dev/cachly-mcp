@@ -289,6 +289,16 @@ async function main(): Promise<void> {
   const diagnosePfad = flag('diagnose');
   const diagnose: Array<Record<string, unknown>> = [];
 
+  // --kandidaten-nach <datei>: je Frage die obersten 25 in der ENDGUELTIGEN
+  // Hausordnung (alle Merkmale, Tuer und Zweitmodell eingerechnet) samt
+  // Punktzahl. Das ist die Liste, die ein Leser (Stichentscheid Stufe B,
+  // VORREGISTRIERUNG-leser-stufe-b.md) neu ordnen darf — und die Grundlinie,
+  // gegen die er gemessen wird. Hier geschrieben und nicht in einem eigenen
+  // Werkzeug, damit die Ordnung dieselbe ist, die dieser Lauf zaehlt.
+  const kandidatenPfad = flag('kandidaten-nach');
+  const kandidaten: string[] = [];
+  const KANDIDATEN_TIEFE = 25;
+
   /*
    * ── --kontobuch <datei>: das Verlust-Kontobuch (Karte 3utwghaycu3g) ─────
    *
@@ -472,6 +482,19 @@ async function main(): Promise<void> {
       m.get(wert)!.push(platz);
     }
 
+    if (kandidatenPfad && !rrf) {
+      const geordnet = topf.map((t, i) => ({ t, p: punkte[i] }))
+        .sort((a, b) => b.p - a.p);
+      kandidaten.push(JSON.stringify({
+        query: q.query,
+        relevant: q.relevant,
+        art: q.art ?? 'ohne',
+        bestPunkt: geordnet[0]?.p ?? 0,
+        platzHaus: platz,
+        kandidaten: geordnet.slice(0, KANDIDATEN_TIEFE),
+      }));
+    }
+
     if (diagnosePfad && !rrf) {
       const geordnet = topf.map((t, i) => ({ t, p: punkte[i], i }))
         .sort((a, b) => b.p - a.p);
@@ -525,6 +548,10 @@ async function main(): Promise<void> {
   if (diagnosePfad && diagnose.length > 0) {
     writeFileSync(resolve(diagnosePfad), diagnose.map((d) => JSON.stringify(d)).join('\n') + '\n', 'utf8');
     console.log(`  Diagnose: ${diagnose.length} Zeilen nach ${resolve(diagnosePfad)}`);
+  }
+  if (kandidatenPfad && kandidaten.length > 0) {
+    writeFileSync(resolve(kandidatenPfad), `${kandidaten.join('\n')}\n`, 'utf8');
+    console.log(`  Kandidaten (Top ${KANDIDATEN_TIEFE}, Hausordnung): ${kandidaten.length} Zeilen nach ${resolve(kandidatenPfad)}`);
   }
 
   if (kontobuchPfad && kontobuch.length > 0) {

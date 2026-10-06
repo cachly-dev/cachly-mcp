@@ -241,6 +241,7 @@ export const LESER_MAX_ZEICHEN = 1500;
 
 
 
+
 /**
  * ══ Die Gewichte der automatischen Einblendung (ohne Vektoren) ═════════════
  *

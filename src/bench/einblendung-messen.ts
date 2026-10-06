@@ -51,7 +51,9 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Einblendbestand, torWoerter, zaehleBelege } from '../einblendung-kern.js';
-import { lektionsText } from '../seltenheitsbestand.js';
+import { lektionsText, leserText } from '../seltenheitsbestand.js';
+import { leserPunkte, mischeMitLeser } from '../leser.js';
+import { LESER_TIEFE, LESER_MAX_ZEICHEN } from '../rangfolge-stellschrauben.js';
 
 interface Lektion {
   topic: string;
@@ -137,14 +139,20 @@ function zeile(name: string, k: Kennzahlen, n: number): string {
  * Permutation. So laeuft BEIDES durch denselben Code — eine zweite Schleife
  * waere eine zweite Wahrheit.
  */
-function lauf(
+// Arm D (--leser): die besten LESER_TIEFE von Arm C liest der Leser-Endpunkt
+// (POST /api/v1/rerank, Instanz aus CACHLY_BRAIN_INSTANCE_ID — die API waehlt
+// eigenen Dienst oder Jev), gemischt wie im Hook (lib.mjs selectRelevantMitLeser).
+// Braucht CACHLY_JWT; ohne Antwort zaehlt die Frage mit der Ordnung von Arm C.
+let leserAusfaelle = 0;
+async function lauf(
   lektionen: Lektion[],
   fragen: Frage[],
   zuordnung: number[],
   minBelege: number,
   plaetzeNach: Array<Record<string, unknown>> | null,
   topf: number | undefined,
-): { a: Kennzahlen; b: Kennzahlen; c: Kennzahlen } {
+  leser = false,
+): Promise<{ a: Kennzahlen; b: Kennzahlen; c: Kennzahlen; d: Kennzahlen | null }> {
   const themen = lektionen.map((l) => l.topic);
   const topicKlein = lektionen.map((l) => String(l.topic ?? '').toLowerCase());
   const hayKurz = lektionen.map((l) => heuhaufenAlt(l, true));
@@ -157,6 +165,8 @@ function lauf(
   const bestand = new Einblendbestand(lektionen, topf !== undefined ? { topf } : {});
 
   const a = leer(); const b = leer(); const c = leer();
+  const d = leser ? leer() : null;
+  const instanz = process.env.CACHLY_BRAIN_INSTANCE_ID || '';
 
   for (let i = 0; i < fragen.length; i++) {
     const text = fragen[i].query;
@@ -175,7 +185,8 @@ function lauf(
 
     const pA = ordne(lektionen.map((l, j) => alteBewertung(tokens, topicKlein[j], hayKurz[j], l)));
     const pB = ordne(lektionen.map((l, j) => alteBewertung(tokens, topicKlein[j], hayVoll[j], l)));
-    const pC = bestand.sortiere(text).map((x) => x.lektion.topic as string);
+    const sortiertC = bestand.sortiere(text);
+    const pC = sortiertC.map((x) => x.lektion.topic as string);
 
     const platzA = platzVon(pA, erwartet);
     const platzB = platzVon(pB, erwartet);
@@ -183,12 +194,30 @@ function lauf(
     buche(a, platzA, torOffen);
     buche(b, platzB, torOffen);
     buche(c, platzC, torOffen);
+    if (d) {
+      let pD = pC;
+      if (torOffen && sortiertC.length > 1) {
+        const kopf = sortiertC.slice(0, LESER_TIEFE);
+        const lp = await leserPunkte(
+          text,
+          kopf.map((x) => leserText(x.lektion as Record<string, unknown>, LESER_MAX_ZEICHEN)),
+          { instanceId: instanz },
+        );
+        if (lp) {
+          const neu = mischeMitLeser(kopf.map((x) => x.punkte), lp);
+          pD = [...neu.map((k) => kopf[k].lektion.topic as string), ...pC.slice(LESER_TIEFE)];
+        } else {
+          leserAusfaelle++;
+        }
+      }
+      buche(d, platzVon(pD, erwartet), torOffen);
+    }
 
     if (plaetzeNach) {
       plaetzeNach.push({ id: fragen[i].id ?? i, guete: fragen[i].guete, sprache: fragen[i].sprache, alt: platzA, altVoll: platzB, neu: platzC, tor: torOffen });
     }
   }
-  return { a, b, c };
+  return { a, b, c, d };
 }
 
 /** Ein festgekeimter Zufallsgenerator — damit die Gegenprobe wiederholbar ist. */
@@ -200,7 +229,7 @@ function keimZufall(keim: number): () => number {
   };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const korpusPfad = flag('korpus');
   const satzPfad = flag('pruefsatz');
   if (!korpusPfad || !satzPfad) {
@@ -233,7 +262,8 @@ function main(): void {
   const topf = topfFlag !== undefined ? Number(topfFlag) : undefined;
   const gerade = fragen.map((_, i) => i);
   const t0 = Date.now();
-  const echt = lauf(lektionen, fragen, gerade, minBelege, plaetze, topf);
+  const leserAn = argv.includes('--leser');
+  const echt = await lauf(lektionen, fragen, gerade, minBelege, plaetze, topf, leserAn);
   const dauer = Date.now() - t0;
 
   const n = fragen.length;
@@ -243,7 +273,10 @@ function main(): void {
     + `${zeile('A alt', echt.a, n)}\n`
     + `${zeile('B alt-voll', echt.b, n)}\n`
     + `${zeile('C neu', echt.c, n)}\n`
-    + `\n(${dauer} ms fuer ${n} Fragen · ${(dauer / n).toFixed(1)} ms je Frage)\n`,
+    + (echt.d ? `${zeile('D Leser', echt.d, n)}\n` : '')
+    + `\n(${dauer} ms fuer ${n} Fragen · ${(dauer / n).toFixed(1)} ms je Frage`
+    + (leserAn ? ` · Leser-Ausfaelle ${leserAusfaelle} · Instanz ${process.env.CACHLY_BRAIN_INSTANCE_ID ? 'gesetzt' : 'FEHLT'}` : '')
+    + ')\n',
   );
 
   if (argv.includes('--kontrolle')) {
@@ -253,13 +286,14 @@ function main(): void {
       const j = Math.floor(r() * (i + 1));
       [perm[i], perm[j]] = [perm[j], perm[i]];
     }
-    const kontrolle = lauf(lektionen, fragen, perm, minBelege, null, topf);
+    const kontrolle = await lauf(lektionen, fragen, perm, minBelege, null, topf, leserAn);
     process.stdout.write(
       '\nGEGENPROBE — dieselben Fragen, Erwartungen permutiert (Keim 42).\n'
       + 'Brechen diese Zahlen NICHT ein, misst der Stand sich selbst.\n'
       + `${zeile('A alt', kontrolle.a, n)}\n`
       + `${zeile('B alt-voll', kontrolle.b, n)}\n`
-      + `${zeile('C neu', kontrolle.c, n)}\n`,
+      + `${zeile('C neu', kontrolle.c, n)}\n`
+      + (kontrolle.d ? `${zeile('D Leser', kontrolle.d, n)}\n` : ''),
     );
   }
 
