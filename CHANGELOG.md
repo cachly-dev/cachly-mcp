@@ -7,6 +7,32 @@
 
 ---
 
+## [0.10.170] – 2026-10-06 — *"Read the question and the answer together."*
+
+Every ranking signal so far compared the question with a lesson **separately**:
+word overlap, vector distance, rarity of shared words. This release adds the
+first signal that reads both **as one piece of text** — a cross-encoder
+("the reader") that gets the question and the lesson in the same input and
+returns one score for the pair.
+
+Measured on the frozen 3,003-question test set (doors `eingaenge-b`, pots
+25/75, second model on): place 1 **48.8 → 54.9 %**, top 3 **64.9 → 69.3 %**.
+The counter-check with shuffled lesson texts collapses to 240 — the gain is
+the reader, not chance. On 99 lessons the reader had never seen in training:
++3.9 points place 1. The reader does **not** replace the house ranking — as a
+replacement it loses — so it only re-mixes the best `LESER_TIEFE` (25)
+candidates; everything behind keeps its order.
+
+How it reaches you: the server exposes `POST /api/v1/rerank` (same key as
+`/api/v1/embed`), the MCP server asks it after the house ranking
+(`src/leser.ts`). Any failure — no service, 503, 2.5 s timeout, broken answer —
+leaves the house order untouched; a 503 is remembered for ten minutes.
+`CACHLY_LESER=0` turns it off. Tuning values and their measurements live in
+`rangfolge-stellschrauben.ts` (`LESER_*`).
+
+Known cost: on CPU the reader needs about 1.2 s for 25 pairs; depth and text
+length are being measured for a faster default.
+
 ## [0.10.169] – 2026-09-05 — *"A warning nobody reads is silence."*
 
 0.10.168 let you report a failed check. It wrote `pruefung_gefallen_am` — and
