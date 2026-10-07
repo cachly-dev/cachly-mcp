@@ -251,6 +251,8 @@ import { TOOLS } from '../tools.js';
 import { vorspannHinweis } from '../vorspann.js';
 import { autorAbzeichen, fremdanteil } from '../autor-abzeichen.js';
 import { cachlyUrl } from '../cachly-url.js';
+import { belegFuer } from '../schreibbeleg.js';
+import { schwaerzeFelder } from '../geheimnis-filter.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
 // Resolve the package version at runtime from package.json so the session briefing
@@ -827,6 +829,9 @@ async function handleBrainToolInner(
 ): Promise<string | null> {
   switch (name) {
     case 'learn_from_attempts': {
+      // Geheimnis-Filter VOR allem anderen: kein Schluessel erreicht Bestand,
+      // Kausalgraph, Team-Kopie oder Antworttext (geheimnis-filter.ts).
+      const geschwaerzt = schwaerzeFelder(args as Record<string, unknown>);
       const {
         instance_id,
         topic,
@@ -847,7 +852,7 @@ async function handleBrainToolInner(
         grund = '',
         ersetzt = '',
         gilt_ab = '',
-      } = args as {
+      } = geschwaerzt.felder as {
         instance_id: string;
         topic: string;
         outcome: 'success' | 'failure' | 'partial';
@@ -1261,6 +1266,9 @@ async function handleBrainToolInner(
         [what_worked, what_failed, rohCtx].filter(Boolean).join(' ').slice(0, 2000),
       );
       if (entscheidung) (lessonObj as Record<string, unknown>).entscheidung = entscheidung;
+      // Schreibbeleg: nachpruefbar statt geglaubt — der Stop-Hook gleicht ihn ab.
+      const beleg = belegFuer(topic, ts, what_worked);
+      (lessonObj as Record<string, unknown>).beleg = beleg;
 
       const lesson = JSON.stringify(lessonObj);
 
@@ -1639,7 +1647,10 @@ async function handleBrainToolInner(
       const sevEmoji = severity === 'critical' ? '🔴' : severity === 'major' ? '🟡' : '🟢';
       const action = isUpdate ? 'updated' : 'stored';
       return [
-        `${emoji} **Lesson ${action}:** \`${topic}\` (${outcome}) ${sevEmoji} ${severity}`,
+        `${emoji} **Lesson ${action}:** \`${topic}\` (${outcome}) ${sevEmoji} ${severity} · Beleg: \`${beleg}\``,
+        geschwaerzt.funde.length
+          ? `🔒 **${geschwaerzt.funde.length} Geheimnis(se) geschwaerzt** vor dem Speichern (${geschwaerzt.funde.join('; ')}). Der Wert ist nicht im Brain — verweise kuenftig auf den Ort (z. B. Infisical-Pfad oder Variablenname).`
+          : '',
         beliefConflict ?? '',
         ``,
         `**What worked:** ${what_worked}`,

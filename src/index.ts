@@ -867,6 +867,7 @@ import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
 import { runAmbient, parseHookPayload, stopObservation } from './ambient-cli.js';
+import { stopAntwort } from './schreibbeleg.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
 import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
 import { buildAmbientDeps } from './ambient-deps.js';
@@ -4360,6 +4361,23 @@ if (process.argv[2] === 'ambient-recall') {
     const chunks: Buffer[] = [];
     for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
     const raw = Buffer.concat(chunks).toString('utf-8');
+    // Schreibbeleg (07.10.2026): braucht keinen Schluessel, nur das Protokoll
+    // des Zugs — laeuft deshalb VOR der Schluesselsuche. Behauptet die Antwort
+    // eine Speicherung ohne erfolgreichen Schreibaufruf, geht sie einmal zurueck.
+    const stopRoh = parseHookPayload(raw);
+    if (stopRoh?.hook_event_name === 'Stop' && stopRoh.transcript_path) {
+      try {
+        const { readFileSync } = await import('node:fs');
+        const zeilen = readFileSync(stopRoh.transcript_path, 'utf-8').split('\n');
+        const block = stopAntwort(zeilen, stopRoh.stop_hook_active === true);
+        if (block) {
+          process.stdout.write(block);
+          process.exit(0); // zurueckgeschickt — kein Auto-Lernen aus einer unbelegten Behauptung
+        }
+      } catch {
+        // Protokoll nicht lesbar → keine Pruefung, nie den Zug blockieren
+      }
+    }
     // GROW-015: hooks run as bare OS processes and never see the MCP config's
     // env, so JWT is usually still empty here — resolve it the same way every
     // ambient/CLI caller does (env, then ~/.cachly, then a legacy .mcp.json).

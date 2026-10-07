@@ -48,6 +48,11 @@ import { lektionsText } from './seltenheitsbestand.js';
 import { bestandAusDokumenten, keywordSearchMitBestand, type Wortbestand } from './search.js';
 import { SINN_TOPF, EINBLENDUNG_DECKUNG, EINBLENDUNG_ZEUGE } from './rangfolge-stellschrauben.js';
 
+// Der Rahmen reist mit dem Kern in den Hook — eine Quelle fuer beide Wege.
+export { rahmeEin, entschaerfe, RAHMEN_ETIKETT, RAHMEN_HINWEIS } from './einblendung-rahmen.js';
+// Ebenso der Schreibbeleg fuer den Stop-Hook (tools/ambient-recall/stop.mjs).
+export { stopAntwort } from './schreibbeleg.js';
+
 /**
  * Wie viele Kandidaten die Wortsuche nominiert, bevor sortiert wird.
  *

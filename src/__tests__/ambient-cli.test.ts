@@ -11,6 +11,7 @@ import {
   type HookPayload,
 } from '../ambient-cli.js';
 import type { LessonCandidate } from '../ambient-recall.js';
+import { rahmeEin } from '../einblendung-rahmen.js';
 
 const lesson = (over: Partial<LessonCandidate> = {}): LessonCandidate => ({
   id: 'l1',
@@ -118,9 +119,9 @@ describe('formatContextBlock', () => {
     expect(out).toContain('- A');
     expect(out).toContain('- B');
   });
-  it('injects a single pre-formatted briefing verbatim (no bullet wrapping)', () => {
+  it('injects a single pre-formatted briefing unchanged inside the memory frame (no bullet wrapping)', () => {
     const briefing = '🧠 Smart Recall\n> Brain saved you here\n- lesson one';
-    expect(formatContextBlock([lesson({ summary: briefing })])).toBe(briefing);
+    expect(formatContextBlock([lesson({ summary: briefing })])).toBe(rahmeEin(briefing));
   });
   it('returns empty for no lessons', () => {
     expect(formatContextBlock([])).toBe('');

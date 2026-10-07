@@ -11,6 +11,7 @@ import { safeJsonParse } from '../utils.js';
 import { ersparteMinuten, istStarterLektion, fmtStunden } from '../wertbeitrag.js';
 import { cachlyUrl } from '../cachly-url.js';
 import { leseVermerke } from '../aussetzer.js';
+import { schwaerzeFelder } from '../geheimnis-filter.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -268,7 +269,9 @@ export async function handleTeamTool(
 
     // ── team_learn ────────────────────────────────────────────────────────────
     case 'team_learn': {
-      const { instance_id, author, topic, outcome, what_worked, what_failed, severity, file_paths, commands, tags } = args as {
+      const { instance_id, author, topic, outcome, what_worked, what_failed, severity, file_paths, commands, tags } = schwaerzeFelder(
+        args as Record<string, unknown>,
+      ).felder as {
         instance_id: string; author: string; topic: string; outcome: string;
         what_worked: string; what_failed?: string; severity?: string;
         file_paths?: string[]; commands?: string[]; tags?: string[];

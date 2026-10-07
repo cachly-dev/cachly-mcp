@@ -25,6 +25,7 @@ import {
   type LessonCandidate,
   type GateOptions,
 } from './ambient-recall.js';
+import { rahmeEin } from './einblendung-rahmen.js';
 
 /** The subset of the Claude Code hook payload we care about. */
 export interface HookPayload {
@@ -38,6 +39,10 @@ export interface HookPayload {
   tool_input?: { file_path?: string; [k: string]: unknown };
   /** Present on Stop — what the assistant just said (auto-learn signal). */
   last_assistant_message?: string;
+  /** Present on every event — the session transcript (JSONL). Stop reads it for the Schreibbeleg. */
+  transcript_path?: string;
+  /** Present on Stop — true when this turn already continues because of a Stop hook. */
+  stop_hook_active?: boolean;
   cwd?: string;
 }
 
@@ -184,7 +189,10 @@ export function formatContextBlock(lessons: LessonCandidate[], withCreditFooter 
             return `- ${l.summary.trim()}` + (beleg ? '\n' + beleg : '');
           })
           .join('\n');
-  return withCreditFooter ? `${body}\n${CREDIT_FOOTER}` : body;
+  // Lektionstext ist fremder Inhalt: gekennzeichnet und entschaerft. Die
+  // Fusszeile ist unsere eigene und steht deshalb ausserhalb des Rahmens.
+  const gerahmt = rahmeEin(body);
+  return withCreditFooter ? `${gerahmt}\n${CREDIT_FOOTER}` : gerahmt;
 }
 
 /**

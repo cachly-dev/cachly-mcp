@@ -1,6 +1,7 @@
 import type { Redis } from 'ioredis';
 import { computeEmbedding } from '../embeddings.js';
 import type { Instance } from './brain.js';
+import { schwaerzeFelder } from '../geheimnis-filter.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -23,7 +24,7 @@ export async function handleContextTool(
         content,
         category = 'custom',
         ttl = 86400,
-      } = args as {
+      } = schwaerzeFelder(args as Record<string, unknown>).felder as {
         instance_id: string;
         key: string;
         content: string;
