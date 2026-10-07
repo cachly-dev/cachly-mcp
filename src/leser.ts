@@ -39,7 +39,7 @@ export function leserSperreLoeschen(): void { gesperrtBis = 0; }
 export async function leserPunkte(
   frage: string,
   texte: string[],
-  opts?: { zeitlimitMs?: number; fetchFn?: typeof fetch; instanceId?: string },
+  opts?: { zeitlimitMs?: number; fetchFn?: typeof fetch; instanceId?: string; zusatzKopf?: Record<string, string> },
 ): Promise<number[] | null> {
   if (!leserAktiv() || texte.length === 0) return null;
   const zeitlimit = opts?.zeitlimitMs ?? LESER_ZEITLIMIT_MS;
@@ -47,11 +47,15 @@ export async function leserPunkte(
   try {
     // instance_id: die API entscheidet damit, WELCHER Leser lesen darf —
     // der eigene Dienst im Haus, oder (nur fuer freigegebene Instanzen) Jev.
+    // zusatzKopf: nur fuer Messlaeufe (X-Admin-Key). /rerank teilt den
+    // Embed-Limiter (60 je Minute je Nutzer); ein Messlauf mit 2,7 Aufrufen
+    // je Sekunde verlor am 07.10.2026 706 von 3.003 Leseraufrufen an HTTP 429.
     const res = await f(`${embedConfig.apiUrl}/api/v1/rerank`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${embedConfig.jwt}`,
+        ...(opts?.zusatzKopf ?? {}),
       },
       body: JSON.stringify({ query: frage, texts: texte, instance_id: opts?.instanceId }),
       signal: AbortSignal.timeout(zeitlimit),

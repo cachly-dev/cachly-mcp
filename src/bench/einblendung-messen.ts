@@ -167,6 +167,9 @@ async function lauf(
   const a = leer(); const b = leer(); const c = leer();
   const d = leser ? leer() : null;
   const instanz = process.env.CACHLY_BRAIN_INSTANCE_ID || '';
+  // CACHLY_ADMIN_KEY stellt den Messlauf vom Embed-Limiter frei (60/min je
+  // Nutzer, gilt auch fuer /rerank). Ohne ihn zaehlen 429er als Leser-Ausfall.
+  const adminKopf = process.env.CACHLY_ADMIN_KEY ? { 'X-Admin-Key': process.env.CACHLY_ADMIN_KEY } : undefined;
 
   for (let i = 0; i < fragen.length; i++) {
     const text = fragen[i].query;
@@ -201,7 +204,7 @@ async function lauf(
         const lp = await leserPunkte(
           text,
           kopf.map((x) => leserText(x.lektion as Record<string, unknown>, LESER_MAX_ZEICHEN)),
-          { instanceId: instanz },
+          { instanceId: instanz, zusatzKopf: adminKopf },
         );
         if (lp) {
           const neu = mischeMitLeser(kopf.map((x) => x.punkte), lp);
