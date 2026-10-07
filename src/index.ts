@@ -868,6 +868,7 @@ import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } fr
 import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
 import { runAmbient, parseHookPayload, stopObservation } from './ambient-cli.js';
 import { stopAntwort } from './schreibbeleg.js';
+import { rahmeAntwort } from './antwort-rahmen.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
 import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
 import { buildAmbientDeps } from './ambient-deps.js';
@@ -1854,7 +1855,7 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
   try {
     merkeWerkzeugAufruf();
     const text = await handleTool(name, (args ?? {}) as Record<string, unknown>);
-    return { content: [{ type: 'text', text }] };
+    return { content: [{ type: 'text', text: rahmeAntwort(name, text) }] };
   } catch (err) {
     if (err instanceof UnknownToolError) {
       return { content: [{ type: 'text', text: err.message }], isError: true };

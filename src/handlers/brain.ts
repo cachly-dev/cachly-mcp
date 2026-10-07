@@ -3384,7 +3384,7 @@ async function handleBrainToolInner(
 
       // 1. Scan all best-solution lessons
       const lessonKeys: string[] = [];
-      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 200 });
+      const lStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 1000 });
       await new Promise<void>((resolve, reject) => {
         lStream.on('data', (batch: string[]) => lessonKeys.push(...batch));
         lStream.on('end', resolve);
@@ -3413,7 +3413,7 @@ async function handleBrainToolInner(
 
       // 3. Count context entries (filter :meta keys)
       let ctxCount = 0;
-      const ctxStream = redis.scanStream({ match: 'cachly:ctx:*', count: 200 });
+      const ctxStream = redis.scanStream({ match: 'cachly:ctx:*', count: 1000 });
       await new Promise<void>((resolve, reject) => {
         ctxStream.on('data', (batch: string[]) => {
           ctxCount += batch.filter((k: string) => !k.endsWith(':meta')).length;
@@ -3809,10 +3809,27 @@ async function handleBrainToolInner(
         }
       }
 
+      // Alle CKG-Knotenschluessel, EINMAL je Aufruf gelesen. Lueckensuche und
+      // Risiko-Vorschau filtern danach im Speicher. Vorher scannte jede der
+      // beiden je Fokuswort den ganzen Bestand mit COUNT 10 bzw. 20: bei 22.147
+      // Schluesseln 5.269 SCAN-Aufrufe und 208 s fuer ein session_start
+      // (gemessen 07.10.2026). SCAN liest bei jedem MATCH den ganzen Bestand,
+      // COUNT bestimmt nur, wie viele Runden das dauert.
+      const CKG_KNOTEN = 'cachly:ckg:node:';
+      let ckgKnotenCache: string[] | null = null;
+      const ckgKnoten = async (): Promise<string[]> => {
+        if (ckgKnotenCache) return ckgKnotenCache;
+        const schluessel: string[] = [];
+        const stream = redis.scanStream({ match: `${CKG_KNOTEN}*`, count: 1000 });
+        await new Promise<void>((res, rej) => { stream.on('data', (b: string[]) => schluessel.push(...b)); stream.on('end', res); stream.on('error', rej); });
+        ckgKnotenCache = schluessel;
+        return schluessel;
+      };
+
       // ── Layer 7 MCM: Active belief conflicts ─────────────────────────────────
       try {
         const conflictKeys: string[] = [];
-        const cfStream = redis.scanStream({ match: 'cachly:ckg:conflict:*', count: 50 });
+        const cfStream = redis.scanStream({ match: 'cachly:ckg:conflict:*', count: 1000 });
         await new Promise<void>((res, rej) => { cfStream.on('data', (b: string[]) => conflictKeys.push(...b)); cfStream.on('end', res); cfStream.on('error', rej); });
         if (conflictKeys.length > 0) {
           lines.push(`⚡ **Active belief conflicts (${conflictKeys.length}):**`);
@@ -3837,10 +3854,8 @@ async function handleBrainToolInner(
             const nodeExists = await redis.exists(`cachly:ckg:node:${token}`);
             if (!nodeExists) {
               // Check if any node starts with this token (prefix match)
-              const prefixKeys: string[] = [];
-              const psStream = redis.scanStream({ match: `cachly:ckg:node:${token}*`, count: 10 });
-              await new Promise<void>((res, rej) => { psStream.on('data', (b: string[]) => prefixKeys.push(...b)); psStream.on('end', res); psStream.on('error', rej); });
-              if (prefixKeys.length === 0) blindSpots.push(token);
+              const hatPraefix = (await ckgKnoten()).some(k => k.startsWith(`${CKG_KNOTEN}${token}`));
+              if (!hatPraefix) blindSpots.push(token);
             }
           }
           if (blindSpots.length > 0) {
@@ -4110,9 +4125,7 @@ async function handleBrainToolInner(
           const ppePredictions: PPEPrediction[] = [];
 
           for (const token of ppeFocusTokens) {
-            const nodeKeys: string[] = [];
-            const nStream = redis.scanStream({ match: `cachly:ckg:node:*${token}*`, count: 20 });
-            await new Promise<void>((res, rej) => { nStream.on('data', (b: string[]) => nodeKeys.push(...b)); nStream.on('end', res); nStream.on('error', rej); });
+            const nodeKeys = (await ckgKnoten()).filter(k => k.slice(CKG_KNOTEN.length).includes(token));
 
             for (const nk of nodeKeys.slice(0, 3)) {
               const nodeRaw = await redis.get(nk);
