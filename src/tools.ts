@@ -1633,7 +1633,7 @@ const TOOLS = [
     description:
       'List your Cachly organizations (team/org plans). ' +
       'Returns each org with plan, seat count, and member info. ' +
-      'Org plans (Team €99, Business €299, Enterprise custom) are billed separately from cache tiers.',
+      'Org plans (Team €49, Business €199, Enterprise custom) are billed separately from cache tiers.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -1645,7 +1645,7 @@ const TOOLS = [
     description:
       'Create a new Cachly organization for team collaboration. ' +
       'After creation, invite team members with invite_member and upgrade the plan via the billing portal. ' +
-      'Org plans: Team (€99/mo, 10 seats), Business (€299/mo, 50 seats), Enterprise (custom).',
+      'Org plans: Team (€49/mo, 5 seats), Business (€199/mo, 20 seats), Enterprise (custom).',
     inputSchema: {
       type: 'object',
       properties: {

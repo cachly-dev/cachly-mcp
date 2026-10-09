@@ -162,7 +162,7 @@ export async function handleInstanceTool(
     case 'list_orgs': {
       const res = await apiFetch<{ orgs: Array<{ id: string; name: string; slug: string; plan: string; max_members: number; member_count?: number }> }>('/api/v1/orgs');
       const orgs = res.orgs ?? [];
-      if (orgs.length === 0) return `📭 No organizations yet.\n\nCreate one with \`create_org(name="My Team")\`.\nOrg plans: Team €99/mo (10 seats), Business €299/mo (50 seats), Enterprise custom.`;
+      if (orgs.length === 0) return `📭 No organizations yet.\n\nCreate one with \`create_org(name="My Team")\`.\nOrg plans: Team €49/mo (5 seats), Business €199/mo (20 seats), Enterprise custom.`;
       return [
         `🏢 **Your organizations (${orgs.length})**\n`,
         ...orgs.map(o => `• **${o.name}** (\`${o.slug}\`) — plan: ${o.plan} · seats: ${o.member_count ?? '?'}/${o.max_members}\n  ID: \`${o.id}\``),
@@ -185,7 +185,7 @@ export async function handleInstanceTool(
         `**Next steps:**`,
         `1. Invite team members: \`invite_member(org_id="${res.id}", email="dev@example.com")\``,
         `2. Upgrade plan: open billing portal via dashboard → /team`,
-        `   Team: €99/mo (10 seats) · Business: €299/mo (50 seats)`,
+        `   Team: €49/mo (5 seats) · Business: €199/mo (20 seats)`,
       ].join('\n');
     }
 
@@ -207,7 +207,7 @@ export async function handleInstanceTool(
       }>(`/api/v1/orgs/${org_id}`);
       const accepted = (org.members ?? []).filter(m => m.accepted_at).length;
       const pending = (org.members ?? []).filter(m => !m.accepted_at).length;
-      const planPrice: Record<string, string> = { free: '€0', team: '€99/mo', business: '€299/mo', enterprise: 'custom' };
+      const planPrice: Record<string, string> = { free: '€0', team: '€49/mo', business: '€199/mo', enterprise: 'custom' };
       return [
         `🏢 **${org.name}** — Plan: **${org.plan}** (${planPrice[org.plan] ?? org.plan})`,
         `   Seats: ${accepted} active + ${pending} pending / ${org.max_members} max`,
