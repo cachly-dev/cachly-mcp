@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Buendelt src/einblendung-kern.ts nach tools/ambient-recall/einblendung-kern.gen.mjs.
+ * Buendelt src/einblendung.ts (Einblendung + Sortierkern) nach tools/ambient-recall/einblendung-kern.gen.mjs.
  *
  * ── Warum eine erzeugte Datei und kein zweiter Code ─────────────────────────
  *
@@ -11,7 +11,7 @@
  * `bewerteTopf`, der ausgelieferte Pfad mit `mischeRangfolgen`, und wochenlang
  * beschrieben unsere Zahlen eine Maschine, die es nicht gab.
  *
- * Also: eine Quelle (einblendung-kern.ts), ein Erzeugnis (.gen.mjs, eingecheckt),
+ * Also: eine Quelle (einblendung.ts samt einblendung-kern.ts), ein Erzeugnis (.gen.mjs, eingecheckt),
  * und ein Waechter, der beide vergleicht (src/__tests__/einblendung-kern-abgleich.test.ts).
  *
  * Aufruf:
@@ -27,13 +27,13 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HIER = dirname(fileURLToPath(import.meta.url));
-const QUELLE = resolve(HIER, '..', 'src', 'einblendung-kern.ts');
+const QUELLE = resolve(HIER, '..', 'src', 'einblendung.ts');
 // tools/ liegt im Repo-Wurzelverzeichnis, nicht unter sdk/mcp.
 const ZIEL = resolve(HIER, '..', '..', '..', 'tools', 'ambient-recall', 'einblendung-kern.gen.mjs');
 
 const KOPF = `// ERZEUGT — NICHT VON HAND AENDERN.
 //
-// Quelle: sdk/mcp/src/einblendung-kern.ts (und was sie importiert).
+// Quelle: sdk/mcp/src/einblendung.ts (und was sie importiert).
 // Erzeugen: cd sdk/mcp && node scripts/einblendung-kern-buendeln.mjs
 // Waechter: sdk/mcp/src/__tests__/einblendung-kern-abgleich.test.ts
 //
@@ -73,7 +73,7 @@ async function main() {
     }
     process.stderr.write(
       'ABWEICHUNG: tools/ambient-recall/einblendung-kern.gen.mjs passt nicht zu '
-      + 'sdk/mcp/src/einblendung-kern.ts.\n'
+      + 'sdk/mcp/src/einblendung.ts.\n'
       + `  ${alt === null ? 'Die Datei fehlt.' : `alt ${alt.length} Zeichen, neu ${neu.length} Zeichen.`}\n`
       + '  Beheben: cd sdk/mcp && node scripts/einblendung-kern-buendeln.mjs\n',
     );

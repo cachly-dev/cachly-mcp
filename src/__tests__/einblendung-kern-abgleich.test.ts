@@ -43,7 +43,9 @@ describe('einblendung-kern.gen.mjs — Erzeugnis und Quelle', () => {
 
   it('traegt keine Abhaengigkeit hinein — der Hook laeuft ohne node_modules', () => {
     const inhalt = readFileSync(ZIEL, 'utf8');
-    expect(inhalt).not.toMatch(/^import .* from ['"][^.]/m);
+    // Node-Bordmittel (`node:fs`, `node:crypto` …) sind erlaubt — sie kommen
+    // mit Node selbst, nicht aus node_modules.
+    expect(inhalt).not.toMatch(/^import .* from ['"](?!node:)[^.]/m);
     expect(inhalt).not.toMatch(/\brequire\(/);
   });
 });

@@ -1,31 +1,33 @@
-// Ambient Recall (Phase 4) — the CLI core that the hook scripts pipe to.
+// Ambient Recall — the CLI core that the installed hook scripts pipe to.
 //
-// The SessionStart / UserPromptSubmit hooks (ambient-hooks.ts) pipe Claude Code's
-// hook payload JSON on stdin to `npx @cachly-dev/mcp-server ambient-recall`. This
-// module is that command's brain: it parses the payload, runs the §6.3 relevance
-// gate (ambient-recall.ts), and prints the `hookSpecificOutput` JSON Claude Code
-// injects as additionalContext — or nothing at all when the gate says skip.
+// The hooks written by `init`/`setup`/`autopilot` (ambient-hooks.ts) pipe
+// Claude Code's hook payload JSON on stdin to `cachly ambient-recall`. This
+// module is that command's brain: it parses the payload and runs the ONE
+// injection core (einblendung.ts) — the same function our own repo hooks in
+// tools/ambient-recall/ call. There is no second path.
 //
-// Design constraints (roadmap §6.3):
-//   • Pure + dependency-injected (recall is passed in) so it is exhaustively
-//     unit-tested without any network.
-//   • Graceful: EVERY failure path returns '' (no output) — the caller exits 0 so
-//     a crashing hook can never block or corrupt the agent's turn.
-//   • Self-limited: recall runs under a hard timeout budget; a slow brain never
-//     stalls the user's prompt.
+// Why (08.10.2026): this command used to call `smart_recall` under a 3 s
+// budget. Measured with 10 real questions against the live brain it injected
+// 0 of 10 — every question ended exactly at the 3 s cap (3004–3018 ms), and
+// with a 120 s cap still none returned. Our own hooks meanwhile sorted the
+// whole lesson stock locally and injected on the same questions. Customers got
+// the worse path; now they get the same one.
+//
+// Design constraints:
+//   • Graceful: EVERY failure path returns '' (no output) — the caller exits 0
+//     so a crashing hook can never block or corrupt the agent's turn.
+//   • Bounded: the lesson stock comes from disk (refreshed in a detached side
+//     run); only a cold start waits for `/export`, under `abrufMs`. The reader
+//     (Leser) has its own 2.5 s cap and falls back to the local order.
 
 import {
-  decideRecall,
-  commitInjection,
-  emptyMemory,
-  type RecallMemory,
-  isTrivialPrompt,
-  selectInjectable,
+  promptEinblendung,
+  holeBestand,
+  sitzungsKontext,
+  hookAusgabe,
   estimateTokens,
-  type LessonCandidate,
-  type GateOptions,
-} from './ambient-recall.js';
-import { rahmeEin } from './einblendung-rahmen.js';
+  type EinblendConfig,
+} from './einblendung.js';
 
 /** The subset of the Claude Code hook payload we care about. */
 export interface HookPayload {
@@ -43,6 +45,7 @@ export interface HookPayload {
   transcript_path?: string;
   /** Present on Stop — true when this turn already continues because of a Stop hook. */
   stop_hook_active?: boolean;
+  session_id?: string;
   cwd?: string;
 }
 
@@ -64,30 +67,30 @@ export function parseHookPayload(raw: string): HookPayload | null {
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
 
 /**
- * The query to recall on for a payload, or null when recall should be skipped
- * before any brain call:
- *   • UserPromptSubmit → the prompt, unless it is trivial (§6.3 guardrail 2).
- *   • SessionStart     → a fixed briefing query (there is no user prompt yet);
- *     skipped on 'compact'/'clear' resumes where a mid-session briefing is noise.
- *   • PreToolUse       → a file-scoped query for Edit/Write-class tools only.
- *   • Stop             → never recalls (it learns instead — see stopObservation).
+ * The query to sort the lesson stock against, or null when nothing should be
+ * injected for this payload:
+ *   • UserPromptSubmit → the prompt itself. No separate "trivial" filter: the
+ *     core's gate needs two distinct content words in a lesson, so "danke" or
+ *     "ok mach" never inject — exactly as in our own repo hook.
+ *   • PreToolUse       → the edited file's path (relative to cwd when possible),
+ *     for Edit/Write-class tools only.
+ *   • SessionStart / Stop → null (SessionStart briefs from the whole stock, Stop learns).
  */
 export function recallQueryFor(payload: HookPayload): string | null {
   const event = payload.hook_event_name ?? 'UserPromptSubmit';
-  if (event === 'SessionStart') {
-    if (payload.source === 'compact' || payload.source === 'clear') return null;
-    return 'session start: recent lessons, active pitfalls, and known failure modes for this project';
-  }
+  if (event === 'SessionStart' || event === 'Stop') return null;
   if (event === 'PreToolUse') {
     if (payload.tool_name && !FILE_TOOLS.has(payload.tool_name)) return null;
     const filePath = payload.tool_input?.file_path;
     if (typeof filePath !== 'string' || !filePath.trim()) return null;
-    return `known pitfalls, past bugs and lessons for file ${filePath.trim()}`;
+    const f = filePath.trim().replace(/\\/g, '/');
+    const cwd = (payload.cwd ?? '').replace(/\\/g, '/').replace(/\/+$/, '');
+    // The absolute prefix (C:/Users/<name>/Documents/...) would match half the
+    // stock on words like "users" or "documents" — only the project part counts.
+    return cwd && f.toLowerCase().startsWith(cwd.toLowerCase() + '/') ? f.slice(cwd.length + 1) : f;
   }
-  if (event === 'Stop') return null;
   const prompt = (payload.prompt ?? '').trim();
-  if (!prompt || isTrivialPrompt(prompt)) return null;
-  return prompt;
+  return prompt || null;
 }
 
 export interface StopObservation {
@@ -120,190 +123,71 @@ export function stopObservation(payload: HookPayload): StopObservation | null {
   };
 }
 
-/** Truncate text to fit an estimated token budget (~4 chars/token), on a word edge. */
-export function truncateToTokens(text: string, maxTokens: number): string {
-  const t = text.trim();
-  if (estimateTokens(t) <= maxTokens) return t;
-  const maxChars = Math.max(0, maxTokens * 4);
-  const cut = t.slice(0, maxChars);
-  const lastSpace = cut.lastIndexOf(' ');
-  return (lastSpace > maxChars * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd() + '…';
-}
-
 /**
- * Tiny footer that closes the net-token loop (§6.2): the agent self-reports
- * prevented tokens via `ambient-credit` when a recalled lesson changed its path.
- * Kept to one short line — its own token cost is counted as injected.
- */
-export const CREDIT_FOOTER =
-  '(If this memory just saved you from a wrong path, record it: `npx @cachly-dev/mcp-server@latest ambient-credit <tokens-saved>`)';
-
-/**
- * Der Beleg: WANN es gelernt wurde und WORAN.
- *
- * Ohne Beleg ist proaktive Erinnerung eine Behauptung — und Behauptungen einer
- * Maschine prueft niemand nach, man glaubt sie oder ignoriert sie. Mit Datum
- * und Datei wird daraus eine nachpruefbare Aussage: "am 24.07., in
- * infra/backup.sh — ging damals schief". Genau das macht den Unterschied
- * zwischen einem Hinweis, dem man folgt, und einem, den man wegklickt.
- *
- * Bewusst kurz gehalten (eine Zeile, hoechstens zwei Dateien): der Beleg wird
- * bei JEDER Erinnerung mitgezahlt und darf das Token-Budget nicht sprengen.
- */
-export function formatProvenance(l: LessonCandidate): string {
-  const teile: string[] = [];
-  if (l.learnedAt) {
-    const d = new Date(l.learnedAt);
-    if (!Number.isNaN(d.getTime())) {
-      teile.push(
-        `am ${String(d.getDate()).padStart(2, "0")}.${String(d.getMonth() + 1).padStart(2, "0")}.`,
-      );
-    }
-  }
-  if (l.files?.length) {
-    const f = l.files.slice(0, 2).join(", ");
-    teile.push(`in ${f}${l.files.length > 2 ? ` (+${l.files.length - 2})` : ""}`);
-  }
-  if (l.outcome === "failure") teile.push("ging damals schief");
-  else if (l.outcome === "success") teile.push("so ging es damals gut aus");
-  return teile.length ? `  ↳ ${teile.join(" · ")}` : "";
-}
-
-/**
- * Render the gated lessons into a context block for the agent.
- *   • A single already-formatted briefing (multi-line summary — what smart_recall
- *     returns) is injected verbatim; it carries its own headings.
- *   • Multiple short lessons are rendered as a titled bullet list.
- * `withCreditFooter` appends the self-report line (per-prompt events only —
- * a SessionStart briefing is ambience, not a decision-changing recall).
- */
-export function formatContextBlock(lessons: LessonCandidate[], withCreditFooter = false): string {
-  if (lessons.length === 0) return '';
-  const body =
-    lessons.length === 1 && lessons[0].summary.includes('\n')
-      ? lessons[0].summary.trim()
-      : `🧠 Relevant memory from your cachly brain (auto-recalled):\n` +
-        lessons
-          .map((l) => {
-            const beleg = formatProvenance(l);
-            return `- ${l.summary.trim()}` + (beleg ? '\n' + beleg : '');
-          })
-          .join('\n');
-  // Lektionstext ist fremder Inhalt: gekennzeichnet und entschaerft. Die
-  // Fusszeile ist unsere eigene und steht deshalb ausserhalb des Rahmens.
-  const gerahmt = rahmeEin(body);
-  return withCreditFooter ? `${gerahmt}\n${CREDIT_FOOTER}` : gerahmt;
-}
-
-/**
- * Build the JSON Claude Code expects from a hook. `additionalContext` is spliced
- * into the model's context for the turn. Empty context → empty string (no output),
+ * Build the JSON Claude Code expects from a hook. Empty context → '' (no output),
  * which Claude Code treats as "hook contributed nothing".
  */
-export function buildHookOutput(event: string, additionalContext: string): string {
-  if (!additionalContext) return '';
-  return JSON.stringify({
-    hookSpecificOutput: {
-      hookEventName: event,
-      additionalContext,
-    },
-  });
-}
+export const buildHookOutput = hookAusgabe;
 
-export interface AmbientDeps {
-  /** Optionales Trigger-Gedaechtnis (Dedupe + Ruhe-Budget). Fehlt es, bleibt das Verhalten zustandslos. */
-  loadMemory?: () => RecallMemory | null | undefined;
-  saveMemory?: (m: RecallMemory) => void;
-  /** Fetch candidate lessons for a query. Should already be scoped to the brain. */
-  recall: (query: string, event: string) => Promise<LessonCandidate[]>;
-  /** Overrides for the relevance gate. */
-  gate?: Partial<GateOptions>;
-  /** Hard latency budget for the whole recall step (ms). Default 3000. */
-  timeoutMs?: number;
-  /**
-   * Auto-backoff probe (§6.3 guardrail 3): return true when the recent ledger
-   * window is net-negative — recall is then skipped BEFORE any brain call.
-   */
-  backoff?: () => boolean | Promise<boolean>;
+/**
+ * How long a cold start (nothing on disk yet) may wait for `/export` on a
+ * per-prompt event. The installed hook has a 10 s outer timeout and npx
+ * resolution alone costs ~2 s, so 5 s keeps the whole hook inside it.
+ * SessionStart (30 s outer timeout) uses the core default of 8 s.
+ */
+export const PROMPT_ABRUF_MS = 5000;
+
+export interface EinblendDeps {
+  cfg: EinblendConfig;
+  /** `node` arguments that start the detached stock refresh (see starteNebenlauf). */
+  nebenlauf?: string[];
   /** Called with the estimated injected tokens whenever context is emitted. */
   onInject?: (tokens: number, event: string) => void;
-}
-
-/** Resolve a promise to a fallback if it does not settle within `ms`. */
-async function withTimeout<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<T>((res) => {
-    timer = setTimeout(() => res(fallback), ms);
-  });
-  try {
-    return await Promise.race([p, timeout]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  /** Write the per-prompt net log line (default true). */
+  protokoll?: boolean;
+  /** Tests only. */
+  fetchFn?: typeof fetch;
 }
 
 /**
- * The whole ambient-recall CLI flow, as a pure function of (stdin, deps).
- * Returns the string to print on stdout — either the hookSpecificOutput JSON or
- * '' (nothing to inject). Never throws.
+ * The whole `ambient-recall` flow, as a function of (stdin, deps). Returns the
+ * string to print on stdout — the hookSpecificOutput JSON or '' (nothing).
+ * Never throws.
  */
-export async function runAmbient(raw: string, deps: AmbientDeps): Promise<string> {
-  const payload = parseHookPayload(raw);
-  if (!payload) return '';
-  const event = payload.hook_event_name ?? 'UserPromptSubmit';
-
-  const query = recallQueryFor(payload);
-  if (query === null) return ''; // trivial / non-recallable event → skip before any brain call
-
-  // Auto-backoff (§6.3 guardrail 3): when the recent net balance is red, stop
-  // paying — checked after trivial-skip but before any brain call.
+export async function runEinblendung(raw: string, deps: EinblendDeps): Promise<string> {
   try {
-    if (deps.backoff && (await deps.backoff())) return '';
-  } catch {
-    // a broken backoff probe must not disable recall
-  }
+    const payload = parseHookPayload(raw);
+    if (!payload) return '';
+    const event = payload.hook_event_name ?? 'UserPromptSubmit';
+    if (!deps.cfg.jwt || !deps.cfg.instanceId) return '';
 
-  let candidates: LessonCandidate[] = [];
-  try {
-    candidates = await withTimeout(deps.recall(query, event), deps.timeoutMs ?? 3000, []);
-  } catch {
-    return ''; // recall failed → inject nothing, never block the turn
-  }
-  if (!Array.isArray(candidates) || candidates.length === 0) return '';
-
-  // SessionStart/PreToolUse have no user prompt, so their trivial-skip is
-  // meaningless; pass the recall query itself so the gate's non-trivial branch runs.
-  const gateInput = event === 'UserPromptSubmit' ? (payload.prompt ?? query) : query;
-  // Antizipation braucht Timing, nicht nur Relevanz: dieselbe Lektion in jedem
-  // zweiten Turn ist kein Hinweis mehr, sondern Laerm. `decideRecall` bringt
-  // Dedupe, Ruhe-Budget und einen risikoabhaengigen Ausloesemoment mit; ohne
-  // Gedaechtnis-Deps bleibt das Verhalten exakt wie bisher (reiner Gate).
-  const memory: RecallMemory = deps.loadMemory?.() ?? emptyMemory();
-  const decision = deps.loadMemory
-    ? decideRecall(gateInput, candidates, memory, deps.gate)
-    : {
-        ...selectInjectable(gateInput, candidates, deps.gate),
-        risk: 'normal' as const,
-        suppressedDuplicates: [] as string[],
-      };
-
-  if (deps.saveMemory) {
-    try {
-      deps.saveMemory(commitInjection(memory, decision));
-    } catch {
-      // Gedaechtnis ist Komfort, kein Muss — ein Schreibfehler darf den Turn nie stoppen
+    let kontext = '';
+    if (event === 'SessionStart') {
+      // Fetch fresh — this warms the stock for every prompt of the session.
+      const { lessons } = await holeBestand(deps.cfg, { force: true, fetchFn: deps.fetchFn });
+      kontext = sitzungsKontext(lessons);
+    } else {
+      const query = recallQueryFor(payload);
+      if (query === null) return '';
+      const r = await promptEinblendung(query, deps.cfg, {
+        nebenlauf: deps.nebenlauf,
+        abrufMs: PROMPT_ABRUF_MS,
+        // Before every Edit each second counts: local order only, no reader call.
+        leser: event !== 'PreToolUse',
+        session: payload.session_id ?? null,
+        protokoll: deps.protokoll,
+        fetchFn: deps.fetchFn,
+      });
+      kontext = r.kontext;
     }
-  }
-  if (!decision.inject) return '';
-
-  // Credit footer only where a recall can change a decision mid-flight.
-  const withFooter = event === 'UserPromptSubmit' || event === 'PreToolUse';
-  const context = formatContextBlock(decision.selected, withFooter);
-  const injectedTokens = estimateTokens(context); // includes the footer's own cost
-  try {
-    deps.onInject?.(injectedTokens, event);
+    if (!kontext) return '';
+    try {
+      deps.onInject?.(estimateTokens(kontext), event);
+    } catch {
+      // ledger is telemetry — never block the injection over it
+    }
+    return hookAusgabe(event, kontext);
   } catch {
-    // ledger is telemetry — never block the injection over it
+    return '';
   }
-  return buildHookOutput(event, context);
 }

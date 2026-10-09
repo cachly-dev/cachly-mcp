@@ -127,12 +127,16 @@ describe('hook inspection (real filesystem)', () => {
 });
 
 describe('ledger check + report rendering', () => {
-  it('empty ledger is ok; net-negative window warns about backoff', () => {
+  it('empty ledger is ok; a net-negative ledger is reported, not treated as a pause', () => {
     expect(checkLedger([], '/x/ledger.jsonl').status).toBe('ok');
+    // "prevented" is only ever credited by hand, so a real ledger is almost
+    // always net-negative. Since 08.10.2026 that no longer pauses injection,
+    // and the doctor must not claim it does.
     const negative = Array.from({ length: 10 }, () => ({ injected: 100, prevented: 0 }));
     const c = checkLedger(negative, '/x/ledger.jsonl');
-    expect(c.status).toBe('warn');
-    expect(c.detail).toContain('backoff');
+    expect(c.status).toBe('ok');
+    expect(c.detail).toContain('net -1000');
+    expect(c.detail).not.toContain('backoff');
   });
 
   it('renders hints only for non-ok checks and summarises fails', () => {

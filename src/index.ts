@@ -866,12 +866,11 @@ import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain
 import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-proof.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
-import { runAmbient, parseHookPayload, stopObservation } from './ambient-cli.js';
+import { runEinblendung, parseHookPayload, stopObservation } from './ambient-cli.js';
+import { holeBestand as holeEinblendBestand } from './einblendung.js';
 import { stopAntwort } from './schreibbeleg.js';
 import { rahmeAntwort } from './antwort-rahmen.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
-import { loadAmbientMemory, saveAmbientMemory } from './ambient-memory.js';
-import { buildAmbientDeps } from './ambient-deps.js';
 import { resolveApiKey, saveApiKey, type CredentialsHomeOptions } from './credentials.js';
 import { holeSofortTest } from './sofort-test.js';
 import { beiStdinEnde } from './stdin-ende.js';
@@ -886,7 +885,7 @@ import {
   kostprobeHinweis,
   schrankeNachKostproben,
 } from './kostprobe.js';
-import { netBalance, shouldBackoff } from './ambient-recall.js';
+import { netBalance } from './ambient-recall.js';
 import { handleShareTool } from './handlers/share.js';
 import { handleVizTool } from './handlers/viz.js';
 import type { Instance } from './handlers/brain.js';
@@ -4348,12 +4347,17 @@ if (process.argv[2] === 'learn-git') {
 
 // ── ambient-recall: CLI entrypoint for the Claude Code hooks ──────────────────
 // Invoked as: <hook payload JSON on stdin> | cachly ambient-recall
-// SessionStart/UserPromptSubmit/PreToolUse payloads recall through the §6.3
-// relevance gate (ambient-cli.ts) and print the `hookSpecificOutput` JSON that
-// Claude Code injects as additionalContext — or nothing. Stop payloads instead
-// feed a fix-signal observation to auto_learn_session (the automatic
-// `learn_from_attempts`). Injections are booked into the net-token ledger
-// (§6.2) and auto-backoff kicks in when the recent window is net-negative.
+// SessionStart/UserPromptSubmit/PreToolUse payloads run the ONE injection core
+// (einblendung.ts via runEinblendung) — the same function our own repo hooks in
+// tools/ambient-recall/ call: whole lesson stock from disk, local ranking, the
+// reader (Leser) on the top 25, gate, frame — and print the `hookSpecificOutput`
+// JSON that Claude Code injects as additionalContext, or nothing. Until
+// 08.10.2026 this called `smart_recall` under a 3 s cap and injected 0 of 10
+// measured questions. Stop payloads instead feed a fix-signal observation to
+// auto_learn_session (the automatic `learn_from_attempts`). Injections are
+// booked into the net-token ledger (§6.2) as telemetry only — the old
+// auto-backoff paused injection for good after 8 turns, because "prevented"
+// is only ever credited by hand.
 // Best-effort: no JWT, no stdin, a slow brain or any error → prints nothing and
 // exits 0 so a hook can NEVER block or corrupt the agent's turn.
 if (process.argv[2] === 'ambient-recall') {
@@ -4400,18 +4404,16 @@ if (process.argv[2] === 'ambient-recall') {
     }
 
     let reported: Promise<void> | undefined;
-    const out = await runAmbient(raw, buildAmbientDeps({
-      instanceId,
-      smartRecall: async (query) => String((await handleTool('smart_recall', { instance_id: instanceId, query })) ?? ''),
-      loadMemory: () => loadAmbientMemory(),
-      saveMemory: (m) => saveAmbientMemory(m),
-      backoff: async () => shouldBackoff(await readLedger()),
+    const out = await runEinblendung(raw, {
+      cfg: { apiUrl: API_URL, jwt: JWT, instanceId },
+      // The detached stock refresh re-enters this very binary (no npx round trip).
+      nebenlauf: process.argv[1] ? [process.argv[1], 'ambient-auffrischen'] : undefined,
       onInject: (tokens, event) => {
         const entry = { ts: new Date().toISOString(), event, injected: tokens, prevented: 0 };
         void appendLedgerEntry(entry);
         reported = reportAmbientLedgerEvent(instanceId, entry); // org dashboard mirror
       },
-    }));
+    });
     if (out) process.stdout.write(out);
     // Bounded flush so the dashboard mirror survives process.exit — never more
     // than 500ms on top of a turn that already injected.
@@ -4422,11 +4424,25 @@ if (process.argv[2] === 'ambient-recall') {
   process.exit(0);
 }
 
+// ── ambient-auffrischen: detached refresh of the on-disk lesson stock ─────────
+// Started by `ambient-recall` (einblendung.ts starteNebenlauf) when the stock on
+// disk is older than ten minutes. The prompt that started it never waits for it.
+if (process.argv[2] === 'ambient-auffrischen') {
+  try {
+    if (!JWT) JWT = resolveApiKey() ?? '';
+    const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId;
+    if (JWT && instanceId) await holeEinblendBestand({ apiUrl: API_URL, jwt: JWT, instanceId }, { force: true });
+  } catch {
+    // a failed refresh keeps the old stock; the next prompt tries again
+  }
+  process.exit(0);
+}
+
 // ── ambient-credit: agent-reported prevented-token credit (§6.2) ──────────────
-// Invoked as: cachly ambient-credit <tokens> [note…] — the injected context's
-// footer invites the agent to call this when a recalled lesson changed its path.
-// This is the client-side signal that makes the net ledger (and auto-backoff)
-// meaningful before the server-side dashboard exists. Silent + exit 0 always.
+// Invoked as: cachly ambient-credit <tokens> [note…] — called by the agent (or
+// the user) when a recalled lesson changed its path. This is the client-side
+// signal that makes the net ledger meaningful before the server-side dashboard
+// exists. Silent + exit 0 always.
 if (process.argv[2] === 'ambient-credit') {
   try {
     const tokens = Math.round(Number(process.argv[3]));
@@ -4447,19 +4463,16 @@ if (process.argv[2] === 'ambient-credit') {
 }
 
 // ── ambient-stats: the honest net-token readout (§6.2) ────────────────────────
-// Shows injected vs prevented and the NET — even when it is negative — plus
-// whether auto-backoff is currently pausing injection.
+// Shows injected vs prevented and the NET — even when it is negative.
 if (process.argv[2] === 'ambient-stats') {
   const entries = await readLedger();
   const bal = netBalance(entries);
-  const backing = shouldBackoff(entries);
   const recent = entries.slice(-5);
   console.log('\n🧠 Ambient Recall — net-token ledger\n');
   console.log(`   Turns recorded:   ${entries.length}`);
   console.log(`   Injected tokens:  ${bal.injected}`);
   console.log(`   Prevented tokens: ${bal.prevented} (agent-reported via ambient-credit)`);
   console.log(`   NET:              ${bal.net >= 0 ? '+' : ''}${bal.net} tokens`);
-  console.log(`   Auto-backoff:     ${backing ? '🔴 ACTIVE — recent window is net-negative, injection paused' : '🟢 inactive'}`);
   if (recent.length > 0) {
     console.log('\n   Last entries:');
     for (const e of recent) {

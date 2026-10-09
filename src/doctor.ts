@@ -10,7 +10,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
-import { netBalance, shouldBackoff, type TurnRecord } from './ambient-recall.js';
+import { netBalance, type TurnRecord } from './ambient-recall.js';
 import { cachlyUrl } from './cachly-url.js';
 
 export type DoctorStatus = 'ok' | 'warn' | 'fail';
@@ -273,23 +273,14 @@ export function checkHooks(inspection: HookInspection): DoctorCheck {
   return { name: 'Hooks', status: 'ok', detail: `all 4 events wired, scripts ${AMBIENT_HOOK_VERSION}` };
 }
 
-/** Net-token ledger readable + backoff state. */
+/** Net-token ledger readable. Telemetry only — it never pauses injection (08.10.2026). */
 export function checkLedger(entries: TurnRecord[], ledgerPath: string): DoctorCheck {
   const bal = netBalance(entries);
-  const backing = shouldBackoff(entries);
   if (entries.length === 0) {
     return {
       name: 'Ledger',
       status: 'ok',
       detail: `empty (${ledgerPath}) — fills up once ambient hooks inject`,
-    };
-  }
-  if (backing) {
-    return {
-      name: 'Ledger',
-      status: 'warn',
-      detail: `${entries.length} entries, net ${bal.net} tokens — auto-backoff ACTIVE, injection paused`,
-      hint: 'The agent has not reported prevented tokens lately. This self-heals; `ambient-stats` shows details.',
     };
   }
   return {
