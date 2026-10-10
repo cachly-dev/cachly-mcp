@@ -100,7 +100,9 @@ const PROVISION_TIMEOUT_MS = Number(process.env.CACHLY_PROVISION_TIMEOUT_MS ?? 9
 // ── Default Instance Resolution (for Smithery & single-credential setups) ────
 // When CACHLY_BRAIN_INSTANCE_ID is set, tools can omit the instance_id parameter.
 // When neither is set, we auto-fetch the first running instance once per process.
-let _defaultInstanceId: string = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+// echterWert: das Claude-Code-Plugin setzt "${user_config.instance_id}". Bleibt
+// das Feld leer, kann der Platzhalter selbst ankommen — er ist keine Kennung.
+let _defaultInstanceId: string = echterWert(process.env.CACHLY_BRAIN_INSTANCE_ID);
 // Timestamp of last failed fetch — retries after 30 s (not permanently blocked).
 let _defaultInstanceLastAttempt = 0;
 // In-flight resolution guard: a burst of parallel tool calls on startup must not
@@ -150,32 +152,12 @@ async function autoProvisionInstance(): Promise<string> {
 async function resolveDefaultInstanceId(): Promise<string> {
   if (_defaultInstanceId) return _defaultInstanceId;
   /*
-   * ── Kein Schluessel? Dann holen wir einen. (28.08.2026) ──────────────────
-   *
-   * Hier stand `if (!JWT) return ''` — und genau daran endete der Weg fuer den
-   * einen Nutzer, um den es geht: den neuen. Wer schon angemeldet war und nur
-   * keine Instanz hatte, bekam ein paar Zeilen weiter unten automatisch eine.
-   * Wer NICHTS hatte, bekam nichts, still, bei jedem Werkzeugaufruf.
-   *
-   * Das Gegenstueck gibt es seit Juli: POST /auth/instant-trial legt Konto,
-   * Schluessel und Instanz in unter einer Sekunde an, ohne Anmeldung. Die
-   * VS-Code-Erweiterung benutzt es. Ab jetzt auch der MCP-Server — damit ist
-   * die Installation der letzte Schritt und nicht der vorletzte.
-   *
-   * Nur wenn WIRKLICH kein Schluessel da ist. Ein vorhandener, aber kaputter
-   * Schluessel fuehrt NICHT hierher: ein stiller zweiter Account waere
-   * schlimmer als eine Fehlermeldung, der Nutzer suchte seine Daten dann im
-   * falschen Brain.
+   * Ohne Schluessel gibt es hier nichts aufzuloesen. Der Sofort-Test sass bis
+   * zum 11.10.2026 an dieser Stelle — und war unerreichbar, weil handleTool()
+   * ohne Schluessel vorher schon die Browser-Anmeldung startete. Er steht
+   * jetzt in zugang.ts und wird in handleTool() VOR der Anmeldung versucht.
    */
-  if (!JWT) {
-    const test = await holeSofortTest({ apiUrl: API_URL, version: CURRENT_VERSION });
-    if (!test) return '';
-    JWT = test.apiKey;
-    _defaultInstanceId = test.instanzId;
-    _defaultInstanceLastAttempt = 0;
-    void persistInstanceIdToConfig(test.instanzId);
-    return _defaultInstanceId;
-  }
+  if (!JWT) return '';
   // Coalesce concurrent resolutions so parallel tool calls share one round-trip.
   if (_resolveInFlight) return _resolveInFlight;
   // Cooldown: don't hammer the API on every tool call after a transient failure.
@@ -873,6 +855,7 @@ import { rahmeAntwort } from './antwort-rahmen.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
 import { resolveApiKey, saveApiKey, type CredentialsHomeOptions } from './credentials.js';
 import { holeSofortTest } from './sofort-test.js';
+import { sichereZugang, echterWert } from './zugang.js';
 import { beiStdinEnde } from './stdin-ende.js';
 import { merkeWerkzeugAufruf, starteBrandWachhund } from './brand-wachhund.js';
 import { sichtbareWerkzeuge, VERTEILER } from './werkzeug-auswahl.js';
@@ -1118,6 +1101,95 @@ async function zaehleLieferung(instanceId: string, name: string, antwort: string
   }
 }
 
+/**
+ * Die Browser-Anmeldung (Device Flow), unveraendert aus handleTool()
+ * herausgezogen. Laeuft nur, wenn kein Schluessel da ist und der Sofort-Test
+ * nicht moeglich war oder nicht gewollt ist (siehe zugang.ts).
+ */
+async function starteAnmeldung(name: string): Promise<string> {
+  const flow = await startDeviceFlow();
+  if (flow) {
+    _deviceFlow = flow;
+    sendFunnelEvent('device_flow_started', { tool: name });
+    // Try to open the browser automatically — never block, but DO report.
+    //
+    // Gemessen: 34 begonnene Anmeldungen zwischen dem 23.06. und 14.08.2026,
+    // null abgeschlossene, und null Seitenaufrufe auf /device. Wenn das
+    // Oeffnen scheitert, ist das der einzige Grund, den wir kennen — und bis
+    // heute hat es niemand erfahren. Das Ereignis traegt den Fehlercode
+    // (meist ENOENT: kein xdg-open in Containern, SSH-Sitzungen und WSL ohne
+    // Oberflaeche), damit die naechste Auswertung nicht wieder raten muss.
+    //
+    // Zusaetzlich geht die Adresse auf stderr. Der Rueckgabetext eines
+    // Werkzeugs landet beim ASSISTENTEN, und ob der ihn dem Menschen zeigt,
+    // entscheidet der Assistent. stderr landet im Protokoll des Editors und
+    // ist die einzige Stelle, die niemand wegfassen kann.
+    openInBrowser(flow.verifyUrl, (ok, err) => {
+      if (ok) {
+        // Karte trichteranm1: der Erfolg wird MITGEZAEHLT. Nur so laesst sich
+        // "hat nie einen Browser gesehen" von "hat ihn gesehen und
+        // aufgegeben" trennen — das eine behebt man mit Code, das andere mit
+        // weniger Schritten.
+        sendFunnelEvent('device_browser_opened', { stelle: 'tool' });
+        return;
+      }
+      sendFunnelEvent('device_browser_failed', { reason: err ?? 'unknown', stelle: 'tool' });
+      process.stderr.write(
+        `\ncachly: could not open a browser (${err ?? 'unknown'}).\n`
+        + `cachly: open this yourself to finish signing in:\n`
+        + `cachly:   ${flow.verifyUrl}\n`
+        + `cachly:   code ${flow.userCode}\n\n`,
+      );
+    });
+    // Poll in the background so sign-in self-completes — the user no longer
+    // has to trigger another tool call to drive the flow (the #1 drop-off).
+    startBackgroundDevicePoll(flow);
+    // Der Text sagt nicht mehr "browser opening…". Das war eine Behauptung,
+    // und sie war zwischen dem 23.06. und 14.08.2026 in 34 von 34 Faellen
+    // falsch. Jetzt steht die Adresse als HANDLUNG da, und der Browser ist
+    // nur noch die Bequemlichkeit obendrauf.
+    //
+    // Die erste Zeile ist ausdruecklich eine Anweisung an den Assistenten:
+    // dieser Text landet bei IHM, nicht beim Menschen, und ob er ihn zeigt,
+    // entscheidet er. Wer den Menschen erreichen will, muss es sagen.
+    return [
+      '🧠 **cachly AI Brain — the user must sign in once.**',
+      '',
+      '**Show the following link and code to the user verbatim — they cannot',
+      'continue without them.**',
+      '',
+      `👉 **${flow.verifyUrl}**`,
+      '',
+      `Code: **${flow.userCode}**`,
+      '',
+      'A browser may have opened automatically with the code pre-filled. If it',
+      'did not, the link above is the whole step.',
+      '',
+      'Once signed in, the Brain activates on its own — no further action, no',
+      'restart. The next request arrives brain-powered.',
+      '',
+      // Die Zahl kommt aus TOOLS statt aus einer getippten 122. Auf der
+      // Landingpage standen bis heute 122 und 126 nebeneinander, weil beide
+      // von Hand gepflegt wurden.
+      `✨ Free forever · No credit card · ${TOOLS.length} MCP tools · GDPR · EU servers`,
+    ].join('\n');
+  }
+
+  // Device flow unavailable (network issue) — fall back to manual setup
+  return [
+    '🧠 **cachly AI Brain — Setup required**',
+    '',
+    'Run the setup wizard once in your terminal:',
+    '   ```',
+    '   npx @cachly-dev/mcp-server@latest autopilot',
+    '   ```',
+    '',
+    `Or get your API key at: ${cachlyUrl('/setup-ai', 'ambient-signin')}`,
+    '',
+    '✨ Free tier includes: 1 Brain instance, persistent memory, semantic search.',
+  ].join('\n');
+}
+
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
   // Guard: if no JWT, return actionable onboarding message instead of HTTP 401
   if (!JWT) {
@@ -1148,88 +1220,32 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       ].join('\n');
     }
 
-    // No pending flow — start a new one
-    const flow = await startDeviceFlow();
-    if (flow) {
-      _deviceFlow = flow;
-      sendFunnelEvent('device_flow_started', { tool: name });
-      // Try to open the browser automatically — never block, but DO report.
-      //
-      // Gemessen: 34 begonnene Anmeldungen zwischen dem 23.06. und 14.08.2026,
-      // null abgeschlossene, und null Seitenaufrufe auf /device. Wenn das
-      // Oeffnen scheitert, ist das der einzige Grund, den wir kennen — und bis
-      // heute hat es niemand erfahren. Das Ereignis traegt den Fehlercode
-      // (meist ENOENT: kein xdg-open in Containern, SSH-Sitzungen und WSL ohne
-      // Oberflaeche), damit die naechste Auswertung nicht wieder raten muss.
-      //
-      // Zusaetzlich geht die Adresse auf stderr. Der Rueckgabetext eines
-      // Werkzeugs landet beim ASSISTENTEN, und ob der ihn dem Menschen zeigt,
-      // entscheidet der Assistent. stderr landet im Protokoll des Editors und
-      // ist die einzige Stelle, die niemand wegfassen kann.
-      openInBrowser(flow.verifyUrl, (ok, err) => {
-        if (ok) {
-          // Karte trichteranm1: der Erfolg wird MITGEZAEHLT. Nur so laesst sich
-          // "hat nie einen Browser gesehen" von "hat ihn gesehen und
-          // aufgegeben" trennen — das eine behebt man mit Code, das andere mit
-          // weniger Schritten.
-          sendFunnelEvent('device_browser_opened', { stelle: 'tool' });
-          return;
-        }
-        sendFunnelEvent('device_browser_failed', { reason: err ?? 'unknown', stelle: 'tool' });
-        process.stderr.write(
-          `\ncachly: could not open a browser (${err ?? 'unknown'}).\n`
-          + `cachly: open this yourself to finish signing in:\n`
-          + `cachly:   ${flow.verifyUrl}\n`
-          + `cachly:   code ${flow.userCode}\n\n`,
-        );
-      });
-      // Poll in the background so sign-in self-completes — the user no longer
-      // has to trigger another tool call to drive the flow (the #1 drop-off).
-      startBackgroundDevicePoll(flow);
-      // Der Text sagt nicht mehr "browser opening…". Das war eine Behauptung,
-      // und sie war zwischen dem 23.06. und 14.08.2026 in 34 von 34 Faellen
-      // falsch. Jetzt steht die Adresse als HANDLUNG da, und der Browser ist
-      // nur noch die Bequemlichkeit obendrauf.
-      //
-      // Die erste Zeile ist ausdruecklich eine Anweisung an den Assistenten:
-      // dieser Text landet bei IHM, nicht beim Menschen, und ob er ihn zeigt,
-      // entscheidet er. Wer den Menschen erreichen will, muss es sagen.
-      return [
-        '🧠 **cachly AI Brain — the user must sign in once.**',
-        '',
-        '**Show the following link and code to the user verbatim — they cannot',
-        'continue without them.**',
-        '',
-        `👉 **${flow.verifyUrl}**`,
-        '',
-        `Code: **${flow.userCode}**`,
-        '',
-        'A browser may have opened automatically with the code pre-filled. If it',
-        'did not, the link above is the whole step.',
-        '',
-        'Once signed in, the Brain activates on its own — no further action, no',
-        'restart. The next request arrives brain-powered.',
-        '',
-        // Die Zahl kommt aus TOOLS statt aus einer getippten 122. Auf der
-        // Landingpage standen bis heute 122 und 126 nebeneinander, weil beide
-        // von Hand gepflegt wurden.
-        `✨ Free forever · No credit card · ${TOOLS.length} MCP tools · GDPR · EU servers`,
-      ].join('\n');
-    }
-
-    // Device flow unavailable (network issue) — fall back to manual setup
-    return [
-      '🧠 **cachly AI Brain — Setup required**',
-      '',
-      'Run the setup wizard once in your terminal:',
-      '   ```',
-      '   npx @cachly-dev/mcp-server@latest autopilot',
-      '   ```',
-      '',
-      `Or get your API key at: ${cachlyUrl('/setup-ai', 'ambient-signin')}`,
-      '',
-      '✨ Free tier includes: 1 Brain instance, persistent memory, semantic search.',
-    ].join('\n');
+    // No pending flow. Erst der Sofort-Test, dann die Browser-Anmeldung.
+    //
+    // Bis zum 11.10.2026 stand hier direkt startDeviceFlow(). Gemessen ueber
+    // 60 Tage: jeder Start ohne Schluessel landete in der Browser-Anmeldung,
+    // von 8 kam 1 durch, und ueber das Claude-Code-Plugin entstand seit dem
+    // 28.08. kein einziges Konto. Begruendung und Regeln: zugang.ts.
+    return sichereZugang({
+      schluessel: JWT,
+      konfigurierteInstanz: _defaultInstanceId,
+      aufrufInstanz: args.instance_id,
+      werkzeugName: name,
+      // speichern: no-op — alle Ablagen macht sichereZugang an EINER Stelle,
+      // sonst schriebe credentials.json zweimal und an zwei Orten im Code.
+      holeSofortTest: () => holeSofortTest({ apiUrl: API_URL, version: CURRENT_VERSION, speichern: () => {} }),
+      ablagen: {
+        setzeSchluessel: (key) => { JWT = key; },
+        setEmbedJwt,
+        saveApiKey: (key) => saveApiKey(key),
+        persistApiKeyToConfig,
+        merkeInstanz: (id) => { _defaultInstanceId = id; _defaultInstanceLastAttempt = 0; },
+        persistInstanceIdToConfig,
+      },
+      meldeEreignis: sendFunnelEvent,
+      werkzeug: () => handleTool(name, args),
+      anmelden: () => starteAnmeldung(name),
+    });
   }
 
   // Auto-resolve instance_id from env / API when not provided in args
@@ -1840,9 +1856,9 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
   // Skip session management tools to avoid recursion.
   const sessionTools = new Set(['session_start', 'session_start_summary', 'session_end', 'auto_learn_session']);
   if (!sessionTools.has(name) && !_autoSessionStarted && !_autoSessionStarting) {
-    const instanceId = ((args as Record<string, unknown>)?.instance_id as string | undefined)
+    const instanceId = echterWert((args as Record<string, unknown>)?.instance_id)
       || _defaultInstanceId
-      || process.env.CACHLY_BRAIN_INSTANCE_ID;
+      || echterWert(process.env.CACHLY_BRAIN_INSTANCE_ID);
     if (instanceId) {
       await autoStartSession(instanceId).catch(() => undefined);
     }

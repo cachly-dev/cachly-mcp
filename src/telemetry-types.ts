@@ -51,6 +51,16 @@ export type FunnelEventName =
    * Trichter — 51 gegen 15 Starts — und wurden bisher in einen Topf geworfen.
    */
   | 'device_browser_opened'
+  /**
+   * Ohne Schluessel gestartet, Sofort-Test gelungen: Konto, Schluessel und
+   * Brain sind angelegt, ohne Browser. Felder: `tool`, `instance_id`.
+   *
+   * Seit 11.10.2026 (zugang.ts). Vorher folgte auf `first_call_no_jwt` immer
+   * `device_flow_started` — von 8 solchen Starts kam 1 durch. Die Kette ist
+   * jetzt `first_call_no_jwt` → `instant_trial_started`; nur wenn der
+   * Sofort-Test scheitert, kommt danach noch `device_flow_started`.
+   */
+  | 'instant_trial_started'
   | 'auth_self_healed'
   | 'm2m_auth_completed'
   | 'm2m_auth_failed'

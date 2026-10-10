@@ -467,7 +467,7 @@ following. Manual snippets are in the **Manual Setup** section below.
 
 | Editor / Client | Auto-setup | Config file written | Global config | Notes |
 |---|---|---|---|---|
-| **Claude Code** | ✅ | `~/.claude/mcp.json` + `.mcp.json` | ✅ global always | Runtime device-flow sign-in on first tool call |
+| **Claude Code** | ✅ | `~/.claude/mcp.json` + `.mcp.json` | ✅ global always | No key: test Brain on first tool call; browser sign-in only as fallback |
 | **Cursor** | ✅ detected via `.cursor/` | `.cursor/mcp.json` | — | Project-level; restart Cursor after setup |
 | **Windsurf** | ✅ detected via `.windsurf/` | `.windsurf/mcp.json` | — | Project-level; restart Windsurf after setup |
 | **VS Code + Copilot** | ✅ detected via `.vscode/` | `.vscode/mcp.json` | — | Requires VS Code MCP extension or Copilot chat |
@@ -483,7 +483,8 @@ following. Manual snippets are in the **Manual Setup** section below.
 |---|---|
 | `autosetup` from a real terminal (TTY) | OAuth device-flow → browser click → API key saved automatically |
 | `autosetup` from VSCode task / CI (non-TTY) | Auto-detects non-interactive, opens browser with step-by-step guide, prints `CACHLY_JWT=... autosetup` instruction |
-| First tool call from Claude Code (no JWT yet) | Inline device-flow: MCP returns URL + code, browser opens automatically, next call proceeds |
+| First tool call without any key | Instant trial: an anonymous test Brain on EU servers, key saved to `~/.cachly/credentials.json` and `~/.claude/mcp.json`, the call proceeds. If that fails (offline, rate limit): inline device-flow with URL + code |
+| First tool call with `CACHLY_BRAIN_INSTANCE_ID` set but no key | Inline device-flow (you already have a Brain — no second account is created) |
 | `CACHLY_JWT=cky_live_xxx npx ... autosetup` | Skips auth step entirely, uses provided key |
 
 > **Tip — fastest per-project setup from inside Claude Code:**
@@ -509,7 +510,8 @@ following. Manual snippets are in the **Manual Setup** section below.
   }
 }
 ```
-On the first tool call your AI will prompt you to sign in — takes 10 seconds.
+Without a key, the first tool call creates a test Brain on EU servers — no sign-up.
+Run `npx @cachly-dev/mcp-server@latest autopilot` to use your own account instead.
 </details>
 
 <details>
