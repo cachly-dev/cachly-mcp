@@ -7,6 +7,30 @@
 
 ---
 
+## [0.10.174] – 2026-10-10 — *"What we measure is what you get."*
+
+**Ambient recall now works for every installation.** The hooks that `init`
+and `autopilot` install called a separate code path that waited 3 s for a
+full `smart_recall` and then injected nothing: measured on 10 real
+engineering questions, **0 of 10** got a lesson. A second fault switched
+injection off for good after 8 injections. Both paths now share one core
+(`src/einblendung.ts`): the whole lesson store is read from disk, ranked
+locally, re-ranked by the in-house EU reader, and framed as data.
+Same 10 questions after the change: **10 of 10**, three lessons each,
+2.2–3.5 s per prompt. The reader gets 2.5 s instead of 1.5 s — at 1.5 s it
+finished on only 4 of 72 prompts.
+
+**Write receipt: no more false alarms on meta-talk and quotes.** Describing
+the feature ("cachly catches the AI when it claims it saved something") or
+quoting someone ("every 'I saved it' is effectively a lie") no longer sends
+the model back. Real claims are still caught (48 test cases).
+
+**One tool count everywhere: 124.** README, docs, blog and the capability
+matrix said 122, 123, 126, 137 or 140. `verify-tool-counts` now guards
+16 surfaces. The `cachly_tool` description names when to reach for
+`compact_recover`, `brain_predict_failures`, `brain_plan`, `brain_conflicts`
+and `memory_crystalize`.
+
 ## [0.10.171] – 2026-10-07 — *"The reader now says whose lesson it is reading."*
 
 0.10.170 added the reader. This release sends the **instance id** along with
