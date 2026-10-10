@@ -340,9 +340,9 @@ MCP tool — bulk-ingests past outcomes the same way `brain_from_git` ingests co
 
 ---
 
-## MCP Tools (123 total, 27 in the default catalogue)
+## MCP Tools (124 total, 27 in the default catalogue)
 
-**Your editor sees 27 of them, not 123 — on purpose.** The full list cost
+**Your editor sees 27 of them, not 124 — on purpose.** The full list cost
 ~27,750 tokens in *every* request, which is 14 % of a 200k window gone before
 you type anything. The tools you use daily are listed individually; the other
 96 sit behind one dispatcher:
@@ -354,7 +354,7 @@ cachly_tool(tool: "team_roster", describe: true)  get its schema first
 
 Nothing is unreachable: the server dispatches by name and never consults the
 catalogue, so `team_roster` called directly still works. Set
-`CACHLY_ALLE_WERKZEUGE=1` to get all 123 listed again.
+`CACHLY_ALLE_WERKZEUGE=1` to get all 124 listed again.
 
 The full tool catalog is generated from `sdk/mcp/src/tools.ts`. Cross-surface
 coverage is tracked in [`../../docs/generated/surface-parity.md`](../../docs/generated/surface-parity.md),

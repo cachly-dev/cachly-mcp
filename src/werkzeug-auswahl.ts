@@ -6,7 +6,7 @@
 // Gemessen an docs/generated/tool-specs/cachly.anthropic.json, also an der
 // Datei, die wirklich zum Modell geht:
 //
-//     123 Werkzeuge
+//     124 Werkzeuge
 //     111.014 Byte
 //     ~27.750 Token  IN JEDER EINZELNEN ANFRAGE
 //
@@ -142,16 +142,29 @@ export const RECALL_WERKZEUGE: readonly string[] = [
 /** Der Name des Verteilers. Englisch, weil er im Produkt sichtbar ist. */
 export const VERTEILER = 'cachly_tool';
 
+/** Wann man zu einem Werkzeug hinter dem Verteiler greift (Name, Anlass). Knapp halten: jedes Token zaehlt bei jeder Anfrage. */
+const VERTEILER_WANN: readonly (readonly [string, string])[] = [
+  ['compact_recover', 'after a context limit'],
+  ['brain_predict_failures', 'before a risky step, with odds'],
+  ['brain_plan', 'plan a task from past lessons'],
+  ['brain_conflicts', 'lessons contradict'],
+  ['memory_crystalize', 'condense lessons'],
+];
+
 /**
  * Baut die Beschreibung des Verteilers. Sie trägt die NAMEN der übrigen
  * Werkzeuge, aber keine Schemata — genau dort sitzt die Ersparnis.
  */
 export function verteilerBeschreibung(uebrige: readonly string[]): string {
+  // Starke Werkzeuge, die der Katalog nicht traegt: ein Halbsatz je Werkzeug, nur
+  // fuer Namen, die wirklich hinter dem Verteiler stehen. Kostet ~55 Token je Anfrage.
+  const wann = VERTEILER_WANN.filter(([n]) => uebrige.includes(n)).map(([n, w]) => `${n} (${w})`);
   return [
     "Run any of cachly's specialist tools by name.",
     '',
     'The most-used tools are listed separately above. This one reaches the',
     `other ${uebrige.length} without their schemas taking up room in every request.`,
+    ...(wann.length ? ['', `When: ${wann.join('; ')}.`] : []),
     '',
     'Unsure about a tool\'s arguments? Call it with describe:true first — that',
     'returns its input schema instead of running it.',

@@ -28,6 +28,39 @@ const trackedSurfaces = [
   'web/e2e/marketing.spec.ts',
 ];
 
+/**
+ * Zweite Liste: Dateien und Ordner, in denen eine Werkzeugzahl stehen darf,
+ * aber keine falsche. Hier gilt NUR die Frage "ist jede Zahl neben tools die
+ * richtige?" — nicht die strengere Forderung von oben, die Zahl muesse als
+ * "N MCP tools" vorkommen. Ein Blogartikel darf "124 tools" schreiben.
+ *
+ * Eingetragen am 08.10.2026: dort standen noch 122, 126, 137 und 140, in 27
+ * Dateien, waehrend die Pruefung gruen war — sie sah nur die Liste oben.
+ * Nicht aufgenommen sind Verlaufsprotokolle (CHANGELOG, docs/internal/dev,
+ * docs/make_cachly_great_again.md, .agent) und die Landingpage-Dateien, die
+ * ihre Zahl aus MCP_TOOL_COUNT ziehen.
+ */
+const zahlGeprueftDateien = [
+  'api/internal/service/email_service.go',
+  'docs/DISTRIBUTION_ROADMAP.md',
+  'docs/internal/strategy/10X_VISION.md',
+  'docs/internal/strategy/mcp-launch-texts.md',
+  'docs/public/api/openapi.yaml',
+  'docs/public/show-hn-post.md',
+  'scripts/content-briefs/beispiel-editor-cursor.json',
+  'sdk/agents/README.md',
+  'sdk/init/README.md',
+  'sdk/mcp/llms.txt',
+  'sdk/openclaw/README.md',
+  'web/public/llms-full.txt',
+  'web/public/openapi.yaml',
+];
+const zahlGeprueftOrdner = [
+  'docs/launch',
+  'web/app/(marketing)/blog',
+  'web/components/blog',
+];
+
 const broadScanRoots = ['sdk', 'web'];
 const ignoredDirs = new Set([
   '.next',
@@ -99,8 +132,15 @@ const ZAHL_BEI_WERKZEUGEN = [
   /\b(\d{2,4})[\s_-]+(?:MCP[\s_-]+)?tools?\b/gi,
   // "126-tool MCP server"
   /\b(\d{2,4})-tool\s+MCP\s+server\b/gi,
-  // "MCP Tools (126 total)"
-  /\btools?\s*\((\d{2,4})\s+total\)/gi,
+  // "MCP Tools (126 total)" und "MCP Tools (126 total, 27 in the default catalogue)"
+  /\btools?\s*\((\d{2,4})\s+total\b/gi,
+  // "126 native MCP tools", "126 AI Brain tools"
+  /\b(\d{2,4})[\s_-]+(?:(?:native|AI|Brain)[\s_-]+)+(?:MCP[\s_-]+)?tools?\b/gi,
+  // "124-Tool", "124 MCP-Tools", "124 Werkzeuge" (deutsche Texte)
+  /\b(\d{2,4})[\s-]+(?:MCP-)?(?:Tools?|Werkzeuge?)\b/g,
+  // "Tool-count aligned to 140", "tool count: 140" (08.10.2026: CACHLY_CAPABILITY_MATRIX.md nannte
+  // in Zeile 15 die Zahl 124 und in Zeile 23 "aligned to 140"; die Pruefung blieb gruen)
+  /\btool[- ]count\b[^|\n\d]{0,25}(\d{2,4})\b/gi,
 ];
 
 /** Findet Zahlen neben "tools", die nicht die erwartete sind. */
@@ -255,6 +295,25 @@ for (const rel of trackedSurfaces) {
     failures.push(
       `${rel}: mentions MCP tools but neither "${expectedPhrase}" nor a derived count (\${TOOLS.length} / \${MCP_TOOL_COUNT})`,
     );
+  }
+}
+
+function pruefeNurZahl(rel) {
+  let text = '';
+  try {
+    text = ohneKommentare(readFileSync(join(repoRoot, rel), 'utf8'), rel);
+  } catch {
+    failures.push(`${rel}: Datei fehlt (steht in zahlGeprueftDateien)`);
+    return;
+  }
+  for (const treffer of falscheWerkzeugZahlen(text, expected)) {
+    failures.push(`${rel}: sagt "${treffer}", die generierte Wahrheit sind ${expected} Werkzeuge`);
+  }
+}
+for (const rel of zahlGeprueftDateien) pruefeNurZahl(rel);
+for (const ordner of zahlGeprueftOrdner) {
+  for (const { rel } of walkFiles(join(repoRoot, ordner))) {
+    if (/\.(tsx?|md|txt|json|ya?ml)$/i.test(rel)) pruefeNurZahl(rel);
   }
 }
 

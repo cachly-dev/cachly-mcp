@@ -39,6 +39,18 @@ describe('behauptetSpeicherung', () => {
     'Das steht jetzt als Lektion im Gedächtnis festgehalten.',
     'Die Lücke steht als kritische Lektion im Brain (`sicherheit:x`).',
     'Recorded it as a new lesson.',
+    // Was weiter anschlagen muss, auch neben Meta-Rede (08.10.2026):
+    'Ich habe das im Brain gespeichert.',
+    'Gespeichert als Lektion deploy:api.',
+    'I saved this to memory.',
+    'Ich habe das im Brain gespeichert, damit die KI es morgen weiss.',
+    'Erledigt. Ich habe die Lektion gespeichert. Der Schreibbeleg prüft, ob die KI wirklich gespeichert hat.',
+    // Ein Zitat darf nur der NAME sein, nicht die Behauptung (08.10.2026):
+    'Gespeichert als Lektion „deploy:api“.',
+    'Gespeichert als Lektion "deploy:api".',
+    'I saved this to memory, as it\'s what you asked.',
+    'I\'ve saved the lesson to the brain, it\'s done.',
+    'Ich habe das im Brain gespeichert („deploy:api“).',
   ])('erkennt: %s', (t) => expect(behauptetSpeicherung(t)).toBe(true));
 
   it.each([
@@ -50,6 +62,20 @@ describe('behauptetSpeicherung', () => {
     // Fehlalarme aus 414 echten Zuegen (07.10.2026):
     '| **Türsteher** | je neue Lektion drei Fragen | nichts — heute wird gespeichert, was kommt |',
     'Bei 3.003 Fragen, die absichtlich anders formuliert sind als die Lektion.',
+    // Fehlalarm vom 08.10.2026: die Antwort BESCHRIEB die Funktion, sie meldete keine Speicherung.
+    'Darunter sind Dinge, die so sonst niemand zeigt, zum Beispiel der Schreibbeleg: cachly ertappt die KI, wenn sie behauptet, etwas gespeichert zu haben, ohne es getan zu haben.',
+    'Der Schreibbeleg prüft, ob die KI wirklich gespeichert hat.',
+    'cachly merkt es, falls das Modell behauptet, es habe die Lektion im Brain gespeichert.',
+    'The guard catches the AI when it claims it saved something to memory.',
+    'It checks whether the model really stored the lesson in the brain.',
+    // Fehlalarm 2 vom 08.10.2026: Zitat und indirekte Rede sind keine eigene Meldung.
+    'Ein Zitat von GitHub über das eingebaute Claude-Memory: jedes „ich habe es gespeichert“ sei „effectively a lie“. Genau dagegen haben wir den Schreibbeleg.',
+    'Ein Zitat: jedes „ich habe es im Brain gespeichert“ sei gelogen.',
+    'GitHub says every "I saved it to memory" is "effectively a lie".',
+    'Der Entwickler schrieb: “Lesson stored in the brain.”',
+    'Die Lektion sei im Brain gespeichert, sagt er.',
+    'Laut dem Bericht habe er die Lektion im Brain gespeichert.',
+    'He said I saved it to the brain.',
   ])('laesst durch: %s', (t) => expect(behauptetSpeicherung(t)).toBe(false));
 });
 
@@ -105,6 +131,20 @@ describe('pruefeZug / stopAntwort', () => {
 
   it('keine Behauptung, kein Aufruf: kein Einwand', () => {
     expect(stopAntwort([nutzer('x'), antwort('Der Test ist gruen.')], false)).toBe('');
+  });
+
+  it('Beschreibung der Funktion (Meta-Rede) wird nicht zurueckgeschickt', () => {
+    const satz =
+      'Darunter sind Dinge, die so sonst niemand zeigt, zum Beispiel der Schreibbeleg: cachly ertappt die KI, wenn sie behauptet, etwas gespeichert zu haben, ohne es getan zu haben.';
+    expect(stopAntwort([nutzer('was ist neu?'), antwort(satz)], false)).toBe('');
+    expect(stopAntwort([nutzer('x'), antwort('Ich habe das im Brain gespeichert.')], false)).toContain('"decision":"block"');
+  });
+
+  it('Zitat einer fremden Behauptung wird nicht zurueckgeschickt', () => {
+    const satz =
+      'Ein Zitat von GitHub über das eingebaute Claude-Memory: jedes „ich habe es gespeichert“ sei „effectively a lie“. Genau dagegen haben wir den Schreibbeleg.';
+    expect(stopAntwort([nutzer('was sagt GitHub?'), antwort(satz)], false)).toBe('');
+    expect(stopAntwort([nutzer('x'), antwort('Gespeichert als Lektion „deploy:api“.')], false)).toContain('"decision":"block"');
   });
 
   it('nie zweimal hintereinander (stop_hook_active)', () => {

@@ -3080,7 +3080,7 @@ if (process.argv[2] === 'publish') {
 }
 
 // ── CLI: cachly tool-specs / openapi ───────────────────────────────────────────
-// Emit the 122-tool surface in any agent framework's dialect, derived from the
+// Emit the 124-tool surface in any agent framework's dialect, derived from the
 // single TOOLS source of truth. Lets OpenAI Assistants, the Anthropic Messages
 // API, LangChain, CrewAI and AutoGen wrap cachly without hand-written glue.
 //   npx @cachly-dev/mcp-server tool-specs --format=openai   > cachly.openai.json

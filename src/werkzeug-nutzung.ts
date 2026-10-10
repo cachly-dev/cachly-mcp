@@ -1,5 +1,5 @@
 /**
- * Welche der 122 Werkzeuge werden wirklich benutzt?
+ * Welche der 124 Werkzeuge werden wirklich benutzt?
  *
  * ANLASS 19.08.2026: Die Glama-Bewertung sagt, cachly habe zu viele Werkzeuge
  * und viele liessen sich zusammenlegen. Der Einwand ist plausibel — nur konnte

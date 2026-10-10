@@ -51,13 +51,56 @@ export function belegFuer(topic: string, zeit: string, inhalt: string): string {
 // Fragen und Angebote sind keine Behauptung: "Soll ich das als Lektion speichern?"
 const ANGEBOT = /\?\s*$|\b(soll ich|kann ich|darf ich|moechtest|möchtest|willst|wenn du|falls du|shall i|should i|would you|want me to|if you)\b/i;
 
+/*
+ * Rede UEBER die KI ist keine Meldung der KI (Fehlalarm vom 08.10.2026).
+ *
+ * Die Antwort beschrieb diese Funktion: "cachly ertappt die KI, wenn sie
+ * behauptet, etwas gespeichert zu haben". Das Wort "cachly" und "gespeichert"
+ * standen im selben Satz, also schlug die Pruefung an — obwohl nichts gemeldet
+ * wurde. Eng gefasst: der Satz muss die KI in dritter Person nennen UND einen
+ * Nebensatz-Anker haben (wenn/ob/falls/dass/behauptet, if/whether/claims).
+ * "Ich habe das im Brain gespeichert" hat keines von beiden und schlaegt weiter an.
+ */
+const KI_DRITTE_PERSON = '(?:die ki|das modell|der agent|der assistent|the (?:ai|model|agent|assistant)|claude)';
+const NEBENSATZ_ANKER = '(?:wenn|ob|falls|dass|behauptet|if|whether|claims?|says?)';
+const REDE_UEBER_KI = new RegExp(
+  `\\b${KI_DRITTE_PERSON}\\b[^.\\n]*?\\b${NEBENSATZ_ANKER}\\b|\\b${NEBENSATZ_ANKER}\\b[^.\\n]*?\\b${KI_DRITTE_PERSON}\\b`,
+  'i',
+);
+
+/*
+ * Zitate und indirekte Rede sind keine eigene Meldung (zweiter Fehlalarm, 08.10.2026).
+ *
+ * Die Antwort zitierte GitHub: jedes „ich habe es gespeichert“ sei „effectively a
+ * lie“. Das Zitat enthielt die Behauptung, die Antwort selbst meldete nichts.
+ *
+ * 1. Text in Anfuehrungszeichen wird vor der Pruefung herausgenommen. Die
+ *    Behauptung davor bleibt stehen: `Gespeichert als Lektion „deploy:api“.`
+ *    wird zu `Gespeichert als Lektion .` und schlaegt weiter an (das Zitat ist
+ *    dort nur der Name). Einfache Anfuehrungszeichen zaehlen nur, wenn sie
+ *    nicht mitten im Wort stehen, sonst frisst "I've … it's" den halben Satz.
+ * 2. Indirekte Rede: Konjunktiv "sei/seien", "sagt er", "laut …", "according to",
+ *    "he said". Eine eigene Meldung benutzt keines davon.
+ */
+const ZITAT = /„[^“”"\n]*[“”"]|“[^”\n]*”|"[^"\n]*"|»[^«\n]*«|«[^»\n]*»|‚[^‘’\n]*[‘’]|(?<![\p{L}\p{N}])'[^'\n]*'(?![\p{L}\p{N}])/gu;
+const INDIREKTE_REDE =
+  /\b(sei|seien)\b|\b(sagt|sagte|meint|meinte|schreibt|schrieb|behauptet)\s+(er|sie|es|man)\b|\blaut\b|\baccording to\b|\b(he|she|they)\s+(says?|said|claims?|claimed|wrote)\b/i;
+
+function ohneZitate(zeile: string): string {
+  return zeile.replace(ZITAT, ' ');
+}
+
 export function behauptetSpeicherung(text: string): boolean {
   return text
     .split(/\n+/)
     // Tabellenzeilen beschreiben, sie melden nichts (gemessen: 1 von 4 Fehlalarmen)
     .filter((zeile) => !zeile.trim().startsWith('|'))
+    .map(ohneZitate)
     .flatMap((zeile) => zeile.split(/(?<=[.!?])\s+/))
-    .some((satz) => !ANGEBOT.test(satz) && BEHAUPTUNG.some((m) => m.test(satz)));
+    .some(
+      (satz) =>
+        !ANGEBOT.test(satz) && !REDE_UEBER_KI.test(satz) && !INDIREKTE_REDE.test(satz) && BEHAUPTUNG.some((m) => m.test(satz)),
+    );
 }
 
 interface Block {

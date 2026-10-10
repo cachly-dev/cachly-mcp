@@ -2,7 +2,7 @@
 /**
  * Baut die Datengrundlage fuer die Doku-Startseite (web/app/docs).
  *
- * WARUM ES DAS GIBT: Die 122 Werkzeuge tragen in tools.ts Ueberschriften, die
+ * WARUM ES DAS GIBT: Die 124 Werkzeuge tragen in tools.ts Ueberschriften, die
  * aus der Entwicklungsgeschichte stammen — "v4 Move 1", "Layer 6: FedBrain",
  * "Phase 3". Fuer uns sagen die etwas, fuer einen Besucher nichts. brain_doctor
  * steht unter "Roadmap", die team_*-Werkzeuge stehen unter "AI Brain — Extended

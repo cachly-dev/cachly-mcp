@@ -62,6 +62,25 @@ describe('Werkzeug-Auswahl: weniger im Katalog, nichts verloren', () => {
     expect(fehlend, `nicht in der Beschreibung: ${fehlend.join(', ')}`).toEqual([]);
   });
 
+  it('die Beschreibung sagt, wann man die fuenf starken Werkzeuge hinter dem Verteiler braucht', () => {
+    // 08.10.2026: brain_conflicts, brain_predict_failures, brain_plan,
+    // memory_crystalize und compact_recover standen nur als Name in der Liste.
+    // Sie bleiben ABSICHTLICH ausserhalb des Katalogs (Katalogmiete je Anfrage);
+    // auffindbar sind sie nur, wenn die Beschreibung den Anlass nennt.
+    // Und der Zusatz bleibt klein: ~60 Token, gemessen 223 Zeichen.
+    const { uebrige } = sichtbareWerkzeuge(ALLE, {});
+    const text = verteilerBeschreibung(uebrige);
+    const zeile = text.split('\n').find((z) => z.startsWith('When: '));
+    expect(zeile, 'Zeile "When: ..." fehlt').toBeDefined();
+    for (const n of ['brain_conflicts', 'brain_predict_failures', 'brain_plan', 'memory_crystalize', 'compact_recover']) {
+      expect(uebrige, `${n} steht nicht hinter dem Verteiler`).toContain(n);
+      expect(zeile, `${n} ohne Anlass`).toContain(n);
+    }
+    expect(zeile!.length + 1).toBeLessThanOrEqual(230);
+    // Wer nicht hinter dem Verteiler steht, bekommt keinen Hinweis (Profil 'recall' hat keinen Verteiler).
+    expect(verteilerBeschreibung(['team_roster'])).not.toContain('When: ');
+  });
+
   it('die Roadmap bleibt VOLLSTAENDIG eigenstaendig', () => {
     // Ausdruecklicher Wunsch, und deshalb festgenagelt: alle vier, nicht drei.
     const { katalog } = sichtbareWerkzeuge(ALLE, {});
