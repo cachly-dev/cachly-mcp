@@ -8,6 +8,7 @@ import { buildClsPostCommitHook } from '../cls-hook.js';
 import { installBrainWatchHook } from '../brain-watch-hook.js';
 import { keywordSearch } from '../search.js';
 import { buildFirstContactReport, suggestRecallQueries, type FirstContactProof } from '../first-contact.js';
+import { classifyCommit, extractDomain } from '../commit-art.js';
 
 // Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
 export let _lastBrainFromGitCounts: { fixes: number; features: number; refactors: number; total: number } | null = null;
@@ -1013,29 +1014,9 @@ export async function handleFedbrainTool(
         });
       }
 
-      // Pattern classifiers
-      const classifyCommit = (subject: string): { category: string; outcome: 'success' | 'failure' | 'partial'; severity: 'critical' | 'major' | 'minor' } => {
-        const s = subject.toLowerCase();
-        if (/\b(fix|fixed|fixes|bug|hotfix|patch|revert|resolve|closes? #\d+)\b/.test(s)) {
-          const sev: 'critical' | 'major' | 'minor' = /\b(critical|crash|security|auth|data loss|outage|prod|production)\b/.test(s) ? 'critical' : /\b(major|breaking|regression|hotfix)\b/.test(s) ? 'major' : 'minor';
-          return { category: 'fix', outcome: 'success', severity: sev };
-        }
-        if (/\b(feat|feature|add|added|implement|new|introduce)\b/.test(s)) return { category: 'feat', outcome: 'success', severity: 'minor' };
-        if (/\b(refactor|clean|cleanup|improve|simplify|extract|rename)\b/.test(s)) return { category: 'refactor', outcome: 'success', severity: 'minor' };
-        if (/\b(perf|optimize|speed|cache|latency|memory|performance)\b/.test(s)) return { category: 'perf', outcome: 'success', severity: 'major' };
-        if (/\b(security|cve|auth|csrf|xss|sql|injection|sanitize|escape|encrypt)\b/.test(s)) return { category: 'security', outcome: 'success', severity: 'critical' };
-        if (/\b(deploy|ci|cd|build|docker|k8s|helm|infra|devops)\b/.test(s)) return { category: 'deploy', outcome: 'success', severity: 'major' };
-        if (/\b(test|spec|coverage|assert|mock|unit|integration)\b/.test(s)) return { category: 'test', outcome: 'success', severity: 'minor' };
-        return { category: 'chore', outcome: 'success', severity: 'minor' };
-      };
-
-      // Extract domain keywords from commit subject
-      const extractDomain = (subject: string): string => {
-        const s = subject.toLowerCase();
-        const tokens = s.replace(/[^a-z0-9\s\-_]/g, ' ').split(/\s+/).filter(t => t.length > 3 && !['that', 'this', 'with', 'from', 'when', 'into', 'also', 'some', 'were'].includes(t));
-        return tokens.slice(0, 3).join('-') || 'general';
-      };
-
+      // Einteilung und Thema kommen aus src/commit-art.ts — dieselben Regeln
+      // nutzen `demo` und (als Abschrift, per Test gleich gehalten) das
+      // Repo-Roentgen auf cachly.dev.
       const ts = new Date().toISOString();
       let ingested = 0;
       let skipped = 0;

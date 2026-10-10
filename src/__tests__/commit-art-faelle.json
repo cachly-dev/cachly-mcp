@@ -1,0 +1,31 @@
+{
+  "zweck": "Gemeinsame Faelle fuer die Commit-Einteilung. Gelesen von sdk/mcp/src/__tests__/commit-art.test.ts UND web/lib/__tests__/repo-roentgen-gleich-mcp.test.ts. Wer eine Regel aendert, aendert sie in sdk/mcp/src/commit-art.ts und web/lib/repo-roentgen.ts und ergaenzt hier einen Fall.",
+  "faelle": [
+    { "betreff": "fix(auth): token refresh loop", "art": "fix" },
+    { "betreff": "Fixes #12: crash on start", "art": "fix" },
+    { "betreff": "closes #44 wrong timezone in report", "art": "fix" },
+    { "betreff": "Revert \"feat: add dark mode\"", "art": "fix" },
+    { "betreff": "hotfix: prod outage after deploy", "art": "fix" },
+    { "betreff": "Patch release 1.2.3", "art": "fix" },
+    { "betreff": "feat(api): add pagination", "art": "feat" },
+    { "betreff": "Implement SSO login", "art": "feat" },
+    { "betreff": "Add unit tests for parser", "art": "feat" },
+    { "betreff": "Refactor cache layer", "art": "refactor" },
+    { "betreff": "Improve memory usage of the indexer", "art": "refactor" },
+    { "betreff": "Optimize query latency", "art": "perf" },
+    { "betreff": "perf: speed up startup", "art": "perf" },
+    { "betreff": "Sanitize user input in search", "art": "security" },
+    { "betreff": "Bump openssl for CVE-2024-1234", "art": "security" },
+    { "betreff": "Encrypt backups at rest", "art": "security" },
+    { "betreff": "ci: run e2e on node 22", "art": "deploy" },
+    { "betreff": "build(docker): multi-stage image", "art": "deploy" },
+    { "betreff": "Dockerfile: pin base image", "art": "chore" },
+    { "betreff": "test: cover parser edge cases", "art": "test" },
+    { "betreff": "docs: update README", "art": "chore" },
+    { "betreff": "chore(deps): bump lodash from 4.17.20 to 4.17.21", "art": "chore" },
+    { "betreff": "Bugfix: handle empty list", "art": "chore" },
+    { "betreff": "Behebt Absturz beim Start", "art": "chore" },
+    { "betreff": "Merge branch 'main' into feature", "art": "feat" },
+    { "betreff": "Merge branch 'main'", "art": "chore" }
+  ]
+}

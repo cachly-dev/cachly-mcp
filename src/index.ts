@@ -888,6 +888,7 @@ import {
 import { netBalance } from './ambient-recall.js';
 import { handleShareTool } from './handlers/share.js';
 import { handleVizTool } from './handlers/viz.js';
+import { commitArt, istRueckbau, zaehleLektionen } from './commit-art.js';
 import type { Instance } from './handlers/brain.js';
 
 // ── Tools (imported from tools.ts) ─────────────────────────────────────────
@@ -2819,45 +2820,32 @@ if (process.argv[2] === 'demo') {
     process.exit(0);
   }
 
-  // Classify commits (same logic as brain_from_git)
-  const classify = (s: string) => {
-    const t = s.toLowerCase();
-    if (/\b(fix|fixed|bug|hotfix|patch|revert|resolve)\b/.test(t)) return 'fix';
-    if (/\b(feat|feature|add|implement|new|introduce)\b/.test(t)) return 'feat';
-    if (/\b(perf|optim|speed|cache|latency)\b/.test(t)) return 'perf';
-    if (/\b(security|cve|auth|csrf|xss|inject|sanitize)\b/.test(t)) return 'security';
-    if (/\b(deploy|ci|cd|docker|k8s|infra)\b/.test(t)) return 'deploy';
-    if (/\b(refactor|clean|simplify|extract)\b/.test(t)) return 'refactor';
-    return 'chore';
-  };
-
-  // Count categories
+  // Einteilung aus src/commit-art.ts — dieselbe, mit der brain_from_git die
+  // Lektionen anlegt. Vorher stand hier eine eigene, abweichende Fassung.
   const cats = new Map<string, number>();
   const fixes: string[] = [];
   const feats: string[] = [];
   const security: string[] = [];
   const authors = new Set<string>();
+  let reverts = 0;
 
   for (const c of commits) {
-    const cat = classify(c.subject);
+    const cat = commitArt(c.subject);
     cats.set(cat, (cats.get(cat) ?? 0) + 1);
+    if (istRueckbau(c.subject)) reverts++;
     if (cat === 'fix' && fixes.length < 5) fixes.push(c.subject.slice(0, 72));
     if (cat === 'feat' && feats.length < 5) feats.push(c.subject.slice(0, 72));
     if (cat === 'security' && security.length < 3) security.push(c.subject.slice(0, 72));
-    if (c.author) authors.add(c.author.split(' ')[0]!);
+    // Voller Name: mit nur dem Vornamen zaehlten zwei "Tim" als einer.
+    if (c.author) authors.add(c.author);
   }
 
-  const totalLessons = commits.length - (cats.get('chore') ?? 0);
+  // Gezaehlt wie brain_from_git: eine Lektion je Thema, leere Betreffzeilen
+  // nicht. Hier stand frueher "Commits minus chore" und daneben eine
+  // geschaetzte Stundenzahl ("Time wasted re-explaining", 45 Minuten je
+  // Werktag seit dem ersten Commit). Beides war keine Zaehlung.
+  const totalLessons = zaehleLektionen(commits.map(c => c.subject));
   const dateRange = `${commits[commits.length - 1]?.date ?? '?'} → ${commits[0]?.date ?? '?'}`;
-
-  // Estimate time wasted re-explaining (45 min/day * workdays since first commit)
-  const firstDate = commits[commits.length - 1]?.date;
-  let daysActive = 0;
-  if (firstDate) {
-    const ms = Date.now() - new Date(firstDate).getTime();
-    daysActive = Math.max(1, Math.round(ms / (1000 * 60 * 60 * 24) * 5 / 7)); // workdays
-  }
-  const hoursWasted = Math.round(daysActive * 0.75); // 45 min/day
 
   // Brain Level based on total lessons (matches Go ComputeBrainLevel thresholds)
   const brainLevelName = totalLessons >= 501 ? 'Oracle' : totalLessons >= 201 ? 'Architect' : totalLessons >= 51 ? 'Expert' : totalLessons >= 11 ? 'Explorer' : 'Apprentice';
@@ -2873,7 +2861,7 @@ if (process.argv[2] === 'demo') {
   console.log('├─────────────────────────────────────────────────────────────┤');
   console.log(`│  Commits analysed : \x1b[33m${String(commits.length).padEnd(6)}\x1b[0m  Date range: \x1b[90m${dateRange.slice(0, 23).padEnd(23)}\x1b[0m  │`);
   console.log(`│  Lessons extracted: \x1b[32m${String(totalLessons).padEnd(6)}\x1b[0m  Contributors: \x1b[36m${String(authors.size).padEnd(20)}\x1b[0m│`);
-  console.log(`│  Brain Level      : \x1b[35m${brainLevelName.padEnd(14)}\x1b[0m  Time wasted re-explaining: \x1b[31m${String(hoursWasted + 'h').padEnd(5)}\x1b[0m│`);
+  console.log(`│  Brain Level      : \x1b[35m${brainLevelName.padEnd(10)}\x1b[0m  Reverts: \x1b[33m${String(reverts).padEnd(21)}\x1b[0m│`);
   console.log('├─────────────────────────────────────────────────────────────┤');
 
   // Category breakdown
@@ -2916,7 +2904,7 @@ if (process.argv[2] === 'demo') {
     lessons: String(totalLessons),
     level: brainLevelName,
     authors: String(authors.size),
-    hours: String(hoursWasted),
+    reverts: String(reverts),
   });
   const previewURL = cachlyUrl(`/preview?${previewParams.toString()}`, 'demo');
 
