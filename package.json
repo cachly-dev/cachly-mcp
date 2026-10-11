@@ -2,7 +2,7 @@
   "name": "@cachly-dev/mcp-server",
   "version": "0.10.179",
   "mcpName": "io.github.cachly-dev/mcp-server",
-  "description": "Your AI forgets everything between sessions. cachly fixes that permanently: 124 MCP tools for Claude Code, Cursor, Copilot & Windsurf. Learns from every bug fix, commit and CI run. Arrives pre-briefed. Free tier forever, EU servers, GDPR.",
+  "description": "Solve it once. From then on, your AI knows. Experience for coding agents, EU-hosted: 124 MCP tools for Claude Code, Cursor, Copilot & Windsurf. Learns from every bug fix, commit and CI run.",
   "type": "module",
   "files": [
     "dist/index.js",

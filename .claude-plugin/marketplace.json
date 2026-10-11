@@ -18,7 +18,7 @@
       },
       "homepage": "https://cachly.dev/docs/mcp",
       "repository": "https://github.com/cachly-dev/cachly-mcp",
-      "license": "MIT",
+      "license": "Apache-2.0",
       "category": "productivity",
       "keywords": [
         "memory",
