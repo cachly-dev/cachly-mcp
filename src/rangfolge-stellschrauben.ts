@@ -257,8 +257,19 @@ export const LESER_TIEFE = 25;
  *
  * Zurueck auf 15 oder 25 erst, wenn der Leser unter Last schneller antwortet
  * (CPU-Vorrang auf node-4 oder eigene Maschine) — dann mit demselben Lauf.
+ *
+ * NACHTRAG 11.10.2026 abends — 15. Der Leser hat jetzt CPUWeight 10000 statt
+ * 1000 (Abhakliste 2.6: unter Last 25 Texte p50 2.471 → 806 ms). Derselbe
+ * Lauf (--tiefen 10,15,25 --stichprobe 600 --saat 7 --leser-zeitlimit 8000
+ * --kontrolle, echte CI-Last auf node-4), mit Frist 2,5 s:
+ *   10: Platz 1 40,2 %, @3 52,2 %, @10 58,0 % · Leser p50 643 / p95 932 ms · rechtzeitig 100 %
+ *   15: Platz 1 42,2 %, @3 54,3 %, @10 62,5 % · Leser p50 920 / p95 1302 ms · rechtzeitig 99,5 %
+ *   25: Platz 1 44,0 %, @3 55,7 %, @10 64,0 % · Leser p50 1442 / p95 1956 ms · rechtzeitig 98,6 %
+ * Gegenprobe: alle Arme <= 0,7 % Platz 1. 10 → 15 bringt +2,0 Punkte fuer
+ * +0,28 s, 15 → 25 nur +1,8 fuer +0,52 s; die Messlatte (Stufe 2) liegt bei
+ * 1,5 s je Prompt. Darum 15, nicht 25.
  */
-export const LESER_TIEFE_EINBLENDUNG = 10;
+export const LESER_TIEFE_EINBLENDUNG = 15;
 /** Zeitlimit des Anrufs beim Dienst: 2500 ms, dann bleibt die Hausordnung. */
 export const LESER_ZEITLIMIT_MS = 2500;
 /**

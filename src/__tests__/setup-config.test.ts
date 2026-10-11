@@ -11,7 +11,7 @@ import {
 } from '../index.js';
 import { writeInstructions } from '../index';
 import { credentialsPath } from '../credentials.js';
-import { existsSync, readFileSync, rmSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -288,6 +288,23 @@ describe('writeInstructions', () => {
       expect(content).toContain(instanceId);
       expect(result[path]).toMatch(/written|appended|updated/);
     }
+  });
+
+  // JetBrains AI Assistant: Projektregel nur in JetBrains-Projekten (.idea/).
+  it('writes .aiassistant/rules/cachly.md only when the project has .idea/', async () => {
+    const ohne = resolve(tmp, 'ohne-idea');
+    await writeInstructions(ohne, instanceId);
+    expect(existsSync(resolve(ohne, '.aiassistant'))).toBe(false);
+
+    const mit = resolve(tmp, 'mit-idea');
+    mkdirSync(resolve(mit, '.idea'), { recursive: true });
+    const result = await writeInstructions(mit, instanceId);
+    const regel = resolve(mit, '.aiassistant', 'rules', 'cachly.md');
+    expect(result[regel]).toBe('written');
+    expect(readFileSync(regel, 'utf-8')).toContain(instanceId);
+    // Zweiter Lauf: Marker ersetzt, nicht doppelt angehaengt.
+    expect((await writeInstructions(mit, instanceId))[regel]).toBe('updated');
+    expect(readFileSync(regel, 'utf-8').split(CLAUDE_MD_MARKER_START).length).toBe(2);
   });
 });
 

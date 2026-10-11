@@ -2370,7 +2370,15 @@ const CURSOR_MDC_FRONTMATTER =
  * - .cursor/rules/cachly.mdc         (Cursor — frontmatter + alwaysApply)
  * - .windsurfrules                   (Windsurf / Cascade)
  * - .clinerules                      (Cline)
+ * - .aiassistant/rules/cachly.md     (JetBrains AI Assistant — nur wenn .idea/ da ist)
  * Idempotent, Marker-basiert. Cross-Harness Tier A (siehe make_cachly_great_again.md §6.7).
+ *
+ * JetBrains (11.10.2026, Abhakliste 5.2): Der AI Assistant hat keine Hooks.
+ * Es bleibt eine Projektregel. Laut Hilfe (2026.2, configure-project-rules)
+ * liegen sie als .md in .aiassistant/rules/, und "by default, project rules
+ * are automatically added to each chat session" — eine angelegte Datei wirkt
+ * also ohne Klick. Nur in Projekten mit .idea/, damit nicht jedes Projekt
+ * einen weiteren Ordner bekommt.
  */
 export async function writeInstructions(projectDir: string, instanceId: string): Promise<Record<string, 'written'|'updated'|'appended'>> {
   const { writeFile, appendFile, readFile, mkdir } = await import('node:fs/promises');
@@ -2386,6 +2394,9 @@ export async function writeInstructions(projectDir: string, instanceId: string):
     { path: resolve(projectDir, '.cursor', 'rules', 'cachly.mdc'), prefix: CURSOR_MDC_FRONTMATTER },
     { path: resolve(projectDir, '.windsurfrules') },
     { path: resolve(projectDir, '.clinerules') },
+    ...(existsSync(resolve(projectDir, '.idea'))
+      ? [{ path: resolve(projectDir, '.aiassistant', 'rules', 'cachly.md') }]
+      : []),
   ];
   const block = '\n' + buildClaudeMdBlock(instanceId) + '\n';
   const results: Record<string, 'written'|'updated'|'appended'> = {};

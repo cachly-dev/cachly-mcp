@@ -7,6 +7,20 @@
 
 ---
 
+## [0.10.183] – 2026-10-12 — *"The reader looks a little deeper."*
+
+**The hook reranks 15 lessons instead of 10.** The EU reader that orders
+lessons for each prompt now has CPU priority on its server, so under build
+load it answers in time almost always (99.5 %). Measured on 600 questions
+under real load with the 2.5 s limit: first place 40.2 % → 42.2 %, top 3
+52.2 % → 54.3 %, top 10 58.0 % → 62.5 %. The reader's median wait goes from
+0.64 s to 0.92 s.
+
+**JetBrains AI Assistant reads the Brain protocol.** In projects with an
+`.idea` folder, `setup` and `init` also write `.aiassistant/rules/cachly.md`.
+AI Assistant has no hooks, but it adds project rules to every chat session
+by default.
+
 ## [0.10.182] – 2026-10-11 — *"VS Code, Codex and Gemini get the lessons too."*
 
 **Three more editors get the session briefing and the matching lessons on
