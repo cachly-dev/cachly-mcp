@@ -1214,7 +1214,7 @@ async function starteAnmeldung(name: string): Promise<string> {
       // Die Zahl kommt aus TOOLS statt aus einer getippten 122. Auf der
       // Landingpage standen bis heute 122 und 126 nebeneinander, weil beide
       // von Hand gepflegt wurden.
-      `✨ Free forever · No credit card · ${TOOLS.length} MCP tools · GDPR · EU servers`,
+      `✨ ${TOOLS.length} MCP tools · GDPR · EU servers · free tier, no credit card`,
     ].join('\n');
   }
 
@@ -3044,7 +3044,7 @@ if (process.argv[2] === 'demo') {
   console.log(`  \x1b[90m🔗 Shareable preview:\x1b[0m \x1b[36m${previewURL}\x1b[0m`);
   console.log('');
   console.log('  Works with: Claude Code · Cursor · Windsurf · Copilot · Cline · Zed');
-  console.log('  Free forever · GDPR · German servers · No credit card');
+  console.log('  GDPR · German servers · free tier, no credit card');
   console.log('');
   process.exit(0);
 }
@@ -3300,7 +3300,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
   // Aus TOOLS statt getippt — dieselbe Zahl stand auf der Landingpage
   // gleichzeitig als 122 und als 126, weil beide von Hand gepflegt wurden.
-  console.log(`  \x1b[90mFree forever · GDPR · German servers · ${TOOLS.length} MCP tools\x1b[0m`);
+  console.log(`  \x1b[90mGDPR · German servers · ${TOOLS.length} MCP tools\x1b[0m`);
   console.log('');
   process.exit(0);
 }
