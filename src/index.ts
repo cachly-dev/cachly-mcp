@@ -2058,6 +2058,32 @@ export const EDITOR_FILES: Record<string, string> = {
   zed:      '.zed/settings.json',            // Zed project-level context_servers
 };
 
+/**
+ * Codex and Gemini CLI keep their MCP servers in their own config and never
+ * read .mcp.json, so `init --editor codex|gemini` prints their own `mcp add`
+ * line instead of writing a file nobody reads. Checked 11.10.2026 against
+ * codex-rs/cli/src/mcp_cmd.rs (`codex mcp add <NAME> --env K=V -- <COMMAND>…`,
+ * writes ~/.codex/config.toml) and gemini-cli commands/mcp/add.ts (`-s project`
+ * writes .gemini/settings.json; args after `--` go to the server, so npx keeps
+ * its `-y` instead of Gemini reading it). The env holds no key (buildServerEnv).
+ */
+export function mcpAddBefehl(editor: string, env: Record<string, string>): { befehl: string; wo: string } | null {
+  const paare = Object.entries(env).map(([k, v]) => `${k}=${v}`);
+  if (editor === 'codex') {
+    return {
+      befehl: `codex mcp add cachly ${paare.map((p) => `--env ${p}`).join(' ')} -- npx -y @cachly-dev/mcp-server@latest`,
+      wo: '~/.codex/config.toml',
+    };
+  }
+  if (editor === 'gemini') {
+    return {
+      befehl: `gemini mcp add -s project ${paare.map((p) => `-e ${p}`).join(' ')} cachly npx -- -y @cachly-dev/mcp-server@latest`,
+      wo: '.gemini/settings.json',
+    };
+  }
+  return null;
+}
+
 export const CLAUDE_MD_MARKER_START = '<!-- cachly-brain-start -->';
 export const CLAUDE_MD_MARKER_END   = '<!-- cachly-brain-end -->';
 
@@ -3393,7 +3419,7 @@ function reportEditorHooks(editor: keyof typeof EDITOR_HOOK_ZEILEN, r: EditorIns
   if (!r) return;
   const { datei, name, wie } = EDITOR_HOOK_ZEILEN[editor];
   if (r.hooks === 'skipped') {
-    console.log(`⚠️ ${pad}${datei} is not valid JSON — left untouched, ${name} hooks not wired`);
+    console.log(`⚠️ ${pad}${datei} ${r.grund ?? 'is not valid JSON'} — left untouched, ${name} hooks not wired`);
     return;
   }
   const verb = r.hooks === 'unchanged' ? '✓  ' : '✅ ';
@@ -3457,20 +3483,27 @@ if (process.argv[2] === 'init') {
     process.exit(1);
   }
 
-  const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
-  const configPath = resolve(projectDir, configFile);
-  await mkdir(dirname(configPath), { recursive: true });
-  const { existsSync: exInit } = await import('node:fs');
-  const configExisted = exInit(configPath);
-  const prevConfig = configExisted ? await readFile(configPath, 'utf-8').catch(() => '') : '';
-  saveApiKey(apiKey);
-  const merged = await mergeMcpConfig(configPath, apiKey, instanceId, editor, { readFile, existsSync: exInit });
-  // Idempotent: only write when the content actually changes.
-  if (merged !== prevConfig) {
-    await writeFile(configPath, merged, 'utf-8');
-    console.log(`\n✅ ${configExisted ? 'Updated' : 'Written'}: ${configFile}`);
+  const mcpAdd = mcpAddBefehl(editor, buildServerEnv(apiKey, instanceId));
+  if (mcpAdd) {
+    saveApiKey(apiKey);
+    console.log(`\n👉 Register the MCP server once (writes ${mcpAdd.wo}):`);
+    console.log(`   ${mcpAdd.befehl}`);
   } else {
-    console.log(`\n✓  Already configured: ${configFile} (no change)`);
+    const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
+    const configPath = resolve(projectDir, configFile);
+    await mkdir(dirname(configPath), { recursive: true });
+    const { existsSync: exInit } = await import('node:fs');
+    const configExisted = exInit(configPath);
+    const prevConfig = configExisted ? await readFile(configPath, 'utf-8').catch(() => '') : '';
+    saveApiKey(apiKey);
+    const merged = await mergeMcpConfig(configPath, apiKey, instanceId, editor, { readFile, existsSync: exInit });
+    // Idempotent: only write when the content actually changes.
+    if (merged !== prevConfig) {
+      await writeFile(configPath, merged, 'utf-8');
+      console.log(`\n✅ ${configExisted ? 'Updated' : 'Written'}: ${configFile}`);
+    } else {
+      console.log(`\n✓  Already configured: ${configFile} (no change)`);
+    }
   }
 
   // Always write the brain protocol to all instruction files (idempotent —
@@ -3512,7 +3545,9 @@ if (process.argv[2] === 'init') {
 
   const initSecs = ((Date.now() - initStart) / 1000).toFixed(1);
   console.log(`\n🧠 Cachly AI Brain configured for ${editor === 'claude' ? 'Claude Code' : editor}! (${initSecs}s)`);
-  console.log(`   Restart your editor — the \`cachly\` MCP tools will appear.`);
+  console.log(mcpAdd
+    ? `   Run the \`mcp add\` line above, then restart ${editor} — the \`cachly\` MCP tools will appear.`
+    : `   Restart your editor — the \`cachly\` MCP tools will appear.`);
   console.log(`   Re-run \`init\` anytime — it's idempotent (only writes what changed).`);
   console.log(`\n   📛 Add a live badge to your README:`);
   console.log(`      npx @cachly-dev/mcp-server@latest badge\n`);

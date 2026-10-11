@@ -7,6 +7,7 @@ import {
   buildClaudeMdBlock,
   CLAUDE_MD_MARKER_START,
   CLAUDE_MD_MARKER_END,
+  mcpAddBefehl,
 } from '../index.js';
 import { writeInstructions } from '../index';
 import { credentialsPath } from '../credentials.js';
@@ -287,5 +288,31 @@ describe('writeInstructions', () => {
       expect(content).toContain(instanceId);
       expect(result[path]).toMatch(/written|appended|updated/);
     }
+  });
+});
+
+// Codex und Gemini lesen .mcp.json nie. `init --editor codex|gemini` nennt
+// deshalb deren eigene `mcp add`-Zeile (Quellen am Kopf von mcpAddBefehl).
+describe('mcpAddBefehl — Codex and Gemini register the server themselves', () => {
+  const env = { CACHLY_BRAIN_INSTANCE_ID: '8e03addd-a2d9-406e-bcbb-d6d8c938a3d0' };
+
+  it('codex: --env per pair, the server command after --', () => {
+    expect(mcpAddBefehl('codex', env)?.befehl).toBe(
+      'codex mcp add cachly --env CACHLY_BRAIN_INSTANCE_ID=8e03addd-a2d9-406e-bcbb-d6d8c938a3d0 -- npx -y @cachly-dev/mcp-server@latest',
+    );
+  });
+
+  it('gemini: project scope, npx keeps -y because it comes after --', () => {
+    expect(mcpAddBefehl('gemini', env)?.befehl).toBe(
+      'gemini mcp add -s project -e CACHLY_BRAIN_INSTANCE_ID=8e03addd-a2d9-406e-bcbb-d6d8c938a3d0 cachly npx -- -y @cachly-dev/mcp-server@latest',
+    );
+  });
+
+  it('no key in either line, and every other editor keeps its config file', () => {
+    const serverEnv = buildServerEnv('cky_live_geheim', 'iid-1');
+    for (const editor of ['codex', 'gemini']) {
+      expect(mcpAddBefehl(editor, serverEnv)?.befehl).not.toContain('cky_live_geheim');
+    }
+    for (const editor of Object.keys(EDITOR_FILES)) expect(mcpAddBefehl(editor, env)).toBeNull();
   });
 });

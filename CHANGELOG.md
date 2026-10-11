@@ -7,6 +7,41 @@
 
 ---
 
+## [0.10.182] – 2026-10-11 — *"VS Code, Codex and Gemini get the lessons too."*
+
+**Three more editors get the session briefing and the matching lessons on
+their own.** `setup`, `autopilot` and `init --editor copilot|codex|gemini`
+now write each editor's hook file, from the same core as Claude Code and
+Cursor:
+
+| Editor | File | Briefing | Lessons |
+|---|---|---|---|
+| VS Code (Copilot, "Local") | `.github/hooks/cachly-ambient.json` | session start | before each prompt |
+| Copilot CLI | same file | session start | at the first tool call of a turn |
+| Codex CLI | `.codex/hooks.json` | session start | before each prompt |
+| Gemini CLI | `.gemini/settings.json` (`hooks` only) | first turn | appended to the prompt |
+
+Limits, so nobody is surprised: none of the three has been tried in the
+real editor yet; this release is checked against their docs, their source
+and the docs' sample inputs. VS Code takes per-prompt context according to
+its source, not its reference. Codex runs project hooks only after you
+trust `.codex/` and confirm the hook once in `/hooks`, and its hook command
+names the script with an absolute path, valid on this machine only. Gemini
+escapes `<` and `>` in the context it shows.
+
+**`setup` never leaves half an install behind.** It now checks the
+editor's config file before writing any script. A file it cannot merge
+without loss stays untouched, no scripts land in the project, and the
+message says why: a file with comments (Gemini allows them) is reported as
+such instead of "not valid JSON", and a `hooks.<event>` entry that is not a
+list is no longer replaced silently. A byte-order mark at the start of the
+file is fine now, and the file keeps its indentation.
+
+**`init --editor codex|gemini` prints the line that registers the MCP
+server.** Neither editor reads `.mcp.json`, which `init` used to write for
+them. Now it prints `codex mcp add cachly …` or `gemini mcp add -s project …`
+with the instance id; the API key stays in `~/.cachly/credentials.json`.
+
 ## [0.10.181] – 2026-10-11 — *"Your plugin tells you when it is behind."*
 
 **Plugin users learn when their plugin is out of date.** The plugin starts

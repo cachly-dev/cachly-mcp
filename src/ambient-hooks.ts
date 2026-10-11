@@ -499,7 +499,8 @@ export function mergeCursorHooks(existing: CursorHooksDatei): { datei: CursorHoo
  * Zusammenfuehren fuer Dateien mit flachen Listen je Ereignis und `version`
  * (Cursor, Copilot). Fremde Eintraege und Ereignisse bleiben, alte
  * cachly-Eintraege werden ersetzt (nie doppelt). `version` bleibt; fehlt sie,
- * kommt 1 (Pflichtfeld in beiden Formaten).
+ * kommt 1 (Pflichtfeld in beiden Formaten). Ist ein Ereignis keine Liste,
+ * wirft es NichtZusammenfuehrbar, statt den Wert still zu ersetzen.
  */
 function mergeFlach<T extends { version?: number; hooks?: Record<string, unknown[]>; [k: string]: unknown }>(
   existing: T,
@@ -507,7 +508,8 @@ function mergeFlach<T extends { version?: number; hooks?: Record<string, unknown
 ): { datei: T; changed: boolean } {
   const hooks: Record<string, unknown[]> = { ...(existing.hooks ?? {}) };
   for (const [e, eintraege] of Object.entries(unsere)) {
-    const fremd = (Array.isArray(hooks[e]) ? hooks[e] : []).filter((h) => !istCachlyEintrag(h));
+    pruefeListe(hooks[e], e);
+    const fremd = (hooks[e] ?? []).filter((h) => !istCachlyEintrag(h));
     hooks[e] = [...fremd, ...eintraege];
   }
   const datei = { ...existing, version: typeof existing.version === 'number' ? existing.version : 1, hooks } as T;
@@ -526,6 +528,7 @@ export interface HookGruppe {
  * Gruppe fallen nur die cachly-Eintraege; eine Gruppe, die dadurch leer wird,
  * faellt ganz. Fremde Eintraege bleiben auch in gemischten Gruppen stehen.
  * Alle anderen Felder der Datei (bei Gemini die ganzen Einstellungen) bleiben.
+ * Ist ein Ereignis keine Liste, wirft es NichtZusammenfuehrbar.
  */
 function mergeGruppen<T extends { hooks?: Record<string, unknown>; [k: string]: unknown }>(
   existing: T,
@@ -533,7 +536,8 @@ function mergeGruppen<T extends { hooks?: Record<string, unknown>; [k: string]: 
 ): { datei: T; changed: boolean } {
   const hooks: Record<string, unknown> = { ...(existing.hooks ?? {}) };
   for (const [e, gruppen] of Object.entries(unsere)) {
-    const fremd = (Array.isArray(hooks[e]) ? (hooks[e] as unknown[]) : []).flatMap((g) => {
+    pruefeListe(hooks[e], e);
+    const fremd = ((hooks[e] ?? []) as unknown[]).flatMap((g) => {
       const liste = (g as HookGruppe | null)?.hooks;
       if (!Array.isArray(liste)) return [g];
       const rest = liste.filter((h) => !istCachlyEintrag(h));
@@ -553,8 +557,13 @@ export interface EditorInstallResult {
   /** Die Konfigurationsdatei des Editors (hooks.json, settings.json …). */
   hooksPath: string;
   scripts: 'written' | 'upgraded' | 'unchanged';
-  /** 'skipped': die Datei war kein JSON-Objekt — sie bleibt unangetastet, der Hook ist nicht verdrahtet. */
+  /**
+   * 'skipped': die Datei liess sich nicht zusammenfuehren — sie bleibt
+   * unangetastet, Skript und Buendel werden gar nicht erst geschrieben.
+   */
   hooks: 'written' | 'merged' | 'unchanged' | 'skipped';
+  /** Nur bei 'skipped': warum, als Satzende fuer die Ausgabe ("has comments"). */
+  grund?: string;
 }
 export type CursorInstallResult = EditorInstallResult;
 
@@ -579,8 +588,6 @@ interface HookDateien {
  */
 async function installiereHookDateien(d: HookDateien): Promise<EditorInstallResult> {
   const hookDir = resolve(d.projectDir, d.hookDir);
-  await mkdir(hookDir, { recursive: true });
-
   const bundleSource = hookBuendelQuelle();
   if (!bundleSource) throw new Error(`cachly hook bundle ${HOOK_BUENDEL} missing from the package`);
   const bundle = readFileSync(bundleSource, 'utf-8');
@@ -591,6 +598,30 @@ async function installiereHookDateien(d: HookDateien): Promise<EditorInstallResu
   const readIf = async (p: string): Promise<string> => {
     try { return await readFile(p, 'utf-8'); } catch { return ''; }
   };
+
+  // Erst die Konfiguration: laesst sie sich nicht zusammenfuehren, bleibt das
+  // Projekt ganz unberuehrt — keine Skripte, die nichts aufruft.
+  const hooksPath = resolve(d.projectDir, d.configDatei);
+  const roh = existsSync(hooksPath) ? await readIf(hooksPath) : '';
+  const leer = !roh.trim();
+  let zusammen: { datei: unknown; changed: boolean };
+  try {
+    // Ein BOM (Notepad, PowerShell 5) macht die Datei nicht kaputt.
+    const ohneBom = roh.charCodeAt(0) === 0xfeff ? roh.slice(1) : roh;
+    const p = leer ? {} : (JSON.parse(ohneBom) as unknown);
+    if (!istObjekt(p)) throw new NichtZusammenfuehrbar('is not a JSON object');
+    if (p.hooks !== undefined && !istObjekt(p.hooks)) throw new NichtZusammenfuehrbar('has a "hooks" field that is not an object');
+    zusammen = d.merge(p, scriptPath);
+  } catch (e) {
+    // Eine Datei des Nutzers, die wir nicht verlustfrei lesen, wird nicht ueberschrieben.
+    // Gemini erlaubt Kommentare in settings.json; JSON.parse nicht.
+    const grund = e instanceof NichtZusammenfuehrbar ? e.message
+      : /^\s*\/\/|\/\*/m.test(roh) ? 'has comments, and cachly only rewrites plain JSON'
+      : 'is not valid JSON';
+    return { scriptPath, bundlePath, hooksPath, scripts: 'unchanged', hooks: 'skipped', grund };
+  }
+
+  await mkdir(hookDir, { recursive: true });
   const altSkript = await readIf(scriptPath);
   const allCurrent = altSkript === script && (await readIf(bundlePath)) === bundle;
   const scripts: EditorInstallResult['scripts'] = allCurrent ? 'unchanged' : altSkript ? 'upgraded' : 'written';
@@ -601,28 +632,15 @@ async function installiereHookDateien(d: HookDateien): Promise<EditorInstallResu
     await chmod(scriptPath, 0o755).catch(() => {});
   }
 
-  const hooksPath = resolve(d.projectDir, d.configDatei);
-  const roh = existsSync(hooksPath) ? await readIf(hooksPath) : null;
-  let vorhanden: Record<string, unknown> = {};
-  if (roh !== null && roh.trim()) {
-    try {
-      const p = JSON.parse(roh) as unknown;
-      if (!istObjekt(p)) throw new Error('kein Objekt');
-      if (p.hooks !== undefined && !istObjekt(p.hooks)) throw new Error('hooks ist kein Objekt');
-      vorhanden = p;
-    } catch {
-      // Eine kaputte Datei des Nutzers wird nicht ueberschrieben.
-      return { scriptPath, bundlePath, hooksPath, scripts, hooks: 'skipped' };
-    }
-  }
-  const { datei, changed } = d.merge(vorhanden, scriptPath);
   let hooks: EditorInstallResult['hooks'];
-  if (roh === null || !roh.trim()) hooks = 'written';
-  else if (!changed) hooks = 'unchanged';
+  if (leer) hooks = 'written';
+  else if (!zusammen.changed) hooks = 'unchanged';
   else hooks = 'merged';
   if (hooks !== 'unchanged') {
+    // Den Einzug des Nutzers behalten (4 Leerzeichen, Tabs); neu: 2.
+    const einzug = /^([ \t]+)"/m.exec(roh)?.[1] ?? 2;
     await mkdir(dirname(hooksPath), { recursive: true });
-    await writeFile(hooksPath, JSON.stringify(datei, null, 2) + '\n', 'utf-8');
+    await writeFile(hooksPath, JSON.stringify(zusammen.datei, null, einzug) + '\n', 'utf-8');
   }
 
   return { scriptPath, bundlePath, hooksPath, scripts, hooks };
@@ -630,6 +648,16 @@ async function installiereHookDateien(d: HookDateien): Promise<EditorInstallResu
 
 function istObjekt(x: unknown): x is Record<string, unknown> {
   return !!x && typeof x === 'object' && !Array.isArray(x);
+}
+
+/** Die Datei ist JSON, aber in einer Form, die wir nicht verlustfrei zusammenfuehren. */
+class NichtZusammenfuehrbar extends Error {}
+
+/** `hooks.<Ereignis>` muss fehlen oder eine Liste sein — sonst ginge der Wert beim Schreiben verloren. */
+function pruefeListe(wert: unknown, ereignis: string): asserts wert is unknown[] | undefined {
+  if (wert !== undefined && !Array.isArray(wert)) {
+    throw new NichtZusammenfuehrbar(`has a "hooks.${ereignis}" entry that is not a list`);
+  }
 }
 
 /** Installiert/erneuert den Cursor-Hook in `projectDir`. Wirft nur bei Dateifehlern. */

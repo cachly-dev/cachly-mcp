@@ -820,6 +820,7 @@ describe('Claude-Hooks in VS Code / Copilot CLI (.claude/settings.json)', () => 
 describe('Installation je Editor', () => {
   const installer = { copilot: installCopilotHooks, codex: installCodexHooks, gemini: installGeminiHooks } as const;
   const dateien = { copilot: '.github/hooks/cachly-ambient.json', codex: '.codex/hooks.json', gemini: '.gemini/settings.json' } as const;
+  const eigeneEreignisse = { copilot: buildCopilotHooks(), codex: buildCodexHooks('/x.mjs'), gemini: buildGeminiHooks() } as const;
 
   for (const editor of ['copilot', 'codex', 'gemini'] as const) {
     it(`${editor}: schreibt, ist danach unveraendert, erneuert ein veraltetes Buendel`, async () => {
@@ -835,15 +836,39 @@ describe('Installation je Editor', () => {
       expect((await installer[editor](projekt, instanz)).scripts).toBe('upgraded');
     });
 
-    it(`${editor}: eine kaputte Datei wird nicht ueberschrieben`, async () => {
+    it(`${editor}: eine kaputte Datei wird nicht ueberschrieben, und es landen keine Skripte ohne Verdrahtung`, async () => {
       const pfad = join(projekt, dateien[editor]);
       mkdirSync(resolve(pfad, '..'), { recursive: true });
-      // Gemini erlaubt Kommentare nicht im JSON.parse — eine solche Datei bleibt ebenso stehen.
-      const kaputt = '{ // Kommentar\n  "hooks": { ';
+      const kaputt = '{ "hooks": { ';
       writeFileSync(pfad, kaputt);
       const r = await installer[editor](projekt, instanz);
       expect(r.hooks).toBe('skipped');
+      expect(r.grund).toBe('is not valid JSON');
       expect(readFileSync(pfad, 'utf8')).toBe(kaputt);
+      expect(existsSync(r.scriptPath)).toBe(false);
+      expect(existsSync(r.bundlePath)).toBe(false);
+    });
+
+    it(`${editor}: eine Datei mit Kommentaren bleibt stehen und sagt warum`, async () => {
+      // Gemini liest settings.json mit strip-json-comments; JSON.parse kann das nicht.
+      const pfad = join(projekt, dateien[editor]);
+      mkdirSync(resolve(pfad, '..'), { recursive: true });
+      const mitKommentar = '{\n  // eigene Einstellung\n  "general": { "vimMode": true }\n}\n';
+      writeFileSync(pfad, mitKommentar);
+      const r = await installer[editor](projekt, instanz);
+      expect(r.hooks).toBe('skipped');
+      expect(r.grund).toMatch(/comments/);
+      expect(readFileSync(pfad, 'utf8')).toBe(mitKommentar);
+      expect(existsSync(r.scriptPath)).toBe(false);
+    });
+
+    it(`${editor}: ein BOM am Anfang ist kein Fehler`, async () => {
+      const pfad = join(projekt, dateien[editor]);
+      mkdirSync(resolve(pfad, '..'), { recursive: true });
+      writeFileSync(pfad, String.fromCharCode(0xfeff) + '{ "hooks": {} }\n');
+      const r = await installer[editor](projekt, instanz);
+      expect(r.hooks).toBe('merged');
+      expect(existsSync(r.scriptPath)).toBe(true);
     });
 
     it(`${editor}: "hooks" ist kein Objekt — Datei bleibt stehen`, async () => {
@@ -852,6 +877,27 @@ describe('Installation je Editor', () => {
       const vorher = readFileSync(pfad, 'utf8');
       expect((await installer[editor](projekt, instanz)).hooks).toBe('skipped');
       expect(readFileSync(pfad, 'utf8')).toBe(vorher);
+    });
+
+    it(`${editor}: ein Ereignis, das keine Liste ist, geht nicht still verloren`, async () => {
+      const pfad = join(projekt, dateien[editor]);
+      const ereignis = Object.keys(eigeneEreignisse[editor])[0];
+      schreibeJson(pfad, { hooks: { [ereignis]: { eigen: true } } });
+      const vorher = readFileSync(pfad, 'utf8');
+      const r = await installer[editor](projekt, instanz);
+      expect(r.hooks).toBe('skipped');
+      expect(r.grund).toContain(`hooks.${ereignis}`);
+      expect(readFileSync(pfad, 'utf8')).toBe(vorher);
+    });
+
+    it(`${editor}: der Einzug des Nutzers bleibt`, async () => {
+      const pfad = join(projekt, dateien[editor]);
+      mkdirSync(resolve(pfad, '..'), { recursive: true });
+      writeFileSync(pfad, JSON.stringify({ eigen: { a: 1 } }, null, 4) + '\n');
+      const r = await installer[editor](projekt, instanz);
+      expect(r.hooks).toBe('merged');
+      expect(readFileSync(pfad, 'utf8')).toMatch(/^ {4}"eigen"/m);
+      expect(readFileSync(pfad, 'utf8')).not.toMatch(/^ {2}"eigen"/m);
     });
   }
 
