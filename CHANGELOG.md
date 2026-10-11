@@ -7,6 +7,43 @@
 
 ---
 
+## [0.10.175] – 2026-10-11 — *"Install it, and it works."*
+
+**No key? You get a test Brain, not a browser.** Without an API key the server
+used to start a browser sign-in on the first tool call. In containers, WSL and
+SSH sessions the browser could not open, and the sign-in timed out after
+10 minutes. The instant trial that should have caught this sat behind that
+check and was never reached: since 28 August, not one account was created
+through the Claude Code plugin. Now the first tool call creates a test Brain
+on EU servers in under a second, stores the key where restarts and hooks find
+it, and runs the tool. The browser sign-in remains the fallback. A tool call
+that passes an invented `instance_id` ("default", "my-brain") no longer blocks
+this; only a real UUID does.
+
+**The plugin brings ambient recall.** Installing cachly from the Claude Code
+marketplace used to give you the MCP server only: no lessons before your
+prompt, no session briefing, no write receipt. The plugin now ships all three
+hooks. If a project already has cachly hooks, the lessons still appear once.
+
+**Hooks start in a fraction of the time.** The hooks called
+`npx @cachly-dev/mcp-server@latest`, which asked the npm registry on every
+prompt. They now run a bundled script (91 KB, no dependencies) directly with
+node. Measured warm, median per prompt: 6.6 s before, 2.7 s with project
+hooks, 3.5 s with the plugin. A hard 8-second deadline keeps a slow network
+from ever holding your prompt to Claude Code's 10-second limit. Existing
+project hooks switch on the next `setup` or `autopilot`.
+
+**`smart_recall` shows the order we measure.** The visible result list was
+re-sorted by keyword score at the very end, so meaning-only matches never
+reached the top. On 3,003 rephrased questions the right lesson now appears in
+the top 3 in **64.9 %** of cases instead of 45.8 %, and first in 48.3 % instead
+of 32.9 %. `npm run bench:ausgabe` fails as soon as the output drifts from the
+ranking again.
+
+**Lessons learned over REST join the knowledge graph.** The API now creates
+the same `fixes` edge as the MCP path. That covers the new hooks and the
+VS Code and JetBrains extensions.
+
 ## [0.10.174] – 2026-10-10 — *"What we measure is what you get."*
 
 **Ambient recall now works for every installation.** The hooks that `init`
