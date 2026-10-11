@@ -223,12 +223,42 @@ export const SELTENHEIT_LAENGE_B = 1.0;
  */
 export const LESER_GEWICHT = 1.0;
 /**
- * So viele der besten Kandidaten liest der Leser: 25, der Topf der Messung
- * (Arm L4, T25). Aenderung nur mit Messung auf dem Pruefsatz
- * (leser-arme-offline.py auf einer punkte.jsonl); auf CPU kosten 25 Paare
- * x 256 Token 1,2 s, 10 Paare x 128 Token 230 ms (node-4, 06.10.2026).
+ * So viele der besten Kandidaten liest der Leser in `smart_recall`: 25, der
+ * Topf der Messung (Arm L4, T25). Aenderung nur mit Messung auf dem
+ * Pruefsatz (leser-arme-offline.py auf einer punkte.jsonl); auf CPU kosten 25
+ * Paare x 256 Token 1,2 s, 10 Paare x 128 Token 230 ms (node-4, 06.10.2026).
+ *
+ * Offen: unter Bau-Last auf node-4 antwortet der Leser bei 25 Texten nur in
+ * 31,6 % der Aufrufe binnen LESER_ZEITLIMIT_MS (Messung an
+ * LESER_TIEFE_EINBLENDUNG). Fuer smart_recall ist die kleinere Tiefe nicht
+ * gemessen — dessen Kandidatenliste kommt aus einer anderen Sortierung.
  */
 export const LESER_TIEFE = 25;
+/**
+ * So viele der besten Kandidaten liest der Leser in der EINBLENDUNG (Hook je
+ * Prompt): 10. Gemessen 11.10.2026 mit einblendung-messen.ts --tiefen
+ * 10,15,25 --stichprobe 600 --saat 7 --leser-zeitlimit 8000 (Pruefsatz 3.003,
+ * 499 Lektionen; je Frage alle drei Tiefen abwechselnd, Hausleser auf node-4,
+ * 65 min, davon die meiste Zeit 4-6 Bau-Jobs auf node-4):
+ *
+ *   Tiefe   Platz 1 / @3 mit Frist   jede Antwort   Leser p50/p95   binnen 2,5 s
+ *   ohne        33,7 / 44,3             -               -                -
+ *   10          40,0 / 51,8         40,3 / 52,2     1,37 / 2,63 s       90,9 %
+ *   15          40,3 / 51,7         42,3 / 54,3     1,87 / 3,39 s       76,8 %
+ *   25          35,8 / 47,3         43,7 / 55,2     2,88 / 4,51 s       31,6 %
+ *
+ * "Mit Frist" ist, was der Hook bekommt: kommt der Leser nach 2,5 s, bleibt
+ * die lokale Ordnung. Bei 25 haelt er so nur +2,1 Punkte Platz 1, bei 10
+ * +6,3; 15 ist bei Platz 1 und @3 gleichauf mit 10, wartet aber 0,4 s
+ * laenger je Prompt (Mittel 1,90 statt 1,47 s) und faellt bei 4+ Bau-Jobs auf
+ * 67 % rechtzeitig (10: 90 %; beides mit 0,09 s fuer den Verbindungsaufbau,
+ * den der Hook je Prompt neu bezahlt). Gegenprobe (Erwartungen permutiert): alle Arme
+ * <= 0,7 % Platz 1. Stichprobe: +-2 Punkte je Wert.
+ *
+ * Zurueck auf 15 oder 25 erst, wenn der Leser unter Last schneller antwortet
+ * (CPU-Vorrang auf node-4 oder eigene Maschine) — dann mit demselben Lauf.
+ */
+export const LESER_TIEFE_EINBLENDUNG = 10;
 /** Zeitlimit des Anrufs beim Dienst: 2500 ms, dann bleibt die Hausordnung. */
 export const LESER_ZEITLIMIT_MS = 2500;
 /**

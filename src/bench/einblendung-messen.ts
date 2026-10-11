@@ -46,14 +46,36 @@
  *
  * Zusaetzlich: --fragen <n> begrenzt den Satz (Probelauf), --kontrolle fuegt
  * den Permutationslauf hinzu, --nach <datei.json> schreibt die Rohplaetze.
+ *
+ * ── Die Tiefe des Lesers unter Last (--tiefen) ─────────────────────────────
+ *
+ *   --leser                   Arm D mit der Tiefe des Hooks
+ *                             (LESER_TIEFE_EINBLENDUNG).
+ *   --tiefen 10,15,25         Arm D je Tiefe. Je Frage werden alle Tiefen
+ *                             nacheinander gefragt, die Reihenfolge wechselt
+ *                             von Frage zu Frage — so trifft eine Lastspitze
+ *                             auf dem Leser-Server alle Tiefen gleich.
+ *   --stichprobe <n>          feste Stichprobe (nach dem Filter), Saat aus
+ *   --saat <k>                --saat (Vorgabe 7). Gleiche Saat = gleiche Fragen.
+ *   --leser-zeitlimit <ms>    Zeitgrenze des MESS-Aufrufs (Vorgabe: die des
+ *                             Produkts). Hoeher gesetzt sieht man die ganze
+ *                             Verteilung; "Frist" zaehlt dann nur Antworten,
+ *                             die binnen LESER_ZEITLIMIT_MS kamen — das, was
+ *                             der Hook wirklich bekommt.
+ *   --leser-protokoll <datei> je Aufruf eine Zeile JSON (Zeit, Tiefe, ms).
+ *
+ * Die Gegenprobe (--kontrolle) bewertet dieselben Ranglisten gegen
+ * permutierte Erwartungen — ohne einen zweiten Satz Leser-Aufrufe.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Einblendbestand, torWoerter, zaehleBelege } from '../einblendung-kern.js';
 import { lektionsText, leserText } from '../seltenheitsbestand.js';
-import { leserPunkte, mischeMitLeser } from '../leser.js';
-import { LESER_TIEFE, LESER_MAX_ZEICHEN } from '../rangfolge-stellschrauben.js';
+import { mischeMitLeser } from '../leser.js';
+import { embedConfig } from '../embeddings.js';
+import { LeserSicherung, frageLeser, speicherImProzess } from '../leser-sicherung.js';
+import { LESER_TIEFE_EINBLENDUNG, LESER_MAX_ZEICHEN, LESER_ZEITLIMIT_MS } from '../rangfolge-stellschrauben.js';
 
 interface Lektion {
   topic: string;
@@ -131,28 +153,49 @@ function zeile(name: string, k: Kennzahlen, n: number): string {
     + `  ${String(k.ohneTor).padStart(5)}`;
 }
 
+/** Nur die ersten zehn Plaetze zaehlen (@10) — mehr muss je Frage nicht aufgehoben werden. */
+const AUFHEBEN = 10;
+
+/** Die Leser-Zeiten einer Tiefe ueber den ganzen Lauf. */
+interface LeserZeiten {
+  aufrufe: number;
+  /** Aufrufe ohne brauchbare Antwort (Zeitgrenze des Messaufrufs, Fehler). */
+  ausfaelle: number;
+  /** Antworten, die binnen LESER_ZEITLIMIT_MS beim Client ankamen. */
+  rechtzeitig: number;
+  clientMs: number[];
+  serverMs: number[];
+}
+
+/** Die Ranglisten (je die ersten AUFHEBEN Themen) einer Frage. */
+interface Ranglisten {
+  torOffen: boolean;
+  a: string[]; b: string[]; c: string[];
+  /** Arm D je Tiefe: `voll` mit jeder Leser-Antwort, `frist` nur mit rechtzeitigen. */
+  d: Map<number, { voll: string[]; frist: string[] }>;
+}
+
 /**
- * Ein Durchgang ueber alle Fragen.
- *
- * `zuordnung[i]` sagt, welche Frage auf welchen Erwartungssatz trifft. Fuer
- * den echten Lauf ist das die Reihenfolge selbst; fuer die Gegenprobe eine
- * Permutation. So laeuft BEIDES durch denselben Code — eine zweite Schleife
- * waere eine zweite Wahrheit.
+ * Ein Durchgang ueber alle Fragen: rechnet die Ranglisten, bewertet sie aber
+ * nicht. Bewertet wird in `bewerte` — fuer den echten Lauf und die
+ * Gegenprobe mit DENSELBEN Ranglisten. So laeuft beides durch denselben Code
+ * (eine zweite Schleife waere eine zweite Wahrheit), und die Gegenprobe
+ * kostet keinen zweiten Satz Leser-Aufrufe.
  */
-// Arm D (--leser): die besten LESER_TIEFE von Arm C liest der Leser-Endpunkt
-// (POST /api/v1/rerank, Instanz aus CACHLY_BRAIN_INSTANCE_ID — die API waehlt
-// eigenen Dienst oder Jev), gemischt wie im Hook (lib.mjs selectRelevantMitLeser).
-// Braucht CACHLY_JWT; ohne Antwort zaehlt die Frage mit der Ordnung von Arm C.
-let leserAusfaelle = 0;
+// Arm D (--leser / --tiefen): die besten `tiefe` von Arm C liest der
+// Leser-Endpunkt (POST /api/v1/rerank, Instanz aus CACHLY_BRAIN_INSTANCE_ID —
+// die API waehlt den Leser), ueber denselben Anruf wie der Hook (frageLeser),
+// gemischt wie im Hook (einblendung.ts selectRelevantMitLeser). Braucht
+// CACHLY_JWT; ohne Antwort zaehlt die Frage mit der Ordnung von Arm C.
 async function lauf(
   lektionen: Lektion[],
   fragen: Frage[],
-  zuordnung: number[],
   minBelege: number,
-  plaetzeNach: Array<Record<string, unknown>> | null,
   topf: number | undefined,
-  leser = false,
-): Promise<{ a: Kennzahlen; b: Kennzahlen; c: Kennzahlen; d: Kennzahlen | null }> {
+  tiefen: number[],
+  messZeitlimitMs: number,
+  protokoll: string | undefined,
+): Promise<{ ranglisten: Ranglisten[]; zeiten: Map<number, LeserZeiten> }> {
   const themen = lektionen.map((l) => l.topic);
   const topicKlein = lektionen.map((l) => String(l.topic ?? '').toLowerCase());
   const hayKurz = lektionen.map((l) => heuhaufenAlt(l, true));
@@ -164,19 +207,18 @@ async function lauf(
   // Genau diese Falle stand im grossen Messstand: Produkt 25, Bench 75.
   const bestand = new Einblendbestand(lektionen, topf !== undefined ? { topf } : {});
 
-  const a = leer(); const b = leer(); const c = leer();
-  const d = leser ? leer() : null;
   const instanz = process.env.CACHLY_BRAIN_INSTANCE_ID || '';
   // CACHLY_ADMIN_KEY stellt den Messlauf vom Embed-Limiter frei (60/min je
   // Nutzer, gilt auch fuer /rerank). Ohne ihn zaehlen 429er als Leser-Ausfall.
   const adminKopf = process.env.CACHLY_ADMIN_KEY ? { 'X-Admin-Key': process.env.CACHLY_ADMIN_KEY } : undefined;
+  const zeiten = new Map(tiefen.map((t) => [t, { aufrufe: 0, ausfaelle: 0, rechtzeitig: 0, clientMs: [], serverMs: [] } as LeserZeiten]));
+  const ranglisten: Ranglisten[] = [];
 
   for (let i = 0; i < fragen.length; i++) {
     const text = fragen[i].query;
-    const erwartet = new Set(fragen[zuordnung[i]].relevant);
     const tokens = torWoerter(text);
 
-    // Das Tor ist in allen drei Armen dasselbe (>= minBelege verschiedene
+    // Das Tor ist in allen Armen dasselbe (>= minBelege verschiedene
     // Frageworte im Text). Waere es je Arm anders, verglichen wir zwei
     // Dinge auf einmal.
     const torOffen = torHeuhaufen.some((h) => zaehleBelege(tokens, h) >= minBelege);
@@ -191,36 +233,106 @@ async function lauf(
     const sortiertC = bestand.sortiere(text);
     const pC = sortiertC.map((x) => x.lektion.topic as string);
 
-    const platzA = platzVon(pA, erwartet);
-    const platzB = platzVon(pB, erwartet);
-    const platzC = platzVon(pC, erwartet);
-    buche(a, platzA, torOffen);
-    buche(b, platzB, torOffen);
-    buche(c, platzC, torOffen);
-    if (d) {
-      let pD = pC;
+    const d = new Map<number, { voll: string[]; frist: string[] }>();
+    // Reihenfolge der Tiefen wechselt je Frage: keine Tiefe sitzt immer auf
+    // dem ersten (kalten) oder letzten Aufruf.
+    const reihe = tiefen.map((_, k) => tiefen[(k + i) % tiefen.length]);
+    for (const tiefe of reihe) {
+      let voll = pC;
+      let frist = pC;
       if (torOffen && sortiertC.length > 1) {
-        const kopf = sortiertC.slice(0, LESER_TIEFE);
-        const lp = await leserPunkte(
-          text,
-          kopf.map((x) => leserText(x.lektion as Record<string, unknown>, LESER_MAX_ZEICHEN)),
-          { instanceId: instanz, zusatzKopf: adminKopf },
-        );
-        if (lp) {
-          const neu = mischeMitLeser(kopf.map((x) => x.punkte), lp);
-          pD = [...neu.map((k) => kopf[k].lektion.topic as string), ...pC.slice(LESER_TIEFE)];
+        const kopf = sortiertC.slice(0, tiefe);
+        const z = zeiten.get(tiefe)!;
+        const t0 = performance.now();
+        const antwort = await frageLeser({
+          url: `${embedConfig.apiUrl}/api/v1/rerank`,
+          jwt: embedConfig.jwt,
+          frage: text,
+          texte: kopf.map((x) => leserText(x.lektion as Record<string, unknown>, LESER_MAX_ZEICHEN)),
+          instanceId: instanz,
+          zeitlimitMs: messZeitlimitMs,
+          zusatzKopf: adminKopf,
+        }, new LeserSicherung(speicherImProzess()));
+        const ms = performance.now() - t0;
+        z.aufrufe++;
+        if (antwort.art === 'punkte') {
+          const neu = mischeMitLeser(kopf.map((x) => x.punkte), antwort.scores);
+          voll = [...neu.map((k) => kopf[k].lektion.topic as string), ...pC.slice(tiefe)];
+          z.clientMs.push(ms);
+          z.serverMs.push(antwort.ms);
+          if (ms <= LESER_ZEITLIMIT_MS) { frist = voll; z.rechtzeitig++; }
         } else {
-          leserAusfaelle++;
+          z.ausfaelle++;
+        }
+        if (protokoll) {
+          appendFileSync(protokoll, `${JSON.stringify({ t: new Date().toISOString(), frage: i, tiefe, art: antwort.art, clientMs: Math.round(ms), serverMs: antwort.art === 'punkte' ? antwort.ms : null, anbieter: antwort.art === 'punkte' ? antwort.provider : null })}\n`);
         }
       }
-      buche(d, platzVon(pD, erwartet), torOffen);
+      d.set(tiefe, { voll: voll.slice(0, AUFHEBEN), frist: frist.slice(0, AUFHEBEN) });
     }
 
-    if (plaetzeNach) {
-      plaetzeNach.push({ id: fragen[i].id ?? i, guete: fragen[i].guete, sprache: fragen[i].sprache, alt: platzA, altVoll: platzB, neu: platzC, tor: torOffen });
+    ranglisten.push({ torOffen, a: pA.slice(0, AUFHEBEN), b: pB.slice(0, AUFHEBEN), c: pC.slice(0, AUFHEBEN), d });
+    if (tiefen.length && (i + 1) % 50 === 0) {
+      process.stderr.write(`  ${i + 1}/${fragen.length} Fragen\n`);
     }
   }
+  return { ranglisten, zeiten };
+}
+
+/**
+ * Bewertet die Ranglisten. `zuordnung[i]` sagt, welche Frage auf welchen
+ * Erwartungssatz trifft: fuer den echten Lauf die Reihenfolge selbst, fuer die
+ * Gegenprobe eine Permutation.
+ */
+function bewerte(
+  ranglisten: Ranglisten[],
+  fragen: Frage[],
+  zuordnung: number[],
+  plaetzeNach: Array<Record<string, unknown>> | null,
+): { a: Kennzahlen; b: Kennzahlen; c: Kennzahlen; d: Map<number, { voll: Kennzahlen; frist: Kennzahlen }> } {
+  const a = leer(); const b = leer(); const c = leer();
+  const d = new Map<number, { voll: Kennzahlen; frist: Kennzahlen }>();
+  ranglisten.forEach((r, i) => {
+    const erwartet = new Set(fragen[zuordnung[i]].relevant);
+    const platzA = platzVon(r.a, erwartet);
+    const platzB = platzVon(r.b, erwartet);
+    const platzC = platzVon(r.c, erwartet);
+    buche(a, platzA, r.torOffen);
+    buche(b, platzB, r.torOffen);
+    buche(c, platzC, r.torOffen);
+    // Plaetze je Tiefe auch je Frage — fuer den gepaarten Vergleich zweier
+    // Tiefen (welche Fragen gewinnt die eine, welche die andere).
+    const leserPlaetze: Record<string, number> = {};
+    for (const [tiefe, l] of r.d) {
+      if (!d.has(tiefe)) d.set(tiefe, { voll: leer(), frist: leer() });
+      const pv = platzVon(l.voll, erwartet);
+      const pf = platzVon(l.frist, erwartet);
+      buche(d.get(tiefe)!.voll, pv, r.torOffen);
+      buche(d.get(tiefe)!.frist, pf, r.torOffen);
+      leserPlaetze[`T${tiefe}`] = pv;
+      leserPlaetze[`T${tiefe}F`] = pf;
+    }
+    if (plaetzeNach) {
+      plaetzeNach.push({ id: fragen[i].id ?? i, guete: fragen[i].guete, sprache: fragen[i].sprache, alt: platzA, altVoll: platzB, neu: platzC, tor: r.torOffen, ...(r.d.size ? { leser: leserPlaetze } : {}) });
+    }
+  });
   return { a, b, c, d };
+}
+
+/** Quantil einer Zahlenreihe (naechster Rang), 0 bei leerer Reihe. */
+function quantil(werte: number[], q: number): number {
+  if (!werte.length) return 0;
+  const s = [...werte].sort((x, y) => x - y);
+  return s[Math.min(s.length - 1, Math.max(0, Math.ceil(q * s.length) - 1))];
+}
+
+function armZeilen(d: Map<number, { voll: Kennzahlen; frist: Kennzahlen }>, n: number, mitFrist: boolean): string {
+  let s = '';
+  for (const [tiefe, k] of d) {
+    s += `${zeile(`D T${tiefe}`, k.voll, n)}\n`;
+    if (mitFrist) s += `${zeile(`D T${tiefe} F`, k.frist, n)}\n`;
+  }
+  return s;
 }
 
 /** Ein festgekeimter Zufallsgenerator — damit die Gegenprobe wiederholbar ist. */
@@ -240,7 +352,7 @@ async function main(): Promise<void> {
   const korpusPfad = flag('korpus');
   const satzPfad = flag('pruefsatz');
   if (!korpusPfad || !satzPfad) {
-    process.stderr.write('Aufruf: --korpus <datei> --pruefsatz <datei> [--fragen n] [--kontrolle] [--nach datei]\n');
+    process.stderr.write('Aufruf: --korpus <datei> --pruefsatz <datei> [--fragen n] [--kontrolle] [--nach datei] [--leser | --tiefen 10,15,25] [--stichprobe n --saat k] [--leser-zeitlimit ms] [--leser-protokoll datei]\n');
     process.exit(2);
   }
   const minBelege = Number(flag('belege') ?? '2');
@@ -258,31 +370,66 @@ async function main(): Promise<void> {
   const vorher = fragen.length;
   fragen = fragen.filter((q) => Array.isArray(q.relevant) && q.relevant.some((t) => themenDa.has(t)));
 
+  // --stichprobe <n>: feste Auswahl mit Saat — gleiche Saat, gleiche Fragen,
+  // in der Reihenfolge des Pruefsatzes.
+  const stichprobe = Number(flag('stichprobe') ?? '0');
+  const saat = Number(flag('saat') ?? '7');
+  const ungefiltert = fragen.length;
+  if (stichprobe > 0 && stichprobe < fragen.length) {
+    const r = keimZufall(saat);
+    const idx = fragen.map((_, i) => i);
+    for (let i = idx.length - 1; i > 0; i--) {
+      const j = Math.floor(r() * (i + 1));
+      [idx[i], idx[j]] = [idx[j], idx[i]];
+    }
+    const gewaehlt = idx.slice(0, stichprobe).sort((x, y) => x - y);
+    fragen = gewaehlt.map((i) => fragen[i]);
+  }
+
   process.stdout.write(
-    `Bestand ${lektionen.length} Lektionen · Fragen ${fragen.length} von ${vorher}`
-    + ` (${vorher - fragen.length} ohne passende Lektion im Korpus)\n`
-    + `Tor: mindestens ${minBelege} verschiedene Frageworte im Text\n\n`,
+    `Bestand ${lektionen.length} Lektionen · Fragen ${ungefiltert} von ${vorher}`
+    + ` (${vorher - ungefiltert} ohne passende Lektion im Korpus)`
+    + (fragen.length < ungefiltert ? ` · Stichprobe ${fragen.length} (Saat ${saat})` : '')
+    + `\nTor: mindestens ${minBelege} verschiedene Frageworte im Text\n\n`,
   );
 
   const plaetze: Array<Record<string, unknown>> | null = flag('nach') ? [] : null;
   const topfFlag = flag('topf');
   const topf = topfFlag !== undefined ? Number(topfFlag) : undefined;
-  const gerade = fragen.map((_, i) => i);
+  const tiefenFlag = flag('tiefen');
+  const tiefen = tiefenFlag
+    ? tiefenFlag.split(',').map((x) => Number(x.trim())).filter((x) => Number.isInteger(x) && x > 1)
+    : (argv.includes('--leser') ? [LESER_TIEFE_EINBLENDUNG] : []);
+  const messZeitlimit = Number(flag('leser-zeitlimit') ?? String(LESER_ZEITLIMIT_MS));
+  const mitFrist = messZeitlimit > LESER_ZEITLIMIT_MS;
   const t0 = Date.now();
-  const leserAn = argv.includes('--leser');
-  const echt = await lauf(lektionen, fragen, gerade, minBelege, plaetze, topf, leserAn);
+  const { ranglisten, zeiten } = await lauf(lektionen, fragen, minBelege, topf, tiefen, messZeitlimit, flag('leser-protokoll'));
   const dauer = Date.now() - t0;
+  const gerade = fragen.map((_, i) => i);
+  const echt = bewerte(ranglisten, fragen, gerade, plaetze);
 
   const n = fragen.length;
+  let zeitTafel = '';
+  if (tiefen.length) {
+    zeitTafel = `\nLeser-Zeit je Tiefe (Client = was der Hook wartet, Server = API bis Leser und zurueck; Frist ${LESER_ZEITLIMIT_MS} ms, Messgrenze ${messZeitlimit} ms)\n`;
+    for (const [tiefe, z] of zeiten) {
+      const rz = z.aufrufe ? ((z.rechtzeitig / z.aufrufe) * 100).toFixed(1) : '-';
+      zeitTafel += `  T${String(tiefe).padEnd(3)} Aufrufe ${z.aufrufe} · Client p50 ${Math.round(quantil(z.clientMs, 0.5))} / p95 ${Math.round(quantil(z.clientMs, 0.95))} ms`
+        + ` · Server p50 ${Math.round(quantil(z.serverMs, 0.5))} / p95 ${Math.round(quantil(z.serverMs, 0.95))} ms`
+        + ` · rechtzeitig ${z.rechtzeitig} (${rz} %) · Ausfaelle ${z.ausfaelle}\n`;
+    }
+  }
   process.stdout.write(
     `Wortkanal-Topf fuer Arm C: ${topf ?? 'Auslieferungsvorgabe (WORT_TOPF)'}\n\n`
     + `${''.padEnd(10)} ${'Platz 1'.padStart(13)}  ${'@3'.padStart(13)}  ${'@10'.padStart(13)}  Tor zu\n`
     + `${zeile('A alt', echt.a, n)}\n`
     + `${zeile('B alt-voll', echt.b, n)}\n`
     + `${zeile('C neu', echt.c, n)}\n`
-    + (echt.d ? `${zeile('D Leser', echt.d, n)}\n` : '')
+    + armZeilen(echt.d, n, mitFrist)
+    + (mitFrist ? `(D Tn = jede Leser-Antwort genutzt · D Tn F = nur Antworten binnen ${LESER_ZEITLIMIT_MS} ms, sonst Ordnung C)\n` : '')
+    + zeitTafel
     + `\n(${dauer} ms fuer ${n} Fragen · ${(dauer / n).toFixed(1)} ms je Frage`
-    + (leserAn ? ` · Leser-Ausfaelle ${leserAusfaelle} · Instanz ${process.env.CACHLY_BRAIN_INSTANCE_ID ? 'gesetzt' : 'FEHLT'}` : '')
+    + (tiefen.length ? ` · Instanz ${process.env.CACHLY_BRAIN_INSTANCE_ID ? 'gesetzt' : 'FEHLT'}` : '')
     + ')\n',
   );
 
@@ -293,14 +440,14 @@ async function main(): Promise<void> {
       const j = Math.floor(r() * (i + 1));
       [perm[i], perm[j]] = [perm[j], perm[i]];
     }
-    const kontrolle = await lauf(lektionen, fragen, perm, minBelege, null, topf, leserAn);
+    const kontrolle = bewerte(ranglisten, fragen, perm, null);
     process.stdout.write(
-      '\nGEGENPROBE — dieselben Fragen, Erwartungen permutiert (Keim 42).\n'
+      '\nGEGENPROBE — dieselben Ranglisten, Erwartungen permutiert (Keim 42).\n'
       + 'Brechen diese Zahlen NICHT ein, misst der Stand sich selbst.\n'
       + `${zeile('A alt', kontrolle.a, n)}\n`
       + `${zeile('B alt-voll', kontrolle.b, n)}\n`
       + `${zeile('C neu', kontrolle.c, n)}\n`
-      + (kontrolle.d ? `${zeile('D Leser', kontrolle.d, n)}\n` : ''),
+      + armZeilen(kontrolle.d, n, mitFrist),
     );
   }
 

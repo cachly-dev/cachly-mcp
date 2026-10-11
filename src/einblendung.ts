@@ -49,7 +49,7 @@ import { rahmeEin } from './einblendung-rahmen.js';
 import { leserText as leserTextZuschnitt } from './seltenheitsbestand.js';
 import { mischeMitLeser } from './leser.js';
 import { LeserSicherung, dateiSpeicher, frageLeser, type LeserAntwort } from './leser-sicherung.js';
-import { LESER_TIEFE as LESER_TIEFE_PRODUKT, LESER_ZEITLIMIT_MS } from './rangfolge-stellschrauben.js';
+import { LESER_TIEFE_EINBLENDUNG, LESER_ZEITLIMIT_MS } from './rangfolge-stellschrauben.js';
 
 // Alles, was der abhaengigkeitsfreie Hook braucht, reist ueber diese Datei.
 export * from './einblendung-kern.js';
@@ -81,8 +81,13 @@ const NEBENLAUF_SPERRE_MS = 60 * 1000;
  */
 export const ANZEIGE_ZEICHEN = 120;
 
-/** Die besten so vielen Kandidaten liest der Leser — dieselbe Tiefe wie im Produkt. */
-export const LESER_TIEFE = LESER_TIEFE_PRODUKT;
+/**
+ * Die besten so vielen Kandidaten liest der Leser im Hook: 10, nicht die 25
+ * von smart_recall. Bei 25 kam der Leser unter Bau-Last nur in 31,6 % der
+ * Prompts binnen 2,5 s, bei 10 in 90,9 % (Zahlen an LESER_TIEFE_EINBLENDUNG
+ * in rangfolge-stellschrauben.ts).
+ */
+export const LESER_TIEFE = LESER_TIEFE_EINBLENDUNG;
 /** So viel Text je Kandidat bekommt der Leser (Zuschnitt des Trainings). */
 export const LESER_MAX_ZEICHEN = 1500;
 /**
