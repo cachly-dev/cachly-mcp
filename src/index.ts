@@ -3647,16 +3647,27 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     console.log('Step 1: Sign in to cachly (free, no credit card)\n');
     sendFunnelEvent('setup_auth_started');
 
-    // Start device flow — try API proxy first, fall back to direct Keycloak
+    // Start device flow — cachly API first, direct Keycloak as fallback.
+    //
+    // Bis zum 11.10.2026 ging der erste Versuch an `/api/v1/auth/device/code`.
+    // Diese Adresse gibt es im Server nicht: routes.go kennt nur `/auth/device`
+    // und `/auth/device/token`, beide OHNE /api/v1. Jeder Lauf bekam ein 404 und
+    // landete still bei Keycloak. Jetzt geht der erste Versuch an die echte
+    // Adresse, wie im Werkzeugpfad (startDeviceFlow).
+    //
+    // Wer den Code ausgibt, beantwortet auch die Abfrage. Ein cachly-Code geht
+    // nie an Keycloak: Keycloak kennt ihn nicht, antwortet mit einem Fehler, und
+    // die Schleife unten bricht bei jedem Fehler ausser "pending" ab.
     let deviceCode = '', userCode = '', verifyUri = '', pollInterval = 5000;
     let deviceFlowOk = false;
+    let codeVon: 'cachly' | 'keycloak' = 'cachly';
 
-    // Attempt 1: API proxy (recommended path)
+    // Attempt 1: cachly API (root path, NOT under /api/v1)
     try {
-      const deviceRes = await fetch(`${API_URL}/api/v1/auth/device/code`, {
+      const deviceRes = await fetch(`${API_URL}/auth/device`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_id: 'cachly-mcp-cli' }),
+        body: JSON.stringify({}),
         signal: AbortSignal.timeout(8000),
       });
       if (deviceRes.ok) {
@@ -3666,9 +3677,12 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
         };
         deviceCode   = data.device_code;
         userCode     = data.user_code;
-        verifyUri    = data.verification_uri;
+        // Der Code haengt an der Adresse: cachly.dev/device?code=… fuellt ihn
+        // selbst ein und schickt ihn nach der Anmeldung ab.
+        const basis  = data.verification_uri || cachlyUrl('/device', cliSource);
+        verifyUri    = `${basis}${basis.includes('?') ? '&' : '?'}code=${encodeURIComponent(userCode)}`;
         pollInterval = (data.interval ?? 5) * 1000;
-        deviceFlowOk = true;
+        deviceFlowOk = Boolean(deviceCode);
       }
     } catch { /* fall through */ }
 
@@ -3692,6 +3706,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
           verifyUri    = data.verification_uri_complete;
           pollInterval = (data.interval ?? 5) * 1000;
           deviceFlowOk = true;
+          codeVon      = 'keycloak';
         }
       } catch { /* fall through */ }
     }
@@ -3755,19 +3770,23 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
         await new Promise(r => setTimeout(r, pollInterval));
         process.stdout.write('.');
         try {
-          // Poll via API proxy first, then Keycloak
+          // Poll the side that issued the code — never both.
           type TokenResp = { access_token?: string; error?: string };
           let tokenData: TokenResp | null = null;
-          try {
-            const proxyRes = await fetch(`${API_URL}/api/v1/auth/device/token`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ device_code: deviceCode, client_id: 'cachly-mcp-cli' }),
-              signal: AbortSignal.timeout(8000),
-            });
-            if (proxyRes.ok) tokenData = await proxyRes.json() as TokenResp;
-          } catch { /* try Keycloak */ }
-          if (!tokenData) {
+          if (codeVon === 'cachly') {
+            // Der Server meldet "wartet noch" mit 200 UND einem Feld error,
+            // Ablauf und Absage mit 400/403 und error. Es zaehlt der Koerper,
+            // nicht der Status. 5xx ist ein Aussetzer: weiter abfragen.
+            try {
+              const res = await fetch(`${API_URL}/auth/device/token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ device_code: deviceCode }),
+                signal: AbortSignal.timeout(8000),
+              });
+              if (res.status < 500) tokenData = await res.json() as TokenResp;
+            } catch { /* network hiccup */ }
+          } else {
             const AUTH_BASE = 'https://auth.cachly.dev/realms/cachly/protocol/openid-connect';
             try {
               const kcRes = await fetch(`${AUTH_BASE}/token`, {
