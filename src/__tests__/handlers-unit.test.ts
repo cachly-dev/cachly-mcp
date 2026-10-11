@@ -368,6 +368,16 @@ describe('handleRoadmapTool', () => {
       expect(result).toContain('in-progress');
     });
 
+    it('ohne neuen Status meldet die Antwort den gespeicherten Status, nicht "→ undefined"', async () => {
+      // Gemeldet 11.10.2026: nur Notizen geaendert -> "Status: planned → undefined",
+      // obwohl der gespeicherte Status richtig blieb.
+      const id = await addItem('Nur Notiz');
+      const result = await handleRoadmapTool('roadmap_update', { instance_id: INSTANCE, id, notes: 'zwischenstand' }, getConnection, apiFetch);
+      expect(result).not.toContain('undefined');
+      expect(result).toContain('Status: planned');
+      expect(result).not.toContain('→');
+    });
+
     it('persists status change in Redis', async () => {
       const id = await addItem('Fix cache');
       await handleRoadmapTool('roadmap_update', { instance_id: INSTANCE, id, status: 'done' }, getConnection, apiFetch);

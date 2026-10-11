@@ -84,7 +84,8 @@ export async function handleRoadmapTool(
         `${statusEmoji[newStatus ?? oldStatus] ?? '📋'} **Roadmap updated** \`${itemId}\``,
         ``,
         `  Title:  ${item.title}`,
-        oldStatus !== newStatus ? `  Status: ${oldStatus} → ${newStatus}` : `  Status: ${item.status}`,
+        // Ohne neuen Status bleibt der alte — "→ undefined" war nur ein Fehler der Antwort.
+        newStatus && oldStatus !== newStatus ? `  Status: ${oldStatus} → ${newStatus}` : `  Status: ${item.status}`,
         newNotes ? `  Notes:  ${newNotes}` : '',
       ].filter(Boolean).join('\n');
     }
