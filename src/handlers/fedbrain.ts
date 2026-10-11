@@ -9,6 +9,7 @@ import { installBrainWatchHook } from '../brain-watch-hook.js';
 import { keywordSearch, wortindexEntwerten } from '../search.js';
 import { buildFirstContactReport, suggestRecallQueries, type FirstContactProof } from '../first-contact.js';
 import { classifyCommit, extractDomain } from '../commit-art.js';
+import { VEKTOR_NACHTRAG } from '../bedeutung.js';
 
 // Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
 export let _lastBrainFromGitCounts: { fixes: number; features: number; refactors: number; total: number } | null = null;
@@ -1077,6 +1078,11 @@ export async function handleFedbrainTool(
           await redis.rpush(`cachly:lessons:${topic}`, JSON.stringify(lessonObj));
           await redis.ltrim(`cachly:lessons:${topic}`, -100, -1);
           await redis.expire(`cachly:lessons:${topic}`, 90 * 86400);
+          // Ohne Vektor findet die Bedeutungssuche diese Lektion nie (12.10.2026:
+          // brain_from_git schrieb weder vec noch vec2). Der Vermerk laesst
+          // heileVektorNachtrag (brain.ts) beide beim naechsten smart_recall
+          // nachrechnen — kein Einbettungsaufruf hier im Massenlauf.
+          await redis.sadd(VEKTOR_NACHTRAG, topic).catch(() => { /* still */ });
         }
         await redis.rpush('cachly:lessons:brain_from_git:all', JSON.stringify({ topic, sha: commit.sha.slice(0, 8), subject: commit.subject.slice(0, 60) }));
         await redis.ltrim('cachly:lessons:brain_from_git:all', -500, -1);
