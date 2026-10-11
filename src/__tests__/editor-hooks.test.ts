@@ -919,6 +919,29 @@ describe('Installation je Editor', () => {
   });
 });
 
+describe('Doku /docs/claude-code-hooks', () => {
+  const seite = () => readFileSync(join(SDK, '..', '..', 'web', 'app', 'docs', 'claude-code-hooks', 'page.tsx'), 'utf8');
+
+  it('VS Code: das Beispiel ist byte-gleich mit der Datei, die setup schreibt', () => {
+    const beispiel = /const COPILOT_HOOKS_EXAMPLE = `([\s\S]*?)`;/.exec(seite());
+    expect(beispiel, 'COPILOT_HOOKS_EXAMPLE fehlt auf der Doku-Seite').not.toBeNull();
+    expect(beispiel![1]).toBe(JSON.stringify(mergeCopilotHooks({}).datei, null, 2));
+  });
+
+  it('Codex: das Beispiel ist byte-gleich, mit Platzhalter statt Projektpfad', () => {
+    const beispiel = /const CODEX_HOOKS_EXAMPLE = String\.raw`([\s\S]*?)`;/.exec(seite());
+    expect(beispiel, 'CODEX_HOOKS_EXAMPLE fehlt auf der Doku-Seite').not.toBeNull();
+    const pfad = '/path/to/project/.codex/hooks/cachly-ambient-codex.mjs';
+    expect(beispiel![1]).toBe(JSON.stringify(mergeCodexHooks({}, pfad).datei, null, 2));
+  });
+
+  it('Gemini: das Beispiel ist byte-gleich mit dem hooks-Teil, den setup schreibt', () => {
+    const beispiel = /const GEMINI_HOOKS_EXAMPLE = `([\s\S]*?)`;/.exec(seite());
+    expect(beispiel, 'GEMINI_HOOKS_EXAMPLE fehlt auf der Doku-Seite').not.toBeNull();
+    expect(beispiel![1]).toBe(JSON.stringify(mergeGeminiHooks({}).datei, null, 2));
+  });
+});
+
 describe('Ereignislisten', () => {
   it('jedes Ereignis hat ein Zeitlimit', () => {
     for (const e of COPILOT_HOOK_EVENTS) expect(COPILOT_TIMEOUTS[e]).toBeGreaterThan(0);
