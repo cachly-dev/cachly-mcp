@@ -1988,6 +1988,18 @@ export function buildMcpConfig(apiKey: string, instanceId: string, editor: strin
       },
     }, null, 2);
   }
+  if (nutztVsCodeFormat(editor)) {
+    return JSON.stringify({
+      servers: {
+        cachly: {
+          type: 'stdio',
+          command: 'npx',
+          args: ['-y', '@cachly-dev/mcp-server@latest'],
+          env: buildServerEnv(apiKey, instanceId),
+        },
+      },
+    }, null, 2);
+  }
   return JSON.stringify({
     mcpServers: {
       cachly: {
@@ -1997,6 +2009,17 @@ export function buildMcpConfig(apiKey: string, instanceId: string, editor: strin
       },
     },
   }, null, 2);
+}
+
+/**
+ * `.vscode/mcp.json` hat ein eigenes Format: VS Code liest den Schluessel
+ * `servers` (mit `type: "stdio"`), nicht `mcpServers`. Bis 0.10.176 schrieb
+ * setup fuer Copilot und Cline `mcpServers` in diese Datei — VS Code hat den
+ * Eintrag nie geladen (Quelle: code.visualstudio.com/docs/copilot/reference/
+ * mcp-configuration). Gefunden am 11.10.2026 beim Bau der VS-Code-Anbindung.
+ */
+function nutztVsCodeFormat(editor: string): boolean {
+  return EDITOR_FILES[editor] === '.vscode/mcp.json';
 }
 
 /**
@@ -2069,7 +2092,32 @@ export async function mergeMcpConfig(
     return JSON.stringify(existing, null, 2);
   }
 
-  // Standard mcpServers format (Claude Code, Cursor, Windsurf, Copilot, Cline)
+  if (nutztVsCodeFormat(editor)) {
+    // VS Code: Eintrag unter `servers`. Ein alter cachly-Eintrag unter
+    // `mcpServers` (bis 0.10.176 hier faelschlich geschrieben) wird uebernommen
+    // und entfernt; fremde Eintraege unter `mcpServers` bleiben unangetastet.
+    const alt = (existing['mcpServers'] ?? undefined) as Record<string, unknown> | undefined;
+    const altCachly = alt?.['cachly'] as { env?: Record<string, string> } | undefined;
+    const altSchluessel = altCachly?.env?.['CACHLY_JWT'];
+    if (altSchluessel) saveApiKey(altSchluessel, credOpts);
+    if (alt && 'cachly' in alt) {
+      delete alt['cachly'];
+      if (Object.keys(alt).length === 0) delete existing['mcpServers'];
+    }
+    const vsServer = (existing['servers'] ?? {}) as Record<string, unknown>;
+    const bisher = vsServer['cachly'] as { env?: Record<string, string>; envFile?: string } | undefined;
+    const bisherSchluessel = bisher?.env?.['CACHLY_JWT'];
+    if (bisherSchluessel) saveApiKey(bisherSchluessel, credOpts);
+    // Die VS-Code-Erweiterung legt den Schluessel per `envFile` daneben
+    // (~/.cachly/vscode-mcp.env). Der Verweis bleibt erhalten.
+    vsServer['cachly'] = bisher?.envFile
+      ? { type: 'stdio', ...cachlyEntry, envFile: bisher.envFile }
+      : { type: 'stdio', ...cachlyEntry };
+    existing['servers'] = vsServer;
+    return JSON.stringify(existing, null, 2);
+  }
+
+  // Standard mcpServers format (Claude Code, Cursor, Windsurf)
   const servers = (existing['mcpServers'] ?? {}) as Record<string, unknown>;
   const previousCachly = servers['cachly'] as { env?: Record<string, string> } | undefined;
   const legacyKey = previousCachly?.env?.['CACHLY_JWT'];
