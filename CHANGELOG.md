@@ -7,6 +7,28 @@
 
 ---
 
+## [0.10.181] – 2026-10-11 — *"Your plugin tells you when it is behind."*
+
+**Plugin users learn when their plugin is out of date.** The plugin starts
+the MCP server with `npx -y @cachly-dev/mcp-server`, and npx fetches the
+newest server on each start. The hooks, though, come with the plugin, and
+Claude Code updates plugins from this marketplace only when auto-update is
+on, which it is not by default. The update notice used to compare only the
+server with npm, so plugin users never saw it. It now compares the plugin's
+own version (from `CLAUDE_PLUGIN_ROOT`, else
+`~/.claude/plugins/installed_plugins.json`) and says how to fix it once:
+`/plugin` → Marketplaces → cachly → Enable auto-update.
+
+**On a new Brain, lessons get their search vectors first.** At the first
+session start, indexing your code and importing your git history used to
+share the same 60 embeddings per minute, and the code files often took
+them. The background code indexing now embeds at most one file every 2
+seconds and stops embedding after the first rate-limit answer, keeping the
+keyword index. Calling `index_project` yourself is as fast as before.
+
+**`roadmap_update` reports the right status.** Updating only notes or the
+title no longer answers "Status: planned → undefined".
+
 ## [0.10.180] – 2026-10-11 — *"No waiting on day one."*
 
 **The first briefing arrives in 0.6 s instead of 16 s.** On a new Brain that
