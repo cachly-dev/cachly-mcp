@@ -1892,6 +1892,8 @@ async function autoStartSession(instanceId: string): Promise<void> {
           max_files: 150,
           ttl: 86400 * 7, // cache for 7 days
           namespace: 'cachly:sem:code',
+          // Lektionen zuerst: Code-Dateien betten im Takt ein (einbett-takt.ts).
+          hintergrund: true,
         });
       }
     })().catch(() => { /* never block the session on indexing errors */ });

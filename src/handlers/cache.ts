@@ -5,6 +5,7 @@ import { join, relative, extname } from 'node:path';
 import type { Redis } from 'ioredis';
 import type { Instance } from './brain.js';
 import { computeEmbedding, hasEmbedProvider, embedProviderHint } from '../embeddings.js';
+import { einbettTakt } from '../einbett-takt.js';
 import { detectNamespace } from '../namespace.js';
 import { simpleHash } from '../confidence.js';
 import { scanKeys } from '../utils.js';
@@ -505,6 +506,7 @@ export async function handleCacheTool(
         ttl = 86400,
         summary_chars = 1200,
         namespace: nsArg = 'cachly:sem:code',
+        hintergrund = false,
       } = args as {
         instance_id: string;
         dir: string;
@@ -513,6 +515,8 @@ export async function handleCacheTool(
         ttl?: number;
         summary_chars?: number;
         namespace?: string;
+        /** Automatischer Lauf beim Sitzungsstart: Einbettungen im Takt (einbett-takt.ts). */
+        hintergrund?: boolean;
       };
 
       const ALLOWED_EXT = new Set(
@@ -559,6 +563,10 @@ export async function handleCacheTool(
       const details: string[] = [];
       const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
       const redis = await getConnection(instance_id);
+      // Code-Dateien teilen sich das Kontingent (60 je Minute) mit den Lektionen
+      // und lassen ihnen den Vortritt: im Hintergrund im Takt, nach einem 429
+      // nur noch Wortindex (einbett-takt.ts).
+      const takt = einbettTakt({ hintergrund });
 
       for (const filePath of files) {
         const relPath = relative(dir, filePath);
@@ -608,10 +616,14 @@ export async function handleCacheTool(
         details.push(`  ✅ ${relPath}`);
 
         // ── Layer 2: Semantic vector index (optional, only if embedding available) ──
-        if (canEmbed) {
+        if (canEmbed && takt.darf()) {
           try {
             const prompt = `File: ${relPath}\n${excerpt}`;
-            const embedding = await computeEmbedding(prompt);
+            await takt.warte();
+            const embedding = await computeEmbedding(prompt).catch((fehler: unknown) => {
+              takt.fehler(fehler);
+              throw fehler;
+            });
             const id = randomUUID();
             await fetch(`${vectorUrl}/entries`, {
               method: 'POST',
