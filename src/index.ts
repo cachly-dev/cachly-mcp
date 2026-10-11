@@ -270,9 +270,12 @@ async function persistApiKeyToConfig(apiKey: string): Promise<void> {
  * Persist the resolved instance id to ~/.claude/mcp.json so restarts reuse it
  * (avoids a list/provision round-trip on every startup). Only updates an
  * existing cachly entry — does not create config from scratch.
+ * Also next to the key in ~/.cachly/credentials.json — where the hooks read it
+ * (Sofort-Test, Browser-Anmeldung, Auto-Provision: alle laufen hier durch).
  */
 async function persistInstanceIdToConfig(instanceId: string): Promise<void> {
   if (!instanceId) return;
+  saveInstanceId(instanceId, { apiKey: JWT });
   try {
     const { writeFile, readFile } = await import('node:fs/promises');
     const { existsSync } = await import('node:fs');
@@ -848,12 +851,10 @@ import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain
 import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-proof.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
-import { runEinblendung, parseHookPayload, stopObservation } from './ambient-cli.js';
-import { holeBestand as holeEinblendBestand } from './einblendung.js';
-import { stopAntwort } from './schreibbeleg.js';
+import { hookHauptlauf, auffrischenHauptlauf } from './ambient-hook.js';
 import { rahmeAntwort } from './antwort-rahmen.js';
-import { appendLedgerEntry, readLedger, defaultLedgerPath } from './ambient-ledger.js';
-import { resolveApiKey, saveApiKey, type CredentialsHomeOptions } from './credentials.js';
+import { appendLedgerEntry, readLedger, defaultLedgerPath, reportLedgerEntry } from './ambient-ledger.js';
+import { resolveApiKey, saveApiKey, saveInstanceId, type CredentialsHomeOptions } from './credentials.js';
 import { holeSofortTest } from './sofort-test.js';
 import { sichereZugang, echterWert } from './zugang.js';
 import { beiStdinEnde } from './stdin-ende.js';
@@ -950,16 +951,7 @@ function reportAmbientLedgerEvent(
   instanceId: string | undefined,
   entry: { ts: string; event: string; injected: number; prevented: number; note?: string },
 ): Promise<void> {
-  if (!instanceId || !JWT || process.env.CACHLY_NO_TELEMETRY === '1') return Promise.resolve();
-  return fetch(`${API_URL}/api/v1/instances/${instanceId}/ambient-events`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${JWT}` },
-    body: JSON.stringify({ events: [entry] }),
-    signal: AbortSignal.timeout(3000),
-  }).then(
-    () => undefined,
-    () => undefined,
-  );
+  return reportLedgerEntry({ apiUrl: API_URL, jwt: JWT, instanceId }, entry);
 }
 
 async function sendAnonymousTelemetry(toolName: string): Promise<void> {
@@ -4358,88 +4350,25 @@ if (process.argv[2] === 'learn-git') {
 // JSON that Claude Code injects as additionalContext, or nothing. Until
 // 08.10.2026 this called `smart_recall` under a 3 s cap and injected 0 of 10
 // measured questions. Stop payloads instead feed a fix-signal observation to
-// auto_learn_session (the automatic `learn_from_attempts`). Injections are
+// the REST learn path (the automatic `learn_from_attempts`). Injections are
 // booked into the net-token ledger (§6.2) as telemetry only — the old
 // auto-backoff paused injection for good after 8 turns, because "prevented"
 // is only ever credited by hand.
+// Since 11.10.2026 the whole run lives in ambient-hook.ts — the same function
+// the npx-free hook bundle (hooks/cachly-ambient-einblendung.mjs) runs. This
+// subcommand stays for project hooks from before v5 that still call npx.
 // Best-effort: no JWT, no stdin, a slow brain or any error → prints nothing and
 // exits 0 so a hook can NEVER block or corrupt the agent's turn.
 if (process.argv[2] === 'ambient-recall') {
-  try {
-    if (process.stdin.isTTY) process.exit(0); // no piped payload → nothing to do
-    const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) chunks.push(chunk as Buffer);
-    const raw = Buffer.concat(chunks).toString('utf-8');
-    // Schreibbeleg (07.10.2026): braucht keinen Schluessel, nur das Protokoll
-    // des Zugs — laeuft deshalb VOR der Schluesselsuche. Behauptet die Antwort
-    // eine Speicherung ohne erfolgreichen Schreibaufruf, geht sie einmal zurueck.
-    const stopRoh = parseHookPayload(raw);
-    if (stopRoh?.hook_event_name === 'Stop' && stopRoh.transcript_path) {
-      try {
-        const { readFileSync } = await import('node:fs');
-        const zeilen = readFileSync(stopRoh.transcript_path, 'utf-8').split('\n');
-        const block = stopAntwort(zeilen, stopRoh.stop_hook_active === true);
-        if (block) {
-          process.stdout.write(block);
-          process.exit(0); // zurueckgeschickt — kein Auto-Lernen aus einer unbelegten Behauptung
-        }
-      } catch {
-        // Protokoll nicht lesbar → keine Pruefung, nie den Zug blockieren
-      }
-    }
-    // GROW-015: hooks run as bare OS processes and never see the MCP config's
-    // env, so JWT is usually still empty here — resolve it the same way every
-    // ambient/CLI caller does (env, then ~/.cachly, then a legacy .mcp.json).
-    if (!JWT) JWT = resolveApiKey() ?? '';
-    if (!JWT) {
-      console.error('cachly ambient-recall: no API key found (CACHLY_JWT/CACHLY_API_KEY env, ~/.cachly/credentials.json, or .mcp.json) — recall skipped for this turn.');
-      process.exit(0);
-    }
-    const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId;
-
-    // Stop event → auto-learn, never inject (roadmap §6.1 PostToolUse/Stop row).
-    const stopPayload = parseHookPayload(raw);
-    if (stopPayload?.hook_event_name === 'Stop') {
-      const obs = stopObservation(stopPayload);
-      if (obs && instanceId) {
-        await handleTool('auto_learn_session', { instance_id: instanceId, observations: [obs] });
-      }
-      process.exit(0);
-    }
-
-    let reported: Promise<void> | undefined;
-    const out = await runEinblendung(raw, {
-      cfg: { apiUrl: API_URL, jwt: JWT, instanceId },
-      // The detached stock refresh re-enters this very binary (no npx round trip).
-      nebenlauf: process.argv[1] ? [process.argv[1], 'ambient-auffrischen'] : undefined,
-      onInject: (tokens, event) => {
-        const entry = { ts: new Date().toISOString(), event, injected: tokens, prevented: 0 };
-        void appendLedgerEntry(entry);
-        reported = reportAmbientLedgerEvent(instanceId, entry); // org dashboard mirror
-      },
-    });
-    if (out) process.stdout.write(out);
-    // Bounded flush so the dashboard mirror survives process.exit — never more
-    // than 500ms on top of a turn that already injected.
-    if (reported) await Promise.race([reported, new Promise((r) => setTimeout(r, 500))]);
-  } catch {
-    // Swallow everything — an ambient hook must never break the agent.
-  }
-  process.exit(0);
+  // The detached stock refresh re-enters this very binary (`… ambient-auffrischen`).
+  await hookHauptlauf(process.argv.slice(3), process.argv[1]);
 }
 
 // ── ambient-auffrischen: detached refresh of the on-disk lesson stock ─────────
 // Started by `ambient-recall` (einblendung.ts starteNebenlauf) when the stock on
 // disk is older than ten minutes. The prompt that started it never waits for it.
 if (process.argv[2] === 'ambient-auffrischen') {
-  try {
-    if (!JWT) JWT = resolveApiKey() ?? '';
-    const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId;
-    if (JWT && instanceId) await holeEinblendBestand({ apiUrl: API_URL, jwt: JWT, instanceId }, { force: true });
-  } catch {
-    // a failed refresh keeps the old stock; the next prompt tries again
-  }
-  process.exit(0);
+  await auffrischenHauptlauf();
 }
 
 // ── ambient-credit: agent-reported prevented-token credit (§6.2) ──────────────

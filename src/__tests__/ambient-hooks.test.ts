@@ -8,6 +8,7 @@ import {
   mergeAmbientSettings,
   AMBIENT_HOOK_VERSION,
   AMBIENT_CLI_SUBCOMMAND,
+  HOOK_BUENDEL,
   PRE_TOOL_USE_MATCHER,
 } from '../ambient-hooks.js';
 
@@ -40,18 +41,19 @@ describe('hook script builders (v3 — cross-platform Node scripts)', () => {
     const withKey = buildSessionStartHook({ ...opts, apiKey: 'cky_abc' });
     expect(withoutKey).not.toContain('cky_abc');
     expect(withKey).not.toContain('cky_abc');
-    expect(withKey).toContain('CACHLY_API_KEY');
+    expect(withKey).toBe(withoutKey);
   });
 
-  it('spawn the CLI with inherited stdin/stdout and always exit 0 (graceful)', () => {
+  it('v5: no npx, no child process — loads the bundle next to the script', () => {
     const s = buildUserPromptSubmitHook(opts);
-    expect(s).toContain(`npx @cachly-dev/mcp-server@latest ${AMBIENT_CLI_SUBCOMMAND}`);
-    // stdin (hook payload) and stdout (hookSpecificOutput) pass through; stderr dropped.
-    expect(s).toContain("stdio: ['inherit', 'inherit', 'ignore']");
-    // shell:true resolves npx/npx.cmd on Windows too.
-    expect(s).toContain('shell: true');
-    expect(s).toContain("child.on('error', () => process.exit(0));");
-    expect(s).toContain("child.on('close', () => process.exit(0));");
+    expect(s).not.toContain('npx');
+    expect(s).not.toContain(AMBIENT_CLI_SUBCOMMAND);
+    expect(s).not.toContain('spawn');
+    expect(s).toContain(`await import('./${HOOK_BUENDEL}');`);
+    // The bundle reads the event from argv, like the plugin's direct call.
+    expect(s).toContain("process.argv.splice(2, process.argv.length, 'UserPromptSubmit');");
+    // A missing/broken bundle ends silently with exit 0.
+    expect(s).toContain('process.exit(0);');
   });
 
   it('never splices untrusted prompt text into the script (payload only via stdin)', () => {
@@ -59,18 +61,11 @@ describe('hook script builders (v3 — cross-platform Node scripts)', () => {
     // at runtime on stdin, so a malicious prompt cannot break the script.
     const s = buildUserPromptSubmitHook(opts);
     expect(s).not.toContain('prompt_text');
-    expect(s).toContain("stdio: ['inherit'");
   });
 
   it('escapes quotes/backslashes in embedded values (no JS injection)', () => {
     const s = buildSessionStartHook({ instanceId: "in'st\\1" });
     expect(s).toContain("process.env.CACHLY_BRAIN_INSTANCE_ID = 'in\\'st\\\\1';");
-  });
-
-  it('honour a resolved local CLI command (latency for per-prompt hook)', () => {
-    const s = buildUserPromptSubmitHook({ ...opts, cliCommand: '/usr/local/bin/cachly-ambient' });
-    expect(s).toContain("spawn('/usr/local/bin/cachly-ambient'");
-    expect(s).not.toContain('npx');
   });
 });
 

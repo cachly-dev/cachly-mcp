@@ -123,6 +123,51 @@ export function stopObservation(payload: HookPayload): StopObservation | null {
   };
 }
 
+/** Body for `POST /api/v1/instances/:id/learn` (the REST learn path the VS Code extension uses). */
+export interface StopLernanfrage {
+  topic: string;
+  outcome: 'success';
+  what_worked: string;
+  context: string;
+  severity: 'minor';
+  source: string;
+  tags: string[];
+}
+
+/**
+ * Turns a Stop observation into a REST learn request. The topic is derived as
+ * auto_learn_session derives it (`auto:<first four words>`), so a lesson
+ * learned here lands under the same name as before.
+ *
+ * Warum REST statt auto_learn_session (11.10.2026): Der Hook laeuft jetzt als
+ * eigenstaendiges Buendel ohne npx. auto_learn_session schreibt direkt in die
+ * Instanz-Datenbank und braeuchte den ganzen Server samt Treiber im Buendel.
+ * Der REST-Weg schwaerzt ausserdem Schluessel vor dem Speichern und legt den
+ * Bedeutungsvektor an — beides fehlte dem alten Weg. Die fixes-Kante im
+ * Wissensgraphen legt die API nach derselben Regel an wie auto_learn_session:
+ * der Tag `auto-learned` loest sie aus, das Problem kommt aus `context`
+ * (api/internal/handler/lesson_write.go, schreibeKausalKante).
+ */
+export function stopLernanfrage(obs: StopObservation): StopLernanfrage {
+  const roh = obs.action
+    .toLowerCase()
+    .replace(/[^a-z0-9:\-_\s]/g, '')
+    .trim()
+    .split(/\s+/)
+    .slice(0, 4)
+    .join('-');
+  const topic = !roh ? 'auto:stop' : roh.includes(':') ? roh : `auto:${roh}`;
+  return {
+    topic,
+    outcome: obs.outcome,
+    what_worked: obs.action,
+    context: obs.details,
+    severity: obs.severity,
+    source: 'ambient-stop',
+    tags: ['auto-learned'],
+  };
+}
+
 /**
  * Build the JSON Claude Code expects from a hook. Empty context → '' (no output),
  * which Claude Code treats as "hook contributed nothing".

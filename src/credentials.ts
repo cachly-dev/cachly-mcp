@@ -70,25 +70,69 @@ export function credentialsPath(opts: CredentialsHomeOptions = {}): string {
  * write (setup and CLI auth still succeed without a persisted copy).
  */
 export function saveApiKey(key: string, opts: CredentialsHomeOptions = {}): void {
+  // Die Instanz bleibt nur stehen, wenn der Schluessel derselbe ist. Ein neuer
+  // Schluessel kann zu einem anderen Konto gehoeren; die alte Instanz daneben
+  // waere dann eine falsche Paarung, und jeder Hook-Aufruf scheiterte still.
+  const alt = readCredentialsFile(opts);
+  const instanceId = alt?.apiKey === key ? nonEmpty(alt.instanceId) : undefined;
+  writeCredentialsFile({ apiKey: key, ...(instanceId ? { instanceId } : {}) }, opts);
+}
+
+/**
+ * Legt die Instanz neben den Schluessel in {@link credentialsPath}.
+ *
+ * Warum (11.10.2026): Die Hooks laufen als nackte Prozesse. Den Schluessel
+ * fanden sie hier, die Instanz aber nur in `~/.claude/mcp.json` — einer Datei,
+ * die nur entsteht, wenn jemand sie anlegt. Wer cachly als Plugin installierte,
+ * hatte nach dem Sofort-Test einen Schluessel und keine Instanz, und die
+ * Einblendung blieb still.
+ *
+ * Geschrieben wird nur, wenn `apiKey` der Schluessel in der Datei ist: eine
+ * Instanz gehoert zu einem Konto, und sie darf nie neben dem Schluessel eines
+ * anderen Kontos landen. Wirft nie.
+ */
+export function saveInstanceId(instanceId: string, opts: CredentialsHomeOptions & { apiKey: string }): void {
+  const alt = readCredentialsFile(opts);
+  if (!nonEmpty(instanceId) || !alt?.apiKey || alt.apiKey !== opts.apiKey) return;
+  if (alt.instanceId === instanceId) return;
+  writeCredentialsFile({ ...alt, instanceId }, opts);
+}
+
+/** Die Instanz aus {@link credentialsPath}, oder undefined. Alte Dateien ohne Instanz: undefined. */
+export function readInstanceId(opts: CredentialsHomeOptions = {}): string | undefined {
+  return nonEmpty(readCredentialsFile(opts)?.instanceId);
+}
+
+interface CredentialsFile {
+  apiKey?: string;
+  instanceId?: string;
+}
+
+function readCredentialsFile(opts: CredentialsHomeOptions): CredentialsFile | null {
+  try {
+    const path = credentialsPath(opts);
+    if (!existsSync(path)) return null;
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
+    return parsed && typeof parsed === 'object' ? (parsed as CredentialsFile) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Temp file + rename, owner-only. Best-effort: never throws. */
+function writeCredentialsFile(inhalt: CredentialsFile, opts: CredentialsHomeOptions): void {
   try {
     const target = credentialsPath(opts);
     mkdirSync(dirname(target), { recursive: true });
     const tmp = `${target}.${process.pid}-${Date.now()}.tmp`;
-    writeFileSync(tmp, JSON.stringify({ apiKey: key }, null, 2), 'utf8');
+    writeFileSync(tmp, JSON.stringify(inhalt, null, 2), 'utf8');
     try { chmodSync(tmp, 0o600); } catch { /* e.g. Windows — best-effort */ }
     renameSync(tmp, target);
   } catch { /* best-effort — a failed persist must not break the caller */ }
 }
 
 function readHomeCredential(opts: ResolveApiKeyOptions): string | undefined {
-  try {
-    const path = credentialsPath(opts);
-    if (!existsSync(path)) return undefined;
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as { apiKey?: string };
-    return nonEmpty(parsed.apiKey);
-  } catch {
-    return undefined;
-  }
+  return nonEmpty(readCredentialsFile(opts)?.apiKey);
 }
 
 function readProjectConfigKey(opts: ResolveApiKeyOptions): string | undefined {

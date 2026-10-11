@@ -104,6 +104,10 @@ sdk/mcp/.claude-plugin/
 ├── plugin.json        was das Plugin ist, inkl. mcpServers und userConfig
 ├── marketplace.json   was der Marktplatz zeigt
 └── README.md          diese Datei
+
+sdk/mcp/hooks/         ERZEUGT — nie von Hand ändern
+├── hooks.json                       lädt Claude Code von selbst
+└── cachly-ambient-einblendung.mjs   das Hook-Bündel: eine Datei, kein npx
 ```
 
 Beide Manifeste tragen Name, Version, Homepage, Repository und Lizenz doppelt,
@@ -114,15 +118,65 @@ gegeneinander — als Schritt im CI-Job `capability-drift`.
 Die Beschreibung wird bewusst **nicht** verglichen: im Marktplatz steht der
 Werbetext, im Plugin die technische Fassung.
 
+## Hooks: seit 11.10.2026 dabei
+
+Vorher brachte das Plugin nur den MCP-Server mit. Die Einblendung vor jedem
+Prompt bekam nur, wer `init`, `setup` oder `autopilot` laufen ließ. Wer über
+den Marktplatz kam, bekam sie nie.
+
+Das Plugin liefert `SessionStart` (Sitzungs-Briefing), `UserPromptSubmit`
+(Einblendung) und `Stop` (Schreibbeleg und Auto-Lernen). Jeder Hook ruft das
+Bündel direkt:
+
+```
+node "${CLAUDE_PLUGIN_ROOT}/hooks/cachly-ambient-einblendung.mjs" UserPromptSubmit --plugin
+```
+
+Das Bündel entsteht per esbuild aus `src/ambient-hook-start.ts`. Es ist eine
+Datei ohne `node_modules`. Dieselbe Datei kopiert `installAmbientHooks` in
+Projekte nach `.claude/hooks/`. Neu schreiben und prüfen:
+
+```bash
+cd sdk/mcp && npm run plugin-hooks:write          # schreibt hooks/
+cd sdk/mcp && npm run plugin-hooks:write -- --pruefen
+```
+
+Der Wächter `src/__tests__/plugin-hooks.test.ts` vergleicht die Dateien
+byteweise mit der Quelle.
+
+Was ein Lauf mit `--plugin` tut:
+
+1. **Nie doppelt.** Steht für dasselbe Ereignis schon ein
+   `cachly-ambient-`-Hook in `.claude/settings.json`,
+   `.claude/settings.local.json` oder `~/.claude/settings.json`, endet der
+   Plugin-Lauf sofort. Claude Code führt Plugin- und Einstellungs-Hooks
+   getrennt aus; ohne diese Prüfung käme die Einblendung zweimal.
+2. **Schlüssel und Instanz** sucht er in dieser Reihenfolge: Plugin-Option
+   (`CLAUDE_PLUGIN_OPTION_API_KEY` / `_INSTANCE_ID`), Umgebung,
+   `~/.cachly/credentials.json`, dann `mcpServers.cachly.env` in
+   `~/.claude/mcp.json`, `.mcp.json` im Projekt, Cursor und Windsurf.
+3. **Ohne Schlüssel oder ohne Instanz** endet er mit Exit 0 und ohne Ausgabe.
+
+Kein `${user_config...}` im Hook-Befehl: so läuft der Hook auch, wenn der
+Nutzer die Optionen leer lässt (siehe die Falle oben).
+
+`PreToolUse` liefert das Plugin bewusst nicht mit. Das wäre ein weiterer
+Hook-Lauf vor jeder Dateiänderung.
+
 ## Was später dazukann
 
 Nicht in dieser Fassung, bewusst:
 
 - **Skills** — „was hat mein Gedächtnis zu X gelernt" als `/cachly-brain:...`
-- **Hooks** — `SessionStart` holt das Briefing, statt dass es in einer
-  `CLAUDE.md` steht, die jemand lesen muss
 - **Agents** — ein Lese-Agent, der gegen das Gedächtnis arbeitet
 
-Bei Hooks gilt die Falle oben **nachweislich** — der watermarks-remover
-dokumentiert sie. Wer einen Hook mit `${user_config...}` schreibt, muss die
-Option optional halten oder in Kauf nehmen, dass er still nie läuft.
+## Aktualisierung kommt nicht von allein
+
+Claude Code aktualisiert Plugins aus fremden Marktplätzen standardmäßig
+**nicht**. Automatisch geht das nur bei Anthropics eigenen Marktplätzen.
+Wer `cachly` hinzugefügt hat, bleibt auf der installierten Fassung, bis er
+`/plugin` → Marketplaces → „Enable auto-update“ einschaltet oder
+`claude plugin update cachly-brain@cachly` ausführt. Beleg vom 11.10.2026:
+Eine Installation vom 28.08. stand noch auf 0.10.138, der Marktplatz auf
+0.10.174.
+Quelle: https://code.claude.com/docs/en/plugins/loading#versions-and-updates

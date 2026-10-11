@@ -49,7 +49,7 @@ export interface ZugangsAblagen {
   persistApiKeyToConfig: (key: string) => Promise<void>;
   /** Die Instanz im laufenden Prozess (`_defaultInstanceId` in index.ts). */
   merkeInstanz: (id: string) => void;
-  /** Die Instanz in den Editor-Konfigurationen. */
+  /** Die Instanz in den Editor-Konfigurationen und neben dem Schluessel in ~/.cachly/credentials.json (dort lesen die Hooks). */
   persistInstanceIdToConfig: (id: string) => Promise<void>;
 }
 

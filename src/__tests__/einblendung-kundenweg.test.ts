@@ -29,7 +29,7 @@ import { resolve } from 'node:path';
 import { runEinblendung } from '../ambient-cli.js';
 import { bestandPfad, torWoerter, zaehleBelege, RAHMEN_ETIKETT, type EinblendLektion } from '../einblendung.js';
 import { lektionsText } from '../seltenheitsbestand.js';
-import { buildUserPromptSubmitHook, AMBIENT_CLI_SUBCOMMAND } from '../ambient-hooks.js';
+import { buildUserPromptSubmitHook, AMBIENT_CLI_SUBCOMMAND, HOOK_BUENDEL } from '../ambient-hooks.js';
 
 const FRAGE = 'Warum meldet der Deploy auf node-1 connection refused, obwohl WireGuard aktiv ist?';
 const RICHTIG = 'betrieb:fail2ban-bannt-deploy-kanal';
@@ -151,18 +151,27 @@ describe('Kundenweg (cachly ambient-recall) — Fachfrage gegen den Fixture-Best
 });
 
 describe('Verdrahtung: der Installer liefert genau diesen Weg aus', () => {
-  it('der installierte Hook ruft den Befehl ambient-recall', () => {
+  it('der installierte Hook laedt das Hook-Buendel (seit v5 ohne npx)', () => {
     const skript = buildUserPromptSubmitHook({ instanceId: 'i1' });
-    expect(skript).toContain(`mcp-server@latest ${AMBIENT_CLI_SUBCOMMAND}`);
+    expect(skript).toContain(`await import('./${HOOK_BUENDEL}')`);
+    expect(skript).not.toContain(AMBIENT_CLI_SUBCOMMAND);
   });
 
-  it('der Befehl ambient-recall laeuft durch runEinblendung, nicht mehr durch smart_recall', () => {
+  it('das Buendel (ambient-hook.ts) laeuft durch runEinblendung, nicht durch smart_recall', () => {
+    const quelle = readFileSync(resolve(__dirname, '..', 'ambient-hook.ts'), 'utf8');
+    expect(quelle).toContain('runEinblendung)(');
+    expect(quelle).not.toContain("'smart_recall'");
+    const start = readFileSync(resolve(__dirname, '..', 'ambient-hook-start.ts'), 'utf8');
+    expect(start).toContain('hookHauptlauf(');
+  });
+
+  it('der alte Befehl ambient-recall ruft dieselbe Funktion wie das Buendel', () => {
     const quelle = readFileSync(resolve(__dirname, '..', 'index.ts'), 'utf8');
     const anfang = quelle.indexOf("process.argv[2] === 'ambient-recall'");
     expect(anfang).toBeGreaterThan(0);
     const ende = quelle.indexOf('process.argv[2] ===', anfang + 10);
     const block = quelle.slice(anfang, ende);
-    expect(block).toContain('runEinblendung(');
+    expect(block).toContain('hookHauptlauf(');
     expect(block).not.toContain("'smart_recall'");
   });
 });

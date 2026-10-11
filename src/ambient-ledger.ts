@@ -104,3 +104,27 @@ export async function readLedger(path = defaultLedgerPath()): Promise<LedgerEntr
     return [];
   }
 }
+
+/**
+ * Mirrors one ledger entry to the API (Phase 4 v2: the org-wide dashboard
+ * aggregates these per team). Best-effort fire-and-forget — the local JSONL
+ * ledger stays authoritative; this never throws and never blocks a hook.
+ * Returns the fetch promise so short-lived CLI/hook paths can flush (bounded)
+ * before process.exit kills the socket.
+ */
+export function reportLedgerEntry(
+  cfg: { apiUrl: string; jwt: string; instanceId: string | undefined },
+  entry: LedgerEntry,
+  fetchFn: typeof fetch = fetch,
+): Promise<void> {
+  if (!cfg.instanceId || !cfg.jwt || process.env.CACHLY_NO_TELEMETRY === '1') return Promise.resolve();
+  return fetchFn(`${cfg.apiUrl}/api/v1/instances/${cfg.instanceId}/ambient-events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.jwt}` },
+    body: JSON.stringify({ events: [entry] }),
+    signal: AbortSignal.timeout(3000),
+  }).then(
+    () => undefined,
+    () => undefined,
+  );
+}

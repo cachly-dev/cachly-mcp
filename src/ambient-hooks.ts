@@ -16,9 +16,10 @@
 //     with no output, so Claude Code simply proceeds without the extra context
 //     (§6.3 guardrail 5).
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * Bumped whenever a hook script changes so installers can upgrade old hooks.
@@ -32,16 +33,28 @@ import { resolve } from 'node:path';
  * so a `.claude/hooks/` script that gets committed to a repo never leaks a
  * secret. Bumping the version replaces old v1-v3 scripts (which DID embed
  * the key) the next time setup/autopilot runs.
+ * v5 (11.10.2026): no npx. Each script loads the hook bundle that sits next
+ * to it (HOOK_BUENDEL, copied by installAmbientHooks) in the same process.
+ * v4 spawned `npx @cachly-dev/mcp-server@latest ambient-recall` per prompt:
+ * measured 7.7 s warm and 17.1 s cold against a 10 s limit.
  */
-export const AMBIENT_HOOK_VERSION = 'v4';
+export const AMBIENT_HOOK_VERSION = 'v5';
 
 /**
- * The CLI subcommand the hooks pipe their payload to. It reads the hook JSON on
- * stdin, runs smart_recall through the relevance gate (ambient-recall.ts), and
- * prints the `hookSpecificOutput` JSON Claude Code injects as additionalContext.
- * The CLI self-limits its latency budget (§6.3 guardrail 4). See ambient-cli.ts.
+ * The CLI subcommand that runs one hook from the published package
+ * (`cachly ambient-recall`). Hooks from v5 on no longer call it; it stays for
+ * project hooks from before v5, and runs the same function as the bundle
+ * (ambient-hook.ts).
  */
 export const AMBIENT_CLI_SUBCOMMAND = 'ambient-recall';
+
+/**
+ * The npx-free hook bundle: one file, no node_modules, built from
+ * src/ambient-hook-start.ts by scripts/plugin-hooks-schreiben.mjs. It lives in
+ * the package under hooks/ (the plugin calls it there) and is copied next to
+ * the project hook scripts under .claude/hooks/.
+ */
+export const HOOK_BUENDEL = 'cachly-ambient-einblendung.mjs';
 
 export type AmbientHookEvent = 'SessionStart' | 'UserPromptSubmit' | 'PreToolUse' | 'Stop';
 
@@ -49,54 +62,55 @@ export interface AmbientHookOptions {
   instanceId: string;
   /**
    * Accepted for backward compatibility but never embedded in the generated
-   * script (GROW-015): the hook resolves its key at run time from
-   * CACHLY_JWT/CACHLY_API_KEY in the environment instead.
+   * script (GROW-015): the hook resolves its key at run time (hook-zugang.ts).
    */
   apiKey?: string;
-  /**
-   * Command that resolves the ambient-recall CLI. Defaults to the published
-   * package via npx; an installer SHOULD pass a resolved local binary to avoid
-   * npx resolution latency on every prompt (UserPromptSubmit runs per-turn).
-   */
-  cliCommand?: string;
 }
-
-const DEFAULT_CLI = `npx @cachly-dev/mcp-server@latest ${AMBIENT_CLI_SUBCOMMAND}`;
 
 /** Escape a value for embedding inside a single-quoted JS string literal. */
 function jsString(s: string): string {
   return s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
+/**
+ * One project hook script (v5): bakes in the instance id the user chose for
+ * this project, then loads the bundle next to it in the same process — no
+ * child process, no npx. The bundle reads the payload on stdin, resolves the
+ * key at run time (GROW-015: never a literal here) and always exits 0.
+ */
 function buildHook(event: AmbientHookEvent, opts: AmbientHookOptions): string {
-  const cli = opts.cliCommand ?? DEFAULT_CLI;
   return [
     `#!/usr/bin/env node`,
     `// cachly Ambient Recall — ${event} ${AMBIENT_HOOK_VERSION}`,
     `// Pushes relevant memory into context automatically. Cross-platform Node hook`,
     `// (no shell script — runs identically on Windows/macOS/Linux). Never blocks`,
     `// the agent: every failure path exits 0 with no output (graceful degrade).`,
-    `import { spawn } from 'node:child_process';`,
+    `// Runs the hook bundle next to this file (${HOOK_BUENDEL}) in this process.`,
     `process.env.CACHLY_BRAIN_INSTANCE_ID = '${jsString(opts.instanceId)}';`,
-    // GROW-015: never embed the caller's key as a string literal here — read
-    // it at run time instead, so a committed .claude/hooks/ script can never
-    // leak a secret. Only the key's origin changed: same events, same
-    // output, same 3s budget, errors still swallowed.
-    `if (!process.env.CACHLY_JWT && process.env.CACHLY_API_KEY) process.env.CACHLY_JWT = process.env.CACHLY_API_KEY;`,
     `process.env.CACHLY_HOOK_EVENT = '${jsString(event)}';`,
+    `process.argv.splice(2, process.argv.length, '${jsString(event)}');`,
     `try {`,
-    // Claude Code delivers the hook payload as JSON on stdin; stdio 'inherit'
-    // hands it verbatim to the CLI (no re-parsing of prompt content), and the
-    // CLI's hookSpecificOutput JSON flows straight back to Claude Code on
-    // stdout. shell:true resolves npx/npx.cmd on every platform; stderr is
-    // discarded so a noisy npm can never corrupt the hook protocol.
-    `  const child = spawn('${jsString(cli)}', { shell: true, stdio: ['inherit', 'inherit', 'ignore'] });`,
-    `  child.on('error', () => process.exit(0));`,
-    `  child.on('close', () => process.exit(0));`,
+    `  await import('./${HOOK_BUENDEL}');`,
     `} catch {`,
     `  process.exit(0);`,
     `}`,
   ].join('\n');
+}
+
+/**
+ * Where the bundle sits in this package: `hooks/` next to `src/` in the
+ * monorepo (tests), or next to `dist/` in the published package. null when
+ * neither exists.
+ */
+export function hookBuendelQuelle(): string | null {
+  const hier = dirname(fileURLToPath(import.meta.url));
+  for (const kandidat of [
+    resolve(hier, '..', PLUGIN_HOOK_DIR, HOOK_BUENDEL),
+    resolve(hier, '..', '..', PLUGIN_HOOK_DIR, HOOK_BUENDEL),
+  ]) {
+    if (existsSync(kandidat)) return kandidat;
+  }
+  return null;
 }
 
 /**
@@ -156,8 +170,8 @@ export interface HookMatcherGroup {
   hooks: HookCommand[];
 }
 
-// Per-event latency budgets (seconds). The CLI self-limits recall to 3s; these
-// are the outer safety net so a wedged npx can never stall a turn for long.
+// Per-event latency budgets (seconds). The hook self-limits its fetch and the
+// reader; these are the outer safety net so a wedged hook never stalls a turn.
 const EVENT_TIMEOUTS: Record<string, number> = {
   SessionStart: 30,
   UserPromptSubmit: 10,
@@ -174,13 +188,21 @@ export const PRE_TOOL_USE_MATCHER = 'Edit|Write|MultiEdit|NotebookEdit';
  * Shape matches Claude Code's hooks config: an array of matcher groups, each
  * with a list of `{ type: "command", command, timeout }` entries.
  */
-export function buildAmbientSettingsHooks(paths: AmbientHookPaths): Record<string, HookMatcherGroup[]> {
+export function buildAmbientSettingsHooks(
+  paths: AmbientHookPaths,
+  /** Arguments after the script path, per event (the plugin passes `<Event> --plugin`). */
+  argsFor?: (event: AmbientHookEvent) => string,
+): Record<string, HookMatcherGroup[]> {
   // v3: the command is `node "<script>"` — a plain string that both /bin/sh
   // (macOS/Linux, Windows+Git-Bash) and PowerShell (native Windows fallback)
   // execute identically, so one settings shape covers every platform.
   const entry = (event: AmbientHookEvent, scriptPath: string, matcher?: string): HookMatcherGroup => ({
     ...(matcher ? { matcher } : {}),
-    hooks: [{ type: 'command', command: `node "${scriptPath}"`, timeout: EVENT_TIMEOUTS[event] }],
+    hooks: [{
+      type: 'command',
+      command: `node "${scriptPath}"${argsFor ? ` ${argsFor(event)}` : ''}`,
+      timeout: EVENT_TIMEOUTS[event],
+    }],
   });
   const frag: Record<string, HookMatcherGroup[]> = {
     SessionStart: [entry('SessionStart', paths.sessionStart)],
@@ -216,6 +238,8 @@ export interface AmbientInstallResult {
   promptSubmitPath: string;
   preToolUsePath: string;
   stopPath: string;
+  /** The hook bundle the four scripts load (v5). */
+  bundlePath: string;
   scripts: 'written' | 'upgraded' | 'unchanged';
   settings: 'written' | 'merged' | 'unchanged';
 }
@@ -312,12 +336,19 @@ export async function installAmbientHooks(
   };
   const pathFor = (e: AmbientHookEvent) => resolve(hookDir, SCRIPT_NAMES[e]);
 
+  // v5: the scripts load the bundle next to them. Without it they would do
+  // nothing at all — so a package without the bundle fails loudly here.
+  const bundleSource = hookBuendelQuelle();
+  if (!bundleSource) throw new Error(`cachly hook bundle ${HOOK_BUENDEL} missing from the package`);
+  const bundle = readFileSync(bundleSource, 'utf-8');
+  const bundlePath = resolve(hookDir, HOOK_BUENDEL);
+
   const readIf = async (p: string): Promise<string> => {
     try { return await readFile(p, 'utf-8'); } catch { return ''; }
   };
 
   let anyExisting = false;
-  let allCurrent = true;
+  let allCurrent = (await readIf(bundlePath)) === bundle;
   for (const e of events) {
     const prev = await readIf(pathFor(e));
     if (prev) anyExisting = true;
@@ -326,6 +357,8 @@ export async function installAmbientHooks(
   const scripts: AmbientInstallResult['scripts'] = allCurrent ? 'unchanged' : anyExisting ? 'upgraded' : 'written';
 
   if (scripts !== 'unchanged') {
+    // Bundle first: a script that already runs must never find a half-written one missing.
+    await writeFile(bundlePath, bundle, 'utf-8');
     for (const e of events) {
       await writeFile(pathFor(e), scriptFor[e] + '\n', 'utf-8');
       await chmod(pathFor(e), 0o755).catch(() => {});
@@ -367,7 +400,50 @@ export async function installAmbientHooks(
     promptSubmitPath: pathFor('UserPromptSubmit'),
     preToolUsePath: pathFor('PreToolUse'),
     stopPath: pathFor('Stop'),
+    bundlePath,
     scripts,
     settings: settingsStatus,
   };
 }
+
+// ── Claude-Code-Plugin ───────────────────────────────────────────────────────
+//
+// Warum (11.10.2026): Das Plugin brachte nur den MCP-Server mit. Die
+// Einblendung vor jedem Prompt, das Sitzungs-Briefing und der Schreibbeleg
+// kamen allein ueber `init`/`setup`/`autopilot` (installAmbientHooks). Wer
+// cachly ueber den Marktplatz installierte, bekam das staerkste Merkmal nie.
+//
+// Jetzt liegen unter sdk/mcp/hooks/ (der Spiegel cachly-mcp nimmt sie mit;
+// dort ist es die Plugin-Wurzel) zwei erzeugte Dateien:
+//   • hooks.json — von hier (buildPluginHooksJson),
+//   • das Hook-Buendel HOOK_BUENDEL — esbuild aus src/ambient-hook-start.ts.
+// `npm run plugin-hooks:write` schreibt beide, der Waechter
+// src/__tests__/plugin-hooks.test.ts vergleicht sie byteweise mit der Quelle.
+//
+// Das Plugin ruft das Buendel direkt: `node "<buendel>" <Ereignis> --plugin`.
+// `--plugin` heisst: Schluessel und Instanz zur Laufzeit suchen, und
+// zuruecktreten, wenn das Projekt dieselben Hooks schon hat (hook-zugang.ts).
+
+/**
+ * Events the plugin ships. PreToolUse stays a project-install extra: one more
+ * hook run before every single edit for every plugin user.
+ */
+export const PLUGIN_HOOK_EVENTS = ['SessionStart', 'UserPromptSubmit', 'Stop'] as const;
+
+/** Directory under the plugin root (= sdk/mcp) that holds hooks.json and the bundle. */
+export const PLUGIN_HOOK_DIR = 'hooks';
+
+/**
+ * The plugin's `hooks/hooks.json`, which Claude Code loads from that default
+ * location. Same shape and timeouts as the project install; the command runs
+ * the bundle directly with the event and `--plugin`.
+ */
+export function buildPluginHooksJson(): string {
+  const buendel = '${CLAUDE_PLUGIN_ROOT}/' + `${PLUGIN_HOOK_DIR}/${HOOK_BUENDEL}`;
+  const hooks = buildAmbientSettingsHooks(
+    { sessionStart: buendel, userPromptSubmit: buendel, stop: buendel },
+    (event) => `${event} --plugin`,
+  );
+  return JSON.stringify({ hooks }, null, 2) + '\n';
+}
+
