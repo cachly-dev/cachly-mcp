@@ -920,7 +920,11 @@ import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
 import { hookHauptlauf, auffrischenHauptlauf } from './ambient-hook.js';
 import { rahmeAntwort } from './antwort-rahmen.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath, reportLedgerEntry } from './ambient-ledger.js';
-import { resolveApiKey, saveApiKey, saveInstanceId, type CredentialsHomeOptions } from './credentials.js';
+import { resolveApiKey, saveApiKey, saveInstanceId, readSavedApiKey, type CredentialsHomeOptions } from './credentials.js';
+import {
+  KEYCLOAK_BASIS, istTestSchluessel, waehleTestSchluessel, starteKeycloakAnmeldung, warteAufKeycloakAnmeldung, uebernimm, brainImKonto,
+  erfolgsText, fehlerText, ersetzeSchluessel, type UebernahmeAntwort,
+} from './uebernahme.js';
 import { holeSofortTest } from './sofort-test.js';
 import { sichereZugang, echterWert } from './zugang.js';
 import { zeitpunkt } from './zeitmessung.js';
@@ -2143,6 +2147,19 @@ function nutztVsCodeFormat(editor: string): boolean {
  * reads) before the merged config below is built — so the project file stops
  * carrying the secret without anyone losing access.
  */
+/**
+ * Uebernimmt einen Schluessel aus einer vorhandenen Projekt-Config nach
+ * ~/.cachly/credentials.json — aber nie einen Test-Schluessel (cky_trial_).
+ *
+ * Eine Projekt-Config kann aus einem fremden Repository stammen. Ein dort
+ * hinterlegter Test-Schluessel landete sonst in credentials.json, und `claim`
+ * (uebernahme.ts) zoege das fremde Brain samt Lektionen ins eigene Konto.
+ */
+function uebernimmProjektSchluessel(key: string, credOpts: CredentialsHomeOptions): void {
+  if (istTestSchluessel(key)) return;
+  saveApiKey(key, credOpts);
+}
+
 export async function mergeMcpConfig(
   configPath: string,
   apiKey: string,
@@ -2180,7 +2197,7 @@ export async function mergeMcpConfig(
       const env = (s['env'] ?? {}) as Record<string, string>;
       if (env['CACHLY_JWT']) { legacyKey = env['CACHLY_JWT']; break; }
     }
-    if (legacyKey) saveApiKey(legacyKey, credOpts);
+    if (legacyKey) uebernimmProjektSchluessel(legacyKey, credOpts);
     const filtered = servers.filter((s) => {
       const env = (s['env'] ?? {}) as Record<string, string>;
       return !env['CACHLY_JWT'] && !env['CACHLY_BRAIN_INSTANCE_ID'];
@@ -2195,7 +2212,7 @@ export async function mergeMcpConfig(
     const cs = (existing['context_servers'] ?? {}) as Record<string, unknown>;
     const previousCachly = cs['cachly'] as { command?: { env?: Record<string, string> } } | undefined;
     const legacyKey = previousCachly?.command?.env?.['CACHLY_JWT'];
-    if (legacyKey) saveApiKey(legacyKey, credOpts);
+    if (legacyKey) uebernimmProjektSchluessel(legacyKey, credOpts);
     cs['cachly'] = { command: { path: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'], env: cachlyEntry.env }, settings: {} };
     existing['context_servers'] = cs;
     return JSON.stringify(existing, null, 2);
@@ -2208,7 +2225,7 @@ export async function mergeMcpConfig(
     const alt = (existing['mcpServers'] ?? undefined) as Record<string, unknown> | undefined;
     const altCachly = alt?.['cachly'] as { env?: Record<string, string> } | undefined;
     const altSchluessel = altCachly?.env?.['CACHLY_JWT'];
-    if (altSchluessel) saveApiKey(altSchluessel, credOpts);
+    if (altSchluessel) uebernimmProjektSchluessel(altSchluessel, credOpts);
     if (alt && 'cachly' in alt) {
       delete alt['cachly'];
       if (Object.keys(alt).length === 0) delete existing['mcpServers'];
@@ -2216,7 +2233,7 @@ export async function mergeMcpConfig(
     const vsServer = (existing['servers'] ?? {}) as Record<string, unknown>;
     const bisher = vsServer['cachly'] as { env?: Record<string, string>; envFile?: string } | undefined;
     const bisherSchluessel = bisher?.env?.['CACHLY_JWT'];
-    if (bisherSchluessel) saveApiKey(bisherSchluessel, credOpts);
+    if (bisherSchluessel) uebernimmProjektSchluessel(bisherSchluessel, credOpts);
     // Die VS-Code-Erweiterung legt den Schluessel per `envFile` daneben
     // (~/.cachly/vscode-mcp.env). Der Verweis bleibt erhalten.
     vsServer['cachly'] = bisher?.envFile
@@ -2230,7 +2247,7 @@ export async function mergeMcpConfig(
   const servers = (existing['mcpServers'] ?? {}) as Record<string, unknown>;
   const previousCachly = servers['cachly'] as { env?: Record<string, string> } | undefined;
   const legacyKey = previousCachly?.env?.['CACHLY_JWT'];
-  if (legacyKey) saveApiKey(legacyKey, credOpts);
+  if (legacyKey) uebernimmProjektSchluessel(legacyKey, credOpts);
   servers['cachly'] = cachlyEntry;
   existing['mcpServers'] = servers;
   return JSON.stringify(existing, null, 2);
@@ -3328,6 +3345,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  \x1b[1m\x1b[32m  npx @cachly-dev/mcp-server@latest autopilot\x1b[0m ← \x1b[1mOne command, fully ready\x1b[0m');
   console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest demo\x1b[0m     ← Try it first (no account)');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest setup\x1b[0m    ← Interactive setup (pick editors)');
+  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest claim\x1b[0m    ← Keep a test Brain in your own account');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest health\x1b[0m   ← Check everything works');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest doctor\x1b[0m   ← Diagnose a broken or missing install');
   console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest digest\x1b[0m   ← Weekly Brain summary');
@@ -3755,6 +3773,113 @@ if (process.argv[2] === 'health') {
 // `autopilot` is the one-command entrypoint: it runs the exact same wizard as
 // `setup` but fully automatic (no prompts) — auth → instance → all editor
 // configs → CLAUDE.md → git/starter bootstrap → health, in a single shot.
+// ── claim: ein Test-Brain ins eigene Konto uebernehmen ───────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest claim [--key cky_trial_…] [--api-url URL] [--auth-url URL]
+//
+// Anmeldung im Terminal (Keycloak-Geraete-Anmeldung), dann POST
+// /auth/trial/claim mit Anmeldung UND Test-Schluessel im selben Aufruf
+// (uebernahme.ts). Der Server widerruft jeden Test-Schluessel; der neue landet
+// ueberall, wo der alte lag: ~/.cachly/credentials.json (dort lesen ihn die
+// Hooks), ~/.claude/mcp.json, Cursor, Windsurf und die Editor-Configs in
+// diesem Ordner.
+if (process.argv[2] === 'claim') {
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const { existsSync } = await import('node:fs');
+  const { resolve } = await import('node:path');
+  const { homedir } = await import('node:os');
+  const flagge = (name: string): string | undefined => {
+    const i = process.argv.indexOf(`--${name}`);
+    return i !== -1 ? process.argv[i + 1] : undefined;
+  };
+  // Adressen NUR aus Schaltern, nie aus der Umgebung: CACHLY_API_URL und
+  // CACHLY_AUTH_URL kann ein fremdes Repository setzen (.envrc). Dann ginge
+  // das Anmelde-Token an einen fremden Server, oder eine falsche Anmeldestelle
+  // gaebe ein Token fuer das Konto des Fremden aus.
+  API_URL = (flagge('api-url') ?? 'https://api.cachly.dev').replace(/\/+$/, '');
+  const authBasis = (flagge('auth-url') ?? KEYCLOAK_BASIS).replace(/\/+$/, '');
+
+  console.log('\n🧠  cachly — keep your test Brain in your own account\n');
+  if (API_URL !== 'https://api.cachly.dev' || authBasis !== KEYCLOAK_BASIS) {
+    console.log(`⚠️  Not the cachly servers: API ${API_URL}, sign-in ${authBasis}\n`);
+  }
+  // Nur credentials.json oder --key — nie die Projekt-.mcp.json oder die
+  // Umgebung, die ein fremdes Repository setzen kann (uebernahme.ts).
+  const wahl = waehleTestSchluessel({ argument: flagge('key'), credentials: readSavedApiKey() });
+  if (!wahl) {
+    console.log('No test key (cky_trial_…) was found in ~/.cachly/credentials.json.');
+    console.log('If you already use your own cachly account, there is nothing to claim.');
+    console.log('Otherwise pass the key: npx @cachly-dev/mcp-server@latest claim --key cky_trial_…\n');
+    process.exit(1);
+  }
+  const testSchluessel = wahl.schluessel;
+  const quelle = { argument: '--key', credentials: '~/.cachly/credentials.json' }[wahl.quelle];
+  console.log(`Test key: ${testSchluessel.slice(0, 14)}… (from ${quelle})\n`);
+
+  // 1. Anmeldung — direkt bei Keycloak. Die cachly-Geraete-Anmeldung gaebe
+  //    einen API-Schluessel aus, und der zaehlt hier nicht als Anmeldung.
+  let anmeldeToken = '';
+  try {
+    console.log('Step 1: Sign in to your cachly account\n');
+    const code = await starteKeycloakAnmeldung(fetch, authBasis);
+    console.log(`   Code: \x1b[1;33m${code.userCode}\x1b[0m`);
+    console.log('   Open this URL and confirm the code:');
+    console.log(`${code.adresse}\n`);
+    openInBrowser(code.adresse, (ok, err) => {
+      if (!ok) console.log(`\n   ℹ️  No browser could be opened here (${err ?? 'unknown'}) — please open the URL yourself.`);
+    });
+    process.stdout.write('   Waiting for sign-in');
+    anmeldeToken = await warteAufKeycloakAnmeldung(fetch, code, { basis: authBasis, puls: () => process.stdout.write('.') });
+    console.log(' \x1b[32m✓\x1b[0m\n');
+  } catch (e) {
+    console.error(`\n\n${(e as Error).message}. Nothing was changed.\n`);
+    process.exit(1);
+  }
+
+  // 2. Uebernahme: Anmeldung und Test-Schluessel im selben Aufruf.
+  process.stdout.write('Step 2: Moving the test Brain into your account (it restarts once, up to a minute)…');
+  let erg: UebernahmeAntwort;
+  try {
+    erg = await uebernimm(fetch, API_URL, anmeldeToken, testSchluessel, 'mcp', `cachly-mcp/${CURRENT_VERSION}`);
+    console.log(' \x1b[32m✓\x1b[0m\n');
+  } catch (e) {
+    console.error(`\n\n${fehlerText(e)}\n`);
+    process.exit(1);
+  }
+
+  // 3. Der neue Schluessel ueberall dort, wo der Test-Schluessel lag.
+  JWT = erg.apiKey;
+  saveApiKey(erg.apiKey);
+  saveInstanceId(erg.instanceId, { apiKey: erg.apiKey });
+  await persistApiKeyToConfig(erg.apiKey);
+  await persistInstanceIdToConfig(erg.instanceId);
+  const home = homedir();
+  const kandidaten = new Set([
+    ...Object.values(EDITOR_FILES).map((f) => resolve(process.cwd(), f)),
+    resolve(home, '.claude.json'),
+    resolve(home, '.claude', 'mcp.json'),
+    resolve(home, '.cursor', 'mcp.json'),
+    resolve(home, '.codeium', 'windsurf', 'mcp_config.json'),
+  ]);
+  let ersetzt = 0;
+  for (const pfad of kandidaten) {
+    if (!existsSync(pfad)) continue;
+    try {
+      const r = ersetzeSchluessel(await readFile(pfad, 'utf-8'), testSchluessel, erg.apiKey);
+      if (r.ersetzt) {
+        await writeFile(pfad, r.text, 'utf-8');
+        ersetzt++;
+      }
+    } catch { /* unlesbar oder schreibgeschuetzt — die anderen Ablagen reichen */ }
+  }
+
+  // 4. Erst nachsehen, dann "Lessons kept" sagen.
+  const bestaetigt = await brainImKonto(fetch, API_URL, erg.apiKey, erg.instanceId);
+  console.log(erfolgsText(erg, bestaetigt));
+  console.log(`\nNew key stored in ~/.cachly/credentials.json${ersetzt ? ` and in ${ersetzt} editor config file(s) that held the test key` : ''}.`);
+  console.log('Restart your editor (or reload its MCP servers) so it uses the new key.\n');
+  process.exit(0);
+}
+
 const _isAutopilotCli = process.argv[2] === 'autopilot';
 // 'autosetup' is the canonical alias; 'setup' kept for backwards compat.
 if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopilotCli) {

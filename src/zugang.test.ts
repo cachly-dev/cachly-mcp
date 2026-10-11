@@ -85,7 +85,7 @@ describe('sichereZugang: ohne Schluessel erst der Sofort-Test, dann die Anmeldun
     expect(antwort.startsWith('ERGEBNIS')).toBe(true);
     expect(antwort.match(/test Brain was created/g)?.length).toBe(1);
     expect(antwort).toContain('EU servers');
-    expect(antwort).toContain('npx @cachly-dev/mcp-server@latest autopilot');
+    expect(antwort).toContain('npx @cachly-dev/mcp-server@latest claim');
   });
 
   // (b) Rueckfall unveraendert.
@@ -202,10 +202,14 @@ describe('sofortTestHinweis', () => {
     expect(sofortTestHinweis({ apiKey: 'k', instanzId: 'i' })).toContain('14 days of Dev tier');
   });
 
-  // Es gibt keinen Weg, ein Test-Brain auf ein Konto zu uebertragen. Der
-  // Hinweis darf das nicht versprechen.
-  it('verspricht keine Uebernahme der Test-Daten', () => {
-    expect(sofortTestHinweis(TEST)).toContain('do not move over yet');
+  // Seit dem 11.10.2026 gibt es die Uebernahme (uebernahme.ts). Der Hinweis
+  // nennt den Befehl und sagt ehrlich, dass der Schluessel wechselt.
+  it('nennt den Befehl, der das Test-Brain ins eigene Konto uebernimmt', () => {
+    const hinweis = sofortTestHinweis(TEST);
+    expect(hinweis).toContain('npx @cachly-dev/mcp-server@latest claim');
+    expect(hinweis).toContain('gets a new key');
+    expect(hinweis).not.toContain('autopilot');
+    expect(hinweis).not.toContain('do not move over');
   });
 });
 

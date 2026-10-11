@@ -99,13 +99,17 @@ export function istInstanzKennung(wert: unknown): boolean {
   return UUID.test(echterWert(wert));
 }
 
+/** Der Befehl, der ein Test-Brain in das eigene Konto uebernimmt (uebernahme.ts). */
+export const CLAIM_BEFEHL = 'npx @cachly-dev/mcp-server@latest claim';
+
 /**
  * Der Hinweis am ersten Ergebnis. Er geht an den Assistenten; deshalb steht
  * die Bitte, ihn weiterzugeben, im Text selbst.
  *
- * Es gibt (Stand 11.10.2026) KEINEN Weg, ein Test-Brain auf ein Konto zu
- * uebertragen. `autopilot` meldet neu an und legt ein eigenes Brain an. Das
- * steht im Hinweis, damit niemand Daten erwartet, die nicht mitkommen.
+ * Seit dem 11.10.2026 laesst sich das Test-Brain in ein Konto uebernehmen:
+ * `claim` meldet im Terminal an und zieht dieses Brain samt Lektionen um
+ * (uebernahme.ts). Der Test-Schluessel gilt danach nicht mehr; der Befehl
+ * legt den neuen dort ab, wo der alte lag.
  */
 export function sofortTestHinweis(test: SofortTest): string {
   const bis = test.tarifEndetAm && /^\d{4}-\d{2}-\d{2}/.test(test.tarifEndetAm)
@@ -117,8 +121,8 @@ export function sofortTestHinweis(test: SofortTest): string {
     '---',
     `ℹ️ **cachly:** no API key was found, so a test Brain was created on EU servers — no sign-up. `
       + `Tell the user once: it keeps working without an account (${bis}, then the free tier, same key). `
-      + 'To use their own cachly account instead, run `npx @cachly-dev/mcp-server@latest autopilot` — '
-      + 'that account gets a new Brain; lessons from this test Brain do not move over yet.',
+      + `To keep this Brain and its lessons in their own cachly account, they run \`${CLAIM_BEFEHL}\` `
+      + 'in a terminal and sign in — the Brain moves over and gets a new key.',
   ].join('\n');
 }
 
@@ -170,7 +174,7 @@ export async function sichereZugang(a: ZugangsAufruf): Promise<string> {
   a.meldeEreignis('instant_trial_started', { tool: a.werkzeugName, instance_id: test.instanzId });
   (a.protokoll ?? ((z: string) => { process.stderr.write(z); }))(
     `\ncachly: no API key found — created a test Brain on EU servers (instance ${test.instanzId}).\n`
-    + 'cachly: the key is stored in ~/.cachly/credentials.json. Own account: npx @cachly-dev/mcp-server@latest autopilot\n\n',
+    + `cachly: the key is stored in ~/.cachly/credentials.json. Keep this Brain in your own account: ${CLAIM_BEFEHL}\n\n`,
   );
 
   // Erst die Antwort, dann der Import aus der Git-Geschichte. Auch wenn das

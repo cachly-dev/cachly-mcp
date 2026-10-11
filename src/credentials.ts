@@ -103,6 +103,15 @@ export function readInstanceId(opts: CredentialsHomeOptions = {}): string | unde
   return nonEmpty(readCredentialsFile(opts)?.instanceId);
 }
 
+/**
+ * Nur der Schluessel aus {@link credentialsPath} — ohne Umgebung und ohne
+ * Projekt-Config. Fuer `claim` (uebernahme.ts): Eine .mcp.json im Projekt
+ * kann aus einem fremden Repository stammen.
+ */
+export function readSavedApiKey(opts: CredentialsHomeOptions = {}): string | undefined {
+  return nonEmpty(readCredentialsFile(opts)?.apiKey);
+}
+
 interface CredentialsFile {
   apiKey?: string;
   instanceId?: string;

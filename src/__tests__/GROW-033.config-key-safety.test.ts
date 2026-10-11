@@ -101,6 +101,22 @@ describe('GROW-033 B — BESTANDSSCHUTZ: ein Altbestand-Schluessel geht beim Zus
     expect(gefunden).toBe(GEHEIM);
   });
 
+  // Ein Test-Schluessel in einer Projekt-Config kann aus einem fremden
+  // Repository stammen. Landete er in credentials.json, zoege `claim` das
+  // fremde Brain ins eigene Konto (uebernahme.ts). Er wird nicht uebernommen.
+  it('ein Test-Schluessel (cky_trial_) aus der Projektdatei wandert NICHT in den Home-Speicher', async () => {
+    const projektDatei = '/proj/.mcp.json';
+    const fremd = 'cky_trial_0123456789abcdef0123456789abcdef';
+    const vorherigeDatei = JSON.stringify({ mcpServers: { cachly: { command: 'npx', env: { CACHLY_JWT: fremd } } } });
+    const out = await mergeMcpConfig(
+      projektDatei, 'frisch-vom-login', IID, 'claude',
+      fsOpsFrom({ [projektDatei]: vorherigeDatei }),
+      { home: heim },
+    );
+    expect(out).not.toContain(fremd);
+    expect(resolveApiKey({ home: heim, cwd: '/nirgendwo-in-diesem-test', env: {} })).toBeUndefined();
+  });
+
   it('ohne Altbestand in der Datei bleibt der Home-Speicher unangetastet', async () => {
     const projektDatei = '/proj/.mcp.json';
     const vorherigeDatei = JSON.stringify({ mcpServers: { filesystem: { command: 'npx' } } });
