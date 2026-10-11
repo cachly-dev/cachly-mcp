@@ -10,7 +10,7 @@
 ![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-yellow)
 
 `@cachly-dev/mcp-server` connects [cachly](https://cachly.dev) to Claude Code, Cursor,
-GitHub Copilot, Windsurf, Cline, Continue.dev and Zed over
+GitHub Copilot, Windsurf, Cline, Continue.dev, Zed, Codex CLI and Gemini CLI over
 [MCP](https://modelcontextprotocol.io). It offers 124 MCP tools. Your AI stores a
 lesson after a fix, and finds it again when the same problem returns. Your Brain
 (the store of your lessons) lives on EU servers.
@@ -104,6 +104,8 @@ entry points at this npm package.
 |-------|---------------------|
 | [Claude Code hooks: which event to use when](https://cachly.dev/docs/claude-code-hooks) | `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `Stop` and more, sorted by when they fire. What each one can block, add and change. |
 | [A UserPromptSubmit hook for Claude Code](https://cachly.dev/docs/claude-code-hooks/userpromptsubmit) | The stdin JSON, `additionalContext`, a working Node script and five traps to avoid. |
+| The same hooks in [VS Code and Copilot CLI](https://cachly.dev/docs/claude-code-hooks#vscode), [Codex CLI](https://cachly.dev/docs/claude-code-hooks#codex) and [Gemini CLI](https://cachly.dev/docs/claude-code-hooks#gemini) | Which event takes context in each editor, and the exact file `setup` writes there. |
+| Comparisons: [Supermemory](https://cachly.dev/docs/cachly-vs-supermemory), [Zep](https://cachly.dev/docs/cachly-vs-zep), [claude-mem](https://cachly.dev/docs/cachly-vs-claude-mem), [Basic Memory](https://cachly.dev/docs/cachly-vs-basic-memory), [mem0](https://cachly.dev/docs/cachly-vs-mem0), [Letta](https://cachly.dev/docs/cachly-vs-letta) | Side by side, each row with its source and a visible date, including when the other product fits better. |
 | [EU-hosted MCP server: what leaves your machine](https://cachly.dev/docs/eu-hosted-mcp-memory-server) | Where data lands: storage in Germany, embeddings in the EU, the network edge, and a checklist. |
 | [Lessons learned for coding agents](https://cachly.dev/docs/coding-agent-lessons-learned) | How to write a lesson your agent finds again: symptom, decisive fact first, what failed, files, a check. With examples and a `LESSONS.md`. |
 | [JetBrains plugin guide](https://cachly.dev/docs/jetbrains) | What the plugin does, and how Claude Code, Junie and JetBrains AI Assistant use the Brain. |
@@ -309,9 +311,11 @@ Manual snippets are in [Manual Setup](#manual-setup).
 | Editor / client | Auto-setup | Config file written | Global config | Notes |
 |---|---|---|---|---|
 | **Claude Code** | yes | `~/.claude/mcp.json` + `.mcp.json` | yes, always | Without a key: test Brain on the first tool call; browser sign-in only as fallback |
-| **Cursor** | yes, detected via `.cursor/` | `.cursor/mcp.json` | no | Project-level; restart Cursor after setup |
+| **Cursor** | yes, detected via `.cursor/` | `.cursor/mcp.json`, hooks in `.cursor/hooks.json` | no | Project-level; restart Cursor after setup. Lessons arrive with the first tool call of a turn |
 | **Windsurf** | yes, detected via `.windsurf/` | `.windsurf/mcp.json` | no | Project-level; restart Windsurf after setup |
-| **VS Code + Copilot** | yes, detected via `.vscode/` | `.vscode/mcp.json` | no | Needs the VS Code MCP support or Copilot chat |
+| **VS Code + Copilot** | yes, detected via `.vscode/` | `.vscode/mcp.json`, hooks in `.github/hooks/cachly-ambient.json` | no | Needs the VS Code MCP support or Copilot chat. Briefing at session start, lessons before each prompt |
+| **Codex CLI** | hooks yes, detected via `~/.codex` | hooks in `.codex/hooks.json` | no | Trust `.codex/` and confirm the hook once in `/hooks`. For the tools, `init --editor codex` prints the `codex mcp add` line |
+| **Gemini CLI** | hooks yes, detected via `~/.gemini` | `hooks` in `.gemini/settings.json` | no | Lessons are appended to the prompt (`BeforeAgent`). For the tools, `init --editor gemini` prints the `gemini mcp add` line |
 | **Cline** | yes, detected via VS Code | `.vscode/mcp.json` | no | Shares the config with Copilot; restart VS Code |
 | **Continue.dev** | yes, detected via `.continue/` | `.continue/config.json` | no | Uses the `modelContextProtocolServers` key |
 | **Zed** | yes, detected via `.zed/` | `.zed/settings.json` | no | Uses the `context_servers` key |
