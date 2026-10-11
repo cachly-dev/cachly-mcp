@@ -52,7 +52,8 @@
     "lint": "eslint src",
     "typecheck": "tsc --noEmit",
     "bench:cost": "tsx src/bench/cost.ts",
-    "bench:zurueckhaltung": "tsx src/bench/zurueckhaltung-messen.ts"
+    "bench:zurueckhaltung": "tsx src/bench/zurueckhaltung-messen.ts",
+    "bench:ausgabe": "tsx src/bench/ausgabe-reihenfolge-messen.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.0",

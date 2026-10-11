@@ -59,6 +59,7 @@ import {
   Vektorbestand,
 } from '../bedeutung.js';
 import { schreibeEingaenge, Eingangsbestand } from '../eingaenge.js';
+import { ordneNachHausordnung, rangWerte } from '../ausgabe-ordnung.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { spurLegen } from '../spuren.js';
 import { schlageErsetzungVor } from '../ersetzung-vorschlag.js';
@@ -2469,7 +2470,6 @@ async function handleBrainToolInner(
           return kwMatches;
         }
       })();
-      void sinnAngewandt;
 
       // One quota unit for this call, regardless of how many lessons it surfaced.
       void bumpRecallQuota(redis);
@@ -2668,6 +2668,13 @@ async function handleBrainToolInner(
       type HybridResult = {
         key: string; content: string; hybridScore: number;
         bm25Score?: number; semScore?: number; ckgScore?: number; matchedWords?: string[];
+        /**
+         * Der Ausgangswert vor Sinn-Dienst und Kante. Im Sinnpfad der Wert
+         * des PLATZES in der Hausordnung (rangWerte), sonst der normierte
+         * Wortwert. `bm25Score` bleibt immer der eigene Wortwert — er ist
+         * Anzeige, nicht Rang.
+         */
+        hausWert?: number;
         /** Absoluter Wortbeleg aus search.ts — siehe abstention.ts. */
         wortBelege?: number;
         matchType: 'keyword' | 'semantic' | 'ckg' | 'hybrid'; subQuery?: string;
@@ -2679,12 +2686,47 @@ async function handleBrainToolInner(
       const bm25Range = bm25Scores.length ? (Math.max(...bm25Scores) - bm25Min) || 1 : 1;
       const bm25Norm = (s: number) => (s - bm25Min) / bm25Range;
 
+      /*
+       * ── Die Hausordnung kommt in der Ausgabe an (11.10.2026) ────────────
+       *
+       * Bis zu diesem Tag wurde unten nach `hybridScore` sortiert, und der
+       * kam fuer jeden Eintrag aus `kwGemischt` aus dem normierten WORTWERT.
+       * Topf, bewerteTopf, Tuer, Zweitmodell und Leser sortierten damit fuer
+       * Journal und Gedaechtniszellen — die Ausgabe sortierte neu. Ein reiner
+       * Sinn-Treffer (Wortwert 0) stand in der Hausordnung auf Platz 1 und
+       * in der Ausgabe hinten.
+       *
+       * Gemessen auf 3.003 Fragen (ausgabe-reihenfolge-messen.ts, Leser aus):
+       *
+       *                        Platz 1    Treffer@3
+       *   Ausgabe vorher         987        1374
+       *   Ausgabe nachher       1450        1950
+       *   Hausordnung           1450        1955
+       *
+       * Die 5 fehlenden Treffer@3 sind Mehrthemen-Fragen: die Ausgabe
+       * gruppiert sie nach Teilfrage (148 von 3.003 Fragen).
+       *
+       * Jetzt gilt im Sinnpfad: Platz in der Ausgabe = Platz in `kwGemischt`.
+       * Die Werte wandern mit dem Platz (rangWerte, ausgabe-ordnung.ts):
+       * Rang-Abstand und Versuch sehen je Platz dieselben Zahlen wie vorher,
+       * und Zusatztreffer aus Sinn-Dienst oder Kante reihen sich an derselben
+       * Stelle ein wie vorher. Kante und Datei-Kontext (x1,15) aendern weiter
+       * den Wert, verschieben Hauseintraege untereinander aber nicht mehr.
+       * Faellt der Sinnpfad aus (`return kwMatches`), bleibt alles beim alten
+       * Verfahren — dort ist die Wort-Sortierung gemessen sogar leicht besser
+       * als rerankByQuality (+21 Platz 1, +19 Treffer@3 auf denselben Fragen).
+       */
+      const hausRang = new Map<string, number>();
+      const hausWerte = sinnAngewandt ? rangWerte(kwGemischt.map((m) => bm25Norm(m.score))) : null;
+
       const hybridMap = new Map<string, HybridResult>();
-      for (const m of kwGemischt) {
+      for (const [i, m] of kwGemischt.entries()) {
         const n = bm25Norm(m.score);
+        const basis = hausWerte ? hausWerte[i] : n;
+        if (hausWerte) hausRang.set(m.key, i);
         hybridMap.set(m.key, {
-          key: m.key, content: m.content, bm25Score: n,
-          hybridScore: n * (semHits.length > 0 ? 0.7 : 1.0),
+          key: m.key, content: m.content, bm25Score: n, hausWert: basis,
+          hybridScore: basis * (semHits.length > 0 ? 0.7 : 1.0),
           matchedWords: m.matchedWords, matchType: 'keyword', subQuery: m.subQuery,
           wortBelege: m.wortBelege,
         });
@@ -2693,7 +2735,7 @@ async function handleBrainToolInner(
         const existing = hybridMap.get(hit.key);
         if (existing) {
           existing.semScore = hit.similarity;
-          existing.hybridScore = (existing.bm25Score ?? 0) * 0.6 + hit.similarity * 0.4;
+          existing.hybridScore = (existing.hausWert ?? 0) * 0.6 + hit.similarity * 0.4;
           existing.matchType = 'hybrid';
         } else {
           hybridMap.set(hit.key, {
@@ -2786,7 +2828,7 @@ async function handleBrainToolInner(
 
       // Filter private lessons (recall_best_solution only) + enforce team scopes:
       // group-scoped lessons surface only for members of that group (admins see all).
-      const hybridResults = [...hybridMap.values()]
+      const sichtbareTreffer = [...hybridMap.values()]
         .filter(r => {
           if (!r.key.startsWith('cachly:lesson:best:')) return true;
           // Unlesbar heisst NEIN. safeJsonParse(x, {}) gab bei kaputtem JSON
@@ -2798,8 +2840,12 @@ async function handleBrainToolInner(
           if (!darfHeraus(ld)) return false;
           if (!lessonVisibleToScope(ld?.group, requesterScopes, requesterIsAdmin)) return false;
           return true;
-        })
-        .sort((a, b) => b.hybridScore - a.hybridScore);
+        });
+      // Im Sinnpfad entscheidet die Hausordnung (siehe "Die Hausordnung kommt
+      // in der Ausgabe an" oben); sonst wie bisher der Wert.
+      const hybridResults = hausWerte
+        ? ordneNachHausordnung(sichtbareTreffer, hausRang)
+        : sichtbareTreffer.sort((a, b) => b.hybridScore - a.hybridScore);
 
       /*
        * ── Ersetzte Fassungen verdraengen, NICHT verschlucken (exa5ya3w2m0w) ──
