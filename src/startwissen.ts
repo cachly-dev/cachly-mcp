@@ -42,7 +42,8 @@ import type { Redis } from 'ioredis';
 import { safeJsonParse, scanKeys } from './utils.js';
 import { STARTER_CORPUS_SIZE } from './starter-corpus.js';
 import {
-  NAME_VEKTOR_PRAEFIX, VEKTOR_NACHTRAG, VEKTOR_PRAEFIX, packe, textFuerNamensVektor, textFuerVektor,
+  NAME_VEKTOR_PRAEFIX, VEKTOR_NACHTRAG, VEKTOR_PRAEFIX, ZWEIT_VEKTOR_PRAEFIX, packe, textFuerNamensVektor,
+  textFuerVektor,
 } from './bedeutung.js';
 
 /** Die Marke im Brain. Steht sie, gibt es keinen zweiten Import. */
@@ -93,6 +94,13 @@ export interface StartwissenUmfeld {
   einbetten?: (text: string) => Promise<number[]>;
   /** Ist gerade ein Einbettungsdienst eingerichtet? Standard: ja, wenn `einbetten` da ist. */
   hatEinbettung?: () => boolean;
+  /**
+   * Eine Einbettung durch das Zweitmodell (ZWEIT_MODELL, Merkmal 6 der
+   * Rangfolge). Fehlt sie oder wirft sie (Anbieter ohne Modellwahl), bleibt
+   * vec2 leer, und der Lesepfad laesst das Merkmal wegen ZWEIT_MINDESTDECKUNG
+   * von selbst aus.
+   */
+  einbettenZweit?: (text: string) => Promise<number[]>;
   /** Wird nach dem Import mit der Zahl der neuen Lektionen gerufen (Ereignis). */
   melde?: (lektionen: number) => void;
   /**
@@ -384,6 +392,49 @@ async function betteNacheinander(
     }
   }
   log(`cachly: search vectors for git lessons: ${geschrieben}/${themen.length}.\n`);
+  if (geschrieben > 0) await betteZweitNach(redis, themen, u, log);
+  return geschrieben;
+}
+
+/**
+ * Zweiter Durchgang: der Zweitvektor (vec2) je Lektion.
+ *
+ * Bis zum 12.10.2026 schrieb der Start-Import keinen. Gemessen an einem
+ * frischen Sofort-Test-Brain (0.10.183, Klon von expressjs/cors): 21
+ * Lektionen nach 3,5 Minuten, Zweitvektor-Deckung 6 %. Das Merkmal schaltet
+ * erst ab 80 % (ZWEIT_MINDESTDECKUNG) — und smart_recall traegt nur drei je
+ * Aufruf nach. Ein neues Brain sortierte also tagelang ohne Merkmal 6.
+ *
+ * Erst NACH allen Erstvektoren: die Bedeutungssuche soll nicht laenger warten,
+ * nur damit ein Rangfolge-Merkmal frueher da ist. Dieselbe Pause wie oben,
+ * hoechstens eine Anfrage zur Zeit. Der erste Fehler beendet den Durchgang —
+ * ein Anbieter ohne Modellwahl wirft bei jeder Lektion, das waeren sonst
+ * Dutzende sinnlose Anfragen.
+ */
+async function betteZweitNach(
+  redis: Redis,
+  themen: Array<{ topic: string; lektion: Record<string, unknown> }>,
+  u: StartwissenUmfeld,
+  log: (z: string) => void,
+): Promise<number> {
+  const einbettenZweit = u.einbettenZweit;
+  if (!einbettenZweit) return 0;
+  const schlafen = u.schlafen ?? schlafe;
+  const pause = u.pauseMs ?? EINBETT_PAUSE_MS;
+  let geschrieben = 0;
+  for (const { topic, lektion } of themen) {
+    try {
+      await schlafen(pause);
+      const v2 = await einbettenZweit(textFuerVektor({ ...lektion, topic }));
+      if (v2?.length) {
+        await redis.set(`${ZWEIT_VEKTOR_PRAEFIX}${topic}`, packe(v2), 'EX', LEBENSDAUER_S);
+        geschrieben++;
+      }
+    } catch {
+      break;
+    }
+  }
+  log(`cachly: second-model vectors for git lessons: ${geschrieben}/${themen.length}.\n`);
   return geschrieben;
 }
 

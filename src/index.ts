@@ -153,6 +153,8 @@ function starteStartwissenImHintergrund(instanzId: string): void {
     projektOrdner: projektOrdnerVomClient,
     einbetten: (text) => computeEmbedding(text, { geduld: 'lang' }),
     hatEinbettung: hasEmbedProvider,
+    // Wirft bei Anbietern ohne Modellwahl (embeddings.ts) — dann bleibt vec2 leer.
+    einbettenZweit: (text) => computeEmbedding(text, { geduld: 'lang', modell: ZWEIT_MODELL }),
     melde: (lektionen) => sendFunnelEvent('brain_from_git', {
       ...(JWT ? { api_key: JWT } : {}), instance_id: instanzId, total: lektionen, auto: 'startwissen',
     }),
@@ -672,6 +674,7 @@ function defaultUnrefTimeout(fn: () => void, ms: number): void {
 }
 // ── Embeddings (imported from embeddings.ts) ────────────────────────────────
 import { setEmbedJwt, computeEmbedding, hasEmbedProvider } from './embeddings.js';
+import { ZWEIT_MODELL } from './rangfolge-stellschrauben.js';
 
 // ── Search Engine (imported from search.ts) ─────────────────────────────────
 import { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp, STOPWORDS,

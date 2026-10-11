@@ -8,7 +8,7 @@ import { MockRedis } from './__tests__/redis-mock.js';
 import { handleFedbrainTool } from './handlers/fedbrain.js';
 import { keywordSearch } from './search.js';
 import { sichereZugang, _zugangZuruecksetzen, type ZugangsAufruf } from './zugang.js';
-import { VEKTOR_NACHTRAG, VEKTOR_PRAEFIX, NAME_VEKTOR_PRAEFIX } from './bedeutung.js';
+import { VEKTOR_NACHTRAG, VEKTOR_PRAEFIX, NAME_VEKTOR_PRAEFIX, ZWEIT_VEKTOR_PRAEFIX } from './bedeutung.js';
 import {
   starteStartwissen, lerneAusGitGeschichte, holeStartwissenHinweis, beanspruchStartwissen,
   ausschlussGrund, waehleProjektOrdner, startwissenGestartet, _startwissenZuruecksetzen,
@@ -237,6 +237,39 @@ describe('startwissen: ein neues Brain lernt aus der Git-Geschichte', () => {
     for (const t of themen) {
       expect(await redis.get(`${VEKTOR_PRAEFIX}${t}`)).not.toBeNull();
       expect(await redis.get(`${NAME_VEKTOR_PRAEFIX}${t}`)).not.toBeNull();
+    }
+  });
+
+  it('Zweitvektor: zweiter Durchgang erst nach ALLEN Erstvektoren, je Lektion ein vec2', async () => {
+    const redis = new MockRedis();
+    const reihenfolge: string[] = [];
+    const { u } = umfeld(redis, repoMitCommits(BETREFFE), {
+      einbetten: async () => { reihenfolge.push('erst'); return [0.1, 0.2, 0.3]; },
+      einbettenZweit: async () => { reihenfolge.push('zweit'); return [0.9, 0.8, 0.7]; },
+    });
+    const ergebnis = await lerneAusGitGeschichte(u);
+    expect(ergebnis).toMatchObject({ art: 'fertig', vektoren: BETREFFE.length });
+    // Volltext + Name je Lektion zuerst, danach nur noch Zweitmodell-Anfragen.
+    expect(reihenfolge.slice(0, 2 * BETREFFE.length).every((r) => r === 'erst')).toBe(true);
+    expect(reihenfolge.slice(2 * BETREFFE.length)).toEqual(BETREFFE.map(() => 'zweit'));
+    for (const t of (await lektionen(redis)).map((k) => k.slice('cachly:lesson:best:'.length))) {
+      expect(await redis.get(`${ZWEIT_VEKTOR_PRAEFIX}${t}`)).not.toBeNull();
+    }
+  });
+
+  it('Zweitmodell nicht verfuegbar: Erstvektoren unberuehrt, nach dem ersten Fehler Schluss', async () => {
+    const redis = new MockRedis();
+    let zweitAnfragen = 0;
+    const { u } = umfeld(redis, repoMitCommits(BETREFFE), {
+      einbetten: async () => [0.1, 0.2, 0.3],
+      einbettenZweit: async () => { zweitAnfragen++; throw new Error('Anbieter "tei" kann kein abweichendes Modell anfragen'); },
+    });
+    const ergebnis = await lerneAusGitGeschichte(u);
+    expect(ergebnis).toMatchObject({ art: 'fertig', vektoren: BETREFFE.length });
+    expect(zweitAnfragen).toBe(1);
+    for (const t of (await lektionen(redis)).map((k) => k.slice('cachly:lesson:best:'.length))) {
+      expect(await redis.get(`${VEKTOR_PRAEFIX}${t}`)).not.toBeNull();
+      expect(await redis.get(`${ZWEIT_VEKTOR_PRAEFIX}${t}`)).toBeNull();
     }
   });
 

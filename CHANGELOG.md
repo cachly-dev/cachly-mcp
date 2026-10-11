@@ -7,6 +7,18 @@
 
 ---
 
+## [0.10.184] – 2026-10-12 — *"New Brains rank with all six signals sooner."*
+
+**A new Brain gets its second-model vectors right after the first import.**
+The background import of the last 30 commits now runs a second pass with
+the second embedding model once every lesson has its search vector. The
+sixth ranking signal switches on per Brain at 80 % coverage; a fresh trial
+Brain measured 6 % after 3.5 minutes before this change.
+
+**Lessons from `brain_from_git` join the vector backlog.** Each new lesson
+is marked for the backlog, so the next `smart_recall` computes both of its
+vectors.
+
 ## [0.10.183] – 2026-10-12 — *"The reader looks a little deeper."*
 
 **The hook reranks 15 lessons instead of 10.** The EU reader that orders
