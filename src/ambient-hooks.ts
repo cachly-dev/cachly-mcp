@@ -21,7 +21,10 @@ import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { CURSOR_FLAG, type CursorEreignis } from './cursor-hook.js';
-import { PROJEKT_HOOK_MARKE } from './hook-zugang.js';
+import { COPILOT_FLAG, COPILOT_HOOK_EVENTS, type CopilotEreignis } from './copilot-hook.js';
+import { CODEX_FLAG, CODEX_HOOK_EVENTS, type CodexEreignis } from './codex-hook.js';
+import { GEMINI_FLAG, GEMINI_HOOK_EVENTS, type GeminiEreignis } from './gemini-hook.js';
+import { istCachlyEintrag } from './hook-zugang.js';
 
 /**
  * Bumped whenever a hook script changes so installers can upgrade old hooks.
@@ -432,22 +435,31 @@ export const CURSOR_TIMEOUTS: Record<CursorEreignis, number> = {
   postToolUse: 5,
 };
 
-/** Das kleine Skript vor dem Buendel: Instanz dieses Projekts, dann `--cursor`. */
-export function buildCursorHook(opts: AmbientHookOptions): string {
+/**
+ * Das kleine Skript vor dem Buendel, fuer jeden Editor mit eigenem Format:
+ * Instanz dieses Projekts (nie ein Schluessel, GROW-015), dann das Kennzeichen
+ * des Editors, dann das Buendel daneben im selben Prozess.
+ */
+function buildEditorHook(editor: string, flag: string, ereignisse: readonly string[], opts: AmbientHookOptions): string {
   return [
     `#!/usr/bin/env node`,
-    `// cachly Ambient Recall — Cursor ${AMBIENT_HOOK_VERSION}`,
-    `// Einblendung fuer Cursor: sessionStart, beforeSubmitPrompt, postToolUse.`,
+    `// cachly Ambient Recall — ${editor} ${AMBIENT_HOOK_VERSION}`,
+    `// Einblendung fuer ${editor}: ${ereignisse.join(', ')}.`,
     `// Blockiert nie: jeder Fehler endet mit Exit 0. Ruft das Buendel daneben`,
     `// (${HOOK_BUENDEL}) in diesem Prozess.`,
     `process.env.CACHLY_BRAIN_INSTANCE_ID = '${jsString(opts.instanceId)}';`,
-    `process.argv.push('${CURSOR_FLAG}');`,
+    `process.argv.push('${flag}');`,
     `try {`,
     `  await import('./${HOOK_BUENDEL}');`,
     `} catch {`,
     `  process.exit(0);`,
     `}`,
   ].join('\n');
+}
+
+/** Das kleine Skript vor dem Buendel: Instanz dieses Projekts, dann `--cursor`. */
+export function buildCursorHook(opts: AmbientHookOptions): string {
+  return buildEditorHook('Cursor', CURSOR_FLAG, ['sessionStart', 'beforeSubmitPrompt', 'postToolUse'], opts);
 }
 
 export interface CursorHookEintrag {
@@ -480,48 +492,108 @@ export function buildCursorHooks(): Record<CursorEreignis, CursorHookEintrag[]> 
  * Rein — getestet.
  */
 export function mergeCursorHooks(existing: CursorHooksDatei): { datei: CursorHooksDatei; changed: boolean } {
-  const hooks: Record<string, CursorHookEintrag[]> = { ...(existing.hooks ?? {}) };
-  for (const [e, unsere] of Object.entries(buildCursorHooks())) {
-    const fremd = (Array.isArray(hooks[e]) ? hooks[e] : []).filter(
-      (h) => !String(h?.command ?? '').includes(PROJEKT_HOOK_MARKE),
-    );
-    hooks[e] = [...fremd, ...unsere];
+  return mergeFlach(existing, buildCursorHooks());
+}
+
+/**
+ * Zusammenfuehren fuer Dateien mit flachen Listen je Ereignis und `version`
+ * (Cursor, Copilot). Fremde Eintraege und Ereignisse bleiben, alte
+ * cachly-Eintraege werden ersetzt (nie doppelt). `version` bleibt; fehlt sie,
+ * kommt 1 (Pflichtfeld in beiden Formaten).
+ */
+function mergeFlach<T extends { version?: number; hooks?: Record<string, unknown[]>; [k: string]: unknown }>(
+  existing: T,
+  unsere: Record<string, unknown[]>,
+): { datei: T; changed: boolean } {
+  const hooks: Record<string, unknown[]> = { ...(existing.hooks ?? {}) };
+  for (const [e, eintraege] of Object.entries(unsere)) {
+    const fremd = (Array.isArray(hooks[e]) ? hooks[e] : []).filter((h) => !istCachlyEintrag(h));
+    hooks[e] = [...fremd, ...eintraege];
   }
-  const datei: CursorHooksDatei = {
-    ...existing,
-    version: typeof existing.version === 'number' ? existing.version : 1,
-    hooks,
-  };
+  const datei = { ...existing, version: typeof existing.version === 'number' ? existing.version : 1, hooks } as T;
   return { datei, changed: JSON.stringify(datei) !== JSON.stringify(existing) };
 }
 
-export interface CursorInstallResult {
-  scriptPath: string;
-  bundlePath: string;
-  hooksPath: string;
-  scripts: 'written' | 'upgraded' | 'unchanged';
-  /** 'skipped': hooks.json war kein JSON — sie bleibt unangetastet, der Hook ist nicht verdrahtet. */
-  hooks: 'written' | 'merged' | 'unchanged' | 'skipped';
+/** Eine Matcher-Gruppe wie bei Claude Code, Codex und Gemini: `{ matcher?, hooks: [...] }`. */
+export interface HookGruppe {
+  matcher?: string;
+  hooks?: Array<Record<string, unknown>>;
+  [k: string]: unknown;
 }
 
-/** Installiert/erneuert den Cursor-Hook in `projectDir`. Wirft nur bei Dateifehlern. */
-export async function installCursorHooks(projectDir: string, instanceId: string): Promise<CursorInstallResult> {
-  const hookDir = resolve(projectDir, CURSOR_HOOK_DIR);
+/**
+ * Zusammenfuehren fuer Dateien mit Matcher-Gruppen (Codex, Gemini). Aus jeder
+ * Gruppe fallen nur die cachly-Eintraege; eine Gruppe, die dadurch leer wird,
+ * faellt ganz. Fremde Eintraege bleiben auch in gemischten Gruppen stehen.
+ * Alle anderen Felder der Datei (bei Gemini die ganzen Einstellungen) bleiben.
+ */
+function mergeGruppen<T extends { hooks?: Record<string, unknown>; [k: string]: unknown }>(
+  existing: T,
+  unsere: Record<string, HookGruppe[]>,
+): { datei: T; changed: boolean } {
+  const hooks: Record<string, unknown> = { ...(existing.hooks ?? {}) };
+  for (const [e, gruppen] of Object.entries(unsere)) {
+    const fremd = (Array.isArray(hooks[e]) ? (hooks[e] as unknown[]) : []).flatMap((g) => {
+      const liste = (g as HookGruppe | null)?.hooks;
+      if (!Array.isArray(liste)) return [g];
+      const rest = liste.filter((h) => !istCachlyEintrag(h));
+      if (rest.length === liste.length) return [g];
+      return rest.length ? [{ ...(g as HookGruppe), hooks: rest }] : [];
+    });
+    hooks[e] = [...fremd, ...gruppen];
+  }
+  const datei = { ...existing, hooks } as T;
+  return { datei, changed: JSON.stringify(datei) !== JSON.stringify(existing) };
+}
+
+/** Was setup/autopilot/init je Editor geschrieben hat. */
+export interface EditorInstallResult {
+  scriptPath: string;
+  bundlePath: string;
+  /** Die Konfigurationsdatei des Editors (hooks.json, settings.json …). */
+  hooksPath: string;
+  scripts: 'written' | 'upgraded' | 'unchanged';
+  /** 'skipped': die Datei war kein JSON-Objekt — sie bleibt unangetastet, der Hook ist nicht verdrahtet. */
+  hooks: 'written' | 'merged' | 'unchanged' | 'skipped';
+}
+export type CursorInstallResult = EditorInstallResult;
+
+interface HookDateien {
+  projectDir: string;
+  /** Ordner fuer Skript und Buendel, relativ zum Projekt. */
+  hookDir: string;
+  skriptName: string;
+  /** Inhalt des kleinen Skripts (buildEditorHook). */
+  skript: string;
+  /** Konfigurationsdatei des Editors, relativ zum Projekt. */
+  configDatei: string;
+  /** Fuehrt die cachly-Eintraege ein; bekommt den absoluten Pfad des Skripts. */
+  merge: (vorhanden: Record<string, unknown>, scriptPath: string) => { datei: unknown; changed: boolean };
+}
+
+/**
+ * Der eine Installer fuer Editoren mit eigenem Format: Buendel und Skript
+ * schreiben (nur wenn noetig), die Konfiguration zusammenfuehren. Eine
+ * Konfiguration, die kein JSON-Objekt ist oder deren `hooks` kein Objekt ist,
+ * bleibt unangetastet. Wirft nur bei Dateifehlern.
+ */
+async function installiereHookDateien(d: HookDateien): Promise<EditorInstallResult> {
+  const hookDir = resolve(d.projectDir, d.hookDir);
   await mkdir(hookDir, { recursive: true });
 
   const bundleSource = hookBuendelQuelle();
   if (!bundleSource) throw new Error(`cachly hook bundle ${HOOK_BUENDEL} missing from the package`);
   const bundle = readFileSync(bundleSource, 'utf-8');
   const bundlePath = resolve(hookDir, HOOK_BUENDEL);
-  const scriptPath = resolve(hookDir, CURSOR_SKRIPT);
-  const script = buildCursorHook({ instanceId }) + '\n';
+  const scriptPath = resolve(hookDir, d.skriptName);
+  const script = d.skript + '\n';
 
   const readIf = async (p: string): Promise<string> => {
     try { return await readFile(p, 'utf-8'); } catch { return ''; }
   };
   const altSkript = await readIf(scriptPath);
   const allCurrent = altSkript === script && (await readIf(bundlePath)) === bundle;
-  const scripts: CursorInstallResult['scripts'] = allCurrent ? 'unchanged' : altSkript ? 'upgraded' : 'written';
+  const scripts: EditorInstallResult['scripts'] = allCurrent ? 'unchanged' : altSkript ? 'upgraded' : 'written';
   if (scripts !== 'unchanged') {
     // Buendel zuerst: ein laufendes Skript darf nie ein halbes vorfinden.
     await writeFile(bundlePath, bundle, 'utf-8');
@@ -529,27 +601,242 @@ export async function installCursorHooks(projectDir: string, instanceId: string)
     await chmod(scriptPath, 0o755).catch(() => {});
   }
 
-  const hooksPath = resolve(projectDir, CURSOR_HOOKS_DATEI);
+  const hooksPath = resolve(d.projectDir, d.configDatei);
   const roh = existsSync(hooksPath) ? await readIf(hooksPath) : null;
-  let vorhanden: CursorHooksDatei = {};
+  let vorhanden: Record<string, unknown> = {};
   if (roh !== null && roh.trim()) {
     try {
       const p = JSON.parse(roh) as unknown;
-      if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('kein Objekt');
-      vorhanden = p as CursorHooksDatei;
+      if (!istObjekt(p)) throw new Error('kein Objekt');
+      if (p.hooks !== undefined && !istObjekt(p.hooks)) throw new Error('hooks ist kein Objekt');
+      vorhanden = p;
     } catch {
       // Eine kaputte Datei des Nutzers wird nicht ueberschrieben.
       return { scriptPath, bundlePath, hooksPath, scripts, hooks: 'skipped' };
     }
   }
-  const { datei, changed } = mergeCursorHooks(vorhanden);
-  let hooks: CursorInstallResult['hooks'];
+  const { datei, changed } = d.merge(vorhanden, scriptPath);
+  let hooks: EditorInstallResult['hooks'];
   if (roh === null || !roh.trim()) hooks = 'written';
   else if (!changed) hooks = 'unchanged';
   else hooks = 'merged';
-  if (hooks !== 'unchanged') await writeFile(hooksPath, JSON.stringify(datei, null, 2) + '\n', 'utf-8');
+  if (hooks !== 'unchanged') {
+    await mkdir(dirname(hooksPath), { recursive: true });
+    await writeFile(hooksPath, JSON.stringify(datei, null, 2) + '\n', 'utf-8');
+  }
 
   return { scriptPath, bundlePath, hooksPath, scripts, hooks };
+}
+
+function istObjekt(x: unknown): x is Record<string, unknown> {
+  return !!x && typeof x === 'object' && !Array.isArray(x);
+}
+
+/** Installiert/erneuert den Cursor-Hook in `projectDir`. Wirft nur bei Dateifehlern. */
+export async function installCursorHooks(projectDir: string, instanceId: string): Promise<CursorInstallResult> {
+  return installiereHookDateien({
+    projectDir,
+    hookDir: CURSOR_HOOK_DIR,
+    skriptName: CURSOR_SKRIPT,
+    skript: buildCursorHook({ instanceId }),
+    configDatei: CURSOR_HOOKS_DATEI,
+    merge: (vorhanden) => mergeCursorHooks(vorhanden as CursorHooksDatei),
+  });
+}
+
+// ── VS Code mit GitHub Copilot ───────────────────────────────────────────────
+//
+// Warum (11.10.2026): siehe copilot-hook.ts. Was setup/autopilot/init schreibt:
+//   • .github/hooks/cachly-ambient-einblendung.mjs  das Buendel
+//   • .github/hooks/cachly-ambient-copilot.mjs      traegt die Instanz, ruft das Buendel mit --copilot
+//   • .github/hooks/cachly-ambient.json             drei Eintraege im Copilot-Format
+// Copilot-Format (`version: 1`, camelCase, `timeoutSec`), weil es das einzige
+// ist, das VS Code Local UND Copilot CLI laut Doku lesen; VS Code bildet
+// `command` und `timeoutSec` selbst ab (vscode hookSchema.ts
+// normalizeHookCommand). `cwd: "."` ist die Wurzel des Repos — so steht es im
+// Beispiel der Copilot-CLI-Anleitung; ohne `cwd` nimmt VS Code dieselbe Wurzel.
+
+export const COPILOT_HOOK_DIR = '.github/hooks';
+export const COPILOT_HOOKS_DATEI = '.github/hooks/cachly-ambient.json';
+export const COPILOT_SKRIPT = 'cachly-ambient-copilot.mjs';
+
+/** Zeitlimit je Ereignis in Sekunden (`timeoutSec`; Vorgabe beider Laufzeiten: 30). */
+export const COPILOT_TIMEOUTS: Record<CopilotEreignis, number> = {
+  sessionStart: 30,
+  userPromptSubmitted: 10,
+  postToolUse: 5,
+};
+
+export interface CopilotHookEintrag {
+  type?: string;
+  command?: string;
+  cwd?: string;
+  timeoutSec?: number;
+  [k: string]: unknown;
+}
+export interface CopilotHooksDatei {
+  version?: number;
+  hooks?: Record<string, CopilotHookEintrag[]>;
+  [k: string]: unknown;
+}
+
+/** Das kleine Skript fuer .github/hooks/: Instanz dieses Projekts, dann `--copilot`. */
+export function buildCopilotHook(opts: AmbientHookOptions): string {
+  return buildEditorHook('VS Code / Copilot', COPILOT_FLAG, COPILOT_HOOK_EVENTS, opts);
+}
+
+/** Die cachly-Eintraege fuer .github/hooks/cachly-ambient.json. */
+export function buildCopilotHooks(): Record<CopilotEreignis, CopilotHookEintrag[]> {
+  const eintrag = (e: CopilotEreignis): CopilotHookEintrag[] => [{
+    type: 'command',
+    command: `node ${COPILOT_HOOK_DIR}/${COPILOT_SKRIPT} ${e}`,
+    cwd: '.',
+    timeoutSec: COPILOT_TIMEOUTS[e],
+  }];
+  return {
+    sessionStart: eintrag('sessionStart'),
+    userPromptSubmitted: eintrag('userPromptSubmitted'),
+    postToolUse: eintrag('postToolUse'),
+  };
+}
+
+export function mergeCopilotHooks(existing: CopilotHooksDatei): { datei: CopilotHooksDatei; changed: boolean } {
+  return mergeFlach(existing, buildCopilotHooks());
+}
+
+/** Installiert/erneuert den VS-Code-/Copilot-Hook in `projectDir`. Wirft nur bei Dateifehlern. */
+export async function installCopilotHooks(projectDir: string, instanceId: string): Promise<EditorInstallResult> {
+  return installiereHookDateien({
+    projectDir,
+    hookDir: COPILOT_HOOK_DIR,
+    skriptName: COPILOT_SKRIPT,
+    skript: buildCopilotHook({ instanceId }),
+    configDatei: COPILOT_HOOKS_DATEI,
+    merge: (vorhanden) => mergeCopilotHooks(vorhanden as CopilotHooksDatei),
+  });
+}
+
+// ── OpenAI Codex CLI ─────────────────────────────────────────────────────────
+//
+// Warum (11.10.2026): siehe codex-hook.ts. Was setup/autopilot/init schreibt:
+//   • .codex/hooks/cachly-ambient-einblendung.mjs  das Buendel
+//   • .codex/hooks/cachly-ambient-codex.mjs        traegt die Instanz, ruft das Buendel mit --codex
+//   • .codex/hooks.json                            zwei Gruppen, fremde bleiben stehen
+// Der Befehl nennt das Skript mit ABSOLUTEM Pfad, wie die Claude-Hooks: Codex
+// fuehrt Befehle "with the session cwd as their working directory" aus und
+// "may be started from a subdirectory". Der Vorschlag der Doku
+// (`$(git rev-parse --show-toplevel)`) laeuft unter Windows nicht — Codex ruft
+// dort `cmd.exe /C` (codex-rs/hooks/src/engine/command_runner.rs).
+// Projekt-Hooks laedt Codex nur, wenn der Nutzer dem Ordner `.codex/` traut,
+// und jeden neuen Hook erst nach Pruefung in `/hooks`.
+
+export const CODEX_HOOK_DIR = '.codex/hooks';
+export const CODEX_HOOKS_DATEI = '.codex/hooks.json';
+export const CODEX_SKRIPT = 'cachly-ambient-codex.mjs';
+
+/** Zeitlimit je Ereignis in Sekunden (`timeout`; Codex-Vorgabe 600). */
+export const CODEX_TIMEOUTS: Record<CodexEreignis, number> = {
+  SessionStart: 30,
+  UserPromptSubmit: 10,
+};
+
+export interface CodexHooksDatei {
+  hooks?: Record<string, HookGruppe[]>;
+  [k: string]: unknown;
+}
+
+/** Das kleine Skript fuer .codex/hooks/: Instanz dieses Projekts, dann `--codex`. */
+export function buildCodexHook(opts: AmbientHookOptions): string {
+  return buildEditorHook('Codex', CODEX_FLAG, CODEX_HOOK_EVENTS, opts);
+}
+
+/** Die cachly-Gruppen fuer .codex/hooks.json; `skriptPfad` ist absolut. */
+export function buildCodexHooks(skriptPfad: string): Record<CodexEreignis, HookGruppe[]> {
+  const gruppe = (e: CodexEreignis): HookGruppe[] => [{
+    hooks: [{ type: 'command', command: `node "${skriptPfad}" ${e}`, timeout: CODEX_TIMEOUTS[e] }],
+  }];
+  return { SessionStart: gruppe('SessionStart'), UserPromptSubmit: gruppe('UserPromptSubmit') };
+}
+
+export function mergeCodexHooks(existing: CodexHooksDatei, skriptPfad: string): { datei: CodexHooksDatei; changed: boolean } {
+  return mergeGruppen(existing, buildCodexHooks(skriptPfad));
+}
+
+/** Installiert/erneuert den Codex-Hook in `projectDir`. Wirft nur bei Dateifehlern. */
+export async function installCodexHooks(projectDir: string, instanceId: string): Promise<EditorInstallResult> {
+  return installiereHookDateien({
+    projectDir,
+    hookDir: CODEX_HOOK_DIR,
+    skriptName: CODEX_SKRIPT,
+    skript: buildCodexHook({ instanceId }),
+    configDatei: CODEX_HOOKS_DATEI,
+    merge: (vorhanden, scriptPath) => mergeCodexHooks(vorhanden as CodexHooksDatei, scriptPath),
+  });
+}
+
+// ── Gemini CLI ───────────────────────────────────────────────────────────────
+//
+// Warum (11.10.2026): siehe gemini-hook.ts. Was setup/autopilot/init schreibt:
+//   • .gemini/hooks/cachly-ambient-einblendung.mjs  das Buendel
+//   • .gemini/hooks/cachly-ambient-gemini.mjs       traegt die Instanz, ruft das Buendel mit --gemini
+//   • .gemini/settings.json                         `hooks` zusammengefuehrt, alle anderen Einstellungen bleiben
+// Relative Pfade wie in den Beispielen der Doku (`node .gemini/hooks/…`):
+// Gemini startet Hooks mit `cwd` = Projektwurzel (hookRunner.ts, `cwd: input.cwd`).
+// Gemini prueft Projekt-Hooks per Fingerabdruck und warnt vor jedem neuen.
+
+export const GEMINI_HOOK_DIR = '.gemini/hooks';
+export const GEMINI_SETTINGS_DATEI = '.gemini/settings.json';
+export const GEMINI_SKRIPT = 'cachly-ambient-gemini.mjs';
+
+/** Zeitlimit je Ereignis in MILLISEKUNDEN (`timeout` bei Gemini; Vorgabe 60000). */
+export const GEMINI_TIMEOUTS_MS: Record<GeminiEreignis, number> = {
+  SessionStart: 30_000,
+  BeforeAgent: 10_000,
+};
+
+/** Namen fuer `/hooks disable <name>` und die Liste `hooksConfig.disabled`. */
+const GEMINI_NAMEN: Record<GeminiEreignis, string> = {
+  SessionStart: 'cachly-briefing',
+  BeforeAgent: 'cachly-recall',
+};
+
+export interface GeminiSettingsDatei {
+  hooks?: Record<string, HookGruppe[]>;
+  [k: string]: unknown;
+}
+
+/** Das kleine Skript fuer .gemini/hooks/: Instanz dieses Projekts, dann `--gemini`. */
+export function buildGeminiHook(opts: AmbientHookOptions): string {
+  return buildEditorHook('Gemini CLI', GEMINI_FLAG, GEMINI_HOOK_EVENTS, opts);
+}
+
+/** Die cachly-Gruppen fuer .gemini/settings.json. */
+export function buildGeminiHooks(): Record<GeminiEreignis, HookGruppe[]> {
+  const gruppe = (e: GeminiEreignis): HookGruppe[] => [{
+    hooks: [{
+      name: GEMINI_NAMEN[e],
+      type: 'command',
+      command: `node ${GEMINI_HOOK_DIR}/${GEMINI_SKRIPT} ${e}`,
+      timeout: GEMINI_TIMEOUTS_MS[e],
+    }],
+  }];
+  return { SessionStart: gruppe('SessionStart'), BeforeAgent: gruppe('BeforeAgent') };
+}
+
+export function mergeGeminiHooks(existing: GeminiSettingsDatei): { datei: GeminiSettingsDatei; changed: boolean } {
+  return mergeGruppen(existing, buildGeminiHooks());
+}
+
+/** Installiert/erneuert den Gemini-Hook in `projectDir`. Wirft nur bei Dateifehlern. */
+export async function installGeminiHooks(projectDir: string, instanceId: string): Promise<EditorInstallResult> {
+  return installiereHookDateien({
+    projectDir,
+    hookDir: GEMINI_HOOK_DIR,
+    skriptName: GEMINI_SKRIPT,
+    skript: buildGeminiHook({ instanceId }),
+    configDatei: GEMINI_SETTINGS_DATEI,
+    merge: (vorhanden) => mergeGeminiHooks(vorhanden as GeminiSettingsDatei),
+  });
 }
 
 // ── Claude-Code-Plugin ───────────────────────────────────────────────────────

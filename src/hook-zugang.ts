@@ -13,7 +13,7 @@
 // Ein nicht ersetzter Platzhalter wie `${user_config.api_key}` zaehlt als nichts.
 // Alles hier wirft nie: eine kaputte Datei ist eine leere Datei.
 
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { readInstanceId, resolveApiKey } from './credentials.js';
@@ -94,6 +94,32 @@ export function cursorHatHook(u: HookUmfeld): boolean {
     return !!hooks && typeof hooks === 'object' && Object.values(hooks).some((liste) =>
       Array.isArray(liste)
       && liste.some((h: { command?: unknown }) => String(h?.command ?? '').includes(PROJEKT_HOOK_MARKE)));
+  });
+}
+
+/** true, wenn ein Eintrag (Befehl, bash oder powershell) einen cachly-Hook ruft. */
+export function istCachlyEintrag(h: unknown): boolean {
+  const e = h as { command?: unknown; bash?: unknown; powershell?: unknown } | null;
+  return [e?.command, e?.bash, e?.powershell].some((c) => String(c ?? '').includes(PROJEKT_HOOK_MARKE));
+}
+
+/**
+ * true, wenn VS Code / Copilot CLI fuer dieses Projekt schon den cachly-Hook
+ * haben: eine `*.json` in `.github/hooks/` (Projekt) oder `~/.copilot/hooks/`
+ * (Nutzer; `$COPILOT_HOME/hooks/`, wenn gesetzt) mit einem cachly-Eintrag.
+ * Dann tritt ein Claude-Hook, den VS Code oder Copilot CLI aus
+ * .claude/settings.json mitlaeuft, zurueck (ambient-hook.ts).
+ */
+export function copilotHatHook(u: HookUmfeld): boolean {
+  const nutzer = u.env.COPILOT_HOME ? join(u.env.COPILOT_HOME, 'hooks') : join(u.heim, '.copilot', 'hooks');
+  return [join(u.projekt, '.github', 'hooks'), nutzer].some((ordner) => {
+    let namen: string[];
+    try { namen = readdirSync(ordner).filter((n) => n.endsWith('.json')); } catch { return false; }
+    return namen.some((n) => {
+      const hooks = (lies(join(ordner, n)) as { hooks?: Record<string, unknown> } | null)?.hooks;
+      return !!hooks && typeof hooks === 'object'
+        && Object.values(hooks).some((liste) => Array.isArray(liste) && liste.some(istCachlyEintrag));
+    });
   });
 }
 

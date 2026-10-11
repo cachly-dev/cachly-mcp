@@ -905,7 +905,18 @@ import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
 import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-proof.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
-import { installAmbientHooks, installCursorHooks, AMBIENT_HOOK_VERSION, type CursorInstallResult } from './ambient-hooks.js';
+import {
+  installAmbientHooks,
+  installCursorHooks,
+  installCopilotHooks,
+  installCodexHooks,
+  installGeminiHooks,
+  AMBIENT_HOOK_VERSION,
+  COPILOT_HOOKS_DATEI,
+  CODEX_HOOKS_DATEI,
+  GEMINI_SETTINGS_DATEI,
+  type EditorInstallResult,
+} from './ambient-hooks.js';
 import { hookHauptlauf, auffrischenHauptlauf } from './ambient-hook.js';
 import { rahmeAntwort } from './antwort-rahmen.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath, reportLedgerEntry } from './ambient-ledger.js';
@@ -3367,18 +3378,38 @@ if (!process.argv[2] && process.stdout.isTTY) {
 }
 
 // ── CLI: cachly init ──────────────────────────────────────────────────────────
-// Usage: npx @cachly-dev/mcp-server init --instance-id <id> --api-key <key> [--editor claude|cursor|windsurf|copilot|continue] [--project-dir /path]
+// Usage: npx @cachly-dev/mcp-server init --instance-id <id> --api-key <key> [--editor claude|cursor|windsurf|copilot|continue|codex|gemini] [--project-dir /path]
 
-/** One summary line for the Cursor hook install (init/setup/autopilot). Silent when it failed. */
-function reportCursorHooks(r: CursorInstallResult | null, pad: string): void {
+/** What each editor's hook install prints (init/setup/autopilot). */
+const EDITOR_HOOK_ZEILEN = {
+  cursor: { datei: '.cursor/hooks.json', name: 'Cursor', wie: 'session briefing, per-prompt recall after the first tool call' },
+  copilot: { datei: COPILOT_HOOKS_DATEI, name: 'VS Code / Copilot', wie: 'session briefing, per-prompt recall' },
+  codex: { datei: CODEX_HOOKS_DATEI, name: 'Codex', wie: 'session briefing, per-prompt recall; trust it once in /hooks' },
+  gemini: { datei: GEMINI_SETTINGS_DATEI, name: 'Gemini CLI', wie: 'session briefing, per-prompt recall' },
+} as const;
+
+/** One summary line for an editor hook install (init/setup/autopilot). Silent when it failed. */
+function reportEditorHooks(editor: keyof typeof EDITOR_HOOK_ZEILEN, r: EditorInstallResult | null, pad: string): void {
   if (!r) return;
+  const { datei, name, wie } = EDITOR_HOOK_ZEILEN[editor];
   if (r.hooks === 'skipped') {
-    console.log(`⚠️ ${pad}.cursor/hooks.json is not valid JSON — left untouched, Cursor hooks not wired`);
+    console.log(`⚠️ ${pad}${datei} is not valid JSON — left untouched, ${name} hooks not wired`);
     return;
   }
   const verb = r.hooks === 'unchanged' ? '✓  ' : '✅ ';
   const was = r.hooks === 'written' ? 'Written' : r.hooks === 'merged' ? 'Merged' : 'Already wired';
-  console.log(`${verb}${pad}${was}: .cursor/hooks.json (Ambient Recall for Cursor — session briefing, per-prompt recall after the first tool call)`);
+  console.log(`${verb}${pad}${was}: ${datei} (Ambient Recall for ${name} — ${wie})`);
+}
+
+/** Installs the hooks of one editor with its own hook format and prints one line. Never throws. */
+async function installEditorHooks(editor: keyof typeof EDITOR_HOOK_ZEILEN, projectDir: string, instanceId: string, pad: string): Promise<void> {
+  const installer = {
+    cursor: installCursorHooks,
+    copilot: installCopilotHooks,
+    codex: installCodexHooks,
+    gemini: installGeminiHooks,
+  }[editor];
+  reportEditorHooks(editor, await installer(projectDir, instanceId).catch(() => null), pad);
 }
 
 if (process.argv[2] === 'init') {
@@ -3420,7 +3451,7 @@ if (process.argv[2] === 'init') {
   }
 
   if (!instanceId || !apiKey) {
-    console.error('\nUsage: npx @cachly-dev/mcp-server@latest init --instance-id <uuid> --api-key <cky_live_...> [--editor claude|cursor|windsurf|copilot|continue] [--project-dir /path] [--api-url https://your-self-hosted-backend]\n');
+    console.error('\nUsage: npx @cachly-dev/mcp-server@latest init --instance-id <uuid> --api-key <cky_live_...> [--editor claude|cursor|windsurf|copilot|continue|codex|gemini] [--project-dir /path] [--api-url https://your-self-hosted-backend]\n');
     console.error('First time? Run the zero-config wizard (signs you in, auto-provisions): npx @cachly-dev/mcp-server@latest autopilot\n');
     console.error(`Get your credentials from: ${cachlyUrl('/setup-ai', 'init')}\n`);
     process.exit(1);
@@ -3473,8 +3504,11 @@ if (process.argv[2] === 'init') {
       else                               console.log(`✓  Ambient Recall hooks already wired in .claude/settings.json`);
     } catch { /* non-critical — ambient hooks are a best-effort feature */ }
   }
-  // Cursor: same injection through .cursor/hooks.json (cursor-hook.ts).
-  if (editor === 'cursor') reportCursorHooks(await installCursorHooks(projectDir, instanceId).catch(() => null), '');
+  // Cursor, VS Code / Copilot, Codex, Gemini CLI: same injection through each
+  // editor's own hook file (cursor-hook.ts, copilot-hook.ts, codex-hook.ts, gemini-hook.ts).
+  if (editor === 'cursor' || editor === 'copilot' || editor === 'codex' || editor === 'gemini') {
+    await installEditorHooks(editor, projectDir, instanceId, '');
+  }
 
   const initSecs = ((Date.now() - initStart) / 1000).toFixed(1);
   console.log(`\n🧠 Cachly AI Brain configured for ${editor === 'claude' ? 'Claude Code' : editor}! (${initSecs}s)`);
@@ -4527,8 +4561,17 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     } catch { /* non-critical — ambient hooks are a best-effort feature */ }
   }
   // Cursor (detected by a .cursor folder): same injection through .cursor/hooks.json.
-  if (editorsToSetup.includes('cursor')) {
-    reportCursorHooks(await installCursorHooks(process.cwd(), instance.id).catch(() => null), ' ');
+  if (editorsToSetup.includes('cursor')) await installEditorHooks('cursor', process.cwd(), instance.id, ' ');
+  // VS Code with Copilot (detected by a .vscode folder): .github/hooks/cachly-ambient.json.
+  if (editorsToSetup.includes('copilot')) await installEditorHooks('copilot', process.cwd(), instance.id, ' ');
+  // Codex CLI and Gemini CLI keep their config in ~/.codex and ~/.gemini; a
+  // project folder of the same name counts too. They get only the hook file
+  // here — not part of the MCP config loop above (no .mcp.json of their own).
+  if (existsSync(resolve(home, '.codex')) || existsSync(resolve(cwd, '.codex'))) {
+    await installEditorHooks('codex', process.cwd(), instance.id, ' ');
+  }
+  if (existsSync(resolve(home, '.gemini')) || existsSync(resolve(cwd, '.gemini'))) {
+    await installEditorHooks('gemini', process.cwd(), instance.id, ' ');
   }
 
   // Setup reached the end — close the funnel. Report config-write outcome so the

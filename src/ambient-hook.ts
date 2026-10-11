@@ -26,13 +26,25 @@
 // Cursor (11.10.2026): Mit `--cursor` oder einer Nutzlast mit `cursor_version`
 // laeuft derselbe Weg ueber cursor-hook.ts — Cursors Eingabe wird auf die
 // Claude-Nutzlast abgebildet, die Antwort in Cursors Format zurueckgegeben.
+//
+// VS Code mit Copilot (`--copilot`), Codex CLI (`--codex`) und Gemini CLI
+// (`--gemini`) gehen genauso: copilot-hook.ts, codex-hook.ts, gemini-hook.ts
+// bilden nur Eingabe und Antwort ab; gerechnet wird hier.
 
 import { readFileSync } from 'node:fs';
 import { parseHookPayload, runEinblendung, stopLernanfrage, stopObservation } from './ambient-cli.js';
 import { stopAntwort } from './schreibbeleg.js';
 import { holeBestand } from './einblendung.js';
 import { appendLedgerEntry, reportLedgerEntry } from './ambient-ledger.js';
-import { cursorHatHook, findeInstanz, findeSchluessel, hookUmfeld, projektHatHook, type HookUmfeld } from './hook-zugang.js';
+import {
+  copilotHatHook,
+  cursorHatHook,
+  findeInstanz,
+  findeSchluessel,
+  hookUmfeld,
+  projektHatHook,
+  type HookUmfeld,
+} from './hook-zugang.js';
 import {
   CURSOR_FLAG,
   cursorEreignis,
@@ -41,6 +53,15 @@ import {
   istCursorNutzlast,
   type CursorNutzlast,
 } from './cursor-hook.js';
+import {
+  COPILOT_FLAG,
+  copilotEreignis,
+  copilotHookAntwort,
+  istFremdeLaufzeit,
+  type CopilotNutzlast,
+} from './copilot-hook.js';
+import { CODEX_FLAG, codexHookAntwort, type CodexNutzlast } from './codex-hook.js';
+import { GEMINI_FLAG, geminiEreignis, geminiHookAntwort, type GeminiNutzlast } from './gemini-hook.js';
 
 export const STANDARD_API_URL = 'https://api.cachly.dev';
 
@@ -63,6 +84,8 @@ export interface HookAufruf {
   einblenden?: typeof runEinblendung;
   /** Nur Tests: Ordner der Cursor-Ablage (cursor-hook.ts). */
   cursorAblage?: string;
+  /** Nur Tests: Ordner der Copilot-CLI-Ablage (copilot-hook.ts). */
+  copilotAblage?: string;
 }
 
 /**
@@ -89,6 +112,21 @@ async function cursorLauf(a: HookAufruf, payload: CursorNutzlast | null): Promis
   });
 }
 
+/**
+ * Die Laeufe der Editoren mit eigenem Hook-Format (`--copilot`, `--codex`,
+ * `--gemini`). Jeder bildet nur Eingabe und Antwort ab und rechnet ueber
+ * `hookAntwort` mit einer Claude-Nutzlast. null = kein solcher Lauf.
+ */
+function editorLauf(a: HookAufruf, payload: unknown): Promise<string> | null {
+  const claudeLauf = (raw: string, claudeEreignis: string) => hookAntwort({ ...a, raw, args: [claudeEreignis] });
+  if (a.args.includes(COPILOT_FLAG)) {
+    return copilotHookAntwort({ payload: payload as CopilotNutzlast | null, args: a.args, claudeLauf, ablageOrdner: a.copilotAblage });
+  }
+  if (a.args.includes(CODEX_FLAG)) return codexHookAntwort({ payload: payload as CodexNutzlast | null, args: a.args, claudeLauf });
+  if (a.args.includes(GEMINI_FLAG)) return geminiHookAntwort({ payload: payload as GeminiNutzlast | null, args: a.args, claudeLauf });
+  return null;
+}
+
 /** Was der Hook auf stdout schreibt — oder '' (nichts). Wirft nie. */
 export async function hookAntwort(a: HookAufruf): Promise<string> {
   try {
@@ -96,10 +134,21 @@ export async function hookAntwort(a: HookAufruf): Promise<string> {
     if (a.args.includes(CURSOR_FLAG) || istCursorNutzlast(payload)) {
       return await cursorLauf(a, payload as CursorNutzlast | null);
     }
+    const editor = editorLauf(a, payload);
+    if (editor) return await editor;
     const ereignis = payload?.hook_event_name
       ?? a.args.find((x) => EREIGNISSE.has(x))
       ?? a.umfeld.env.CACHLY_HOOK_EVENT
       ?? '';
+    // Ein Claude-Hook, den VS Code oder Copilot CLI aus .claude/settings.json
+    // mitlaeuft (erkennbar an `timestamp`, copilot-hook.ts): vor Werkzeugen und
+    // am Ende nie (VS Code achtet dort nicht auf den Matcher, das Protokoll hat
+    // ein anderes Format); Briefing und Prompt nur, solange das Projekt den
+    // eigenen Hook in .github/hooks/ nicht hat — sonst kaeme alles doppelt.
+    if (istFremdeLaufzeit(payload)) {
+      if (ereignis !== 'SessionStart' && ereignis !== 'UserPromptSubmit') return '';
+      if (copilotHatHook(a.umfeld)) return '';
+    }
     if (a.args.includes('--plugin') && ereignis && projektHatHook(ereignis, a.umfeld)) return '';
 
     // Schreibbeleg (07.10.2026): braucht keinen Schluessel, nur das Protokoll
@@ -184,7 +233,24 @@ export const HOOK_FRIST_MS: Record<string, number> = {
   sessionStart: 25_000,
   beforeSubmitPrompt: 8_000,
   postToolUse: 3_000,
+  // VS Code / Copilot CLI (COPILOT_TIMEOUTS: 30 / 10 / 5 s), Gemini
+  // (GEMINI_TIMEOUTS_MS: 30 / 10 s). Codex nutzt die Claude-Namen.
+  userPromptSubmitted: 8_000,
+  PostToolUse: 3_000,
+  BeforeAgent: 8_000,
 };
+
+/**
+ * Was ein Lauf an der Gesamtfrist ausgibt. Claude Code und Codex: nichts.
+ * Cursor, VS Code / Copilot CLI und Gemini: eine gueltige Leer-Antwort in
+ * ihrem Format (Gemini liest sonst stderr als Antwort, gemini-hook.ts).
+ */
+function leereAntwort(args: string[], payload: unknown): string {
+  if (args.includes(CURSOR_FLAG)) return cursorLeer(cursorEreignis(payload as CursorNutzlast | null, args));
+  if (args.includes(COPILOT_FLAG)) return copilotEreignis(payload as CopilotNutzlast | null, args) ? '{}' : '';
+  if (args.includes(GEMINI_FLAG)) return geminiEreignis(payload as GeminiNutzlast | null, args) ? '{}' : '';
+  return '';
+}
 
 /** Ganzer Hook-Lauf als Prozess: stdin lesen, antworten, Exit 0. */
 export async function hookHauptlauf(args: string[], selbst: string | undefined): Promise<never> {
@@ -195,8 +261,7 @@ export async function hookHauptlauf(args: string[], selbst: string | undefined):
       ?? args.find((x) => EREIGNISSE.has(x) || Object.hasOwn(HOOK_FRIST_MS, x))
       ?? '';
     const frist = Number(process.env.CACHLY_HOOK_FRIST_MS) || HOOK_FRIST_MS[ereignis] || HOOK_FRIST_MS.UserPromptSubmit;
-    // An der Frist: Claude Code bekommt nichts, Cursor eine gueltige Leer-Antwort.
-    const leer = args.includes(CURSOR_FLAG) ? cursorLeer(cursorEreignis(payload as CursorNutzlast | null, args)) : '';
+    const leer = leereAntwort(args, payload);
     const out = await Promise.race([
       hookAntwort({ args, raw, umfeld: hookUmfeld(), apiUrl: apiUrl(), selbst }),
       new Promise<string>((r) => setTimeout(() => r(leer), frist)),
