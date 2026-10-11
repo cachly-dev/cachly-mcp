@@ -156,7 +156,17 @@ function starteStartwissenImHintergrund(instanzId: string): void {
     melde: (lektionen) => sendFunnelEvent('brain_from_git', {
       ...(JWT ? { api_key: JWT } : {}), instance_id: instanzId, total: lektionen, auto: 'startwissen',
     }),
+    // Ordner ohne Git: der Startvorrat statt der Geschichte (startwissen.ts).
+    startvorrat: (a) => handleShareTool('brain_seed_starter', a, getConnection, apiFetch),
+    meldeStartvorrat: (lektionen) => sendFunnelEvent('brain_seed_starter', {
+      ...(JWT ? { api_key: JWT } : {}), instance_id: instanzId, auto: true,
+    }, { seeded_count: lektionen, auto: true }),
   });
+}
+
+/** Laedt ein neues Brain in einem Ordner ohne Git den Startvorrat? (startwissen.ts) */
+function startvorratMoeglich(): boolean {
+  return startwissenMoeglich() && startvorratErlaubt();
 }
 
 /**
@@ -239,7 +249,7 @@ async function resolveDefaultInstanceId(): Promise<string> {
           _defaultInstanceId = provisioned;
           _defaultInstanceLastAttempt = 0;
           // Das Konto hatte keine Instanz: diese ist neu und leer (leeres-brain.ts).
-          merkeNeuesBrain(provisioned, startwissenMoeglich());
+          merkeNeuesBrain(provisioned, startwissenMoeglich(), startvorratMoeglich());
           void persistInstanceIdToConfig(provisioned);
           // Neu angelegt (nach der Browser-Anmeldung oder der Selbstheilung
           // eines Kontos ohne Instanz): aus der Git-Geschichte lernen.
@@ -590,34 +600,13 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
       // if provisioning is briefly unavailable here).
       _defaultInstanceLastAttempt = 0;
       await resolveDefaultInstanceId();
-      // Give a provisioning instance a head-start so getConnection's wait is shorter.
-      // The instance is almost always ready by the time the user's tool re-enters.
-      if (_defaultInstanceId) {
-        try {
-          const checkRes = await fetch(`${API_URL}/api/v1/instances/${_defaultInstanceId}`, {
-            headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' },
-            signal: AbortSignal.timeout(4000),
-          });
-          if (checkRes.ok) {
-            const checkInst = await checkRes.json() as { status?: string };
-            if (checkInst.status === 'provisioning') {
-              // Wait up to 20s here so the re-entered tool call lands on a running instance.
-              const pDeadline = Date.now() + 20_000;
-              while (checkInst.status === 'provisioning' && Date.now() < pDeadline) {
-                await new Promise(r => setTimeout(r, PROVISION_TAKT_MS));
-                const rr = await fetch(`${API_URL}/api/v1/instances/${_defaultInstanceId}`, {
-                  headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' },
-                  signal: AbortSignal.timeout(4000),
-                }).catch(() => null);
-                if (rr?.ok) {
-                  const ri = await rr.json() as { status?: string };
-                  (checkInst as { status?: string }).status = ri.status;
-                } else { break; }
-              }
-            }
-          }
-        } catch { /* non-fatal — getConnection will handle the wait if still provisioning */ }
-      }
+      // Kein Warten auf die Instanz an dieser Stelle. Bis zum 11.10.2026 hielt
+      // hier eine Schleife bis zu 20 s an, bis die neue Instanz lief — und mit
+      // ihr den Werkzeugaufruf, der die Anmeldung abschloss. Jetzt antworten
+      // die Lesewerkzeuge auf ein neues, noch startendes Brain sofort
+      // (leeres-brain.ts), und jedes Werkzeug, das die Instanz wirklich
+      // braucht, wartet in getConnection darauf (Frist PROVISION_TIMEOUT_MS).
+      // Verloren geht damit nichts: es wartet nur, wer warten muss.
       // Persist instance_id to ~/.claude/mcp.json after it's known, so every
       // restart reuses it instead of making an extra list call on startup.
       if (_defaultInstanceId) void persistInstanceIdToConfig(_defaultInstanceId);
@@ -928,10 +917,11 @@ import {
 import { holeSofortTest } from './sofort-test.js';
 import { sichereZugang, echterWert } from './zugang.js';
 import { zeitpunkt } from './zeitmessung.js';
-import { warteAufLaufendeInstanz, gemeinsamerAufbau, PROVISION_TAKT_MS } from './instanz-warten.js';
-import { merkeNeuesBrain } from './leeres-brain.js';
+import { warteAufLaufendeInstanz, gemeinsamerAufbau } from './instanz-warten.js';
+import { merkeNeuesBrain, startetLautLetztemBlick } from './leeres-brain.js';
 import {
   starteStartwissen, startwissenGestartet, beanspruchStartwissen, holeStartwissenHinweis, waehleProjektOrdner,
+  startvorratErlaubt,
 } from './startwissen.js';
 import { pruefeNeueFassung, holeNeueFassungHinweis } from './neue-fassung.js';
 import { beiStdinEnde } from './stdin-ende.js';
@@ -1324,7 +1314,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         zeitpunkt(`sofort-test: ${test ? 'Brain angelegt' : 'kein Test'}`);
         // Jeder Sofort-Test legt ein neues Konto mit neuer Instanz an: sie ist
         // leer, solange sie startet (leeres-brain.ts).
-        if (test) merkeNeuesBrain(test.instanzId, startwissenMoeglich());
+        if (test) merkeNeuesBrain(test.instanzId, startwissenMoeglich(), startvorratMoeglich());
         return test;
       },
       ablagen: {
@@ -1416,8 +1406,14 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
         ? JSON.stringify(brainResult)
         : String(brainResult ?? '');
       const isFirstSession = resultText.includes('Welcome! Your AI Brain is live.');
+      // Das Briefing eines neuen Brains, das noch startet (leeres-brain.ts),
+      // hat nichts geliefert: kein Abruf. Den Import aus Git macht dort
+      // startwissen.ts im Hintergrund.
+      const neuUndStartet = startetLautLetztemBlick(instanceId);
 
-      if (!isFirstSession && resultText.length > 100) {
+      if (neuUndStartet) {
+        // nichts zu zaehlen, nichts zu importieren
+      } else if (!isFirstSession && resultText.length > 100) {
         // Existing brain — session_start acts as implicit recall → increment counter.
         sendFunnelEvent('recall_best_solution', telemetryExtra);
       } else if (isFirstSession && args.workspace_path && await gitStartFrei(instanceId)) {
@@ -1876,8 +1872,13 @@ async function autoStartSession(instanceId: string): Promise<void> {
   // Auto-index the project if it hasn't been indexed in the last 24h.
   // This is the main lever for growing token savings: more indexed code →
   // more semantic cache hits → fewer LLM calls for repeated questions.
+  //
+  // Ganz im Hintergrund, auch die Pruefung davor. Bis zum 11.10.2026 wartete
+  // der Werkzeugaufruf, der die Sitzung ausloest, auf getConnection — bei einem
+  // neuen Brain, das noch startet, 6 bis 12 s, obwohl die Antwort selbst
+  // sofort feststand (leeres-brain.ts).
   if (process.env.CACHLY_AUTO_INDEX !== 'false') {
-    try {
+    void (async () => {
       const redis = await getConnection(instanceId);
       const lastIndexed = await redis.get(`cachly:index:last_indexed:${instanceId}`);
       const staleMs = 24 * 60 * 60 * 1000;
@@ -1885,16 +1886,15 @@ async function autoStartSession(instanceId: string): Promise<void> {
       if (isStale) {
         // Mark as indexing now to prevent concurrent re-runs.
         await redis.set(`cachly:index:last_indexed:${instanceId}`, String(Date.now()), 'EX', 90000);
-        // Run in background — don't block the first tool call.
-        handleTool('index_project', {
+        await handleTool('index_project', {
           instance_id: instanceId,
           dir: process.cwd(),
           max_files: 150,
           ttl: 86400 * 7, // cache for 7 days
           namespace: 'cachly:sem:code',
-        }).catch(() => undefined);
+        });
       }
-    } catch { /* never block the session on indexing errors */ }
+    })().catch(() => { /* never block the session on indexing errors */ });
   }
 }
 

@@ -4,6 +4,7 @@ import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse, darfHeraus } from '../utils.js';
 import { ersparteMinuten, zaehltAlsErsparnis } from '../wertbeitrag.js';
 import { findePaare } from '../zulassung-und-urteil.js';
+import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
 
 /**
  * Der dritte Lesepfad (Karte lr9c9h26kmb5). `causal_trace` kennt den Fragenden
@@ -29,7 +30,7 @@ export async function handleAdvancedTool(
   name: string,
   args: Record<string, unknown>,
   getConnection: GetConnection,
-  _apiFetch: ApiFetch,
+  apiFetch: ApiFetch,
 ): Promise<string | null> {
   switch (name) {
     case 'memory_consolidate': {
@@ -302,6 +303,10 @@ export async function handleAdvancedTool(
       const { instance_id, problem, max_depth = 5, tags: filterTags = [] } = args as {
         instance_id: string; problem: string; max_depth?: number; tags?: string[];
       };
+      // Ein neues Brain, das noch startet, ist leer (leeres-brain.ts).
+      const sofort = await sofortAntwortNeuesBrain(instance_id, apiFetch,
+        `🔍 **Causal Trace: "${problem}"**\n\nNo matching lessons found in brain.`);
+      if (sofort) return sofort;
       const redis = await getConnection(instance_id);
 
       // Normalize problem to keyword tokens

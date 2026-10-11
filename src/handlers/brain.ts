@@ -50,7 +50,8 @@ import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
 import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
          splitMultiQuery, levenshtein, indexVocab as _indexVocab, bestandHolen } from '../search.js';
-import { neuesBrain, leeresBrainAntwort, lerntNochAusGit } from '../leeres-brain.js';
+import { startetNochLeer, leeresBrainAntwort, startLage, sofortAntwortNeuesBrain,
+         neuesBrainBriefing } from '../leeres-brain.js';
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider, EMBED_PROVIDER } from '../embeddings.js';
 import { leserAktiv, leserPunkte, mischeMitLeser } from '../leser.js';
@@ -792,6 +793,57 @@ function vermerkeLeereSuche(redis: Redis, instanceId: string, query: string, dau
     await redis.ltrim(k, 0, SUCH_DECKEL - 1);
   })().catch(() => { /* Messzeile stoppt nie die Antwort */ });
   void vermerkeAusgang(redis, instanceId, 'schweigen');
+}
+
+/**
+ * Die Serie der Arbeitstage fortschreiben (session_start, Schritt 6). Wirft
+ * nie: bei einem Fehler bleibt, was bis dahin feststand.
+ *
+ * Eine eigene Funktion, weil session_start sie an zwei Stellen braucht: im
+ * vollen Weg und nach der Sofort-Antwort eines neuen Brains, sobald die
+ * Verbindung steht (leeres-brain.ts).
+ */
+async function zaehleSerie(redis: Redis): Promise<{ tage: number; rekord: number }> {
+  const serie = { tage: 0, rekord: 0 };
+  try {
+    const streakRaw = await redis.get('cachly:streak:current');
+    const streak = safeJsonParse<{ days: number; last_date: string; record: number } | null>(streakRaw, null);
+    const today = new Date().toISOString().slice(0, 10);
+    if (streak) {
+      const lastDate = streak.last_date;
+      const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+      if (lastDate === today) {
+        // Already counted today
+        serie.tage = streak.days;
+        serie.rekord = streak.record;
+      } else if (lastDate === yesterday) {
+        // Continuing streak
+        serie.tage = streak.days + 1;
+        serie.rekord = Math.max(serie.tage, streak.record);
+        await redis.set('cachly:streak:current', JSON.stringify({ days: serie.tage, last_date: today, record: serie.rekord }));
+      } else {
+        // Streak broken
+        serie.tage = 1;
+        serie.rekord = streak.record;
+        await redis.set('cachly:streak:current', JSON.stringify({ days: 1, last_date: today, record: serie.rekord }));
+      }
+    } else {
+      // First session ever
+      serie.tage = 1;
+      serie.rekord = 1;
+      await redis.set('cachly:streak:current', JSON.stringify({ days: 1, last_date: today, record: 1 }));
+    }
+  } catch { /* non-critical */ }
+  return serie;
+}
+
+/** Den Sitzungsbeginn vermerken — session_end rechnet daraus die Dauer (session_start, Schritt 7). */
+async function merkeSitzungsbeginn(redis: Redis, focus: string, provider: string): Promise<void> {
+  await redis.set('cachly:session:current', JSON.stringify({
+    started: new Date().toISOString(),
+    focus,
+    provider,
+  }), 'EX', 86400); // auto-expire after 24h if session_end never called
 }
 
 async function getRecallGate(instanceId: string, apiFetch: ApiFetch): Promise<RecallGate> {
@@ -1859,6 +1911,9 @@ async function handleBrainToolInner(
       const { instance_id, topic, author: rbsAuthor } = args as {
         instance_id: string; topic: string; author?: string;
       };
+      // Ein neues Brain, das noch startet, ist leer (leeres-brain.ts).
+      const rbsSofort = await sofortAntwortNeuesBrain(instance_id, apiFetch, `📭 No lessons found for \`${topic}\`.`);
+      if (rbsSofort) return rbsSofort;
       const redis = await getConnection(instance_id);
 
       /*
@@ -2175,19 +2230,14 @@ async function handleBrainToolInner(
       // Jetzt kommt diese Antwort sofort. Begruendung und Zahlen: leeres-brain.ts.
       // Jedes andere Brain (auch eines mit unbekanntem Stand) nimmt den
       // vollen Weg; nach dem ersten Blick auf eine laufende Instanz auch dieses.
-      const frischesBrain = neuesBrain(instance_id);
-      if (frischesBrain && !frischesBrain.laeuft) {
-        const stand = await apiFetch<Instance | null>(`/api/v1/instances/${instance_id}`).catch(() => null);
-        if (stand?.status === 'provisioning') {
-          const dauer = Date.now() - suchStart;
-          // Die Messzeilen schreibt die Verbindung, sobald sie steht.
-          void getConnection(instance_id)
-            .then((r) => vermerkeLeereSuche(r, instance_id, String(query ?? ''), dauer))
-            .catch(() => { /* Messzeile stoppt nie die Antwort */ });
-          zeitpunkt('smart_recall: neues Brain startet noch — sofort geantwortet');
-          return leeresBrainAntwort(String(query ?? ''), { startet: true, lerntAusGit: lerntNochAusGit(instance_id) });
-        }
-        frischesBrain.laeuft = true;
+      if (await startetNochLeer(instance_id, apiFetch)) {
+        const dauer = Date.now() - suchStart;
+        // Die Messzeilen schreibt die Verbindung, sobald sie steht.
+        void getConnection(instance_id)
+          .then((r) => vermerkeLeereSuche(r, instance_id, String(query ?? ''), dauer))
+          .catch(() => { /* Messzeile stoppt nie die Antwort */ });
+        zeitpunkt('smart_recall: neues Brain startet noch — sofort geantwortet');
+        return leeresBrainAntwort(String(query ?? ''), { startet: true, ...startLage(instance_id) });
       }
 
       const redis = await getConnection(instance_id);
@@ -2222,7 +2272,7 @@ async function handleBrainToolInner(
       if (!wortbestand) {
         vermerkeLeereSuche(redis, instance_id, String(query ?? ''), Date.now() - suchStart);
         zeitpunkt('smart_recall: Brain leer — sofort geantwortet');
-        return leeresBrainAntwort(String(query ?? ''), { startet: false, lerntAusGit: lerntNochAusGit(instance_id) });
+        return leeresBrainAntwort(String(query ?? ''), { startet: false, ...startLage(instance_id) });
       }
       const lektionenImBestand = wortbestand.docs
         .reduce((n, d) => n + (d.key.startsWith('cachly:lesson:best:') ? 1 : 0), 0);
@@ -3505,6 +3555,30 @@ async function handleBrainToolInner(
 
     case 'session_start': {
       const { instance_id, focus = '', author = '', provider = '', workspace_path = '' } = args as { instance_id: string; focus?: string; author?: string; provider?: string; workspace_path?: string };
+
+      // ── Ein Brain, das dieser Prozess eben angelegt hat und das noch startet ──
+      //
+      // Es ist leer. Bis zum 11.10.2026 wartete session_start trotzdem auf die
+      // Instanz — gemessen 9,7 s von 16,0 s —, um dann "0 lessons" zu melden.
+      // Jetzt kommt das Briefing sofort (leeres-brain.ts). Was der volle Weg
+      // schreibt — Serie, Sitzungsbeginn fuer session_end, gesehene Fassung —,
+      // schreibt die Verbindung nach, sobald sie steht. Die gesehene Fassung
+      // gilt als gesehen: wer neu anfaengt, braucht kein "What's new". Die
+      // Zeile der API fuer das Konto (notice) bleibt beim vollen Briefing — sie
+      // hat genau EINE Ausgabestelle (notice-kanal.test.ts) und kommt mit dem
+      // ersten session_start auf der laufenden Instanz.
+      if (await startetNochLeer(instance_id, apiFetch)) {
+        void getConnection(instance_id)
+          .then(async (r) => {
+            await zaehleSerie(r);
+            await merkeSitzungsbeginn(r, focus, provider);
+            await r.set('cachly:mcp:version:last_seen', CURRENT_VERSION, 'EX', 365 * 86400);
+          })
+          .catch(() => { /* das Nachschreiben stoppt nie die Antwort */ });
+        zeitpunkt('session_start: neues Brain startet noch — sofort geantwortet');
+        return neuesBrainBriefing({ instanzId: instance_id, provider, ...startLage(instance_id) });
+      }
+
       const redis = await getConnection(instance_id);
 
       // 1. Scan all best-solution lessons
@@ -3564,47 +3638,13 @@ async function handleBrainToolInner(
         : [];
 
       // 6. Streak tracking
-      let streakDays = 0;
-      let streakRecord = 0;
+      const { tage: streakDays, rekord: streakRecord } = await zaehleSerie(redis);
       let streakMessage = '';
-      try {
-        const streakRaw = await redis.get('cachly:streak:current');
-        const streak = safeJsonParse<{ days: number; last_date: string; record: number } | null>(streakRaw, null);
-        const today = new Date().toISOString().slice(0, 10);
-        if (streak) {
-          const lastDate = streak.last_date;
-          const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
-          if (lastDate === today) {
-            // Already counted today
-            streakDays = streak.days;
-            streakRecord = streak.record;
-          } else if (lastDate === yesterday) {
-            // Continuing streak
-            streakDays = streak.days + 1;
-            streakRecord = Math.max(streakDays, streak.record);
-            await redis.set('cachly:streak:current', JSON.stringify({ days: streakDays, last_date: today, record: streakRecord }));
-          } else {
-            // Streak broken
-            streakDays = 1;
-            streakRecord = streak.record;
-            await redis.set('cachly:streak:current', JSON.stringify({ days: 1, last_date: today, record: streakRecord }));
-          }
-        } else {
-          // First session ever
-          streakDays = 1;
-          streakRecord = 1;
-          await redis.set('cachly:streak:current', JSON.stringify({ days: 1, last_date: today, record: 1 }));
-        }
-        if (streakDays >= 7) streakMessage = `🔥 **${streakDays}-day streak!** ${streakDays === streakRecord ? ' New record!' : `Best: ${streakRecord}d`}`;
-        else if (streakDays > 1) streakMessage = `🔥 ${streakDays}-day streak`;
-      } catch { /* non-critical */ }
+      if (streakDays >= 7) streakMessage = `🔥 **${streakDays}-day streak!** ${streakDays === streakRecord ? ' New record!' : `Best: ${streakRecord}d`}`;
+      else if (streakDays > 1) streakMessage = `🔥 ${streakDays}-day streak`;
 
       // 7. Save session start marker
-      await redis.set('cachly:session:current', JSON.stringify({
-        started: new Date().toISOString(),
-        focus,
-        provider,
-      }), 'EX', 86400); // auto-expire after 24h if session_end never called
+      await merkeSitzungsbeginn(redis, focus, provider);
 
       // 8. Time saved counter
       let timeSavedMins = 0;

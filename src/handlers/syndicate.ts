@@ -6,6 +6,7 @@ import type { CKGEdge, CKGNode } from '../ckg.js';
 import { keywordSearch } from '../search.js';
 import { safeJsonParse } from '../utils.js';
 import type { Instance } from './brain.js';
+import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -354,6 +355,10 @@ export async function handleSyndicateTool(
     // ── Layer 1: brain_search ─────────────────────────────────────────────────
     case 'brain_search': {
       const { instance_id, query, limit = 15 } = args as { instance_id: string; query: string; limit?: number };
+      // Ein neues Brain, das noch startet, ist leer (leeres-brain.ts).
+      const sofort = await sofortAntwortNeuesBrain(instance_id, apiFetch,
+        `🔎 **Brain Search: "${query}"**\n\nNo results found across all brain data.`);
+      if (sofort) return sofort;
       const redis = await getConnection(instance_id);
 
       // BM25+ over ALL brain key namespaces
@@ -487,6 +492,10 @@ export async function handleSyndicateTool(
         // fall through to the instance-scoped path below.
       }
 
+      // Ein neues Brain, das noch startet, ist leer (leeres-brain.ts).
+      const sofort = await sofortAntwortNeuesBrain(instance_id, apiFetch,
+        `🔮 **Brain Predict: "${ctx}"**\n\nNo predictions yet — the brain hasn't seen this domain.`);
+      if (sofort) return sofort;
       const redis = await getConnection(instance_id);
 
       const ctxTokens = ctx.toLowerCase().replace(/[^a-z0-9\s\-_:]/g, ' ').split(/\s+/).filter(t => t.length > 2);

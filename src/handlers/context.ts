@@ -2,6 +2,7 @@ import type { Redis } from 'ioredis';
 import { computeEmbedding } from '../embeddings.js';
 import type { Instance } from './brain.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
+import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -94,6 +95,10 @@ export async function handleContextTool(
 
     case 'recall_context': {
       const { instance_id, key } = args as { instance_id: string; key: string };
+      // Ein neues Brain, das noch startet, ist leer (leeres-brain.ts).
+      const sofort = await sofortAntwortNeuesBrain(instance_id, apiFetch,
+        `⚠️ No cached context found ${key.includes('*') ? 'matching pattern' : 'for key'} \`${key}\`.`);
+      if (sofort) return sofort;
       const redis = await getConnection(instance_id);
 
       // Check if key is a glob pattern
@@ -151,6 +156,8 @@ export async function handleContextTool(
         limit = 50,
       } = args as { instance_id: string; category?: string; limit?: number };
 
+      const sofort = await sofortAntwortNeuesBrain(instance_id, apiFetch, '📭 No cached context found.');
+      if (sofort) return sofort;
       const redis = await getConnection(instance_id);
       const pattern = category === 'all' ? 'cachly:ctx:*' : `cachly:ctx:${category}:*`;
       const keys: string[] = [];

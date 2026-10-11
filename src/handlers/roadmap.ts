@@ -1,5 +1,6 @@
 import type { Redis } from 'ioredis';
 import { safeJsonParse } from '../utils.js';
+import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -12,7 +13,7 @@ export async function handleRoadmapTool(
   name: string,
   args: Record<string, unknown>,
   getConnection: GetConnection,
-  _apiFetch: ApiFetch,
+  apiFetch: ApiFetch,
 ): Promise<string | null> {
   switch (name) {
     case 'roadmap_add': {
@@ -99,6 +100,9 @@ export async function handleRoadmapTool(
         instance_id: string; status?: string; tag?: string;
         milestone?: string; priority?: string;
       };
+      // Ein neues Brain, das noch startet, ist leer (leeres-brain.ts).
+      const sofort = await sofortAntwortNeuesBrain(rid, apiFetch, '📋 **Roadmap is empty.**');
+      if (sofort) return sofort;
       const redis = await getConnection(rid);
       const all = await redis.hgetall(`cachly:roadmap:${rid}`);
       if (!all || Object.keys(all).length === 0) {
@@ -149,6 +153,8 @@ export async function handleRoadmapTool(
 
     case 'roadmap_next': {
       const { instance_id: rid, tag: filterTag } = args as { instance_id: string; tag?: string };
+      const sofort = await sofortAntwortNeuesBrain(rid, apiFetch, '📋 **Roadmap is empty.**');
+      if (sofort) return sofort;
       const redis = await getConnection(rid);
       const all = await redis.hgetall(`cachly:roadmap:${rid}`);
       if (!all || Object.keys(all).length === 0) {

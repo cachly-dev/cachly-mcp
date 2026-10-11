@@ -40,6 +40,7 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import type { Redis } from 'ioredis';
 import { safeJsonParse, scanKeys } from './utils.js';
+import { STARTER_CORPUS_SIZE } from './starter-corpus.js';
 import {
   NAME_VEKTOR_PRAEFIX, VEKTOR_NACHTRAG, VEKTOR_PRAEFIX, packe, textFuerNamensVektor, textFuerVektor,
 } from './bedeutung.js';
@@ -57,8 +58,21 @@ const FEHLER_GRENZE = 3;
 /** Dieselbe Lebensdauer wie die Lektionen aus brain_from_git. */
 const LEBENSDAUER_S = 90 * 86400;
 
+/** Wie viele Lektionen der Startvorrat bringt (brain_seed_starter). */
+export const STARTVORRAT_LEKTIONEN = STARTER_CORPUS_SIZE;
+
+/**
+ * Darf ein neues Brain in einem Ordner ohne Git den Startvorrat laden?
+ * CACHLY_STARTVORRAT=false schaltet nur das ab, CACHLY_STARTWISSEN=false
+ * schaltet das ganze Startwissen ab (index.ts).
+ */
+export function startvorratErlaubt(env: Record<string, string | undefined> = process.env): boolean {
+  return !/^(0|false|off|no|nein)$/i.test((env.CACHLY_STARTVORRAT ?? '').trim());
+}
+
 export type StartwissenErgebnis =
   | { art: 'kein-repo'; ordner: string }
+  | { art: 'startvorrat'; ordner: string; lektionen: number; vektoren: number }
   | { art: 'ausgeschlossen'; ordner: string; grund: string }
   | { art: 'hat-lektionen' }
   | { art: 'schon-erledigt' }
@@ -81,6 +95,13 @@ export interface StartwissenUmfeld {
   hatEinbettung?: () => boolean;
   /** Wird nach dem Import mit der Zahl der neuen Lektionen gerufen (Ereignis). */
   melde?: (lektionen: number) => void;
+  /**
+   * Laedt den Startvorrat (brain_seed_starter). Fehlt er, bleibt ein Brain in
+   * einem Ordner ohne Git leer — wie bis zum 11.10.2026.
+   */
+  startvorrat?: (args: { instance_id: string }) => Promise<unknown>;
+  /** Wird nach dem Startvorrat mit der Zahl seiner Lektionen gerufen (Ereignis). */
+  meldeStartvorrat?: (lektionen: number) => void;
   env?: Record<string, string | undefined>;
   pauseMs?: number;
   anlaufMs?: number;
@@ -190,6 +211,7 @@ export async function lerneAusGitGeschichte(u: StartwissenUmfeld): Promise<Start
     const wurzel = await (u.gitWurzel ?? echteGitWurzel)(ordner);
     if (!wurzel) {
       log(`cachly: ${ordner} is not a git repository — the new Brain starts without git history.\n`);
+      if (u.startvorrat && startvorratErlaubt(env)) return await ladeStartvorrat(u, ordner, log);
       return { art: 'kein-repo', ordner };
     }
     const grund = ausschlussGrund(wurzel, env);
@@ -246,6 +268,76 @@ export async function lerneAusGitGeschichte(u: StartwissenUmfeld): Promise<Start
     log(`cachly: import from git history stopped: ${text}\n`);
     return { art: 'fehler', grund: text };
   }
+}
+
+/** Der Satz an der ersten Antwort nach dem Startvorrat. Geht an den Assistenten. */
+export function startvorratSatz(lektionen: number): string {
+  return [
+    '',
+    '',
+    '---',
+    `ℹ️ **cachly:** the project folder is not a git repository, so this new Brain loaded ${lektionen} `
+      + `starter lesson${lektionen === 1 ? '' : 's'} (common engineering fixes, tagged \`source: "starter"\`; `
+      + 'they never override own lessons). `smart_recall` finds them now. Tell the user once.',
+  ].join('\n');
+}
+
+/**
+ * Ordner ohne Git: der Startvorrat, nach denselben Regeln wie der Import aus
+ * Git — nur in ein leeres Brain, einmal je Instanz ueber dieselbe Marke, im
+ * Hintergrund. Bis zum 11.10.2026 spielte ihn der ERSTE session_start ein,
+ * synchron (index.ts); seit session_start auf ein startendes Brain sofort
+ * antwortet (leeres-brain.ts), passiert es hier.
+ *
+ * Dieselbe Marke wie der Git-Import: ein spaeterer Prozess findet sie und
+ * laedt weder den Vorrat noch die Geschichte ein zweites Mal.
+ */
+async function ladeStartvorrat(
+  u: StartwissenUmfeld,
+  ordner: string,
+  log: (z: string) => void,
+): Promise<StartwissenErgebnis> {
+  const laden = u.startvorrat;
+  if (!laden) return { art: 'kein-repo', ordner };
+  const redis = await u.verbindung(u.instanzId);
+  if ((await scanKeys(redis, 'cachly:lesson:best:*', { max: 1 })).length > 0) {
+    log('cachly: this Brain already has lessons — no starter lessons.\n');
+    return { art: 'hat-lektionen' };
+  }
+  const beansprucht = await redis.set(
+    STARTWISSEN_MARKE,
+    JSON.stringify({ stand: 'startvorrat', seit: new Date().toISOString(), ordner }),
+    'NX',
+  );
+  if (beansprucht !== 'OK') return { art: 'schon-erledigt' };
+
+  log(`cachly: new Brain without git history — loading ${STARTVORRAT_LEKTIONEN} starter lessons in the background.\n`);
+  try {
+    await laden({ instance_id: u.instanzId });
+  } catch (e) {
+    const text = e instanceof Error ? e.message : String(e);
+    await redis.set(STARTWISSEN_MARKE, JSON.stringify({ stand: 'abgebrochen', am: new Date().toISOString(), grund: text.slice(0, 200) }))
+      .catch(() => undefined);
+    log(`cachly: loading starter lessons failed: ${text}\n`);
+    return { art: 'fehler', grund: text };
+  }
+
+  // Gezaehlt wird, was der Vorrat wirklich angelegt hat (source "starter").
+  const themen: Array<{ topic: string; lektion: Record<string, unknown> }> = [];
+  for (const schluessel of await scanKeys(redis, 'cachly:lesson:best:*', { max: 1000 })) {
+    const lektion = safeJsonParse<Record<string, unknown>>(await redis.get(schluessel), {});
+    if (lektion.source !== 'starter') continue;
+    themen.push({ topic: schluessel.slice('cachly:lesson:best:'.length), lektion });
+  }
+  await redis.set(STARTWISSEN_MARKE, JSON.stringify({
+    stand: 'fertig', am: new Date().toISOString(), ordner, startvorrat: themen.length,
+  })).catch(() => undefined);
+  log(`cachly: loaded ${themen.length} starter lessons.\n`);
+  if (themen.length > 0) _hinweis = startvorratSatz(themen.length);
+  try { u.meldeStartvorrat?.(themen.length); } catch { /* ein Ereignis stoert nie */ }
+
+  const vektoren = await betteNacheinander(redis, themen, u, log);
+  return { art: 'startvorrat', ordner, lektionen: themen.length, vektoren };
 }
 
 /**
