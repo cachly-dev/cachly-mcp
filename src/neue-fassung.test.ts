@@ -11,8 +11,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, mkdirSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  ABFRAGE_ABSTAND_MS, SITZUNGSBEGINN_WERKZEUGE, _neueFassungZuruecksetzen, hinweisSatz, holeNeueFassungHinweis,
-  istFassung, istNeuer, pruefeNeueFassung, pruefungAus, standPfad,
+  ABFRAGE_ABSTAND_MS, PLUGIN_SCHLUESSEL, SITZUNGSBEGINN_WERKZEUGE, _neueFassungZuruecksetzen, eigeneFassung,
+  hinweisSatz, holeNeueFassungHinweis, istFassung, istNeuer, pluginFassung, pruefeNeueFassung, pruefungAus,
+  standPfad,
 } from './neue-fassung.js';
 
 const ALT = '0.10.138';
@@ -346,8 +347,8 @@ describe('abgeschaltet: nie', () => {
 describe('Anschluss in index.ts', () => {
   const index = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
 
-  it('die Pruefung startet im Hintergrund — ohne await', () => {
-    expect(index).toMatch(/void pruefeNeueFassung\(\{ aktuelle: CURRENT_VERSION \}\)/);
+  it('die Pruefung startet im Hintergrund — ohne await, mit eigeneFassung (als Plugin: die des Plugins)', () => {
+    expect(index).toMatch(/void pruefeNeueFassung\(\{ aktuelle: eigeneFassung\(CURRENT_VERSION\) \}\)/);
     expect(index).not.toMatch(/await pruefeNeueFassung/);
   });
 
@@ -360,5 +361,92 @@ describe('Anschluss in index.ts', () => {
 
   it('der alte Vergleich mit "!==" ist weg: gleich-oder-kleiner meldete er als Update', () => {
     expect(index).not.toMatch(/latest\s*!==\s*CURRENT_VERSION/);
+  });
+});
+
+// ── Als Plugin zaehlt die Fassung des Plugins ─────────────────────────────────
+//
+// Anlass 11.10.2026: npx holt den Server ohne Fassung immer neu, die Hooks im
+// Plugin aber nicht (Auto-Update bei fremden Marktplaetzen aus). Beim Gruender
+// stand das Plugin seit dem 28.08. auf 0.10.138, der Server auf 0.10.180 — und
+// der Vergleich Server gegen npm meldete nie etwas.
+
+const PLUGIN_ENV = { CACHLY_QUELLE: 'claude-code-plugin' };
+
+function schreibeListe(eintraege: unknown): void {
+  mkdirSync(join(heim, '.claude', 'plugins'), { recursive: true });
+  writeFileSync(join(heim, '.claude', 'plugins', 'installed_plugins.json'),
+    JSON.stringify({ version: 2, plugins: { [PLUGIN_SCHLUESSEL]: eintraege } }), 'utf8');
+}
+
+function schreibePluginWurzel(version: unknown): string {
+  const wurzel = join(heim, 'cache', 'cachly', 'cachly-brain', String(version));
+  mkdirSync(join(wurzel, '.claude-plugin'), { recursive: true });
+  writeFileSync(join(wurzel, '.claude-plugin', 'plugin.json'), JSON.stringify({ name: 'cachly-brain', version }), 'utf8');
+  return wurzel;
+}
+
+describe('pluginFassung: welche Fassung das installierte Plugin hat', () => {
+  it('liest CLAUDE_PLUGIN_ROOT zuerst', () => {
+    const wurzel = schreibePluginWurzel('0.10.150');
+    schreibeListe([{ version: '0.10.138' }]);
+    expect(pluginFassung({ CLAUDE_PLUGIN_ROOT: wurzel }, heim)).toBe('0.10.150');
+  });
+
+  it('ohne CLAUDE_PLUGIN_ROOT: installed_plugins.json, Eintrag cachly-brain@cachly', () => {
+    schreibeListe([{ scope: 'user', version: '0.10.138' }]);
+    expect(pluginFassung({}, heim)).toBe('0.10.138');
+  });
+
+  it('mehrere Eintraege: die hoechste Fassung zaehlt', () => {
+    schreibeListe([{ version: '0.10.138' }, { version: '0.10.170' }, { version: '0.10.9' }]);
+    expect(pluginFassung({}, heim)).toBe('0.10.170');
+  });
+
+  it('kaputte Wurzel faellt auf die Liste zurueck', () => {
+    schreibeListe([{ version: '0.10.138' }]);
+    expect(pluginFassung({ CLAUDE_PLUGIN_ROOT: join(heim, 'gibt-es-nicht') }, heim)).toBe('0.10.138');
+  });
+
+  it('nichts Lesbares: null — keine Datei, kaputtes JSON, kein Eintrag, keine Fassungsnummer', () => {
+    expect(pluginFassung({}, heim)).toBeNull();
+    mkdirSync(join(heim, '.claude', 'plugins'), { recursive: true });
+    writeFileSync(join(heim, '.claude', 'plugins', 'installed_plugins.json'), '{kaputt', 'utf8');
+    expect(pluginFassung({}, heim)).toBeNull();
+    schreibeListe('kein-array');
+    expect(pluginFassung({}, heim)).toBeNull();
+    schreibeListe([{ version: 'latest; rm -rf /' }]);
+    expect(pluginFassung({}, heim)).toBeNull();
+  });
+});
+
+describe('eigeneFassung: als Plugin das Plugin, sonst der Server', () => {
+  it('als Plugin mit altem Plugin: die Plugin-Fassung', () => {
+    schreibeListe([{ version: ALT }]);
+    expect(eigeneFassung(NEU, PLUGIN_ENV, heim)).toBe(ALT);
+  });
+
+  it('ohne Plugin-Kennung: immer die Server-Fassung, auch wenn ein Plugin installiert ist', () => {
+    schreibeListe([{ version: ALT }]);
+    expect(eigeneFassung(NEU, NULL_ENV, heim)).toBe(NEU);
+  });
+
+  it('als Plugin ohne lesbare Plugin-Fassung: die Server-Fassung', () => {
+    expect(eigeneFassung(NEU, PLUGIN_ENV, heim)).toBe(NEU);
+  });
+
+  it('Ende zu Ende: Server neu, Plugin alt -> der Hinweis kommt und nennt das Plugin', async () => {
+    schreibeListe([{ version: ALT }]);
+    await lauf({ aktuelle: eigeneFassung(NEU, PLUGIN_ENV, heim), holen: npm(NEU), env: PLUGIN_ENV });
+    const satz = holeNeueFassungHinweis('session_start', PLUGIN_ENV);
+    expect(satz).toContain(`your cachly plugin is ${ALT}`);
+    expect(satz).toContain('Enable auto-update');
+    expect(satz).toContain('/reload-plugins');
+  });
+
+  it('der Plugin-Satz bleibt eine Zeile unter 400 Zeichen', () => {
+    const zeilen = hinweisSatz(NEU, ALT, PLUGIN_ENV).split('\n').filter((z) => z.trim() && z !== '---');
+    expect(zeilen).toHaveLength(1);
+    expect(zeilen[0].length).toBeLessThan(400);
   });
 });

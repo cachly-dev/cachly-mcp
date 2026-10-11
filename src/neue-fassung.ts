@@ -33,6 +33,7 @@
 // heruntergeladen und nichts ueber den Nutzer an npm geschickt ausser der
 // Anfrage selbst. Der Server aktualisiert sich nicht selbst.
 
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -249,21 +250,97 @@ export async function pruefeNeueFassung(u: PruefUmfeld): Promise<PruefErgebnis> 
   }
 }
 
+// ── Als Plugin zaehlt die Fassung des PLUGINS ───────────────────────────────
+//
+// Das Claude-Code-Plugin startet den Server mit `npx -y @cachly-dev/mcp-server`,
+// ohne Fassung. npx holt dabei die neueste (gemessen 11.10.2026 mit npm
+// 10.9.2: der npx-Ordner sprang beim Start von 0.10.174 auf 0.10.180). Der
+// Server ist also immer neu. Die Hooks aber liegen IM Plugin (hooks/), und das
+// Plugin aktualisiert Claude Code bei fremden Marktplaetzen nur mit
+// eingeschaltetem Auto-Update — Vorgabe: aus.
+//
+// Der Vergleich "Server gegen npm" meldete Plugin-Nutzern deshalb nie etwas.
+// Beim Gruender stand das Plugin seit dem 28.08. auf 0.10.138, 42 Fassungen
+// zurueck, ohne einen einzigen Hinweis. Als Plugin wird darum die Fassung des
+// Plugins verglichen:
+//   1. ${CLAUDE_PLUGIN_ROOT}/.claude-plugin/plugin.json — Claude Code gibt den
+//      Pfad laut Doku jedem stdio-Server des Plugins mit.
+//   2. sonst ~/.claude/plugins/installed_plugins.json, Eintrag
+//      `cachly-brain@cachly` (aeltere Claude-Code-Fassungen).
+// Findet sich nichts Lesbares, bleibt es bei der Fassung des Servers.
+
+/** Name des Plugins im Marktplatz, wie ihn installed_plugins.json fuehrt. */
+export const PLUGIN_SCHLUESSEL = 'cachly-brain@cachly';
+
+type Leser = (pfad: string) => string;
+const leseDatei: Leser = (pfad) => readFileSync(pfad, 'utf8');
+
+function alsPlugin(env: Record<string, string | undefined>): boolean {
+  return env.CACHLY_QUELLE?.trim() === 'claude-code-plugin';
+}
+
+/** Die Fassung des installierten Plugins, oder null. Wirft nie. */
+export function pluginFassung(
+  env: Record<string, string | undefined> = process.env,
+  heim: string = heimordner(env),
+  lese: Leser = leseDatei,
+): string | null {
+  const wurzel = env.CLAUDE_PLUGIN_ROOT?.trim();
+  if (wurzel) {
+    try {
+      const v = (JSON.parse(lese(join(wurzel, '.claude-plugin', 'plugin.json'))) as { version?: unknown }).version;
+      if (istFassung(v)) return v.trim();
+    } catch { /* weiter mit der Liste */ }
+  }
+  if (!heim) return null;
+  try {
+    const liste = JSON.parse(lese(join(heim, '.claude', 'plugins', 'installed_plugins.json'))) as {
+      plugins?: Record<string, Array<{ version?: unknown }>>;
+    };
+    const eintraege = liste?.plugins?.[PLUGIN_SCHLUESSEL];
+    if (!Array.isArray(eintraege)) return null;
+    // Mehrere Eintraege (Nutzer- und Projektebene): die hoechste zaehlt, damit
+    // niemand einen Hinweis bekommt, der fuer ihn nicht stimmt.
+    let beste: string | null = null;
+    for (const e of eintraege) {
+      const v = e?.version;
+      if (istFassung(v) && (beste === null || istNeuer(v, beste))) beste = v.trim();
+    }
+    return beste;
+  } catch {
+    return null;
+  }
+}
+
+/** Welche Fassung mit npm verglichen wird: als Plugin die des Plugins, sonst die des Servers. */
+export function eigeneFassung(
+  serverFassung: string,
+  env: Record<string, string | undefined> = process.env,
+  heim?: string,
+  lese?: Leser,
+): string {
+  if (!alsPlugin(env)) return serverFassung;
+  return pluginFassung(env, heim ?? heimordner(env), lese) ?? serverFassung;
+}
+
 /** Der Satz fuer den Assistenten. Er richtet sich an den Nutzer und sagt, wie man aktualisiert. */
 export function hinweisSatz(
   neueste: string,
   aktuelle: string,
   env: Record<string, string | undefined> = process.env,
 ): string {
-  const alsPlugin = env.CACHLY_QUELLE?.trim() === 'claude-code-plugin';
-  const wie = alsPlugin
-    ? 'Plugin: /plugin → Marketplaces → cachly → Update, or turn on auto-update there; then restart Claude Code.'
+  const plugin = alsPlugin(env);
+  const lauf = plugin ? `your cachly plugin is ${aktuelle}` : `you run ${aktuelle}`;
+  const wie = plugin
+    ? 'Claude Code keeps plugin auto-update off for this marketplace. Turn it on once: '
+      + '/plugin → Marketplaces → cachly → Enable auto-update. Or update now: '
+      + '/plugin → Marketplaces → cachly → Update marketplace, then /reload-plugins.'
     : 'npx users: restart your editor. If your config pins a version, run `npx @cachly-dev/mcp-server@latest upgrade` for the steps.';
   return [
     '',
     '',
     '---',
-    `ℹ️ **cachly:** version ${neueste} is available (you run ${aktuelle}). ${wie} `
+    `ℹ️ **cachly:** version ${neueste} is available (${lauf}). ${wie} `
       + 'Mention this to the user once, in one sentence.',
   ].join('\n');
 }

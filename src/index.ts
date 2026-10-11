@@ -923,7 +923,7 @@ import {
   starteStartwissen, startwissenGestartet, beanspruchStartwissen, holeStartwissenHinweis, waehleProjektOrdner,
   startvorratErlaubt,
 } from './startwissen.js';
-import { pruefeNeueFassung, holeNeueFassungHinweis } from './neue-fassung.js';
+import { eigeneFassung, pruefeNeueFassung, holeNeueFassungHinweis } from './neue-fassung.js';
 import { beiStdinEnde } from './stdin-ende.js';
 import { merkeWerkzeugAufruf, starteBrandWachhund } from './brand-wachhund.js';
 import { sichtbareWerkzeuge, VERTEILER } from './werkzeug-auswahl.js';
@@ -4908,8 +4908,10 @@ if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
 // grenze 2 s. Ist die laufende Fassung aelter, haengt EINE Zeile an der Antwort
 // von session_start (siehe neue-fassung.ts). Der HTTP-Modus (Smithery) laeuft
 // beim Betreiber und bekommt keinen Hinweis. Abschalten: CACHLY_UPDATE_CHECK=false.
+// Als Plugin zaehlt die Fassung des Plugins (seine Hooks), nicht die des
+// Servers — den holt npx ohnehin neu (eigeneFassung in neue-fassung.ts).
 if (!process.env.PORT) {
-  void pruefeNeueFassung({ aktuelle: CURRENT_VERSION });
+  void pruefeNeueFassung({ aktuelle: eigeneFassung(CURRENT_VERSION) });
 }
 
 const httpPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;

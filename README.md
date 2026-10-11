@@ -40,6 +40,11 @@ The plugin adds three Claude Code hooks:
 | `UserPromptSubmit` | Puts the lessons that match your prompt next to it |
 | `Stop` | Can record a fix while it is fresh |
 
+Turn on auto-update once: `/plugin` → **Marketplaces** → **cachly** → **Enable auto-update**.
+Claude Code leaves it off for marketplaces outside Anthropic's own. The MCP server updates
+itself on every start, but the hooks come with the plugin and update only with it. If an
+update is waiting, the first `session_start` of a session says so in one line.
+
 ### Keep your test Brain
 
 ```bash
