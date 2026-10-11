@@ -7,6 +7,23 @@
 
 ---
 
+## [0.10.179] – 2026-10-11 — *"Keep what your test Brain learned."*
+
+**Move a test Brain into your own account, lessons included.** Run
+`npx @cachly-dev/mcp-server@latest claim`: you sign in once in the browser,
+and the same call proves you hold the test key. The Brain moves into your
+account with all its lessons; every test key is revoked, the Brain's password
+and token are rotated, and you get a new key that is stored where your editor
+and hooks find it. The move commits only after the Brain rejects its old
+password, so whoever held just the test key loses all access. The Brain
+restarts once (about 20 s). If you already have a free Brain, the free tier's
+one-Brain limit applies and the move is refused with a clear message.
+
+**You hear about new versions.** Once per session, the first `session_start`
+answer ends with one line when npm has a newer version, with the way to update
+for the plugin or for npx. npm is asked at most once a day, in the background,
+with a 2-second limit. Turn it off with `CACHLY_UPDATE_CHECK=false`.
+
 ## [0.10.178] – 2026-10-11 — *"The first answer in about a second."*
 
 **A new Brain answers the first question in about 1 s instead of 10.** The
