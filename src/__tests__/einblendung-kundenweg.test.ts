@@ -27,7 +27,7 @@ import { describe, it, expect, afterAll } from 'vitest';
 import { readFileSync, rmSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { runEinblendung } from '../ambient-cli.js';
-import { bestandPfad, torWoerter, zaehleBelege, RAHMEN_ETIKETT, type EinblendLektion } from '../einblendung.js';
+import { bestandPfad, sicherungsPfad, torWoerter, zaehleBelege, RAHMEN_ETIKETT, type EinblendLektion } from '../einblendung.js';
 import { lektionsText } from '../seltenheitsbestand.js';
 import { buildUserPromptSubmitHook, AMBIENT_CLI_SUBCOMMAND, HOOK_BUENDEL } from '../ambient-hooks.js';
 
@@ -55,7 +55,12 @@ function cfg(name: string) {
   benutzt.add(instanceId);
   return { apiUrl: 'http://fixture.invalid', jwt: 'test-schluessel', instanceId };
 }
-afterAll(() => { for (const id of benutzt) rmSync(bestandPfad(id), { force: true }); });
+afterAll(() => {
+  for (const id of benutzt) {
+    rmSync(bestandPfad(id), { force: true });
+    rmSync(sicherungsPfad(id), { force: true }); // 503 und 'haengt' spannen die Leser-Sicherung
+  }
+});
 
 type Leser = 'aus' | 'haengt' | ((texte: string[]) => number[]);
 

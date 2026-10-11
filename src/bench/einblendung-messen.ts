@@ -233,6 +233,10 @@ function keimZufall(keim: number): () => number {
 }
 
 async function main(): Promise<void> {
+  // Ein Messlauf will JEDE Frage beim Leser sehen. Mit Leser-Sicherung
+  // (leser-sicherung.ts) wuerden nach 3 Ausfaellen in Folge 10 Minuten lang
+  // alle Fragen als "Leser-Ausfall" gezaehlt, ohne dass gefragt wurde.
+  process.env.CACHLY_LESER_SICHERUNG ??= 'aus';
   const korpusPfad = flag('korpus');
   const satzPfad = flag('pruefsatz');
   if (!korpusPfad || !satzPfad) {

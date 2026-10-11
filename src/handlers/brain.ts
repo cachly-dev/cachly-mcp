@@ -2402,7 +2402,7 @@ async function handleBrainToolInner(
           // rangfolge-stellschrauben.ts). Alles dahinter behaelt die Hausordnung.
           // Antwortet der Dienst nicht, bleibt die Hausordnung stehen: der
           // Leser ist gemessen ein Zusatz, kein Ersatz.
-          if (leserAktiv() && reihenfolge.length > 1) {
+          if (leserAktiv(instance_id) && reihenfolge.length > 1) {
             const kopf = reihenfolge.slice(0, LESER_TIEFE);
             const rest = reihenfolge.slice(LESER_TIEFE);
             const hausPunkt = new Map(topf.map((t, i) => [t, punkte[i]] as const));

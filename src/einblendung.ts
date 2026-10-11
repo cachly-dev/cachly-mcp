@@ -30,6 +30,8 @@
  *     ihn auf; der laufende Prompt wartet nie darauf.
  *   * Ein Netzaufruf je Prompt fuer den Leser, hoechstens LESER_HOOK_ZEITLIMIT_MS.
  *     Antwortet er nicht, bleibt die lokale Ordnung — Rueckfall statt nichts.
+ *     Faellt er 3-mal in Folge aus, fragt der Hook ihn 10 Minuten nicht
+ *     (Leser-Sicherung, leser-sicherung.ts; Zustand in sicherungsPfad).
  *   * Pro Lektion ANZEIGE_ZEICHEN Zeichen, hoechstens drei Lektionen, 600 Token.
  *
  * Node 18+ (natives fetch/fs). Nur Node-Bordmittel — die gebuendelte Datei
@@ -46,6 +48,7 @@ import { Einblendbestand, torWoerter, type EinblendLektion } from './einblendung
 import { rahmeEin } from './einblendung-rahmen.js';
 import { leserText as leserTextZuschnitt } from './seltenheitsbestand.js';
 import { mischeMitLeser } from './leser.js';
+import { LeserSicherung, dateiSpeicher, frageLeser, type LeserAntwort } from './leser-sicherung.js';
 import { LESER_TIEFE as LESER_TIEFE_PRODUKT, LESER_ZEITLIMIT_MS } from './rangfolge-stellschrauben.js';
 
 // Alles, was der abhaengigkeitsfreie Hook braucht, reist ueber diese Datei.
@@ -131,6 +134,14 @@ function kurzHash(instanceId: string): string {
 /** Wo der Bestand einer Instanz auf der Platte liegt. Beide Wege teilen ihn. */
 export function bestandPfad(instanceId: string): string {
   return join(tmpdir(), `cachly-ambient-bestand-${kurzHash(instanceId)}.json`);
+}
+
+/**
+ * Wo die Leser-Sicherung einer Instanz ihren Zustand haelt. Jeder Prompt ist
+ * ein eigener Prozess — ohne Datei wuesste der naechste nichts vom letzten.
+ */
+export function sicherungsPfad(instanceId: string): string {
+  return join(tmpdir(), `cachly-leser-sicherung-${kurzHash(instanceId)}.json`);
 }
 
 function sperrPfad(instanceId: string): string {
@@ -356,33 +367,48 @@ export function leserText(l: EinblendLektion): string {
   return leserTextZuschnitt(l as Record<string, unknown>, LESER_MAX_ZEICHEN);
 }
 
+/**
+ * Der Leser fuer einen Prompt — hinter der Leser-Sicherung dieser Instanz.
+ * `uebersprungen` heisst: die Sicherung ist offen, es gab keinen Netzaufruf.
+ */
+export async function leserAnfrageApi(
+  cfg: EinblendConfig,
+  prompt: string,
+  texte: string[],
+  { zeitlimitMs = LESER_HOOK_ZEITLIMIT_MS, fetchFn }: { zeitlimitMs?: number; fetchFn?: typeof fetch } = {},
+): Promise<LeserAntwort> {
+  if (!cfg?.jwt || !cfg?.instanceId || texte.length === 0) return { art: 'ohne' };
+  if (['0', 'off', 'aus', 'false'].includes(String(process.env.CACHLY_LESER || '').toLowerCase())) return { art: 'ohne' };
+  const sicherung = new LeserSicherung(dateiSpeicher(sicherungsPfad(cfg.instanceId)));
+  return frageLeser({
+    url: `${cfg.apiUrl}/api/v1/rerank`,
+    jwt: cfg.jwt,
+    frage: prompt,
+    texte,
+    instanceId: cfg.instanceId,
+    zeitlimitMs,
+    fetchFn,
+  }, sicherung);
+}
+
+/** Wie leserAnfrageApi, aber `null` fuer jede Antwort ohne Punkte. */
 export async function leserPunkteApi(
   cfg: EinblendConfig,
   prompt: string,
   texte: string[],
-  { zeitlimitMs = LESER_HOOK_ZEITLIMIT_MS, fetchFn = fetch }: { zeitlimitMs?: number; fetchFn?: typeof fetch } = {},
+  optionen: { zeitlimitMs?: number; fetchFn?: typeof fetch } = {},
 ): Promise<{ scores: number[]; provider: string; ms: number } | null> {
-  if (!cfg?.jwt || !cfg?.instanceId || texte.length === 0) return null;
-  if (['0', 'off', 'aus', 'false'].includes(String(process.env.CACHLY_LESER || '').toLowerCase())) return null;
-  try {
-    const res = await fetchFn(`${cfg.apiUrl}/api/v1/rerank`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${cfg.jwt}` },
-      body: JSON.stringify({ query: prompt, texts: texte, instance_id: cfg.instanceId }),
-      signal: AbortSignal.timeout(zeitlimitMs),
-    });
-    if (!res.ok) return null;
-    const j = await res.json() as { scores?: unknown; provider?: unknown; ms?: unknown };
-    const scores = Array.isArray(j.scores) ? j.scores : null;
-    if (!scores || scores.length !== texte.length || !scores.every((x) => typeof x === 'number' && Number.isFinite(x))) return null;
-    return { scores: scores as number[], provider: typeof j.provider === 'string' ? j.provider : '?', ms: Number(j.ms) || 0 };
-  } catch {
-    return null;
-  }
+  const a = await leserAnfrageApi(cfg, prompt, texte, optionen);
+  return a.art === 'punkte' ? { scores: a.scores, provider: a.provider, ms: a.ms } : null;
 }
 
 export interface AuswahlMitLeser extends Auswahl {
-  /** 'jev' | 'tei' | 'aus' — wer die Spitze gemischt hat. */
+  /**
+   * Wer die Spitze gemischt hat: der Anbieter ('jev' | 'tei' | ...), wenn der
+   * Leser geantwortet hat. 'uebersprungen': die Leser-Sicherung war offen,
+   * der Leser wurde nicht gefragt. 'aus': nicht gefragt (abgeschaltet, nichts
+   * zu lesen) oder gefragt ohne brauchbare Antwort.
+   */
   leser: string;
   leserMs: number;
 }
@@ -411,12 +437,14 @@ export async function selectRelevantMitLeser(
   if (sortiert.length > 1 && tiefe > 0) {
     const kopf = sortiert.slice(0, tiefe);
     const rest = sortiert.slice(tiefe);
-    const antwort = await leserPunkteApi(cfg, prompt, kopf.map((x) => leserText(x.lektion)), { zeitlimitMs, fetchFn });
-    if (antwort) {
+    const antwort = await leserAnfrageApi(cfg, prompt, kopf.map((x) => leserText(x.lektion)), { zeitlimitMs, fetchFn });
+    if (antwort.art === 'punkte') {
       const neu = mischeMitLeser(kopf.map((x) => x.punkte), antwort.scores, 1.0);
       sortiert = [...neu.map((i) => kopf[i]), ...rest];
       leserArt = antwort.provider;
       leserMs = antwort.ms;
+    } else if (antwort.art === 'uebersprungen') {
+      leserArt = 'uebersprungen';
     }
   }
   return { ...waehleAus(sortiert, topK, tokenBudget), leser: leserArt, leserMs };
