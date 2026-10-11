@@ -25,9 +25,28 @@ export const embedConfig = {
   model:  process.env.CACHLY_EMBED_MODEL ?? '',
 };
 
-/** Call this when JWT is refreshed (e.g. after device flow). */
+/**
+ * Call this when JWT is refreshed (e.g. after device flow) — and once at start
+ * with the key index.ts actually resolved.
+ *
+ * ── Warum der Anbieter hier nachzieht (11.10.2026) ────────────────────────────
+ *
+ * EMBED_PROVIDER wurde beim Import EINMAL bestimmt, und zwar nur aus der
+ * Umgebung: ohne CACHLY_JWT in process.env hiess es 'none', fuer immer. Der
+ * Schluessel kommt aber oft gar nicht aus der Umgebung: index.ts liest ihn ueber
+ * resolveApiKey() auch aus ~/.cachly/credentials.json, und der Sofort-Test und
+ * die Browser-Anmeldung setzen ihn erst zur Laufzeit. Gemessen mit 0.10.175,
+ * frischer Start ohne Schluessel: Test-Brain in 0,4 s angelegt, danach meldete
+ * der erste Abruf "kein Einbettungsdienst eingerichtet — die Suche laeuft nur
+ * ueber Woerter". Die ganze erste Sitzung lief ohne Bedeutungsabgleich, ohne
+ * dass es jemand sah.
+ *
+ * Ein ausdruecklich gewaehlter Anbieter (CACHLY_EMBED_PROVIDER) bleibt, wie er
+ * ist. Umgeschaltet wird nur von 'none' auf unseren eigenen EU-Dienst.
+ */
 export function setEmbedJwt(jwt: string): void {
   embedConfig.jwt = jwt;
+  if (jwt && !ANBIETER_AUSDRUECKLICH && EMBED_PROVIDER === 'none') EMBED_PROVIDER = 'cachly';
 }
 
 // Zeitlimit fuer jeden HTTP-Aufruf an einen Einbettungs-Anbieter.
@@ -130,7 +149,14 @@ function detectEmbedProvider(): string {
   return 'none'; // no provider → embedding disabled, brain still works via exact keys
 }
 
-export const EMBED_PROVIDER = (process.env.CACHLY_EMBED_PROVIDER ?? detectEmbedProvider()).toLowerCase();
+/** Hat jemand den Anbieter ausdruecklich gewaehlt? Dann zieht setEmbedJwt nicht nach. */
+const ANBIETER_AUSDRUECKLICH = !!process.env.CACHLY_EMBED_PROVIDER;
+
+/**
+ * Veraenderlich: setEmbedJwt schaltet von 'none' auf 'cachly', sobald ein echter
+ * Schluessel bekannt ist. Importeure sehen den neuen Wert (ES-Modul-Bindung).
+ */
+export let EMBED_PROVIDER = (process.env.CACHLY_EMBED_PROVIDER ?? detectEmbedProvider()).toLowerCase();
 
 // ── Multi-provider embedding ─────────────────────────────────────────────────
 

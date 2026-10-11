@@ -71,6 +71,12 @@ import { Redis } from 'ioredis';
 // Reassigned (if at all) before any network call is made.
 let API_URL = process.env.CACHLY_API_URL ?? 'https://api.cachly.dev';
 let JWT = resolveApiKey() ?? '';
+// Die Einbettungen bekommen DENSELBEN Schluessel, auch wenn er aus
+// ~/.cachly/credentials.json kam und nicht aus der Umgebung. Vorher lasen sie
+// nur process.env.CACHLY_JWT und blieben sonst still aus (embeddings.ts,
+// setEmbedJwt). Auch ein leerer Wert wird gesetzt: so ersetzt er einen nicht
+// aufgeloesten Plugin-Platzhalter, mit dem jeder Einbettungsaufruf 401 waere.
+setEmbedJwt(JWT);
 const _EMBED_MODEL = process.env.CACHLY_EMBED_MODEL ?? '';
 
 // Resolve the package version at runtime from package.json so the telemetry
@@ -4552,10 +4558,11 @@ if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
     // Launched as an MCP stdio server (or HTTP) without credentials. NEVER touch
     // stdout here — it carries the JSON-RPC protocol. Emit a single actionable
     // hint to stderr (shown in the editor's MCP log) and fall through so the
-    // server starts and the zero-credential device flow can run on first tool call.
+    // server starts. Seit 0.10.175 legt der erste Werkzeugaufruf ein Test-Brain an
+    // (zugang.ts); die Browser-Anmeldung ist nur noch der Rueckfall.
     process.stderr.write(
-      '\n🧠 cachly: no CACHLY_JWT set yet — call any cachly tool and a 10-second browser sign-in starts automatically.\n' +
-      '   (Or run once: npx @cachly-dev/mcp-server@latest autopilot)\n\n',
+      '\n🧠 cachly: no API key yet — the first cachly tool call creates a test Brain on EU servers, no sign-up.\n' +
+      '   (Own account: npx @cachly-dev/mcp-server@latest autopilot)\n\n',
     );
   }
 } else {
