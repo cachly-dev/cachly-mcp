@@ -115,6 +115,45 @@ let _defaultInstanceLastAttempt = 0;
 // each list-and-provision (which would race and create duplicate instances).
 let _resolveInFlight: Promise<string> | null = null;
 
+// Der Import aus der Git-Geschichte (startwissen.ts) laeuft NUR im echten
+// stdio-Serverbetrieb. Ein CLI-Befehl endet nach Sekunden und schnitte ihn ab —
+// die Marke im Brain stuende dann, und es gaebe nie einen zweiten Versuch. Im
+// HTTP-Betrieb ist das Arbeitsverzeichnis das des Servers, nicht des Nutzers.
+// Gesetzt ganz unten bei server.connect.
+let _startwissenErlaubt = false;
+
+/** Der Projektordner: erst die Wurzel, die der Client nennt (MCP roots), dann Umgebung und cwd. */
+async function projektOrdnerVomClient(): Promise<string> {
+  let wurzeln: Array<{ uri: string }> = [];
+  try {
+    if (server.getClientCapabilities()?.roots) {
+      wurzeln = (await server.listRoots(undefined, { timeout: 3000 })).roots;
+    }
+  } catch { /* Client antwortet nicht: Umgebung und cwd */ }
+  return waehleProjektOrdner({ wurzeln, env: process.env, cwd: process.cwd(), dateiPfad: fileURLToPath });
+}
+
+/**
+ * Dieser Prozess hat ein Brain NEU angelegt: im Hintergrund aus der
+ * Git-Geschichte des Projekts lernen. Wartet auf nichts und wirft nie.
+ * CACHLY_STARTWISSEN=false schaltet es ab.
+ */
+function starteStartwissenImHintergrund(instanzId: string): void {
+  if (!_startwissenErlaubt || !instanzId) return;
+  if (/^(0|false|off|no|nein)$/i.test((process.env.CACHLY_STARTWISSEN ?? '').trim())) return;
+  void starteStartwissen({
+    instanzId,
+    verbindung: getConnection,
+    ausGit: (a) => handleFedbrainTool('brain_from_git', a, getConnection, apiFetch),
+    projektOrdner: projektOrdnerVomClient,
+    einbetten: (text) => computeEmbedding(text, { geduld: 'lang' }),
+    hatEinbettung: hasEmbedProvider,
+    melde: (lektionen) => sendFunnelEvent('brain_from_git', {
+      ...(JWT ? { api_key: JWT } : {}), instance_id: instanzId, total: lektionen, auto: 'startwissen',
+    }),
+  });
+}
+
 /**
  * Auto-provision a Brain instance via the idempotent find-or-create endpoint.
  * Returns the instance id, or '' on failure. Fires auto_provision_failed telemetry
@@ -195,6 +234,9 @@ async function resolveDefaultInstanceId(): Promise<string> {
           _defaultInstanceId = provisioned;
           _defaultInstanceLastAttempt = 0;
           void persistInstanceIdToConfig(provisioned);
+          // Neu angelegt (nach der Browser-Anmeldung oder der Selbstheilung
+          // eines Kontos ohne Instanz): aus der Git-Geschichte lernen.
+          starteStartwissenImHintergrund(provisioned);
           return _defaultInstanceId;
         }
       }
@@ -633,7 +675,7 @@ function defaultUnrefTimeout(fn: () => void, ms: number): void {
   if (typeof (t as { unref?: () => void }).unref === 'function') (t as { unref: () => void }).unref();
 }
 // ── Embeddings (imported from embeddings.ts) ────────────────────────────────
-import { setEmbedJwt } from './embeddings.js';
+import { setEmbedJwt, computeEmbedding, hasEmbedProvider } from './embeddings.js';
 
 // ── Search Engine (imported from search.ts) ─────────────────────────────────
 import { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp, STOPWORDS,
@@ -863,6 +905,9 @@ import { appendLedgerEntry, readLedger, defaultLedgerPath, reportLedgerEntry } f
 import { resolveApiKey, saveApiKey, saveInstanceId, type CredentialsHomeOptions } from './credentials.js';
 import { holeSofortTest } from './sofort-test.js';
 import { sichereZugang, echterWert } from './zugang.js';
+import {
+  starteStartwissen, startwissenGestartet, beanspruchStartwissen, holeStartwissenHinweis, waehleProjektOrdner,
+} from './startwissen.js';
 import { beiStdinEnde } from './stdin-ende.js';
 import { merkeWerkzeugAufruf, starteBrandWachhund } from './brand-wachhund.js';
 import { sichtbareWerkzeuge, VERTEILER } from './werkzeug-auswahl.js';
@@ -1188,6 +1233,22 @@ async function starteAnmeldung(name: string): Promise<string> {
   ].join('\n');
 }
 
+/**
+ * Darf der erste session_start synchron aus Git importieren? Nein, wenn dieser
+ * Prozess den Hintergrund-Import gestartet hat oder die Marke im Brain schon
+ * steht. Sonst beansprucht er die Marke selbst. Bei einem Verbindungsfehler
+ * bleibt es beim bisherigen Weg.
+ */
+async function gitStartFrei(instanceId: string): Promise<boolean> {
+  if (!instanceId) return true;
+  if (startwissenGestartet(instanceId)) return false;
+  try {
+    return await beanspruchStartwissen(await getConnection(instanceId), 'sitzungsstart');
+  } catch {
+    return true;
+  }
+}
+
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
   // Guard: if no JWT, return actionable onboarding message instead of HTTP 401
   if (!JWT) {
@@ -1243,6 +1304,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       meldeEreignis: sendFunnelEvent,
       werkzeug: () => handleTool(name, args),
       anmelden: () => starteAnmeldung(name),
+      neuesBrain: starteStartwissenImHintergrund,
     });
   }
 
@@ -1322,9 +1384,12 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       if (!isFirstSession && resultText.length > 100) {
         // Existing brain — session_start acts as implicit recall → increment counter.
         sendFunnelEvent('recall_best_solution', telemetryExtra);
-      } else if (isFirstSession && args.workspace_path) {
+      } else if (isFirstSession && args.workspace_path && await gitStartFrei(instanceId)) {
         // First session with a known workspace: auto-bootstrap from git history.
         // Runs synchronously so the user sees the result in the same response.
+        // Laeuft der Hintergrund-Import (startwissen.ts) schon oder lief er,
+        // entfaellt dieser Weg: sonst zweimal derselbe Import, und dieser
+        // hielte den Aufruf fuer die ganze Dauer an.
         try {
           const gitBootstrap = await handleFedbrainTool('brain_from_git', {
             instance_id: instanceId,
@@ -1869,7 +1934,10 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
   try {
     merkeWerkzeugAufruf();
     const text = await handleTool(name, (args ?? {}) as Record<string, unknown>);
-    return { content: [{ type: 'text', text: rahmeAntwort(name, text) }] };
+    // Hat der Hintergrund-Import aus der Git-Geschichte gerade Lektionen
+    // angelegt, steht die Zahl EINMAL an dieser Antwort — ausserhalb des
+    // Rahmens, denn sie ist eine Meldung des Servers und kein gespeicherter Text.
+    return { content: [{ type: 'text', text: rahmeAntwort(name, text) + holeStartwissenHinweis() }] };
   } catch (err) {
     if (err instanceof UnknownToolError) {
       return { content: [{ type: 'text', text: err.message }], isError: true };
@@ -4751,6 +4819,7 @@ if (httpPort) {
   // 291823"), weil tool-spec-snapshots genau so rendert.
   const cliBefehl = typeof process.argv[2] === 'string' && !process.argv[2].startsWith('-');
   if (!cliBefehl) {
+    _startwissenErlaubt = true;
     starteBrandWachhund();
     beiStdinEnde(process.stdin, (grund) => {
       process.stderr.write(`[cachly-mcp] ${grund} — Session zu Ende, Server geht mit

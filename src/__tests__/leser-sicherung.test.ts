@@ -28,6 +28,14 @@ import {
   LESER_SICHERUNG_FEHLSCHLAEGE, LESER_SICHERUNG_PAUSE_MS,
 } from '../leser-sicherung.js';
 import { selectRelevantMitLeser, sicherungsPfad, bestandPfad, type EinblendLektion } from '../einblendung.js';
+
+/**
+ * Obergrenze fuer "der Leser wurde uebersprungen". Bewiesen werden soll: kein
+ * Warten auf die 2.500-ms-Frist. 50 ms rissen unter Last (volle Suite parallel
+ * zu Builds, 11.10.2026: einzeln 3 von 3 gruen, in der Suite rot). 500 ms
+ * trennen weiter klar von 2.500 ms.
+ */
+const UEBERSPRUNGEN_MAX_MS = 500;
 import { leserAktiv, leserPunkte, leserSperreLoeschen } from '../leser.js';
 import { embedConfig } from '../embeddings.js';
 
@@ -191,7 +199,7 @@ describe('Hook-Weg — Sicherung in der Datei je Instanz', () => {
 
     const vierter = await prompt(c, netz.fetchFn);
     expect(netz.anrufe()).toBe(3);
-    expect(vierter.ms).toBeLessThan(50);
+    expect(vierter.ms).toBeLessThan(UEBERSPRUNGEN_MAX_MS);
     // Die Messung kann "uebersprungen" von "nicht da" ('aus') unterscheiden.
     expect(vierter.leser).toBe('uebersprungen');
     // Die lokale Ordnung bleibt: es wird trotzdem eingeblendet.
@@ -278,7 +286,7 @@ describe('MCP-Weg (leserPunkte) — dieselbe Sicherung im Speicher', () => {
     expect(leserAktiv('i1')).toBe(false);
     const start = performance.now();
     expect(await leserPunkte('f', ['a', 'b'], { fetchFn: netz.fetchFn, zeitlimitMs: 30, instanceId: 'i1' })).toBeNull();
-    expect(performance.now() - start).toBeLessThan(50);
+    expect(performance.now() - start).toBeLessThan(UEBERSPRUNGEN_MAX_MS);
     expect(netz.anrufe()).toBe(3);
     // Andere Instanz im selben Prozess: eigener Leser, eigene Sicherung.
     expect(leserAktiv('i2')).toBe(true);

@@ -2,6 +2,7 @@ import type { Redis } from 'ioredis';
 import { safeJsonParse } from '../utils.js';
 import { STARTER_CORPUS, STARTER_CORPUS_SIZE } from '../starter-corpus.js';
 import { cachlyUrl } from '../cachly-url.js';
+import { VEKTOR_NACHTRAG } from '../bedeutung.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -613,7 +614,7 @@ export async function handleShareTool(
         // Mit Vermerk bettet der naechste smart_recall sie nach — dieselbe
         // Zusage wie im learn-Pfad: gespeichert heisst vermerkt, bis der
         // Vektor nachweislich steht.
-        await redis.sadd('cachly:vek:nachtrag', lesson.topic).catch(() => { /* still */ });
+        await redis.sadd(VEKTOR_NACHTRAG, lesson.topic).catch(() => { /* still */ });
         const listKey = `cachly:lessons:${lesson.topic}`;
         await redis.rpush(listKey, lessonToStore);
         await redis.ltrim(listKey, -100, -1);

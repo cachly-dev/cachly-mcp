@@ -56,7 +56,7 @@ import { leserAktiv, leserPunkte, mischeMitLeser } from '../leser.js';
 import { repariereFelder } from '../feldreparatur.js';
 import {
   VEKTOR_PRAEFIX, NAME_VEKTOR_PRAEFIX, ZWEIT_VEKTOR_PRAEFIX, packe, textFuerVektor, textFuerNamensVektor,
-  Vektorbestand,
+  Vektorbestand, VEKTOR_NACHTRAG,
 } from '../bedeutung.js';
 import { schreibeEingaenge, Eingangsbestand } from '../eingaenge.js';
 import { ordneNachHausordnung, rangWerte } from '../ausgabe-ordnung.js';
@@ -66,7 +66,7 @@ import { schlageErsetzungVor } from '../ersetzung-vorschlag.js';
 
 // Themen, deren Volltext-Vektor beim Schreiben scheiterte — Nachtrag beim
 // naechsten Schreiben (Karte hcg8neyut0kd Teil c).
-const VEK_NACHTRAG = 'cachly:vek:nachtrag';
+const VEK_NACHTRAG = VEKTOR_NACHTRAG;
 
 /**
  * Wie lange die VORFASSUNGEN einer Lektion aufgehoben werden (Karte

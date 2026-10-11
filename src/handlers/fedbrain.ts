@@ -6,7 +6,7 @@ import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse, normalizeGitPath } from '../utils.js';
 import { buildClsPostCommitHook } from '../cls-hook.js';
 import { installBrainWatchHook } from '../brain-watch-hook.js';
-import { keywordSearch } from '../search.js';
+import { keywordSearch, wortindexEntwerten } from '../search.js';
 import { buildFirstContactReport, suggestRecallQueries, type FirstContactProof } from '../first-contact.js';
 import { classifyCommit, extractDomain } from '../commit-art.js';
 
@@ -1104,6 +1104,12 @@ export async function handleFedbrainTool(
       }
 
       process.stderr.write(`   ✅ brain_from_git complete: ${ingested}/${total} commits ingested\n\n`);
+
+      // Der stehende Wortindex kennt die neuen Lektionen noch nicht. Ohne diese
+      // Zeile blieben sie im selben Prozess bis zu 60 s unsichtbar (search.ts,
+      // WORTBESTAND_FRISCHE_MS) — learn_from_attempts entwertet genauso. Steht
+      // VOR der Probe unten, damit auch sie den frischen Bestand sieht.
+      if (ingested > 0) wortindexEntwerten();
 
       // Save the latest commit SHA for incremental runs
       if (commits.length > 0 && commits[0]?.sha) {

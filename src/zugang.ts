@@ -69,6 +69,12 @@ export interface ZugangsAufruf {
   werkzeug: () => Promise<string>;
   /** Startet die Browser-Anmeldung (der bisherige Weg, unveraendert). */
   anmelden: () => Promise<string>;
+  /**
+   * Meldet ein NEU angelegtes Brain, NACHDEM der Werkzeugaufruf fertig ist.
+   * Darf nicht warten lassen: der Aufrufer startet nur etwas im Hintergrund
+   * (startwissen.ts — der Import aus der Git-Geschichte).
+   */
+  neuesBrain?: (instanzId: string) => void;
   /** Zeile fuer das Editor-Protokoll. Standard: stderr. */
   protokoll?: (zeile: string) => void;
 }
@@ -167,6 +173,12 @@ export async function sichereZugang(a: ZugangsAufruf): Promise<string> {
     + 'cachly: the key is stored in ~/.cachly/credentials.json. Own account: npx @cachly-dev/mcp-server@latest autopilot\n\n',
   );
 
-  const ergebnis = await a.werkzeug();
-  return ergebnis + sofortTestHinweis(test);
+  // Erst die Antwort, dann der Import aus der Git-Geschichte. Auch wenn das
+  // Werkzeug wirft: das Brain ist trotzdem neu und leer.
+  try {
+    const ergebnis = await a.werkzeug();
+    return ergebnis + sofortTestHinweis(test);
+  } finally {
+    try { a.neuesBrain?.(test.instanzId); } catch { /* ein Hintergrundstart stoert die Antwort nie */ }
+  }
 }

@@ -72,6 +72,14 @@ export const NAME_VEKTOR_PRAEFIX = 'cachly:lesson:vecname:';
  *  verschiedener Modelle sind nicht vergleichbar. */
 export const ZWEIT_VEKTOR_PRAEFIX = 'cachly:lesson:vec2:';
 
+/**
+ * Themen, deren Volltext-Vektor noch fehlt (Karte hcg8neyut0kd Teil c). Der
+ * Vermerk steht, bis der Vektor nachweislich geschrieben ist; smart_recall
+ * und der Schreibpfad betten von hier nach. EINE Stelle fuer den Namen —
+ * vorher stand er in brain.ts und share.ts je als eigene Zeichenkette.
+ */
+export const VEKTOR_NACHTRAG = 'cachly:vek:nachtrag';
+
 /** Der Text, aus dem der Namensvektor gebildet wird: Trennzeichen zu Wörtern. */
 export function textFuerNamensVektor(topic: string): string {
   return topic.replace(/[:_-]+/g, ' ').replace(/\s+/g, ' ').trim();

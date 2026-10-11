@@ -209,6 +209,46 @@ describe('sofortTestHinweis', () => {
   });
 });
 
+// Ein NEU angelegtes Brain wird gemeldet, damit startwissen.ts im Hintergrund
+// aus der Git-Geschichte lernen kann — erst NACH der Antwort.
+describe('sichereZugang: neues Brain melden', () => {
+  beforeEach(() => _zugangZuruecksetzen());
+
+  it('nach gelungenem Sofort-Test: einmal gemeldet, mit der neuen Instanz, nach dem Werkzeug', async () => {
+    const meldungen: string[] = [];
+    const { aufruf, spur } = aufbau({ neuesBrain: (id) => { spur.push(`neuesBrain(${id})`); meldungen.push(id); } });
+    await sichereZugang(aufruf);
+    expect(meldungen).toEqual(['inst-1']);
+    expect(spur).toEqual(['sofort-test', 'werkzeug(schluessel=cky_trial_abc)', 'neuesBrain(inst-1)']);
+  });
+
+  it('auch wenn das Werkzeug wirft: das Brain ist trotzdem neu', async () => {
+    const meldungen: string[] = [];
+    const { aufruf } = aufbau({
+      neuesBrain: (id) => { meldungen.push(id); },
+      werkzeug: async () => { throw new Error('kaputt'); },
+    });
+    await expect(sichereZugang(aufruf)).rejects.toThrow('kaputt');
+    expect(meldungen).toEqual(['inst-1']);
+  });
+
+  it('wirft die Meldung, bleibt die Antwort trotzdem', async () => {
+    const { aufruf } = aufbau({ neuesBrain: () => { throw new Error('Hintergrund kaputt'); } });
+    expect(await sichereZugang(aufruf)).toContain('ERGEBNIS');
+  });
+
+  it('mit Schluessel, mit Kennung oder ohne Test: keine Meldung — es entsteht kein neues Brain', async () => {
+    const meldungen: string[] = [];
+    const neuesBrain = (id: string) => { meldungen.push(id); };
+    await sichereZugang(aufbau({ schluessel: 'cky_live_x', neuesBrain }).aufruf);
+    _zugangZuruecksetzen();
+    await sichereZugang(aufbau({ konfigurierteInstanz: '8e03addd-a2d9-406e-bcbb-d6d8c938a3d0', neuesBrain }).aufruf);
+    _zugangZuruecksetzen();
+    await sichereZugang(aufbau({ test: null, neuesBrain }).aufruf);
+    expect(meldungen).toEqual([]);
+  });
+});
+
 describe('echterWert', () => {
   it('leer, Platzhalter und Nicht-Text zaehlen als nichts', () => {
     for (const w of [undefined, null, '', '   ', '${user_config.instance_id}', 42]) expect(echterWert(w)).toBe('');
