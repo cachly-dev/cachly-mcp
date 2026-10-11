@@ -7,6 +7,28 @@
 
 ---
 
+## [0.10.176] – 2026-10-11 — *"Meaning from the first prompt, without waiting for a busy reader."*
+
+**Semantic search works for every key, not only one in the environment.** The
+embedding provider was chosen once at start-up, from `CACHLY_JWT` in the
+environment only. A key from `~/.cachly/credentials.json`, from the instant
+trial or from the browser sign-in left semantic search off for the whole
+process, silently. Measured with 0.10.175 from a clean home directory: the
+first answer reported "no embedding service configured — search runs on words
+only". Now the resolved key switches the provider to our EU service; an
+explicitly chosen provider and a local Ollama stay as they are.
+
+**A busy reader no longer costs 2.5 s per prompt.** Ambient recall and
+`smart_recall` wait up to 2.5 s for the re-ranking reader. Under load it
+missed that deadline in 7 of 10 prompts, so users waited and still got the
+local order. After 3 failures in a row the reader is now skipped for
+10 minutes, then tried once again. Measured with an overloaded reader,
+10 prompts each: median 3.2 s → 1.2 s per prompt. The output says
+`leser: "uebersprungen"` so measurements can tell skipped from absent.
+
+**`autopilot` uses the real device-login route.** It asked
+`/api/v1/auth/device/code` first, which does not exist, before falling back.
+
 ## [0.10.175] – 2026-10-11 — *"Install it, and it works."*
 
 **No key? You get a test Brain, not a browser.** Without an API key the server
