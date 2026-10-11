@@ -7,6 +7,26 @@
 
 ---
 
+## [0.10.178] – 2026-10-11 — *"The first answer in about a second."*
+
+**A new Brain answers the first question in about 1 s instead of 10.** The
+first `smart_recall` on a freshly created Brain waited until its instance was
+running in the cluster (polled every 3 s, in two parallel loops) and then ran
+embedding, reader and graph search on an empty store. Now a Brain this process
+just created, or any Brain with no entries yet, answers at once and says what
+is true: it is new, and it is learning from the project's git history. Write
+tools still wait for the instance, now polled every second with one loop per
+instance — nothing is dropped. Measured from a clean home directory: 10.4 s →
+1.0 s. Brains with lessons take the full path, unchanged.
+
+**Quieter stderr on an empty Brain.** The "no lesson has an embedding" notice
+stays silent when there are no lessons at all. Set `CACHLY_ZEITMESSUNG=1` to
+print timing marks for each step.
+
+**Honest texts.** The sign-in fallback and the CLI no longer advertise "free
+forever"; the Smithery description now names the instant test Brain instead of
+a browser sign-in.
+
 ## [0.10.177] – 2026-10-11 — *"Experience from minute one."*
 
 **A new Brain learns from your project right away.** A fresh test Brain used to
