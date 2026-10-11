@@ -929,6 +929,7 @@ import { merkeNeuesBrain } from './leeres-brain.js';
 import {
   starteStartwissen, startwissenGestartet, beanspruchStartwissen, holeStartwissenHinweis, waehleProjektOrdner,
 } from './startwissen.js';
+import { pruefeNeueFassung, holeNeueFassungHinweis } from './neue-fassung.js';
 import { beiStdinEnde } from './stdin-ende.js';
 import { merkeWerkzeugAufruf, starteBrandWachhund } from './brand-wachhund.js';
 import { sichtbareWerkzeuge, VERTEILER } from './werkzeug-auswahl.js';
@@ -1970,7 +1971,14 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
     // Hat der Hintergrund-Import aus der Git-Geschichte gerade Lektionen
     // angelegt, steht die Zahl EINMAL an dieser Antwort — ausserhalb des
     // Rahmens, denn sie ist eine Meldung des Servers und kein gespeicherter Text.
-    return { content: [{ type: 'text', text: rahmeAntwort(name, text) + holeStartwissenHinweis() }] };
+    // Dasselbe gilt fuer die Zeile "neue Fassung": hoechstens EINMAL je Prozess,
+    // nur am Sitzungsbeginn, ebenfalls ausserhalb des Rahmens.
+    return {
+      content: [{
+        type: 'text',
+        text: rahmeAntwort(name, text) + holeStartwissenHinweis() + holeNeueFassungHinweis(name),
+      }],
+    };
   } catch (err) {
     if (err instanceof UnknownToolError) {
       return { content: [{ type: 'text', text: err.message }], isError: true };
@@ -4752,28 +4760,13 @@ if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
   }
 }
 
-// ── Update nudge (non-blocking, fire-and-forget) ─────────────────────────────
-// Check npm registry once per process start; if outdated, log to stderr so
-// the editor's MCP log shows an actionable one-liner. Skipped if opted out.
-if (!process.env.CACHLY_NO_UPDATE_CHECK) {
-  (async () => {
-    try {
-      const res = await fetch(
-        `https://registry.npmjs.org/@cachly-dev/mcp-server/latest`,
-        { signal: AbortSignal.timeout(4000) },
-      );
-      if (res.ok) {
-        const data = await res.json() as { version: string };
-        const latest = data?.version ?? '';
-        if (latest && latest !== CURRENT_VERSION) {
-          process.stderr.write(
-            `\n⚡ cachly update available: ${CURRENT_VERSION} → ${latest}\n` +
-            `   Run: npx @cachly-dev/mcp-server@latest autopilot\n\n`,
-          );
-        }
-      }
-    } catch { /* ignore – network unavailable or timeout */ }
-  })();
+// ── Neue Fassung (im Hintergrund, nichts wartet darauf) ──────────────────────
+// Hoechstens eine Anfrage an npm je 24 h (~/.cachly/update-check.json), Zeit-
+// grenze 2 s. Ist die laufende Fassung aelter, haengt EINE Zeile an der Antwort
+// von session_start (siehe neue-fassung.ts). Der HTTP-Modus (Smithery) laeuft
+// beim Betreiber und bekommt keinen Hinweis. Abschalten: CACHLY_UPDATE_CHECK=false.
+if (!process.env.PORT) {
+  void pruefeNeueFassung({ aktuelle: CURRENT_VERSION });
 }
 
 const httpPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;
