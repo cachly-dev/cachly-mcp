@@ -7,6 +7,32 @@
 
 ---
 
+## [0.10.180] – 2026-10-11 — *"No waiting on day one."*
+
+**The first briefing arrives in 0.6 s instead of 16 s.** On a new Brain that
+is still starting, `session_start` and eight other read tools answer at once
+instead of waiting for the instance. The briefing says what is going on: the
+Brain is new and empty, it is starting, it will learn from your git history,
+and how to work with it. Measured from outside with a fresh home folder:
+`recall_best_solution` 1.1 s → 0.19 s, `smart_recall` 2.7 s → 0.13 s. The
+20-second wait after the browser sign-in is gone. The first write
+(`learn_from_attempts`) still waits until the instance is up, about 9 s.
+
+**Cursor gets the matching lessons too.** `setup` and `autopilot` (when a
+`.cursor` folder exists) and `init --editor cursor` write `.cursor/hooks.json`
+with three hooks: the session briefing at start, and the lessons that match
+your prompt from the first tool call of each turn. Cursor cannot add text to a
+prompt before it is sent, so a turn without any tool call gets no lessons.
+Existing entries in `hooks.json` stay as they are. Costs about 210 ms per tool
+call (median of 10 runs).
+
+**Lessons in your prompt arrive in time far more often.** The hook now lets
+the reader re-rank the best 10 candidates instead of 25. Under build load the
+reader answered within the 2.5-second limit for 91 % of prompts instead of
+32 %, and the right lesson landed in first place for 40.0 % instead of
+35.8 % (600 questions, ±2 points). Each prompt waits 1.47 s on average
+instead of 2.34 s. `smart_recall` still reads 25.
+
 ## [0.10.179] – 2026-10-11 — *"Keep what your test Brain learned."*
 
 **Move a test Brain into your own account, lessons included.** Run
