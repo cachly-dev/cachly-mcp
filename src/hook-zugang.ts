@@ -81,6 +81,23 @@ export function findeInstanz(u: HookUmfeld): string {
 export const PROJEKT_HOOK_MARKE = 'cachly-ambient-';
 
 /**
+ * true, wenn Cursor fuer dieses Projekt schon den cachly-Hook aus
+ * .cursor/hooks.json hat (Projekt oder Nutzer). Dann tritt ein Claude-Hook,
+ * den Cursor aus .claude/settings.json mitlaeuft, ganz zurueck (cursor-hook.ts).
+ */
+export function cursorHatHook(u: HookUmfeld): boolean {
+  return [
+    join(u.projekt, '.cursor', 'hooks.json'),
+    join(u.heim, '.cursor', 'hooks.json'),
+  ].some((datei) => {
+    const hooks = (lies(datei) as { hooks?: Record<string, unknown> } | null)?.hooks;
+    return !!hooks && typeof hooks === 'object' && Object.values(hooks).some((liste) =>
+      Array.isArray(liste)
+      && liste.some((h: { command?: unknown }) => String(h?.command ?? '').includes(PROJEKT_HOOK_MARKE)));
+  });
+}
+
+/**
  * Nie doppelt: true, wenn das Projekt oder der Nutzer fuer dieses Ereignis
  * schon einen cachly-ambient-Hook in den Einstellungen hat. Claude Code fuehrt
  * Plugin- und Einstellungs-Hooks getrennt aus und fasst sie nicht zusammen;

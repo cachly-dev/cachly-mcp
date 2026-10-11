@@ -41,7 +41,8 @@ const KOPF = `#!/usr/bin/env node
 // ERZEUGT — NICHT VON HAND AENDERN.
 // cachly Hook-Buendel: Einblendung, Sitzungs-Briefing, Schreibbeleg. Ohne npx, ohne node_modules.
 // Quelle: sdk/mcp/src/ambient-hook-start.ts. Erzeugen: cd sdk/mcp && npm run plugin-hooks:write
-// Aufruf: node cachly-ambient-einblendung.mjs <SessionStart|UserPromptSubmit|PreToolUse|Stop> [--plugin]`;
+// Aufruf: node cachly-ambient-einblendung.mjs <SessionStart|UserPromptSubmit|PreToolUse|Stop> [--plugin]
+//         node cachly-ambient-einblendung.mjs <sessionStart|beforeSubmitPrompt|postToolUse> --cursor`;
 
 /** Das Buendel als Text. */
 export async function erzeugeBuendel() {

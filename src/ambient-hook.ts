@@ -22,13 +22,25 @@
 //   3. Schluessel und Instanz suchen (hook-zugang.ts). Fehlt eins: nichts.
 //   4. Stop: Auto-Lernen ueber REST. Sonst: Einblendung (einblendung.ts).
 // Jeder Fehler endet still mit Exit 0 — ein Hook blockiert nie den Zug.
+//
+// Cursor (11.10.2026): Mit `--cursor` oder einer Nutzlast mit `cursor_version`
+// laeuft derselbe Weg ueber cursor-hook.ts — Cursors Eingabe wird auf die
+// Claude-Nutzlast abgebildet, die Antwort in Cursors Format zurueckgegeben.
 
 import { readFileSync } from 'node:fs';
 import { parseHookPayload, runEinblendung, stopLernanfrage, stopObservation } from './ambient-cli.js';
 import { stopAntwort } from './schreibbeleg.js';
 import { holeBestand } from './einblendung.js';
 import { appendLedgerEntry, reportLedgerEntry } from './ambient-ledger.js';
-import { findeInstanz, findeSchluessel, hookUmfeld, projektHatHook, type HookUmfeld } from './hook-zugang.js';
+import { cursorHatHook, findeInstanz, findeSchluessel, hookUmfeld, projektHatHook, type HookUmfeld } from './hook-zugang.js';
+import {
+  CURSOR_FLAG,
+  cursorEreignis,
+  cursorHookAntwort,
+  cursorLeer,
+  istCursorNutzlast,
+  type CursorNutzlast,
+} from './cursor-hook.js';
 
 export const STANDARD_API_URL = 'https://api.cachly.dev';
 
@@ -49,12 +61,41 @@ export interface HookAufruf {
   fetchFn?: typeof fetch;
   /** Nur Tests. */
   einblenden?: typeof runEinblendung;
+  /** Nur Tests: Ordner der Cursor-Ablage (cursor-hook.ts). */
+  cursorAblage?: string;
+}
+
+/**
+ * Cursor-Lauf. Zwei Wege hierher:
+ *   • `--cursor`: der Hook aus .cursor/hooks.json — er bedient sessionStart,
+ *     beforeSubmitPrompt und postToolUse.
+ *   • Nutzlast mit `cursor_version` ohne `--cursor`: ein Claude-Hook, den
+ *     Cursor aus .claude/settings.json mitlaeuft. Hat das Projekt den
+ *     Cursor-Hook, tritt er ganz zurueck (nie doppelt). Sonst bedient er nur
+ *     das Briefing: ohne postToolUse kaeme eine Prompt-Einblendung nie an, und
+ *     Cursor wartete vor jedem Prompt umsonst.
+ */
+async function cursorLauf(a: HookAufruf, payload: CursorNutzlast | null): Promise<string> {
+  const eigenerHook = a.args.includes(CURSOR_FLAG);
+  if (!eigenerHook) {
+    if (cursorEreignis(payload, a.args) !== 'sessionStart' || cursorHatHook(a.umfeld)) return '';
+  }
+  const plugin = a.args.filter((x) => x === '--plugin');
+  return cursorHookAntwort({
+    payload,
+    args: a.args,
+    claudeLauf: (raw, claudeEreignis) => hookAntwort({ ...a, raw, args: [claudeEreignis, ...plugin] }),
+    ablageOrdner: a.cursorAblage,
+  });
 }
 
 /** Was der Hook auf stdout schreibt — oder '' (nichts). Wirft nie. */
 export async function hookAntwort(a: HookAufruf): Promise<string> {
   try {
     const payload = parseHookPayload(a.raw);
+    if (a.args.includes(CURSOR_FLAG) || istCursorNutzlast(payload)) {
+      return await cursorLauf(a, payload as CursorNutzlast | null);
+    }
     const ereignis = payload?.hook_event_name
       ?? a.args.find((x) => EREIGNISSE.has(x))
       ?? a.umfeld.env.CACHLY_HOOK_EVENT
@@ -138,17 +179,27 @@ export const HOOK_FRIST_MS: Record<string, number> = {
   UserPromptSubmit: 8_000,
   PreToolUse: 8_000,
   Stop: 50_000,
+  // Cursor (CURSOR_TIMEOUTS in ambient-hooks.ts: 30 / 10 / 5 s). postToolUse
+  // liest nur die Ablage — es laeuft nach JEDEM Werkzeugaufruf.
+  sessionStart: 25_000,
+  beforeSubmitPrompt: 8_000,
+  postToolUse: 3_000,
 };
 
 /** Ganzer Hook-Lauf als Prozess: stdin lesen, antworten, Exit 0. */
 export async function hookHauptlauf(args: string[], selbst: string | undefined): Promise<never> {
   try {
     const raw = await leseStdin();
-    const ereignis = parseHookPayload(raw)?.hook_event_name ?? args.find((x) => EREIGNISSE.has(x)) ?? '';
+    const payload = parseHookPayload(raw);
+    const ereignis = payload?.hook_event_name
+      ?? args.find((x) => EREIGNISSE.has(x) || Object.hasOwn(HOOK_FRIST_MS, x))
+      ?? '';
     const frist = Number(process.env.CACHLY_HOOK_FRIST_MS) || HOOK_FRIST_MS[ereignis] || HOOK_FRIST_MS.UserPromptSubmit;
+    // An der Frist: Claude Code bekommt nichts, Cursor eine gueltige Leer-Antwort.
+    const leer = args.includes(CURSOR_FLAG) ? cursorLeer(cursorEreignis(payload as CursorNutzlast | null, args)) : '';
     const out = await Promise.race([
       hookAntwort({ args, raw, umfeld: hookUmfeld(), apiUrl: apiUrl(), selbst }),
-      new Promise<string>((r) => setTimeout(() => r(''), frist)),
+      new Promise<string>((r) => setTimeout(() => r(leer), frist)),
     ]);
     if (out) await new Promise<void>((r) => process.stdout.write(out, () => r()));
   } catch {

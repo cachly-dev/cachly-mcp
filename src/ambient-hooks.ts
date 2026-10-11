@@ -20,6 +20,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CURSOR_FLAG, type CursorEreignis } from './cursor-hook.js';
+import { PROJEKT_HOOK_MARKE } from './hook-zugang.js';
 
 /**
  * Bumped whenever a hook script changes so installers can upgrade old hooks.
@@ -404,6 +406,150 @@ export async function installAmbientHooks(
     scripts,
     settings: settingsStatus,
   };
+}
+
+// ── Cursor ───────────────────────────────────────────────────────────────────
+//
+// Warum (11.10.2026): Die Einblendung kam nur in Claude Code an. Cursor hat
+// eigene Hooks (Rohtext https://cursor.com/docs/hooks.md). Dort kann
+// beforeSubmitPrompt dem Prompt nichts anfuegen; Kontext geht nur ueber
+// sessionStart und postToolUse (`additional_context`). Der Ablauf steht in
+// cursor-hook.ts; hier steht nur, was setup/autopilot/init dafuer schreibt:
+//   • .cursor/hooks/cachly-ambient-einblendung.mjs  das Buendel (dasselbe wie unter .claude/hooks/)
+//   • .cursor/hooks/cachly-ambient-cursor.mjs       traegt die Instanz, ruft das Buendel mit --cursor
+//   • .cursor/hooks.json                            drei Eintraege, fremde bleiben stehen
+// Projekt-Hooks laufen laut Doku "from the project root"; darum relative Pfade
+// `.cursor/hooks/...`, wie in den Beispielen der Doku.
+
+export const CURSOR_HOOK_DIR = '.cursor/hooks';
+const CURSOR_HOOKS_DATEI = '.cursor/hooks.json';
+export const CURSOR_SKRIPT = 'cachly-ambient-cursor.mjs';
+
+/** Zeitlimit je Ereignis in Sekunden (Feld `timeout` in hooks.json). */
+export const CURSOR_TIMEOUTS: Record<CursorEreignis, number> = {
+  sessionStart: 30,
+  beforeSubmitPrompt: 10,
+  postToolUse: 5,
+};
+
+/** Das kleine Skript vor dem Buendel: Instanz dieses Projekts, dann `--cursor`. */
+export function buildCursorHook(opts: AmbientHookOptions): string {
+  return [
+    `#!/usr/bin/env node`,
+    `// cachly Ambient Recall — Cursor ${AMBIENT_HOOK_VERSION}`,
+    `// Einblendung fuer Cursor: sessionStart, beforeSubmitPrompt, postToolUse.`,
+    `// Blockiert nie: jeder Fehler endet mit Exit 0. Ruft das Buendel daneben`,
+    `// (${HOOK_BUENDEL}) in diesem Prozess.`,
+    `process.env.CACHLY_BRAIN_INSTANCE_ID = '${jsString(opts.instanceId)}';`,
+    `process.argv.push('${CURSOR_FLAG}');`,
+    `try {`,
+    `  await import('./${HOOK_BUENDEL}');`,
+    `} catch {`,
+    `  process.exit(0);`,
+    `}`,
+  ].join('\n');
+}
+
+export interface CursorHookEintrag {
+  command?: string;
+  timeout?: number;
+  [k: string]: unknown;
+}
+export interface CursorHooksDatei {
+  version?: number;
+  hooks?: Record<string, CursorHookEintrag[]>;
+  [k: string]: unknown;
+}
+
+/** Die cachly-Eintraege fuer .cursor/hooks.json. */
+export function buildCursorHooks(): Record<CursorEreignis, CursorHookEintrag[]> {
+  const eintrag = (e: CursorEreignis): CursorHookEintrag[] => [
+    { command: `node ${CURSOR_HOOK_DIR}/${CURSOR_SKRIPT} ${e}`, timeout: CURSOR_TIMEOUTS[e] },
+  ];
+  return {
+    sessionStart: eintrag('sessionStart'),
+    beforeSubmitPrompt: eintrag('beforeSubmitPrompt'),
+    postToolUse: eintrag('postToolUse'),
+  };
+}
+
+/**
+ * Fuegt die cachly-Eintraege in eine vorhandene hooks.json ein. Fremde
+ * Eintraege und Ereignisse bleiben, alte cachly-Eintraege werden ersetzt
+ * (nie doppelt). `version` bleibt, fehlt sie, kommt 1 (Pflichtfeld laut Doku).
+ * Rein — getestet.
+ */
+export function mergeCursorHooks(existing: CursorHooksDatei): { datei: CursorHooksDatei; changed: boolean } {
+  const hooks: Record<string, CursorHookEintrag[]> = { ...(existing.hooks ?? {}) };
+  for (const [e, unsere] of Object.entries(buildCursorHooks())) {
+    const fremd = (Array.isArray(hooks[e]) ? hooks[e] : []).filter(
+      (h) => !String(h?.command ?? '').includes(PROJEKT_HOOK_MARKE),
+    );
+    hooks[e] = [...fremd, ...unsere];
+  }
+  const datei: CursorHooksDatei = {
+    ...existing,
+    version: typeof existing.version === 'number' ? existing.version : 1,
+    hooks,
+  };
+  return { datei, changed: JSON.stringify(datei) !== JSON.stringify(existing) };
+}
+
+export interface CursorInstallResult {
+  scriptPath: string;
+  bundlePath: string;
+  hooksPath: string;
+  scripts: 'written' | 'upgraded' | 'unchanged';
+  /** 'skipped': hooks.json war kein JSON — sie bleibt unangetastet, der Hook ist nicht verdrahtet. */
+  hooks: 'written' | 'merged' | 'unchanged' | 'skipped';
+}
+
+/** Installiert/erneuert den Cursor-Hook in `projectDir`. Wirft nur bei Dateifehlern. */
+export async function installCursorHooks(projectDir: string, instanceId: string): Promise<CursorInstallResult> {
+  const hookDir = resolve(projectDir, CURSOR_HOOK_DIR);
+  await mkdir(hookDir, { recursive: true });
+
+  const bundleSource = hookBuendelQuelle();
+  if (!bundleSource) throw new Error(`cachly hook bundle ${HOOK_BUENDEL} missing from the package`);
+  const bundle = readFileSync(bundleSource, 'utf-8');
+  const bundlePath = resolve(hookDir, HOOK_BUENDEL);
+  const scriptPath = resolve(hookDir, CURSOR_SKRIPT);
+  const script = buildCursorHook({ instanceId }) + '\n';
+
+  const readIf = async (p: string): Promise<string> => {
+    try { return await readFile(p, 'utf-8'); } catch { return ''; }
+  };
+  const altSkript = await readIf(scriptPath);
+  const allCurrent = altSkript === script && (await readIf(bundlePath)) === bundle;
+  const scripts: CursorInstallResult['scripts'] = allCurrent ? 'unchanged' : altSkript ? 'upgraded' : 'written';
+  if (scripts !== 'unchanged') {
+    // Buendel zuerst: ein laufendes Skript darf nie ein halbes vorfinden.
+    await writeFile(bundlePath, bundle, 'utf-8');
+    await writeFile(scriptPath, script, 'utf-8');
+    await chmod(scriptPath, 0o755).catch(() => {});
+  }
+
+  const hooksPath = resolve(projectDir, CURSOR_HOOKS_DATEI);
+  const roh = existsSync(hooksPath) ? await readIf(hooksPath) : null;
+  let vorhanden: CursorHooksDatei = {};
+  if (roh !== null && roh.trim()) {
+    try {
+      const p = JSON.parse(roh) as unknown;
+      if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('kein Objekt');
+      vorhanden = p as CursorHooksDatei;
+    } catch {
+      // Eine kaputte Datei des Nutzers wird nicht ueberschrieben.
+      return { scriptPath, bundlePath, hooksPath, scripts, hooks: 'skipped' };
+    }
+  }
+  const { datei, changed } = mergeCursorHooks(vorhanden);
+  let hooks: CursorInstallResult['hooks'];
+  if (roh === null || !roh.trim()) hooks = 'written';
+  else if (!changed) hooks = 'unchanged';
+  else hooks = 'merged';
+  if (hooks !== 'unchanged') await writeFile(hooksPath, JSON.stringify(datei, null, 2) + '\n', 'utf-8');
+
+  return { scriptPath, bundlePath, hooksPath, scripts, hooks };
 }
 
 // ── Claude-Code-Plugin ───────────────────────────────────────────────────────

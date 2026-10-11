@@ -905,7 +905,7 @@ import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
 import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-proof.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
-import { installAmbientHooks, AMBIENT_HOOK_VERSION } from './ambient-hooks.js';
+import { installAmbientHooks, installCursorHooks, AMBIENT_HOOK_VERSION, type CursorInstallResult } from './ambient-hooks.js';
 import { hookHauptlauf, auffrischenHauptlauf } from './ambient-hook.js';
 import { rahmeAntwort } from './antwort-rahmen.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath, reportLedgerEntry } from './ambient-ledger.js';
@@ -3367,6 +3367,18 @@ if (!process.argv[2] && process.stdout.isTTY) {
 // ── CLI: cachly init ──────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server init --instance-id <id> --api-key <key> [--editor claude|cursor|windsurf|copilot|continue] [--project-dir /path]
 
+/** One summary line for the Cursor hook install (init/setup/autopilot). Silent when it failed. */
+function reportCursorHooks(r: CursorInstallResult | null, pad: string): void {
+  if (!r) return;
+  if (r.hooks === 'skipped') {
+    console.log(`⚠️ ${pad}.cursor/hooks.json is not valid JSON — left untouched, Cursor hooks not wired`);
+    return;
+  }
+  const verb = r.hooks === 'unchanged' ? '✓  ' : '✅ ';
+  const was = r.hooks === 'written' ? 'Written' : r.hooks === 'merged' ? 'Merged' : 'Already wired';
+  console.log(`${verb}${pad}${was}: .cursor/hooks.json (Ambient Recall for Cursor — session briefing, per-prompt recall after the first tool call)`);
+}
+
 if (process.argv[2] === 'init') {
   const initStart = Date.now();
   const { writeFile, mkdir, readFile } = await import('node:fs/promises');
@@ -3459,6 +3471,8 @@ if (process.argv[2] === 'init') {
       else                               console.log(`✓  Ambient Recall hooks already wired in .claude/settings.json`);
     } catch { /* non-critical — ambient hooks are a best-effort feature */ }
   }
+  // Cursor: same injection through .cursor/hooks.json (cursor-hook.ts).
+  if (editor === 'cursor') reportCursorHooks(await installCursorHooks(projectDir, instanceId).catch(() => null), '');
 
   const initSecs = ((Date.now() - initStart) / 1000).toFixed(1);
   console.log(`\n🧠 Cachly AI Brain configured for ${editor === 'claude' ? 'Claude Code' : editor}! (${initSecs}s)`);
@@ -4509,6 +4523,10 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
       else if (a.settings === 'merged')  console.log(`✅  Merged: .claude/settings.json (Ambient Recall hooks wired)`);
       else                               console.log(`✓  Ambient Recall hooks already wired in .claude/settings.json`);
     } catch { /* non-critical — ambient hooks are a best-effort feature */ }
+  }
+  // Cursor (detected by a .cursor folder): same injection through .cursor/hooks.json.
+  if (editorsToSetup.includes('cursor')) {
+    reportCursorHooks(await installCursorHooks(process.cwd(), instance.id).catch(() => null), ' ');
   }
 
   // Setup reached the end — close the funnel. Report config-write outcome so the
