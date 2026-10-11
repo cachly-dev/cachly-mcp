@@ -7,6 +7,27 @@
 
 ---
 
+## [0.10.177] – 2026-10-11 — *"Experience from minute one."*
+
+**A new Brain learns from your project right away.** A fresh test Brain used to
+answer every question with "nothing in the store yet". Now, when this server
+creates a new Brain inside a git repository, it imports the last 30 commits in
+the background: one embedding at a time, once per instance, only into an empty
+Brain, never blocking the first answer. Measured from a clean home directory on
+a clone of expressjs/cors: 21 lessons after 30.6 s, and the second question
+found the right lesson in first place. Turn it off with
+`CACHLY_STARTWISSEN=false`.
+
+**Lessons from `brain_from_git` are findable at once.** The keyword index was
+not refreshed after an import, so new lessons stayed invisible for up to 60 s
+in the same process.
+
+**`setup` writes `.vscode/mcp.json` in the format VS Code reads.** For Copilot
+and Cline it wrote `mcpServers`, which VS Code ignores in that file. It now
+writes `servers.cachly` with `type: "stdio"`, moves an old cachly entry over,
+leaves other servers untouched and keeps an `envFile` set by the VS Code
+extension.
+
 ## [0.10.176] – 2026-10-11 — *"Meaning from the first prompt, without waiting for a busy reader."*
 
 **Semantic search works for every key, not only one in the environment.** The
