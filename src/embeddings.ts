@@ -18,6 +18,8 @@
  * Mutable config — call setEmbedJwt() when the JWT changes (device flow).
  */
 
+import { zeitpunkt } from './zeitmessung.js';
+
 // ── Mutable config (synced with index.ts JWT on device-flow auth) ────────────
 export const embedConfig = {
   apiUrl: process.env.CACHLY_API_URL ?? 'https://api.cachly.dev',
@@ -400,7 +402,10 @@ export async function computeEmbedding(text: string, opts?: { geduld?: EmbedGedu
   for (;;) {
     versuch++;
     try {
-      return await embeddingEinmal(text, geduld, opts?.modell);
+      zeitpunkt(`einbettung: Anfang (${text.length} Zeichen, Versuch ${versuch})`);
+      const v = await embeddingEinmal(text, geduld, opts?.modell);
+      zeitpunkt('einbettung: fertig');
+      return v;
     } catch (fehler) {
       const warte = wiederholungMs(fehler, versuch, geduld);
       if (warte === null) throw fehler;

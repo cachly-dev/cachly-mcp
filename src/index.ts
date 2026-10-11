@@ -133,14 +133,19 @@ async function projektOrdnerVomClient(): Promise<string> {
   return waehleProjektOrdner({ wurzeln, env: process.env, cwd: process.cwd(), dateiPfad: fileURLToPath });
 }
 
+/** Darf dieser Prozess nach dem Anlegen eines Brains aus der Git-Geschichte lernen? */
+function startwissenMoeglich(): boolean {
+  if (!_startwissenErlaubt) return false;
+  return !/^(0|false|off|no|nein)$/i.test((process.env.CACHLY_STARTWISSEN ?? '').trim());
+}
+
 /**
  * Dieser Prozess hat ein Brain NEU angelegt: im Hintergrund aus der
  * Git-Geschichte des Projekts lernen. Wartet auf nichts und wirft nie.
  * CACHLY_STARTWISSEN=false schaltet es ab.
  */
 function starteStartwissenImHintergrund(instanzId: string): void {
-  if (!_startwissenErlaubt || !instanzId) return;
-  if (/^(0|false|off|no|nein)$/i.test((process.env.CACHLY_STARTWISSEN ?? '').trim())) return;
+  if (!instanzId || !startwissenMoeglich()) return;
   void starteStartwissen({
     instanzId,
     verbindung: getConnection,
@@ -233,6 +238,8 @@ async function resolveDefaultInstanceId(): Promise<string> {
         if (provisioned) {
           _defaultInstanceId = provisioned;
           _defaultInstanceLastAttempt = 0;
+          // Das Konto hatte keine Instanz: diese ist neu und leer (leeres-brain.ts).
+          merkeNeuesBrain(provisioned, startwissenMoeglich());
           void persistInstanceIdToConfig(provisioned);
           // Neu angelegt (nach der Browser-Anmeldung oder der Selbstheilung
           // eines Kontos ohne Instanz): aus der Git-Geschichte lernen.
@@ -597,7 +604,7 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
               // Wait up to 20s here so the re-entered tool call lands on a running instance.
               const pDeadline = Date.now() + 20_000;
               while (checkInst.status === 'provisioning' && Date.now() < pDeadline) {
-                await new Promise(r => setTimeout(r, 3000));
+                await new Promise(r => setTimeout(r, PROVISION_TAKT_MS));
                 const rr = await fetch(`${API_URL}/api/v1/instances/${_defaultInstanceId}`, {
                   headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' },
                   signal: AbortSignal.timeout(4000),
@@ -731,19 +738,28 @@ async function getConnection(instance_id: string): Promise<Redis> {
     );
   }
 
-  if (pool.has(instance_id)) return pool.get(instance_id)!;
+  const fertig = pool.get(instance_id);
+  if (fertig) return fertig;
 
+  // Ein Aufbau je Instanz: wer waehrenddessen kommt, wartet auf denselben
+  // (Messung und Begruendung: instanz-warten.ts).
+  return gemeinsamerAufbau(_verbindungImAufbau, instance_id, () => baueVerbindung(instance_id));
+}
+
+/** Laufende Verbindungsaufbauten je Instanz (siehe getConnection). */
+const _verbindungImAufbau = new Map<string, Promise<Redis>>();
+
+async function baueVerbindung(instance_id: string): Promise<Redis> {
   // Fetch instance, waiting up to PROVISION_TIMEOUT_MS if it is still provisioning.
   // This covers the zero-friction path: device-flow auth → auto-provision → first tool call
   // all happen in quick succession and the instance isn't running yet.
+  zeitpunkt('verbindung: Instanz abfragen');
   let inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
-  if (inst.status === 'provisioning') {
-    const deadline = Date.now() + PROVISION_TIMEOUT_MS;
-    while (inst.status === 'provisioning' && Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 3000));
-      inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
-    }
-  }
+  zeitpunkt(`verbindung: Instanz ${inst.status}`);
+  inst = await warteAufLaufendeInstanz(inst, () => apiFetch<Instance>(`/api/v1/instances/${instance_id}`), {
+    fristMs: PROVISION_TIMEOUT_MS,
+    melde: (stand) => zeitpunkt(`verbindung: Instanz ${stand.status}`),
+  });
 
   if (inst.status !== 'running') {
     // Telemetry: unreachable instance so the team can proactively investigate
@@ -787,6 +803,7 @@ async function getConnection(instance_id: string): Promise<Redis> {
     );
     password = conn.password ?? undefined;
     tlsEnabled = conn.tls_enabled !== false;
+    zeitpunkt('verbindung: Zugangsdaten da');
   } catch (connErr) {
     // If the connection endpoint fails and the instance has a password, we cannot connect.
     // Surface the error so the user knows why Redis auth will fail rather than getting a cryptic NOAUTH.
@@ -846,6 +863,7 @@ async function getConnection(instance_id: string): Promise<Redis> {
   }
 
   pool.set(instance_id, client);
+  zeitpunkt('verbindung: Valkey verbunden');
   return client;
 }
 
@@ -905,6 +923,9 @@ import { appendLedgerEntry, readLedger, defaultLedgerPath, reportLedgerEntry } f
 import { resolveApiKey, saveApiKey, saveInstanceId, type CredentialsHomeOptions } from './credentials.js';
 import { holeSofortTest } from './sofort-test.js';
 import { sichereZugang, echterWert } from './zugang.js';
+import { zeitpunkt } from './zeitmessung.js';
+import { warteAufLaufendeInstanz, gemeinsamerAufbau, PROVISION_TAKT_MS } from './instanz-warten.js';
+import { merkeNeuesBrain } from './leeres-brain.js';
 import {
   starteStartwissen, startwissenGestartet, beanspruchStartwissen, holeStartwissenHinweis, waehleProjektOrdner,
 } from './startwissen.js';
@@ -1292,7 +1313,15 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       werkzeugName: name,
       // speichern: no-op — alle Ablagen macht sichereZugang an EINER Stelle,
       // sonst schriebe credentials.json zweimal und an zwei Orten im Code.
-      holeSofortTest: () => holeSofortTest({ apiUrl: API_URL, version: CURRENT_VERSION, speichern: () => {} }),
+      holeSofortTest: async () => {
+        zeitpunkt('sofort-test: Anfang');
+        const test = await holeSofortTest({ apiUrl: API_URL, version: CURRENT_VERSION, speichern: () => {} });
+        zeitpunkt(`sofort-test: ${test ? 'Brain angelegt' : 'kein Test'}`);
+        // Jeder Sofort-Test legt ein neues Konto mit neuer Instanz an: sie ist
+        // leer, solange sie startet (leeres-brain.ts).
+        if (test) merkeNeuesBrain(test.instanzId, startwissenMoeglich());
+        return test;
+      },
       ablagen: {
         setzeSchluessel: (key) => { JWT = key; },
         setEmbedJwt,
@@ -1350,7 +1379,9 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   }
 
   // Delegate brain tools (learn, recall, session, etc.)
+  zeitpunkt(`werkzeug ${name}: Zugang und Tarif geklaert`);
   const brainResult = await handleBrainTool(name, args, getConnection, apiFetch);
+  zeitpunkt(`werkzeug ${name}: Brain-Werkzeug fertig`);
   if (brainResult !== null) {
     // Erst hier steht die Antwort fest — vorher gibt es nichts zu zaehlen.
     if (typeof args.instance_id === 'string' && args.instance_id) {
@@ -1933,7 +1964,9 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
 
   try {
     merkeWerkzeugAufruf();
+    zeitpunkt(`werkzeug ${name}: Anfang`);
     const text = await handleTool(name, (args ?? {}) as Record<string, unknown>);
+    zeitpunkt(`werkzeug ${name}: Antwort fertig`);
     // Hat der Hintergrund-Import aus der Git-Geschichte gerade Lektionen
     // angelegt, steht die Zahl EINMAL an dieser Antwort — ausserhalb des
     // Rahmens, denn sie ist eine Meldung des Servers und kein gespeicherter Text.
@@ -4802,6 +4835,7 @@ if (httpPort) {
 } else {
   // ── stdio mode (default for local editor use) ───────────────────────────
   const transport = new StdioServerTransport();
+  zeitpunkt('start: Module geladen, stdio verbinden');
   await server.connect(transport);
 
   // Der Server stirbt mit seiner Session (Karte xm54lkjujmyi, 31.08.2026):

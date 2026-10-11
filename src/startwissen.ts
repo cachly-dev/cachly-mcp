@@ -297,6 +297,14 @@ async function betteNacheinander(
 
 // Laufende oder fertige Importe dieses Prozesses, je Instanz.
 const _laeufe = new Map<string, Promise<StartwissenErgebnis>>();
+// Wie die fertigen ausgegangen sind. Fehlt der Eintrag, laeuft der Import
+// noch oder hat nie begonnen (leeres-brain.ts fragt das ab).
+const _ausgaenge = new Map<string, StartwissenErgebnis['art']>();
+
+/** Wie der Import fuer diese Instanz ausging — undefined, solange er laeuft oder nie lief. */
+export function startwissenAusgang(instanzId: string): StartwissenErgebnis['art'] | undefined {
+  return _ausgaenge.get(instanzId);
+}
 
 /**
  * Startet den Import im Hintergrund, hoechstens einmal je Instanz und Prozess.
@@ -308,7 +316,8 @@ export function starteStartwissen(u: StartwissenUmfeld): Promise<StartwissenErge
   const lauf = (async () => {
     await (u.schlafen ?? schlafe)(u.anlaufMs ?? ANLAUF_MS);
     return lerneAusGitGeschichte(u);
-  })().catch((e: unknown): StartwissenErgebnis => ({ art: 'fehler', grund: e instanceof Error ? e.message : String(e) }));
+  })().catch((e: unknown): StartwissenErgebnis => ({ art: 'fehler', grund: e instanceof Error ? e.message : String(e) }))
+    .then((ergebnis) => { _ausgaenge.set(u.instanzId, ergebnis.art); return ergebnis; });
   _laeufe.set(u.instanzId, lauf);
   return lauf;
 }
@@ -330,5 +339,6 @@ export async function beanspruchStartwissen(redis: Redis, stand: string): Promis
 /** Nur fuer Tests. */
 export function _startwissenZuruecksetzen(): void {
   _laeufe.clear();
+  _ausgaenge.clear();
   _hinweis = '';
 }

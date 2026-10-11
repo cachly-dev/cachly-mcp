@@ -2292,6 +2292,6 @@ export { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp,
 // ── Exported for use in index.ts ──────────────────────────────────────────────
 export {
   keywordSearch, keywordSearchMitBestand, ZERO_RESULTS_LOG, logZeroResult,
-  _indexVocab as indexVocab, zeroResultsTotal,
+  _indexVocab as indexVocab, zeroResultsTotal, bestandHolen,
 };
 

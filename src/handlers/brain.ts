@@ -49,7 +49,8 @@ import type { CKGEdge, CKGNode, PersonNode, ServiceNode } from '../ckg.js';
 import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
 import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
-         splitMultiQuery, levenshtein, indexVocab as _indexVocab } from '../search.js';
+         splitMultiQuery, levenshtein, indexVocab as _indexVocab, bestandHolen } from '../search.js';
+import { neuesBrain, leeresBrainAntwort, lerntNochAusGit } from '../leeres-brain.js';
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider, EMBED_PROVIDER } from '../embeddings.js';
 import { leserAktiv, leserPunkte, mischeMitLeser } from '../leser.js';
@@ -254,6 +255,7 @@ import { autorAbzeichen, fremdanteil } from '../autor-abzeichen.js';
 import { cachlyUrl } from '../cachly-url.js';
 import { belegFuer } from '../schreibbeleg.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
+import { zeitpunkt } from '../zeitmessung.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
 // Resolve the package version at runtime from package.json so the session briefing
@@ -769,6 +771,27 @@ async function vermerkeAusgang(
   } catch {
     // Eine Messzeile darf die Antwort nie stoppen (Muster bumpRecallQuota).
   }
+}
+
+/**
+ * Die Messzeilen einer Suche in einem LEEREN Brain (siehe leeres-brain.ts).
+ *
+ * Dieselben Zeilen, die der volle Weg fuer "nichts gefunden" schreibt: eine
+ * Quoteneinheit, die Suchstatistik des Dashboards, das Suchprotokoll mit leerer
+ * Lieferung und der Ausgang "schweigen". Die Abkuerzung spart Rechenzeit, nicht
+ * Zaehlung — sonst saehe ein neues Brain im Dashboard so aus, als sei nie
+ * gesucht worden. Alles fire-and-forget, wie im vollen Weg.
+ */
+function vermerkeLeereSuche(redis: Redis, instanceId: string, query: string, dauerMs: number): void {
+  void bumpRecallQuota(redis);
+  void merkeSuchlauf(redis, query, dauerMs);
+  const suche: TrichterSuche = { ts: new Date().toISOString(), frage: query.slice(0, 200), geliefert: [] };
+  void (async () => {
+    const k = suchProtokollSchluessel(instanceId);
+    await redis.lpush(k, JSON.stringify(suche));
+    await redis.ltrim(k, 0, SUCH_DECKEL - 1);
+  })().catch(() => { /* Messzeile stoppt nie die Antwort */ });
+  void vermerkeAusgang(redis, instanceId, 'schweigen');
 }
 
 async function getRecallGate(instanceId: string, apiFetch: ApiFetch): Promise<RecallGate> {
@@ -2142,7 +2165,33 @@ async function handleBrainToolInner(
         ? rawContextFiles.filter((f): f is string => typeof f === 'string')
         : [];
 
+      zeitpunkt('smart_recall: Anfang');
+
+      // ── Ein Brain, das dieser Prozess eben angelegt hat und das noch startet ──
+      //
+      // Es kann nichts enthalten: geschrieben wird erst, wenn die Instanz
+      // laeuft. Bis zum 11.10.2026 wartete dieser Aufruf trotzdem darauf —
+      // gemessen 9,2 s von 10,4 s —, um dann "nichts gefunden" zu sagen.
+      // Jetzt kommt diese Antwort sofort. Begruendung und Zahlen: leeres-brain.ts.
+      // Jedes andere Brain (auch eines mit unbekanntem Stand) nimmt den
+      // vollen Weg; nach dem ersten Blick auf eine laufende Instanz auch dieses.
+      const frischesBrain = neuesBrain(instance_id);
+      if (frischesBrain && !frischesBrain.laeuft) {
+        const stand = await apiFetch<Instance | null>(`/api/v1/instances/${instance_id}`).catch(() => null);
+        if (stand?.status === 'provisioning') {
+          const dauer = Date.now() - suchStart;
+          // Die Messzeilen schreibt die Verbindung, sobald sie steht.
+          void getConnection(instance_id)
+            .then((r) => vermerkeLeereSuche(r, instance_id, String(query ?? ''), dauer))
+            .catch(() => { /* Messzeile stoppt nie die Antwort */ });
+          zeitpunkt('smart_recall: neues Brain startet noch — sofort geantwortet');
+          return leeresBrainAntwort(String(query ?? ''), { startet: true, lerntAusGit: lerntNochAusGit(instance_id) });
+        }
+        frischesBrain.laeuft = true;
+      }
+
       const redis = await getConnection(instance_id);
+      zeitpunkt('smart_recall: Verbindung steht');
 
       // Lesend heilen (Karte 8jnckd2stesi): eine Instanz, in die niemand mehr
       // schreibt, blieb bis zum 02.09.2026 dauerhaft blind — der Nachtrag
@@ -2160,15 +2209,29 @@ async function handleBrainToolInner(
         requesterIsAdmin = reqRole === 'admin';
       }
 
+      // ── Ein Brain ohne einen einzigen Eintrag (leeres-brain.ts) ──────────
+      //
+      // Kein Kontext, keine Lektion, kein Index: Wortsuche, Einbettung der
+      // Frage, Leser, Sinn-Dienst und Kantenscan koennen hier nichts finden.
+      // Die Einbettung kostet bei kaltem Dienst Sekunden — fuer eine Antwort,
+      // die vorher feststeht. Der Bestand ist derselbe, den die Wortsuche
+      // gleich darauf aus dem Zwischenspeicher nimmt: fuer ein Brain mit
+      // Inhalt kostet diese Pruefung keinen zusaetzlichen Abruf.
+      const suchMuster = ['cachly:ctx:*', 'cachly:lesson:best:*', 'cachly:idx:*'];
+      const wortbestand = await bestandHolen(redis, suchMuster);
+      if (!wortbestand) {
+        vermerkeLeereSuche(redis, instance_id, String(query ?? ''), Date.now() - suchStart);
+        zeitpunkt('smart_recall: Brain leer — sofort geantwortet');
+        return leeresBrainAntwort(String(query ?? ''), { startet: false, lerntAusGit: lerntNochAusGit(instance_id) });
+      }
+      const lektionenImBestand = wortbestand.docs
+        .reduce((n, d) => n + (d.key.startsWith('cachly:lesson:best:') ? 1 : 0), 0);
+
       // ── Layer 1: Keyword search across ALL brain data (always works, no embedding) ──
       // Wider candidate pool (25) lets the quality reranker rescue relevant lessons that
       // BM25 alone would rank 11–25 due to vocabulary mismatch. Final slice to 5 happens below.
-      const rawMatches = await keywordSearch(
-        redis,
-        ['cachly:ctx:*', 'cachly:lesson:best:*', 'cachly:idx:*'],
-        query,
-        25,
-      );
+      const rawMatches = await keywordSearch(redis, suchMuster, query, 25);
+      zeitpunkt(`smart_recall: Wortsuche fertig (${rawMatches.length} Treffer)`);
 
       // ── Layer 1.5: Quality-aware rerank — proven success lessons outrank
       // text-similar failed attempts (the moat; see src/rerank.ts + Cachly-Bench). ──
@@ -2211,14 +2274,22 @@ async function handleBrainToolInner(
         }
         try {
           await vektorbestand.aktualisiere(redis);
+          zeitpunkt(`smart_recall: Vektorbestand geladen (${vektorbestand.groesse})`);
           if (vektorbestand.groesse === 0) {
-            meldeEinmal(OHNE_VEKTOREN,
-              'keine einzige Lektion hat eine Einbettung — die Suche laeuft nur ueber '
-              + 'Woerter. Nachruesten mit eingaenge-nachruesten, pruefen mit brain_doctor');
+            // Ohne eine einzige Lektion ist "keine Lektion hat eine Einbettung"
+            // kein Aussetzer, sondern Laerm: die Meldung kam bis zum 11.10.2026
+            // bei jedem neuen Brain. Sie bleibt fuer den Fall, fuer den sie
+            // gebaut ist — Lektionen da, Vektoren nicht.
+            if (lektionenImBestand > 0) {
+              meldeEinmal(OHNE_VEKTOREN,
+                'keine einzige Lektion hat eine Einbettung — die Suche laeuft nur ueber '
+                + 'Woerter. Nachruesten mit eingaenge-nachruesten, pruefen mit brain_doctor');
+            }
             return kwMatches;
           }
 
           const frageVektor = await computeEmbedding(query);
+          zeitpunkt('smart_recall: Frage eingebettet');
           if (!frageVektor?.length) {
             meldeEinmal(OHNE_FRAGEVEKTOR,
               'die Frage liess sich nicht einbetten — diese Suche laeuft nur ueber Woerter');
@@ -2406,7 +2477,9 @@ async function handleBrainToolInner(
             const kopf = reihenfolge.slice(0, LESER_TIEFE);
             const rest = reihenfolge.slice(LESER_TIEFE);
             const hausPunkt = new Map(topf.map((t, i) => [t, punkte[i]] as const));
+            zeitpunkt('smart_recall: Leser Anfang');
             const lp = await leserPunkte(query, kopf.map((t) => seltenheitsbestand.leserTextVon(t)), { instanceId: instance_id });
+            zeitpunkt(`smart_recall: Leser ${lp ? 'fertig' : 'ohne Ergebnis'}`);
             if (lp) {
               const neu = mischeMitLeser(kopf.map((t) => hausPunkt.get(t) ?? 0), lp);
               reihenfolge = [...neu.map((i) => kopf[i]), ...rest];
@@ -2470,6 +2543,7 @@ async function handleBrainToolInner(
           return kwMatches;
         }
       })();
+      zeitpunkt('smart_recall: Bedeutungspfad fertig');
 
       // One quota unit for this call, regardless of how many lessons it surfaced.
       void bumpRecallQuota(redis);
@@ -2633,7 +2707,9 @@ async function handleBrainToolInner(
       // ── Layer 2: Semantic search (parallel, optional) ────────────────────────
       // Semantic recall is a Premium depth layer: free tier keeps full keyword +
       // CKG recall (the magic moment), paid tiers add embedding-based retrieval.
+      zeitpunkt('smart_recall: Treffer gezaehlt');
       const inst = await apiFetch<Instance | null>(`/api/v1/instances/${instance_id}`).catch(() => null);
+      zeitpunkt('smart_recall: Tarif abgefragt');
       const tierIsFree = !inst?.tier || inst.tier.toLowerCase() === 'free';
       type SemHit = { key: string; similarity: number; content: string };
       const semHits: SemHit[] = [];
@@ -2791,6 +2867,7 @@ async function handleBrainToolInner(
           }
         }
       } catch { /* non-critical — keyword + semantic always available */ }
+      zeitpunkt('smart_recall: Sinn-Dienst und CKG fertig');
 
       // ── Layer 4: File-context personalization ────────────────────────────────
       // When the caller provides the files they are currently working on, lessons
@@ -3039,7 +3116,9 @@ async function handleBrainToolInner(
       }
 
       // ── Teaser-Gate: free tier over its recall limit hides the long tail ──────
+      zeitpunkt('smart_recall: Notizen und Duplikate fertig');
       const recallGate = await getRecallGate(instance_id, apiFetch);
+      zeitpunkt('smart_recall: Abruf-Grenze abgefragt');
       // Depth gate: once a free user is over their (monthly, goodwill-adjusted)
       // recall limit, the LONG TAIL is withheld — never the top hit. The rule
       // lives in recall-tiefe.ts with tests (GROW-043), because it used to live
