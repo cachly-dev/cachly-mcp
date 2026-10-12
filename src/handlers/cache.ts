@@ -285,13 +285,10 @@ export async function handleCacheTool(
         return (
           `❌ semantic_search requires an embedding provider.\n\n` +
           `Current: ${embedProviderHint()}\n\n` +
-          `Set one of these in your MCP env config:\n` +
-          `  OPENAI_API_KEY   (provider: openai – default)\n` +
-          `  MISTRAL_API_KEY  (provider: mistral)\n` +
-          `  COHERE_API_KEY   (provider: cohere)\n` +
-          `  GEMINI_API_KEY   (provider: gemini)\n` +
-          `  OLLAMA_BASE_URL  (provider: ollama – local, no key needed)\n` +
-          `Also set: CACHLY_EMBED_PROVIDER=<provider>`
+          `Easiest: sign in (CACHLY_JWT). Embeddings then run on the cachly servers in the EU, no extra key.\n` +
+          `Or set OLLAMA_BASE_URL to use a local model (no key needed).\n` +
+          `Your own key with a third-party provider works only if you name the provider yourself: ` +
+          `CACHLY_EMBED_PROVIDER=<openai|gemini|mistral|cohere> plus its API key. The text is then sent to that provider.`
         );
       }
 
@@ -655,7 +652,7 @@ export async function handleCacheTool(
         `💡 **Next steps:**`,
         `   1. Use \`smart_recall("how does auth work")\` to find relevant files.`,
         `   2. Re-run index_project after major refactors.`,
-        ...(canEmbed ? [] : [`   3. Set OPENAI_API_KEY (or similar) in .env to also enable semantic search.`]),
+        ...(canEmbed ? [] : [`   3. Sign in (CACHLY_JWT) or set OLLAMA_BASE_URL to also enable semantic search.`]),
         ``,
         ...(details.length <= 20 ? details : [...details.slice(0, 20), `  … and ${details.length - 20} more`]),
       ].join('\n');

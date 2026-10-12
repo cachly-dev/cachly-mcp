@@ -38,7 +38,7 @@ const _isMain = process.argv[1] != null &&
  *   • cache_keys            – list keys matching a glob pattern
  *   • cache_stats           – memory, hit rate, ops/sec, keyspace info
  *   • semantic_search       – find semantically similar cached entries
- *                             (needs OPENAI_API_KEY or other embed provider in .env)
+ *                             (needs CACHLY_JWT, or OLLAMA_BASE_URL, or a provider named in CACHLY_EMBED_PROVIDER)
  *
  * ── Auth & Status ────────────────────────────────────────────────────────────
  *   • get_api_status        – check API health + JWT auth info (Keycloak)
@@ -47,7 +47,7 @@ const _isMain = process.argv[1] != null &&
  * Configuration (env vars):
  *   CACHLY_API_URL      – default https://api.cachly.dev
  *   CACHLY_JWT          – your JWT (Keycloak access token)
- *   CACHLY_EMBED_PROVIDER – embedding backend: openai (default), gemini, mistral, cohere, ollama, cachly (server fallback)
+ *   CACHLY_EMBED_PROVIDER – embedding backend, only if you name one: cachly (default with a JWT), ollama, openai, gemini, mistral, cohere
  *   CACHLY_EMBED_MODEL  – override embedding model (optional)
  */
 
@@ -682,7 +682,7 @@ function defaultUnrefTimeout(fn: () => void, ms: number): void {
   if (typeof (t as { unref?: () => void }).unref === 'function') (t as { unref: () => void }).unref();
 }
 // ── Embeddings (imported from embeddings.ts) ────────────────────────────────
-import { setEmbedJwt, computeEmbedding, hasEmbedProvider } from './embeddings.js';
+import { setEmbedJwt, computeEmbedding, hasEmbedProvider, EMBED_PROVIDER } from './embeddings.js';
 import { ZWEIT_MODELL } from './rangfolge-stellschrauben.js';
 
 // ── Search Engine (imported from search.ts) ─────────────────────────────────
@@ -3853,15 +3853,23 @@ if (process.argv[2] === 'health') {
       ['OLLAMA_BASE_URL', 'ollama'],
     ];
     const explicit = (process.env.CACHLY_EMBED_PROVIDER ?? '').toLowerCase();
-    const byok = providerKeys.find(([envVar]) => process.env[envVar]);
     if (explicit && explicit !== 'cachly') {
       const envVar = providerKeys.find(([, p]) => p === explicit)?.[0];
       if (envVar && process.env[envVar]) ok(`BYOK: ${explicit} (key present in ${envVar})`);
       else warn(`CACHLY_EMBED_PROVIDER=${explicit} but its key env var is not set — semantic search will fail`);
-    } else if (byok) {
-      ok(`BYOK: ${byok[1]} auto-detected (${byok[0]} present)`);
     } else {
-      ok('Server-side embeddings (cachly) — no key needed, uses your JWT');
+      // Report what embeddings.ts really does. A third-party key in the
+      // environment never picks a provider (detectEmbedProvider), so doctor
+      // must not say "auto-detected": until 2026-10-12 it did, and it made a
+      // key set for another tool look like a data path to OpenAI.
+      if (EMBED_PROVIDER === 'ollama') ok('Local Ollama (OLLAMA_BASE_URL) — text stays on your machine');
+      else if (EMBED_PROVIDER === 'cachly') ok('Server-side embeddings (cachly, EU) — no key needed, uses your JWT');
+      else warn('No embedding provider active — sign in (CACHLY_JWT) for EU-hosted embeddings; search runs on words until then');
+      for (const [envVar, p] of providerKeys) {
+        if (p !== 'ollama' && process.env[envVar]) {
+          ok(`${envVar} is set but not used — ${p} runs only if you name it with CACHLY_EMBED_PROVIDER=${p}`);
+        }
+      }
     }
   }
 

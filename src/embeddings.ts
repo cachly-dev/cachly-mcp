@@ -2,15 +2,18 @@
  * ┌──────────────────────────────────────────────────────────────────────┐
  * │  EMBEDDING PROVIDER — pluggable, client-side first                  │
  * │                                                                      │
- * │  Auto-detects from env vars. To force a provider, set:              │
+ * │  Auto-detect (detectEmbedProvider): CACHLY_JWT -> cachly (EU),      │
+ * │  else OLLAMA_BASE_URL -> ollama (local), else none. A key such as   │
+ * │  OPENAI_API_KEY in the environment NEVER picks a provider.          │
+ * │                                                                      │
+ * │  A third-party provider runs only when the user names it:           │
  * │    CACHLY_EMBED_PROVIDER=openai   (+ OPENAI_API_KEY)                │
  * │    CACHLY_EMBED_PROVIDER=gemini   (+ GEMINI_API_KEY)                │
  * │    CACHLY_EMBED_PROVIDER=mistral  (+ MISTRAL_API_KEY)               │
  * │    CACHLY_EMBED_PROVIDER=cohere   (+ COHERE_API_KEY)                │
  * │    CACHLY_EMBED_PROVIDER=ollama   (+ OLLAMA_BASE_URL, local)        │
- * │    CACHLY_EMBED_PROVIDER=cachly   (server-side fallback, no key)    │
+ * │    CACHLY_EMBED_PROVIDER=cachly   (server-side, no key)             │
  * │                                                                      │
- * │  Priority: openai > gemini > mistral > cohere > ollama > cachly     │
  * │  Brain works WITHOUT embedding (keyword search + exact key lookup). │
  * │  Embedding is an optional boost for semantic_search/index_project.  │
  * └──────────────────────────────────────────────────────────────────────┘
@@ -439,7 +442,7 @@ export function embedProviderHint(): string {
     gemini: 'GEMINI_API_KEY',
   };
   if (EMBED_PROVIDER === 'none') {
-    return 'No embedding provider configured. Set OPENAI_API_KEY, GEMINI_API_KEY, or another provider key in .env. Brain works without embedding.';
+    return 'No embedding provider configured. Sign in (CACHLY_JWT) to use the EU-hosted cachly embeddings, or set OLLAMA_BASE_URL for a local model. Brain works without embedding.';
   }
   const key = providerKeys[EMBED_PROVIDER] ?? 'CACHLY_JWT';
   return `CACHLY_EMBED_PROVIDER=${EMBED_PROVIDER} → requires ${key}`;

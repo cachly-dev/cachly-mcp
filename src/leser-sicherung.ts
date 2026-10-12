@@ -183,7 +183,7 @@ export interface LeserAnruf {
   jwt: string;
   frage: string;
   texte: string[];
-  /** Die API waehlt damit, WELCHER Leser liest (eigener Dienst oder Jev). */
+  /** Kennung der Instanz; die Sicherung haelt je Instanz einen eigenen Zustand. Es liest nur der eigene Dienst. */
   instanceId?: string;
   zeitlimitMs: number;
   fetchFn?: typeof fetch;

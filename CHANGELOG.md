@@ -7,6 +7,20 @@
 
 ---
 
+## [0.10.186] – 2026-10-12 — *"A key you set for another tool stays that tool's key."*
+
+**`health` no longer says your `OPENAI_API_KEY` is in use.** A key such as
+`OPENAI_API_KEY` in your environment has never selected an embedding provider
+since 23 Aug 2026, but `health` still printed "BYOK: openai auto-detected".
+It now reports what really runs: the EU servers of cachly (with your key),
+a local Ollama, or none. Keys it ignores are listed as "set but not used".
+
+**The hints point to the EU path first.** When `semantic_search` has no
+embedding provider, the message now says: sign in, or use a local Ollama. A
+third-party provider (OpenAI, Gemini, Mistral, Cohere) still works, but only
+if you name it yourself with `CACHLY_EMBED_PROVIDER`. A new test proves that
+a stray `OPENAI_API_KEY` makes no network call at all.
+
 ## [0.10.185] – 2026-10-12 — *"Tool inputs no longer pass through a shell."*
 
 **Paths, branch names and instance ids from tool calls reach Git and hook

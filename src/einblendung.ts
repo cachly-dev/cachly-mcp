@@ -409,7 +409,7 @@ export async function leserPunkteApi(
 
 export interface AuswahlMitLeser extends Auswahl {
   /**
-   * Wer die Spitze gemischt hat: der Anbieter ('jev' | 'tei' | ...), wenn der
+   * Wer die Spitze gemischt hat: der Anbieter ('tei', der eigene Dienst), wenn der
    * Leser geantwortet hat. 'uebersprungen': die Leser-Sicherung war offen,
    * der Leser wurde nicht gefragt. 'aus': nicht gefragt (abgeschaltet, nichts
    * zu lesen) oder gefragt ohne brauchbare Antwort.

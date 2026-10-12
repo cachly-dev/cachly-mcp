@@ -58,8 +58,10 @@ export async function leserPunkte(
   opts?: { zeitlimitMs?: number; fetchFn?: typeof fetch; instanceId?: string; zusatzKopf?: Record<string, string> },
 ): Promise<number[] | null> {
   if (!leserAktiv(opts?.instanceId) || texte.length === 0) return null;
-  // instance_id: die API entscheidet damit, WELCHER Leser lesen darf —
-  // der eigene Dienst im Haus, oder (nur fuer freigegebene Instanzen) Jev.
+  // instance_id: gehoert nur noch zur Leser-Sicherung (ein Zustand je
+  // Instanz). Bis 12.10.2026 entschied die API damit auch, ob eine Instanz zu
+  // Jev (USA) durfte; diesen Weg gibt es nicht mehr. Es liest nur der eigene
+  // Dienst im Haus.
   // zusatzKopf: nur fuer Messlaeufe (X-Admin-Key). /rerank teilt den
   // Embed-Limiter (60 je Minute je Nutzer); ein Messlauf mit 2,7 Aufrufen
   // je Sekunde verlor am 07.10.2026 706 von 3.003 Leseraufrufen an HTTP 429.
