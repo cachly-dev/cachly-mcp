@@ -190,6 +190,8 @@ export interface EinblendDeps {
   onInject?: (tokens: number, event: string) => void;
   /** Write the per-prompt net log line (default true). */
   protokoll?: boolean;
+  /** Which editor runs the hook ('claude', 'cursor', 'copilot', 'codex', 'gemini', 'vscode'). */
+  editor?: string;
   /** Tests only. */
   fetchFn?: typeof fetch;
 }
@@ -221,6 +223,9 @@ export async function runEinblendung(raw: string, deps: EinblendDeps): Promise<s
         leser: event !== 'PreToolUse',
         session: payload.session_id ?? null,
         protokoll: deps.protokoll,
+        // Learning (lernen.ts) only acts on UserPromptSubmit; the event decides.
+        ereignis: event,
+        editor: deps.editor,
         fetchFn: deps.fetchFn,
       });
       kontext = r.kontext;

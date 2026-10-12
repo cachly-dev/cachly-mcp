@@ -444,6 +444,9 @@ The free tier needs no credit card.
 | `CACHLY_PROFILE` | unset | `lean` lists 8 tools plus `cachly_tool`, `recall` lists the 3 read-only tools |
 | `CACHLY_UPDATE_CHECK` | on | Set to `false` to stop the version check. npm is asked at most once a day, with a 2-second limit |
 | `CACHLY_NO_TELEMETRY` | unset | Set to `1` to disable usage pings. They include your API token and up to 80 characters of `smart_recall` queries |
+| `CACHLY_LERNEN` | on | Learning from use in the prompt hook. For 5 % of prompts the matching lessons are computed but not shown (control group), up to 10 % try a stricter or shorter setting. At the end of each turn the hook reports which setting ran and whether the agent named a shown lesson; topics are sent hashed, prompts never. Set to `0` (or `CACHLY_NO_TELEMETRY=1`) to turn it off |
+| `CACHLY_KONTROLLE_ANTEIL` | `5%` | Share of prompts in the control group. `0` turns the control group off, at most `50%` |
+| `CACHLY_ERKUNDUNG` | `10%` | Share of prompts that may try another setting. `0` keeps the leading setting, at most `10%` |
 
 ## Ecosystem and docs
 

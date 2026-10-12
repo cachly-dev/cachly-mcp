@@ -44,6 +44,12 @@ export default defineConfig({
     // and corpus-sample-test under concurrent web build. See .agent/cachly/tasks/SDK-004.md
     testTimeout: 20000,
     hookTimeout: 20000,
+    // Lernen aus Nutzung (src/lernen.ts) ist im Produkt an: 5 % Kontrollgruppe,
+    // bis 10 % Erkundung, entschieden per Hash aus Instanz, Sitzung und Prompt.
+    // Viele Tests bauen die Instanz-Kennung aus der Prozessnummer — mit Lernen
+    // fiele dieselbe Frage in jedem Lauf anders aus. Tests des Lernens setzen
+    // ihre Einstellungen ausdruecklich (src/__tests__/lernen.test.ts).
+    env: { CACHLY_LERNEN: '0' },
     isolate: true,
     poolOptions: {
       threads: {

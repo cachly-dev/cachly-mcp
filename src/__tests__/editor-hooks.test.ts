@@ -550,7 +550,8 @@ function umfeld(extra: Record<string, string> = {}): Record<string, string> {
     const v = process.env[k];
     if (v) env[k] = v;
   }
-  return { ...env, TEMP: temp, TMP: temp, TMPDIR: temp, HOME: heim, USERPROFILE: heim, CACHLY_API_URL: apiUrl, ...extra };
+  // CACHLY_LERNEN=0: ohne Kontrollgruppe und Erkundung (vitest.config.ts), sonst fiele die Ausgabe je Lauf anders aus.
+  return { ...env, TEMP: temp, TMP: temp, TMPDIR: temp, HOME: heim, USERPROFILE: heim, CACHLY_API_URL: apiUrl, CACHLY_LERNEN: '0', ...extra };
 }
 
 /** Gemini setzt diese Variablen (docs/hooks/index.md, "Environment variables"). */

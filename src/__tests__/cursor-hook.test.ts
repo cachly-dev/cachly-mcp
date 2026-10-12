@@ -359,6 +359,8 @@ function umfeld(extra: Record<string, string> = {}): Record<string, string> {
     // Cursor setzt beide (Doku, "Environment Variables").
     CURSOR_PROJECT_DIR: projekt, CLAUDE_PROJECT_DIR: projekt, CURSOR_VERSION: '1.7.2',
     CACHLY_API_URL: apiUrl,
+    // Ohne Kontrollgruppe und Erkundung (vitest.config.ts), sonst fiele die Ausgabe je Lauf anders aus.
+    CACHLY_LERNEN: '0',
     ...extra,
   };
 }

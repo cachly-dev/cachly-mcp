@@ -35,6 +35,7 @@ import { readFileSync } from 'node:fs';
 import { parseHookPayload, runEinblendung, stopLernanfrage, stopObservation } from './ambient-cli.js';
 import { stopAntwort } from './schreibbeleg.js';
 import { holeBestand } from './einblendung.js';
+import { belohnungMelden } from './lernen.js';
 import { appendLedgerEntry, reportLedgerEntry } from './ambient-ledger.js';
 import {
   copilotHatHook,
@@ -80,6 +81,12 @@ export interface HookAufruf {
   /** Skript, das `node <selbst> ambient-auffrischen` startet (Bestand im Hintergrund). */
   selbst?: string;
   fetchFn?: typeof fetch;
+  /**
+   * Welcher Editor den Hook startet. Wird beim ersten Aufruf aus Schalter und
+   * Nutzlast bestimmt und reist mit, wenn ein Editor-Lauf mit einer
+   * Claude-Nutzlast zurueckkehrt (dort fehlt der Schalter).
+   */
+  editor?: string;
   /** Nur Tests. */
   einblenden?: typeof runEinblendung;
   /** Nur Tests: Ordner der Cursor-Ablage (cursor-hook.ts). */
@@ -127,10 +134,21 @@ function editorLauf(a: HookAufruf, payload: unknown): Promise<string> | null {
   return null;
 }
 
+/** Der Editor aus Schalter und Nutzlast — fuer das Protokoll des Lernens (lernen.ts). */
+export function editorVon(args: string[], payload: unknown): string {
+  if (args.includes(CURSOR_FLAG) || istCursorNutzlast(payload)) return 'cursor';
+  if (args.includes(COPILOT_FLAG)) return 'copilot';
+  if (args.includes(CODEX_FLAG)) return 'codex';
+  if (args.includes(GEMINI_FLAG)) return 'gemini';
+  if (istFremdeLaufzeit(payload)) return 'vscode';
+  return 'claude';
+}
+
 /** Was der Hook auf stdout schreibt — oder '' (nichts). Wirft nie. */
-export async function hookAntwort(a: HookAufruf): Promise<string> {
+export async function hookAntwort(aufruf: HookAufruf): Promise<string> {
   try {
-    const payload = parseHookPayload(a.raw);
+    const payload = parseHookPayload(aufruf.raw);
+    const a: HookAufruf = { ...aufruf, editor: aufruf.editor ?? editorVon(aufruf.args, payload) };
     if (a.args.includes(CURSOR_FLAG) || istCursorNutzlast(payload)) {
       return await cursorLauf(a, payload as CursorNutzlast | null);
     }
@@ -154,9 +172,10 @@ export async function hookAntwort(a: HookAufruf): Promise<string> {
     // Schreibbeleg (07.10.2026): braucht keinen Schluessel, nur das Protokoll
     // des Zugs. Behauptet die Antwort eine Speicherung ohne erfolgreichen
     // Schreibaufruf, geht sie einmal zurueck — und es wird nichts gelernt.
+    let zeilen: string[] | null = null;
     if (ereignis === 'Stop' && payload?.transcript_path) {
       try {
-        const zeilen = readFileSync(payload.transcript_path, 'utf-8').split('\n');
+        zeilen = readFileSync(payload.transcript_path, 'utf-8').split('\n');
         const block = stopAntwort(zeilen, payload.stop_hook_active === true);
         if (block) return block;
       } catch {
@@ -171,14 +190,18 @@ export async function hookAntwort(a: HookAufruf): Promise<string> {
 
     if (ereignis === 'Stop') {
       const obs = payload ? stopObservation(payload) : null;
-      if (obs) {
-        await (a.fetchFn ?? fetch)(`${cfg.apiUrl}/api/v1/instances/${cfg.instanceId}/learn`, {
+      const lernen = obs
+        ? (a.fetchFn ?? fetch)(`${cfg.apiUrl}/api/v1/instances/${cfg.instanceId}/learn`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.jwt}` },
           body: JSON.stringify(stopLernanfrage(obs)),
           signal: AbortSignal.timeout(8000),
-        }).catch(() => undefined);
-      }
+        }).catch(() => undefined)
+        : undefined;
+      // Lernen aus Nutzung (lernen.ts): hat der Agent eine eingeblendete
+      // Lektion in diesem Zug aufgegriffen? Bewerten und melden.
+      const belohnung = belohnungMelden(cfg, payload?.session_id ?? null, zeilen, { fetchFn: a.fetchFn });
+      await Promise.all([lernen, belohnung]);
       return '';
     }
 
@@ -186,6 +209,7 @@ export async function hookAntwort(a: HookAufruf): Promise<string> {
     const out = await (a.einblenden ?? runEinblendung)(a.raw, {
       cfg,
       nebenlauf: a.selbst ? [a.selbst, AUFFRISCHEN] : undefined,
+      editor: a.editor,
       fetchFn: a.fetchFn,
       onInject: (tokens, event) => {
         const entry = { ts: new Date().toISOString(), event, injected: tokens, prevented: 0 };
@@ -282,7 +306,8 @@ export async function auffrischenHauptlauf(): Promise<never> {
     const u = hookUmfeld();
     const jwt = findeSchluessel(u);
     const instanceId = findeInstanz(u);
-    if (jwt && instanceId) await holeBestand({ apiUrl: apiUrl(), jwt, instanceId }, { force: true });
+    // lernen: Zaehlungen je Arm holen, ruhende Entscheidungen melden (lernen.ts).
+    if (jwt && instanceId) await holeBestand({ apiUrl: apiUrl(), jwt, instanceId }, { force: true, lernen: true });
   } catch {
     // ein gescheiterter Abruf behaelt den alten Bestand; der naechste Prompt versucht es erneut
   }

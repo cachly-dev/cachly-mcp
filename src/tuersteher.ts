@@ -34,7 +34,10 @@
  * Pruefaelle aus api/internal/tuersteher/testdata/faelle.json.
  */
 
-export const VERDACHT_TAG = 'tuersteher:verdacht';
+import { VERDACHT_TAG } from './verdacht-marke.js';
+
+/** Die Marke steht in verdacht-marke.ts, damit der Hook sie ohne die Regeln lesen kann. */
+export { VERDACHT_TAG };
 
 export type VerdachtArt = 'injektion' | 'befehl';
 

@@ -221,7 +221,8 @@ function umfeld(extra: Record<string, string> = {}): Record<string, string> {
     const v = process.env[k];
     if (v) env[k] = v;
   }
-  return { ...env, HOME: heim, USERPROFILE: heim, CLAUDE_PROJECT_DIR: projekt, CACHLY_API_URL: apiUrl, ...extra };
+  // CACHLY_LERNEN=0: ohne Kontrollgruppe und Erkundung (vitest.config.ts), sonst fiele die Ausgabe je Lauf anders aus.
+  return { ...env, HOME: heim, USERPROFILE: heim, CLAUDE_PROJECT_DIR: projekt, CACHLY_API_URL: apiUrl, CACHLY_LERNEN: '0', ...extra };
 }
 
 function lauf(skript: string, args: string[], payload: object, extra: Record<string, string> = {}) {

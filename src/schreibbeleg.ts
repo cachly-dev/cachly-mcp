@@ -111,6 +111,8 @@ interface Block {
   tool_use_id?: string;
   content?: unknown;
   is_error?: boolean;
+  /** Eingabe eines Werkzeugaufrufs (`tool_use`). */
+  input?: unknown;
 }
 
 interface Eintrag {
@@ -159,10 +161,10 @@ function vomMenschen(e: Eintrag): boolean {
 }
 
 /**
- * Wertet den letzten Zug eines Claude-Code-Protokolls (JSONL-Zeilen) aus.
- * Der Zug beginnt nach der letzten Nachricht vom Menschen.
+ * Der letzte Zug eines Claude-Code-Protokolls: die Eintraege nach der letzten
+ * Nachricht vom Menschen, und diese Nachricht selbst (null, wenn keine da ist).
  */
-export function pruefeZug(zeilen: string[]): ZugBefund {
+function zugAusProtokoll(zeilen: string[]): { frage: Eintrag | null; zug: Eintrag[] } {
   const eintraege: Eintrag[] = [];
   for (const z of zeilen) {
     if (!z.trim()) continue;
@@ -174,14 +176,48 @@ export function pruefeZug(zeilen: string[]): ZugBefund {
     }
   }
 
-  let start = 0;
   for (let i = eintraege.length - 1; i >= 0; i--) {
-    if (vomMenschen(eintraege[i])) {
-      start = i + 1;
-      break;
+    if (vomMenschen(eintraege[i])) return { frage: eintraege[i], zug: eintraege.slice(i + 1) };
+  }
+  return { frage: null, zug: eintraege };
+}
+
+/** Was der Agent im letzten Zug sichtbar getan hat (fuer lernen.ts). */
+export interface LetzterZug {
+  /** Text der Nachricht vom Menschen, mit der der Zug begann ('' wenn keine). */
+  frage: string;
+  /** Alle Textbloecke der Antworten im Zug. */
+  antwortText: string;
+  /** Name und Eingabe jedes Werkzeugaufrufs im Zug, als JSON-Text. */
+  werkzeugEingaben: string;
+}
+
+/**
+ * Der letzte Zug als Text: was der Mensch fragte, was der Agent schrieb und
+ * womit er Werkzeuge aufrief. Werkzeug-ERGEBNISSE fehlen mit Absicht — eine
+ * Lektion, die nur in einem Suchergebnis steht, hat der Agent nicht aufgegriffen.
+ */
+export function letzterZug(zeilen: string[]): LetzterZug {
+  const { frage, zug } = zugAusProtokoll(zeilen);
+  let antwortText = '';
+  let werkzeugEingaben = '';
+  for (const e of zug) {
+    if (e.type !== 'assistant') continue;
+    for (const b of bloecke(e)) {
+      if (b.type === 'text' && b.text) antwortText += `${b.text}\n`;
+      if (b.type === 'tool_use') werkzeugEingaben += `${b.name ?? ''} ${JSON.stringify(b.input ?? {})}\n`;
     }
   }
-  const zug = eintraege.slice(start);
+  const frageText = frage ? bloecke(frage).filter((b) => b.type === 'text').map((b) => b.text ?? '').join('') : '';
+  return { frage: frageText, antwortText, werkzeugEingaben };
+}
+
+/**
+ * Wertet den letzten Zug eines Claude-Code-Protokolls (JSONL-Zeilen) aus.
+ * Der Zug beginnt nach der letzten Nachricht vom Menschen.
+ */
+export function pruefeZug(zeilen: string[]): ZugBefund {
+  const { zug } = zugAusProtokoll(zeilen);
 
   const schreibIds = new Set<string>();
   let antwortText = '';

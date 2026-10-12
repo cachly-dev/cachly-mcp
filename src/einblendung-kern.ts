@@ -47,6 +47,7 @@ import { Seltenheit, inhaltsWoerter, grobStamm, spreizeImTopf } from './rangfolg
 import { lektionsText } from './seltenheitsbestand.js';
 import { bestandAusDokumenten, keywordSearchMitBestand, type Wortbestand } from './search.js';
 import { SINN_TOPF, EINBLENDUNG_DECKUNG, EINBLENDUNG_ZEUGE } from './rangfolge-stellschrauben.js';
+import { istMarkiert } from './verdacht-marke.js';
 
 // Der Rahmen reist mit dem Kern in den Hook — eine Quelle fuer beide Wege.
 export { rahmeEin, entschaerfe, RAHMEN_ETIKETT, RAHMEN_HINWEIS } from './einblendung-rahmen.js';
@@ -211,7 +212,21 @@ export class Einblendbestand<L extends EinblendLektion> {
   /** Wie viele Kandidaten die Wortsuche nominiert. Vorgabe WORT_TOPF; der Messstand darf abweichen. */
   private readonly topf: number;
 
-  constructor(private readonly lektionen: L[], { topf = WORT_TOPF }: { topf?: number } = {}) {
+  /**
+   * Der Bestand, aus dem eingeblendet wird: ohne die beim Speichern als
+   * verdaechtig markierten Lektionen (Tag `tuersteher:verdacht`, verdacht-marke.ts).
+   *
+   * Die Einblendung schiebt Lektionstext von selbst in den Kontext des Modells, ohne dass
+   * jemand ihn angefragt hat. Eine Lektion mit eingeschmuggelter Anweisung darf diesen
+   * Weg nie nehmen. Das ist die EINE Stelle dafuer: Hook, Sitzungsstart und Messstand
+   * bauen den Bestand alle hier. Ausdrueckliche Abrufe (recall_best_solution,
+   * smart_recall als Werkzeug) laufen nicht hierueber und zeigen sie mit Warnzeile.
+   */
+  private readonly lektionen: L[];
+
+  constructor(alle: L[], { topf = WORT_TOPF }: { topf?: number } = {}) {
+    const lektionen = alle.filter((l) => !istMarkiert(l));
+    this.lektionen = lektionen;
     this.topf = topf;
     // Derselbe Text wie im Messstand und in `Seltenheitsbestand`:
     // topic + what_worked + what_failed. `context` fehlt hier ABSICHTLICH,

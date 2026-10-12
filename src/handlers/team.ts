@@ -13,7 +13,7 @@ import { cachlyUrl } from '../cachly-url.js';
 import { leseVermerke } from '../aussetzer.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
 import { VERDACHT_TAG, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
-import { fuerEigenenSpeicher, fuerWeitergabe, hinweise, markiert, weitergabeHinweis } from '../schreibtor.js';
+import { fuerEigenenSpeicher, fuerWeitergabe, fuerZusammenfassung, hinweise, markiert, markierungsWarnung, weitergabeHinweis } from '../schreibtor.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -484,6 +484,9 @@ export async function handleTeamTool(
         const ago = Math.round((Date.now() - new Date(l.ts).getTime()) / 86400000);
         const agoStr = ago === 0 ? 'today' : ago === 1 ? 'yesterday' : `${ago}d ago`;
         lines.push(`${emoji} ${sev}**\`${l.topic}\`**${reviewBadge}${authorStr}${reviewStr}${recallStr} · ${agoStr}`);
+        // Beim Speichern als verdaechtig markiert (tuersteher:verdacht): gezeigt, aber mit Warnung vor dem Auszug.
+        const markierung = markierungsWarnung(l);
+        if (markierung) lines.push(`   ${markierung}`);
         lines.push(`   ${l.what_worked.slice(0, 120)}`);
         lines.push('');
       }
@@ -578,11 +581,20 @@ export async function handleTeamTool(
 
       type RawLesson = { topic: string; outcome: string; what_worked: string; severity?: string; ts: string; auto_learned?: boolean };
       const allLessons: RawLesson[] = [];
+      // Der Kristall wird gespeichert und steht in jedem kuenftigen Briefing. Er fasst auch Lektionen
+      // aus der Zeit vor dem Geheimnis-Filter und dem Tuersteher zusammen: markierte und verdaechtige
+      // bleiben draussen, Geheimnisse werden vorher geschwaerzt (schreibtor.ts: fuerZusammenfassung).
+      let ausgelassen = 0;
+      let geschwaerztInLektionen = 0;
       if (allLessonKeys.length > 0) {
         const raws = await redis.mget(...allLessonKeys);
         for (const raw of raws) {
-          const l = safeJsonParse<RawLesson | null>(raw ?? null, null);
-          if (l) allLessons.push(l);
+          const roh = safeJsonParse<RawLesson | null>(raw ?? null, null);
+          if (!roh) continue;
+          const tor = fuerZusammenfassung(roh);
+          if (!tor) { ausgelassen++; continue; }
+          if (tor.geschwaerzt) geschwaerztInLektionen++;
+          allLessons.push(tor.lektion);
         }
       }
 
@@ -615,6 +627,7 @@ export async function handleTeamTool(
         top_patterns: topPatterns,
         categories: [...categoryMap.keys()],
         created_from: `${sessionHistory.length} sessions, ${allLessons.length} lessons`,
+        ...(ausgelassen > 0 ? { ausgelassen } : {}),
       };
 
       const crystalJson = JSON.stringify(crystal);
@@ -633,6 +646,12 @@ export async function handleTeamTool(
         ``,
         `💡 This crystal will appear in every future \`session_start\` briefing.`,
         `💡 Re-run \`memory_crystalize\` monthly to keep it fresh.`,
+        ...(ausgelassen > 0
+          ? [``, `⚠ ${ausgelassen} Lektion(en) nicht zusammengefasst: beim Speichern als verdächtig markiert oder heute vom Tuersteher als Anweisung/gefährlicher Befehl erkannt. Prüfen oder neu speichern.`]
+          : []),
+        ...(geschwaerztInLektionen > 0
+          ? [`🔒 In ${geschwaerztInLektionen} Lektion(en) standen Geheimnisse — vor dem Zusammenfassen geschwärzt (die Lektionen selbst bleiben unverändert).`]
+          : []),
       ];
       return lines.join('\n');
     }
@@ -666,13 +685,29 @@ export async function handleTeamTool(
         review_level?: string; ts?: string;
       };
       const lessons: TCLesson[] = [];
+      // Wie memory_crystalize: markierte und verdaechtige Lektionen bleiben draussen, Geheimnisse
+      // werden vor dem Zusammenfassen geschwaerzt (schreibtor.ts: fuerZusammenfassung).
+      let ausgelassen = 0;
+      let geschwaerztInLektionen = 0;
       if (keys.length > 0) {
         const raws = await redis.mget(...keys);
         for (const raw of raws) {
-          const l = safeJsonParse<TCLesson | null>(raw ?? null, null);
-          if (l && l.outcome === 'success' && l.author) lessons.push(l);
+          const roh = safeJsonParse<TCLesson | null>(raw ?? null, null);
+          if (!roh || roh.outcome !== 'success' || !roh.author) continue;
+          const tor = fuerZusammenfassung(roh);
+          if (!tor) { ausgelassen++; continue; }
+          if (tor.geschwaerzt) geschwaerztInLektionen++;
+          lessons.push(tor.lektion);
         }
       }
+      const zusammenfassungsHinweise = [
+        ...(ausgelassen > 0
+          ? [`⚠ ${ausgelassen} Lektion(en) nicht zusammengefasst: beim Speichern als verdächtig markiert oder heute vom Tuersteher als Anweisung/gefährlicher Befehl erkannt. Prüfen oder neu speichern.`]
+          : []),
+        ...(geschwaerztInLektionen > 0
+          ? [`🔒 In ${geschwaerztInLektionen} Lektion(en) standen Geheimnisse — vor dem Zusammenfassen geschwärzt (die Lektionen selbst bleiben unverändert).`]
+          : []),
+      ];
 
       // Derive a structural "concept key" for each lesson: the topic namespace plus
       // its most significant problem token, so "db:pool-exhaustion" and
@@ -737,6 +772,7 @@ export async function handleTeamTool(
         label: effectiveLabel, ts: now.toISOString(), kind: 'team',
         contributors: new Set(lessons.map(l => l.author!.toLowerCase())).size,
         analysed: lessons.length, patterns,
+        ...(ausgelassen > 0 ? { ausgelassen } : {}),
       };
       await redis.set('cachly:crystal:team:latest', JSON.stringify(crystal));
       await redis.expire('cachly:crystal:team:latest', 180 * 86400);
@@ -749,6 +785,7 @@ export async function handleTeamTool(
           ``,
           `This is the one thing a per-user memory can't build — it needs your team to accumulate shared, attributed lessons.`,
           `Keep using \`learn_from_attempts(author="...")\` / \`team_learn\`; re-run as the team grows.`,
+          ...(zusammenfassungsHinweise.length ? ['', ...zusammenfassungsHinweise] : []),
         ].join('\n');
       }
 
@@ -771,6 +808,7 @@ export async function handleTeamTool(
       lines.push(
         `---`,
         `💡 Surfaces in \`crystal_view\` and onboarding. Re-run \`team_crystallize\` monthly.`,
+        ...(zusammenfassungsHinweise.length ? ['', ...zusammenfassungsHinweise] : []),
       );
       return lines.join('\n');
     }

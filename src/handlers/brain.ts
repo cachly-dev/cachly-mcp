@@ -259,7 +259,7 @@ import { cachlyUrl } from '../cachly-url.js';
 import { belegFuer } from '../schreibbeleg.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
 import { VERDACHT_TAG, mitVerdachtTag, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
-import { fuerEigenenSpeicher, hinweise, markiert, zaehlHinweise } from '../schreibtor.js';
+import { fuerEigenenSpeicher, hinweise, istMarkiert, markiert, markierungsWarnung, markierungsWarnungAusRohwert, zaehlHinweise } from '../schreibtor.js';
 import { zeitpunkt } from '../zeitmessung.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
@@ -2178,6 +2178,9 @@ async function handleBrainToolInner(
           : '';
 
         return [
+          // Beim Speichern als verdaechtig markiert (tuersteher:verdacht): ausdruecklich abgerufen
+          // wird sie gezeigt, aber mit Warnung VOR dem Inhalt (schreibtor.ts: markierungsWarnung).
+          markierungsWarnung(lesson),
           ersetztBanner,
           abgelaufen,
           // Abhakliste 4.5: gilt die Lektion fuer die Versionen DIESES Projekts?
@@ -2232,9 +2235,10 @@ async function handleBrainToolInner(
       for (const k of matching.slice(0, 5)) {
         const raw = await redis.get(k);
         if (!raw) continue;
-        const lesson = safeJsonParse(raw, null as null | { topic: string; what_worked: string; context?: string; ts: string });
+        const lesson = safeJsonParse(raw, null as null | { topic: string; what_worked: string; context?: string; ts: string; tags?: string[] });
         if (!lesson) continue;
-        results.push(`**\`${lesson.topic}\`** — ${lesson.what_worked.slice(0, 400)}${lesson.what_worked.length > 400 ? ' …' : ''}`);
+        const markierung = markierungsWarnung(lesson);
+        results.push(`${markierung ? `${markierung}\n` : ''}**\`${lesson.topic}\`** — ${lesson.what_worked.slice(0, 400)}${lesson.what_worked.length > 400 ? ' …' : ''}`);
       }
       return `🔍 **Partial matches for \`${topic}\`:**\n\n${results.join('\n\n')}`;
     }
@@ -3411,6 +3415,10 @@ async function handleBrainToolInner(
                 const h = hRaw ? safeJsonParse<{ title?: string; summary?: string }>(hRaw, {}) : {};
                 if (h.title) lines.push(`  📖 **${h.title}** — ${h.summary ?? ''}`);
               }
+              {
+                const markierung = r.key.startsWith('cachly:lesson:best:') ? markierungsWarnungAusRohwert(r.content) : '';
+                if (markierung) lines.push(`  ${markierung}`);
+              }
               for (const z of vorschau) lines.push(`  > ${z}`);
               lines.push('');
             }
@@ -3453,6 +3461,11 @@ async function handleBrainToolInner(
                 ?? (await redis.get(r.key.replace('cachly:lesson:best:', 'lesson:human:')).catch(() => null));
               const h = hRaw ? safeJsonParse<{ title?: string; summary?: string }>(hRaw, {}) : {};
               if (h.title) lines.push(`📖 **${h.title}** — ${h.summary ?? ''}`);
+            }
+            {
+              // Markierte Lektion (tuersteher:verdacht): ausdruecklicher Abruf zeigt sie, mit Warnung vor dem Auszug.
+              const markierung = r.key.startsWith('cachly:lesson:best:') ? markierungsWarnungAusRohwert(r.content) : '';
+              if (markierung) lines.push(markierung);
             }
             for (const z of vorschau) lines.push(`> ${z}`);
             lines.push('');
@@ -3640,11 +3653,17 @@ async function handleBrainToolInner(
         commands?: string[]; file_paths?: string[];
       };
       const lessons: Lesson[] = [];
+      // Beim Speichern als verdaechtig markierte Lektionen (tuersteher:verdacht) stehen NICHT im
+      // Briefing: das Briefing schiebt Lektionstext von selbst in den Kontext. Ausdruecklich
+      // abrufen laesst sich eine solche Lektion weiter (recall_best_solution, mit Warnzeile).
+      let markierteAusgelassen = 0;
       if (lessonKeys.length > 0) {
         const raws = await redis.mget(...lessonKeys);
         for (const raw of raws) {
           const l = safeJsonParse<Lesson | null>(raw ?? null, null);
-          if (l) lessons.push(l);
+          if (!l) continue;
+          if (istMarkiert(l)) { markierteAusgelassen++; continue; }
+          lessons.push(l);
         }
       }
       lessons.sort((a, b) => new Date(b.ts).getTime() - new Date(a.ts).getTime());
@@ -3781,7 +3800,7 @@ async function handleBrainToolInner(
       } catch { /* non-critical */ }
 
       // ── First-time welcome (empty brain) ───────────────────────────────────
-      const isFirstSession = !lastSession && lessons.length === 0 && ctxCount === 0;
+      const isFirstSession = !lastSession && lessons.length === 0 && markierteAusgelassen === 0 && ctxCount === 0;
       if (isFirstSession) {
         lines.push('🎉 **Welcome! Your AI Brain is live.**', '');
         if (workspace_path) {
@@ -3952,6 +3971,13 @@ async function handleBrainToolInner(
 
       // Brain health
       lines.push(`📊 **Brain:** ${lessons.length} lessons · ${ctxCount} context entries`, '');
+      if (markierteAusgelassen > 0) {
+        lines.push(
+          `⚠ ${markierteAusgelassen} Lektion(en) wurden beim Speichern als verdächtig markiert und stehen nicht in diesem Briefing. ` +
+          'Ausdrücklich abrufbar mit recall_best_solution (mit Warnzeile); prüfen oder neu speichern.',
+          '',
+        );
+      }
 
       // ── 📌 Proven Laws — auto-crystallized lessons (quick win 3) ─────────────
       // A lesson that has proven itself (recalled ≥ CRYSTALLIZE_RECALLS times) or
@@ -4531,7 +4557,8 @@ async function handleBrainToolInner(
         const raws = await redis.mget(...lessonKeys);
         for (const raw of raws) {
           const l = safeJsonParse<SummaryLesson | null>(raw ?? null, null);
-          if (l) lessons.push(l);
+          // Markierte Lektionen (tuersteher:verdacht) kommen nicht von selbst in den Kontext.
+          if (l && !istMarkiert(l)) lessons.push(l);
         }
       }
 

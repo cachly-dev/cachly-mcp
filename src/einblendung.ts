@@ -46,16 +46,34 @@ import { spawn } from 'node:child_process';
 
 import { Einblendbestand, torWoerter, type EinblendLektion } from './einblendung-kern.js';
 import { rahmeEin } from './einblendung-rahmen.js';
+import { istMarkiert } from './verdacht-marke.js';
 import { leserText as leserTextZuschnitt } from './seltenheitsbestand.js';
 import { mischeMitLeser } from './leser.js';
 import { LeserSicherung, dateiSpeicher, frageLeser, type LeserAntwort } from './leser-sicherung.js';
 import { LESER_TIEFE_EINBLENDUNG, LESER_ZEITLIMIT_MS } from './rangfolge-stellschrauben.js';
 // Gueltigkeit nach Version (Abhakliste 4.5): Logik und Begruendung in der Datei selbst.
 import { stufeEinblendungNachVersion } from './gueltigkeit-version.js';
+import {
+  ARME,
+  BASIS_MIN_BELEGE,
+  MERKMAL_KANDIDATEN,
+  OHNE_LERNEN,
+  entscheide,
+  leseArmZaehlung,
+  lernEinstellungen,
+  lernenAuffrischen,
+  merkeEntscheidung,
+  neuerSatz,
+  sitzungsKennung,
+  zugKennung,
+  type Entscheidung,
+  type Kandidat,
+} from './lernen.js';
 
 // Alles, was der abhaengigkeitsfreie Hook braucht, reist ueber diese Datei.
 export * from './einblendung-kern.js';
 export { mischeMitLeser };
+export { belohnungMelden, lernenAuffrischen, lernEinstellungen, ARME } from './lernen.js';
 
 /** Zugangsdaten der Einblendung. */
 export interface EinblendConfig {
@@ -247,6 +265,12 @@ export interface HoleBestandOptionen {
   nebenlauf?: string[];
   /** Zeitdeckel fuer den Abruf, wenn wirklich gewartet werden muss. */
   abrufMs?: number;
+  /**
+   * Nur der Nebenlauf: mit dem frischen Abruf die Zaehlungen je Arm holen und
+   * ruhende Entscheidungen melden (lernen.ts). Nicht beim SessionStart — dort
+   * wartet der Mensch aufs Briefing.
+   */
+  lernen?: boolean;
   /** Nur fuer Tests. */
   fetchFn?: typeof fetch;
 }
@@ -263,13 +287,18 @@ export interface HoleBestandOptionen {
  */
 export async function holeBestand(
   cfg: EinblendConfig,
-  { force = false, nebenlauf, abrufMs = ABRUF_TIMEOUT_MS, fetchFn }: HoleBestandOptionen = {},
+  { force = false, nebenlauf, abrufMs = ABRUF_TIMEOUT_MS, lernen = false, fetchFn }: HoleBestandOptionen = {},
 ): Promise<{ lessons: EinblendLektion[]; quelle: BestandQuelle }> {
   if (!cfg.jwt || !cfg.instanceId) return { lessons: [], quelle: 'nicht-eingerichtet' };
   const pfad = bestandPfad(cfg.instanceId);
 
   if (force) {
-    const frisch = await holeVomServer(cfg, { fetchFn, zeitlimitMs: abrufMs });
+    // Im Nebenlauf zusaetzlich: Zaehlungen je Arm holen, ruhende Entscheidungen
+    // melden (lernen.ts) — parallel, eigener Zeitdeckel, scheitert still.
+    const [frisch] = await Promise.all([
+      holeVomServer(cfg, { fetchFn, zeitlimitMs: abrufMs }),
+      lernen ? lernenAuffrischen(cfg, { fetchFn }) : undefined,
+    ]);
     if (frisch) { schreibeBestand(pfad, frisch); return { lessons: frisch, quelle: 'server' }; }
     const alt = leseBestand(pfad);
     return alt
@@ -322,11 +351,16 @@ export interface Auswahl {
 
 const LEER: Auswahl = { lessons: [], tokens: 0, topScore: 0, belege: 0 };
 
-function waehleAus(
-  sortiert: { lektion: EinblendLektion; punkte: number; belege: number }[],
-  topK: number,
-  tokenBudget: number,
-): Auswahl {
+/** Ein sortierter Kandidat; `leser` ist der Punkt des Lesers, wenn er ihn gelesen hat. */
+interface Geordnet {
+  lektion: EinblendLektion;
+  punkte: number;
+  belege: number;
+  leser?: number;
+}
+
+function waehleAus(sortiert: Geordnet[], topK: number, tokenBudget: number): Auswahl {
+  if (sortiert.length === 0) return { ...LEER };
   const gewaehlt: EinblendLektion[] = [];
   let verbraucht = 0;
   // Gueltigkeit nach Version: Lektionen, die nicht zu den Versionen dieses
@@ -426,6 +460,47 @@ export interface AuswahlMitLeser extends Auswahl {
   leserMs: number;
 }
 
+interface Ordnung {
+  /** Alle Kandidaten ueber dem Tor, die besten `tiefe` vom Leser nachgemischt. */
+  sortiert: Geordnet[];
+  leser: string;
+  leserMs: number;
+}
+
+/**
+ * Sortieren, Tor, Leser — ohne Auswahl. Die Auswahl (wie viele, welches Tor)
+ * trifft der Aufrufer; promptEinblendung tut das je Arm (lernen.ts).
+ */
+async function ordneMitLeser(
+  prompt: string,
+  lessons: EinblendLektion[],
+  cfg: EinblendConfig,
+  { minBelege, tiefe, zeitlimitMs, fetchFn }: { minBelege: number; tiefe: number; zeitlimitMs: number; fetchFn?: typeof fetch },
+): Promise<Ordnung> {
+  const leer: Ordnung = { sortiert: [], leser: 'aus', leserMs: 0 };
+  if (!Array.isArray(lessons) || lessons.length === 0) return leer;
+  if (torWoerter(prompt).length === 0) return leer;
+  let sortiert: Geordnet[] = new Einblendbestand(lessons).sortiere(prompt).filter((x) => x.belege >= minBelege);
+  if (sortiert.length === 0) return leer;
+
+  let leserArt = 'aus';
+  let leserMs = 0;
+  if (sortiert.length > 1 && tiefe > 0) {
+    const kopf = sortiert.slice(0, tiefe);
+    const rest = sortiert.slice(tiefe);
+    const antwort = await leserAnfrageApi(cfg, prompt, kopf.map((x) => leserText(x.lektion)), { zeitlimitMs, fetchFn });
+    if (antwort.art === 'punkte') {
+      const neu = mischeMitLeser(kopf.map((x) => x.punkte), antwort.scores, 1.0);
+      sortiert = [...neu.map((i) => ({ ...kopf[i], leser: antwort.scores[i] })), ...rest];
+      leserArt = antwort.provider;
+      leserMs = antwort.ms;
+    } else if (antwort.art === 'uebersprungen') {
+      leserArt = 'uebersprungen';
+    }
+  }
+  return { sortiert, leser: leserArt, leserMs };
+}
+
 /**
  * Wie selectRelevant, aber die besten `tiefe` werden vom Leser neu gemischt.
  * Antwortet der Leser nicht binnen `zeitlimitMs`, bleibt die lokale Ordnung.
@@ -439,28 +514,8 @@ export async function selectRelevantMitLeser(
     zeitlimitMs = LESER_HOOK_ZEITLIMIT_MS, fetchFn,
   }: AuswahlOptionen & { tiefe?: number; zeitlimitMs?: number; fetchFn?: typeof fetch } = {},
 ): Promise<AuswahlMitLeser> {
-  const leer: AuswahlMitLeser = { ...LEER, leser: 'aus', leserMs: 0 };
-  if (!Array.isArray(lessons) || lessons.length === 0) return leer;
-  if (torWoerter(prompt).length === 0) return leer;
-  let sortiert = new Einblendbestand(lessons).sortiere(prompt).filter((x) => x.belege >= minBelege);
-  if (sortiert.length === 0) return leer;
-
-  let leserArt = 'aus';
-  let leserMs = 0;
-  if (sortiert.length > 1 && tiefe > 0) {
-    const kopf = sortiert.slice(0, tiefe);
-    const rest = sortiert.slice(tiefe);
-    const antwort = await leserAnfrageApi(cfg, prompt, kopf.map((x) => leserText(x.lektion)), { zeitlimitMs, fetchFn });
-    if (antwort.art === 'punkte') {
-      const neu = mischeMitLeser(kopf.map((x) => x.punkte), antwort.scores, 1.0);
-      sortiert = [...neu.map((i) => kopf[i]), ...rest];
-      leserArt = antwort.provider;
-      leserMs = antwort.ms;
-    } else if (antwort.art === 'uebersprungen') {
-      leserArt = 'uebersprungen';
-    }
-  }
-  return { ...waehleAus(sortiert, topK, tokenBudget), leser: leserArt, leserMs };
+  const o = await ordneMitLeser(prompt, lessons, cfg, { minBelege, tiefe, zeitlimitMs, fetchFn });
+  return { ...waehleAus(o.sortiert, topK, tokenBudget), leser: o.leser, leserMs: o.leserMs };
 }
 
 // ── Die fertigen Einblendungen ───────────────────────────────────────────────
@@ -481,7 +536,10 @@ export const SITZUNG_TOP_N = 5;
  * (blosse Kategorie-Themen wie "deploy:" oder "auto:*", deren what_worked ein
  * Code-Klumpen ist). Leer, wenn der Bestand leer ist.
  */
-export function sitzungsKontext(lessons: EinblendLektion[]): string {
+export function sitzungsKontext(alle: EinblendLektion[]): string {
+  // Eine beim Speichern als verdaechtig markierte Lektion kommt nicht von selbst in den
+  // Kontext (verdacht-marke.ts). Dieselbe Regel wie in Einblendbestand, hier fuers Briefing.
+  const lessons = alle.filter((l) => !istMarkiert(l));
   if (!lessons.length) return '';
   const sinnvoll = lessons.filter((l) => {
     const topic = String(l.topic ?? '');
@@ -515,6 +573,15 @@ export interface PromptEinblendungOptionen {
   session?: string | null;
   /** Protokollzeile schreiben (Vorgabe: ja). */
   protokoll?: boolean;
+  /**
+   * Hook-Ereignis. Gelernt (Kontrollgruppe, Arme) wird nur bei
+   * 'UserPromptSubmit' — vor einem Edit (PreToolUse) bleibt alles wie bisher.
+   */
+  ereignis?: string;
+  /** Welcher Editor fragt ('claude', 'cursor', 'copilot', 'codex', 'gemini', ...). */
+  editor?: string;
+  /** false: ohne Lernen (Arm 0, keine Kontrollgruppe). Sonst entscheidet die Umgebung (lernen.ts). */
+  lernen?: boolean;
   /** Nur fuer Tests. */
   fetchFn?: typeof fetch;
 }
@@ -525,28 +592,99 @@ export interface PromptEinblendung {
   auswahl: AuswahlMitLeser;
   quelle: BestandQuelle;
   bestand: number;
+  /** Wie entschieden wurde (lernen.ts). `kontrolle`: berechnet, nicht gezeigt. */
+  entscheidung: Entscheidung;
+}
+
+/** Die Kandidaten, die gemerkt werden: die besten MERKMAL_KANDIDATEN und jeder ausgewaehlte. */
+function kandidatenFuer(sortiert: Geordnet[], ausgewaehlt: EinblendLektion[]): Kandidat[] {
+  return sortiert
+    .map((x, rang) => ({ x, rang, gezeigt: ausgewaehlt.includes(x.lektion) }))
+    .filter(({ rang, gezeigt }) => rang < MERKMAL_KANDIDATEN || gezeigt)
+    .map(({ x, rang, gezeigt }) => ({
+      thema: String(x.lektion.topic ?? ''),
+      rang,
+      punkte: Math.round(x.punkte * 1000) / 1000,
+      belege: x.belege,
+      leser: typeof x.leser === 'number' && Number.isFinite(x.leser) ? Math.round(x.leser * 1000) / 1000 : null,
+      gezeigt,
+    }));
 }
 
 /**
  * Der ganze Weg je Prompt: Bestand holen, sortieren, Leser, Tor, Rahmen.
  * Beide Hooks (Repo-Fassung und `cachly ambient-recall`) rufen GENAU diese
  * Funktion — es gibt keinen zweiten Weg.
+ *
+ * Seit 12.10.2026 mit Lernen (lernen.ts): ein Arm bestimmt Tor und Zahl der
+ * Lektionen (Arm 0 = der Stand davor), ein kleiner Anteil ist Kontrollgruppe
+ * (berechnet, gemerkt, NICHT gezeigt). Die Entscheidung landet in einer
+ * lokalen Datei; gemeldet wird erst am Ende des Zugs — vor dem Prompt gibt es
+ * keinen zusaetzlichen Netzaufruf.
  */
 export async function promptEinblendung(
   prompt: string,
   cfg: EinblendConfig,
-  { nebenlauf, abrufMs, leser = true, session = null, protokoll = true, fetchFn }: PromptEinblendungOptionen = {},
+  {
+    nebenlauf, abrufMs, leser = true, session = null, protokoll = true,
+    ereignis = 'UserPromptSubmit', editor = '', lernen = true, fetchFn,
+  }: PromptEinblendungOptionen = {},
 ): Promise<PromptEinblendung> {
   const { lessons, quelle } = await holeBestand(cfg, { nebenlauf, abrufMs, fetchFn });
-  const auswahl = await selectRelevantMitLeser(prompt, lessons, cfg, { tiefe: leser ? LESER_TIEFE : 0, fetchFn });
+  const einstellungen = lernEinstellungen();
+  const lernt = lernen && einstellungen.aktiv && ereignis === 'UserPromptSubmit' && !!cfg.instanceId;
+  const entscheidung: Entscheidung = lernt
+    ? entscheide({ instanceId: cfg.instanceId, sitzung: session, prompt, zaehlung: leseArmZaehlung(cfg.instanceId), einstellungen })
+    : OHNE_LERNEN;
+  const arm = ARME[entscheidung.arm] ?? ARME[0];
+
+  const o = await ordneMitLeser(prompt, lessons, cfg, {
+    minBelege: BASIS_MIN_BELEGE,
+    tiefe: leser ? LESER_TIEFE : 0,
+    zeitlimitMs: LESER_HOOK_ZEITLIMIT_MS,
+    fetchFn,
+  });
+  const auswahl: AuswahlMitLeser = {
+    ...waehleAus(o.sortiert.filter((x) => x.belege >= arm.minBelege), arm.topK, 600),
+    leser: o.leser,
+    leserMs: o.leserMs,
+  };
+  const kontext = entscheidung.kontrolle ? '' : promptKontext(auswahl);
+
+  if (lernt && o.sortiert.length > 0) {
+    merkeEntscheidung(cfg.instanceId, session, neuerSatz({
+      sitzung: sitzungsKennung(session),
+      zug: zugKennung(prompt),
+      ereignis,
+      editor,
+      arm: entscheidung.arm,
+      kontrolle: entscheidung.kontrolle,
+      erkundet: entscheidung.erkundet,
+      ausgewaehlt: auswahl.lessons.length,
+      kandidatenZahl: o.sortiert.length,
+      belege: auswahl.belege,
+      topScore: auswahl.topScore,
+      leser: auswahl.leser,
+      leserMs: auswahl.leserMs,
+      quelle,
+      bestand: lessons.length,
+      kandidaten: kandidatenFuer(o.sortiert, auswahl.lessons),
+    }));
+  }
+
   if (protokoll) {
     try {
       appendFileSync(NETZ_PROTOKOLL, JSON.stringify({
         at: Date.now(),
         session,
         prompt_tokens: estimateTokens(prompt),
-        injected_tokens: auswahl.tokens, // Bruttokosten dieses Zuges
-        matches: auswahl.lessons.length, // 0 = nichts eingeblendet
+        injected_tokens: kontext ? auswahl.tokens : 0, // Bruttokosten dieses Zuges
+        matches: kontext ? auswahl.lessons.length : 0, // 0 = nichts eingeblendet
+        // Lernen (lernen.ts): Arm und Kontrollgruppe. In der Kontrollgruppe
+        // steht hier, was gezeigt WORDEN WAERE.
+        arm: entscheidung.arm,
+        kontrolle: entscheidung.kontrolle,
+        ausgewaehlt: auswahl.lessons.length,
         top_score: auswahl.topScore,
         belege: auswahl.belege,
         leser: auswahl.leser,
@@ -558,5 +696,5 @@ export async function promptEinblendung(
       }) + '\n');
     } catch { /* bestes Bemuehen */ }
   }
-  return { kontext: promptKontext(auswahl), auswahl, quelle, bestand: lessons.length };
+  return { kontext, auswahl, quelle, bestand: lessons.length, entscheidung };
 }
