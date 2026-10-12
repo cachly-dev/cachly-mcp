@@ -3,7 +3,7 @@ version: 0.10.185
 description: >
   Solve it once. From then on, your AI knows. Experience for coding agents,
   EU-hosted: Claude Code, Cursor, Copilot, Windsurf, Cline & Zed.
-  124 MCP tools, among them causal root-cause analysis (causal_trace), failure
+  Its tools include causal root-cause analysis (causal_trace), failure
   prediction (brain_predict), learning from git history (brain_from_git) and a
   Team Brain, with search in 11 languages.
   No sign-up needed: the first tool call creates a test Brain on EU servers.

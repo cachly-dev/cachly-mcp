@@ -2,7 +2,7 @@
   "name": "@cachly-dev/mcp-server",
   "version": "0.10.185",
   "mcpName": "io.github.cachly-dev/mcp-server",
-  "description": "Solve it once. From then on, your AI knows. Experience for coding agents, EU-hosted: 124 MCP tools for Claude Code, Cursor, Copilot & Windsurf. Learns from every bug fix, commit and CI run.",
+  "description": "Solve it once. From then on, your AI knows. Experience for coding agents, EU-hosted: an MCP server for Claude Code, Cursor, Copilot & Windsurf. Learns from every bug fix, commit and CI run.",
   "type": "module",
   "files": [
     "dist/index.js",

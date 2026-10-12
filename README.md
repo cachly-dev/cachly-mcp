@@ -6,14 +6,14 @@
 > the right moment. You build faster, and your team builds on what you figured out.
 
 [![npm version](https://img.shields.io/npm/v/@cachly-dev/mcp-server?color=violet&logo=npm)](https://www.npmjs.com/package/@cachly-dev/mcp-server)
-![124 MCP tools](https://img.shields.io/badge/124_MCP_tools-violet)
 ![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-yellow)
 
 `@cachly-dev/mcp-server` connects [cachly](https://cachly.dev) to Claude Code, Cursor,
 GitHub Copilot, Windsurf, Cline, Continue.dev, Zed, Codex CLI and Gemini CLI over
-[MCP](https://modelcontextprotocol.io). It offers 124 MCP tools. Your AI stores a
-lesson after a fix, and finds it again when the same problem returns. Your Brain
-(the store of your lessons) lives on EU servers.
+[MCP](https://modelcontextprotocol.io). It offers 124 MCP tools. Your editor lists 27 entries
+by default and reaches the rest through one of them, `cachly_tool` (details under MCP
+Tools below). Your AI stores a lesson after a fix, and finds it again when the same
+problem returns. Your Brain (the store of your lessons) lives on EU servers.
 
 ## Start without an account
 
@@ -151,7 +151,7 @@ cachly_tool(tool: "team_roster", describe: true)  get its schema first
 
 Nothing is unreachable. The server dispatches by name, so `team_roster` called directly
 still works. Set `CACHLY_ALLE_WERKZEUGE=1` to list all 124. Set `CACHLY_PROFILE=lean` to
-list 8, or `CACHLY_PROFILE=recall` to list the 3 read-only tools.
+list 8 plus `cachly_tool`, or `CACHLY_PROFILE=recall` to list the 3 read-only tools.
 
 ### Session and lessons (most used)
 
@@ -441,7 +441,7 @@ The free tier needs no credit card.
 | `CACHLY_API_URL` | `https://api.cachly.dev` | Override for a self-hosted backend |
 | `CACHLY_EMBED_PROVIDER` | automatic | Name an embedding provider yourself (see above) |
 | `CACHLY_ALLE_WERKZEUGE` | unset | Set to `1` to list all 124 tools instead of 27 |
-| `CACHLY_PROFILE` | unset | `lean` lists 8 tools, `recall` lists the 3 read-only tools |
+| `CACHLY_PROFILE` | unset | `lean` lists 8 tools plus `cachly_tool`, `recall` lists the 3 read-only tools |
 | `CACHLY_UPDATE_CHECK` | on | Set to `false` to stop the version check. npm is asked at most once a day, with a 2-second limit |
 | `CACHLY_NO_TELEMETRY` | unset | Set to `1` to disable usage pings. They include your API token and up to 80 characters of `smart_recall` queries |
 

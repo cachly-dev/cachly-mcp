@@ -3,11 +3,16 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadToolCatalog } from './tool-catalog.mjs';
+import { falscheWerkzeugZahlen, zaehleKatalogEintraege } from './werkzeug-zahlen.mjs';
 
 const here = fileURLToPath(new URL('.', import.meta.url));
 const repoRoot = resolve(here, '..', '..', '..');
 const catalog = loadToolCatalog();
 const expected = catalog.total_tools;
+// Die zweite wahre Zahl: was ein Editor standardmaessig auflistet (Kernwerkzeuge
+// plus Verteiler). Beide Saetze sind wahr, nur EINE allein ist irrefuehrend.
+const listed = zaehleKatalogEintraege();
+const wahreZahlen = [expected, listed];
 
 const trackedSurfaces = [
   'CACHLY_CAPABILITY_MATRIX.md',
@@ -110,52 +115,6 @@ const stalePatterns = [
   /\b140\s+MCP\s+tools\b/gi,
 ];
 
-/**
- * Die Liste oben ist eine Liste ALTER Zahlen — von Hand gepflegt, also selbst
- * eine zweite Wahrheit. Genau daran ist sie am 14.08.2026 gescheitert: 126
- * stand nicht drin, und deshalb trug sdk/mcp/README.md an zwei Stellen "126"
- * weiter, waehrend das Produkt 122 Werkzeuge hatte — sichtbar fuer jeden, der
- * das Paket auf npm aufmachte. Die Pruefung war gruen.
- *
- * Zwei Luecken zugleich: die Liste kannte 126 nicht, UND die Schreibweisen
- * "126_MCP_tools" (in einer Badge-URL) und "(126 total)" (in einer
- * Ueberschrift) trafen ohnehin keinen der Ausdruecke.
- *
- * Deshalb dreht die Pruefung hier die Frage um. Sie sucht nicht mehr bekannte
- * falsche Zahlen, sondern JEDE Zahl, die neben "tools" oder "total" steht —
- * und laesst nur die durch, die aus der generierten Wahrheit stammt. Eine
- * neue falsche Zahl ist damit automatisch mitgeprueft, ohne dass jemand die
- * Liste pflegt.
- */
-const ZAHL_BEI_WERKZEUGEN = [
-  // "126 MCP tools", "126 tools", "126_MCP_tools" (Badge-URL, Unterstriche)
-  /\b(\d{2,4})[\s_-]+(?:MCP[\s_-]+)?tools?\b/gi,
-  // "126-tool MCP server"
-  /\b(\d{2,4})-tool\s+MCP\s+server\b/gi,
-  // "MCP Tools (126 total)" und "MCP Tools (126 total, 27 in the default catalogue)"
-  /\btools?\s*\((\d{2,4})\s+total\b/gi,
-  // "126 native MCP tools", "126 AI Brain tools"
-  /\b(\d{2,4})[\s_-]+(?:(?:native|AI|Brain)[\s_-]+)+(?:MCP[\s_-]+)?tools?\b/gi,
-  // "124-Tool", "124 MCP-Tools", "124 Werkzeuge" (deutsche Texte)
-  /\b(\d{2,4})[\s-]+(?:MCP-)?(?:Tools?|Werkzeuge?)\b/g,
-  // "Tool-count aligned to 140", "tool count: 140" (08.10.2026: CACHLY_CAPABILITY_MATRIX.md nannte
-  // in Zeile 15 die Zahl 124 und in Zeile 23 "aligned to 140"; die Pruefung blieb gruen)
-  /\btool[- ]count\b[^|\n\d]{0,25}(\d{2,4})\b/gi,
-];
-
-/** Findet Zahlen neben "tools", die nicht die erwartete sind. */
-function falscheWerkzeugZahlen(text, erwartet) {
-  const treffer = [];
-  for (const muster of ZAHL_BEI_WERKZEUGEN) {
-    muster.lastIndex = 0;
-    let m;
-    while ((m = muster.exec(text)) !== null) {
-      if (Number(m[1]) !== erwartet) treffer.push(m[0].trim());
-    }
-  }
-  return [...new Set(treffer)];
-}
-
 const failures = [];
 
 function* walkFiles(absDir) {
@@ -224,8 +183,8 @@ for (const rel of trackedSurfaces) {
     if (match) failures.push(`${rel}: stale count phrase "${match[0]}"`);
   }
 
-  for (const treffer of falscheWerkzeugZahlen(text, expected)) {
-    failures.push(`${rel}: sagt "${treffer}", die generierte Wahrheit sind ${expected} Werkzeuge`);
+  for (const treffer of falscheWerkzeugZahlen(text, wahreZahlen)) {
+    failures.push(`${rel}: sagt "${treffer}", die generierte Wahrheit sind ${expected} Werkzeuge (${listed} davon im Editor-Katalog)`);
   }
 
   const expectedPhrase = `${expected} MCP tools`;
@@ -306,8 +265,8 @@ function pruefeNurZahl(rel) {
     failures.push(`${rel}: Datei fehlt (steht in zahlGeprueftDateien)`);
     return;
   }
-  for (const treffer of falscheWerkzeugZahlen(text, expected)) {
-    failures.push(`${rel}: sagt "${treffer}", die generierte Wahrheit sind ${expected} Werkzeuge`);
+  for (const treffer of falscheWerkzeugZahlen(text, wahreZahlen)) {
+    failures.push(`${rel}: sagt "${treffer}", die generierte Wahrheit sind ${expected} Werkzeuge (${listed} davon im Editor-Katalog)`);
   }
 }
 for (const rel of zahlGeprueftDateien) pruefeNurZahl(rel);

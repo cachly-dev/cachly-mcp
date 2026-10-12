@@ -4,11 +4,11 @@
 
 ## What cachly is
 
-cachly is an MCP (Model Context Protocol) server that adds long-term memory to AI coding assistants. Unlike conversation-window context, cachly memory persists forever across sessions, projects, and team members.
+cachly is an MCP (Model Context Protocol) server that adds long-term memory to AI coding assistants. Unlike conversation-window context, cachly memory persists across sessions, projects, and team members.
 
 It works by maintaining a Causal Knowledge Graph (CKG) — a structured store of lessons, bug fixes, architecture decisions, deployment commands, and failure patterns. On every session start, the AI receives a briefing with relevant lessons. On every fix or commit, new lessons are automatically stored.
 
-**Key differentiator**: causal_trace — given any error or problem description, traces the causal chain through the graph (root cause → intermediate causes → known fix). No other memory system does this.
+**causal_trace**: given an error or problem description, it traces the causal chain through the graph (root cause → intermediate causes → known fix).
 
 ## Installation (zero config)
 
@@ -33,6 +33,8 @@ Claude Code, Cursor, Windsurf, VS Code, GitHub Copilot, Cline, Zed, Continue.dev
 5. Next session → AI arrives pre-briefed
 
 ## Tool catalog (124 tools)
+
+The server knows 124 tools. An editor lists 27 entries by default: 26 core tools plus the dispatcher `cachly_tool`. The other tools run through `cachly_tool` by name; `describe: true` returns a tool's schema first. `CACHLY_ALLE_WERKZEUGE=1` lists all of them.
 
 ### Session & Memory
 - session_start: Single-call session briefing — last summary, open failures, recent lessons, brain health
@@ -123,23 +125,20 @@ Claude Code, Cursor, Windsurf, VS Code, GitHub Copilot, Cline, Zed, Continue.dev
 - setup_ai_memory: One-shot setup of 3-layer AI Memory system
 - brain_federate: Private org knowledge transfer
 
-## Comparison to alternatives
+## Comparisons
 
-| Feature | cachly | mem0 | Plain CLAUDE.md |
-|---------|--------|------|-----------------|
-| Persistent across sessions | ✅ | ✅ | Manual |
-| Causal root cause analysis | ✅ | ❌ | ❌ |
-| Automatic (no explicit calls) | ✅ | ❌ | ❌ |
-| Team knowledge sharing | ✅ | Paid | ❌ |
-| Failure prediction | ✅ | ❌ | ❌ |
-| Git-ambient learning | ✅ | ❌ | ❌ |
-| 11-language search | ✅ | ❌ | ❌ |
-| Free tier forever | ✅ | Limited | ✅ |
-| GDPR / EU servers | ✅ | ❌ | ✅ |
+Each page names its source and date for every statement about another product.
+
+- https://cachly.dev/docs/cachly-vs-mem0
+- https://cachly.dev/docs/cachly-vs-letta
+- https://cachly.dev/docs/cachly-vs-supermemory
+- https://cachly.dev/docs/cachly-vs-zep
+- https://cachly.dev/docs/cachly-vs-claude-mem
+- https://cachly.dev/docs/cachly-vs-basic-memory
 
 ## Pricing
 
-- Free: 25 MB, 1 instance, €0/month forever
+- Free: 25 MB, 1 instance, €0/month
 - Dev: 200 MB, €19/month
 - Pro: 900 MB, team features, €49/month
 - Speed: 900 MB + Dragonfly engine, €79/month
