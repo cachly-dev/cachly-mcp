@@ -34,7 +34,7 @@
 import { readFileSync } from 'node:fs';
 import { parseHookPayload, runEinblendung, stopLernanfrage, stopObservation } from './ambient-cli.js';
 import { stopAntwort } from './schreibbeleg.js';
-import { holeBestand } from './einblendung.js';
+import { holeBestand, hookAusgabe } from './einblendung.js';
 import { belohnungMelden } from './lernen.js';
 import { appendLedgerEntry, reportLedgerEntry } from './ambient-ledger.js';
 import {
@@ -43,9 +43,12 @@ import {
   findeInstanz,
   findeSchluessel,
   hookUmfeld,
+  pluginVersion,
   projektHatHook,
   type HookUmfeld,
 } from './hook-zugang.js';
+import { ABKUEHLUNG_HOOK_MS, schreibeAuftrag, sichereKonto, startwissenEingeschaltet } from './konto-anlegen.js';
+import { istInstanzKennung, sofortTestHinweis } from './zugang.js';
 import {
   CURSOR_FLAG,
   cursorEreignis,
@@ -65,6 +68,17 @@ import { CODEX_FLAG, codexHookAntwort, type CodexNutzlast } from './codex-hook.j
 import { GEMINI_FLAG, geminiEreignis, geminiHookAntwort, type GeminiNutzlast } from './gemini-hook.js';
 
 export const STANDARD_API_URL = 'https://api.cachly.dev';
+
+/**
+ * So lange darf der SessionStart-Hook hoechstens am Konto arbeiten (Warten auf
+ * eine Sperre und die Anfrage zusammen). Der Sofort-Test brauchte in der Probe
+ * 0,42 s (ruhige Maschine). Unter Last — der MCP-Server startet gleichzeitig
+ * per npx — brauchte der Hook schon ein Mehrfaches; drei Sekunden rissen in
+ * einem Lauf. Die Grenze des Hooks liegt bei 30 s (EVENT_TIMEOUTS), die harte
+ * Gesamtfrist bei 25 s (HOOK_FRIST_MS). Scheitert das Anlegen, bleibt es beim
+ * Weg ueber den ersten Werkzeugaufruf.
+ */
+export const KONTO_FRIST_MS = 5_000;
 
 /** Unterbefehl, mit dem der Hook seinen Bestand im Hintergrund auffrischt. */
 export const AUFFRISCHEN = 'ambient-auffrischen';
@@ -144,6 +158,56 @@ export function editorVon(args: string[], payload: unknown): string {
   return 'claude';
 }
 
+/**
+ * Legt fuer eine frische Plugin-Installation das Konto an — ueber dieselbe
+ * Funktion wie der MCP-Server (konto-anlegen.ts: Sperre, ein Konto, nie zwei).
+ *
+ *   angelegt  -> Schluessel + Instanz stehen in ~/.cachly/credentials.json,
+ *                der Hook hinterlaesst dem MCP-Server den Auftrag fuer den
+ *                Start-Import (der laeuft im Server, der die Verbindung hat),
+ *                und der Assistent bekommt den Hinweis, dem Nutzer einmal zu
+ *                sagen, dass ein Test-Brain entstanden ist.
+ *   vorhanden -> ein anderer Prozess war schneller (z. B. der MCP-Server):
+ *                weiter wie mit jedem Schluessel, ohne Hinweis und ohne Auftrag.
+ *   sonst     -> null. Der Hook bleibt still; der MCP-Server versucht es beim
+ *                ersten Werkzeugaufruf, wie bisher.
+ *
+ * Herkunft im User-Agent wie beim Server: das Plugin setzt dort CACHLY_QUELLE.
+ */
+async function legeKontoAn(a: HookAufruf): Promise<{ apiKey: string; instanzId?: string; hinweis: string } | null> {
+  const ergebnis = await sichereKonto({
+    apiUrl: a.apiUrl,
+    version: pluginVersion(a.umfeld),
+    home: a.umfeld.heim,
+    env: { ...a.umfeld.env, CACHLY_QUELLE: 'claude-code-plugin' },
+    fristMs: KONTO_FRIST_MS,
+    anfrageMs: KONTO_FRIST_MS,
+    abkuehlungMs: ABKUEHLUNG_HOOK_MS,
+    holen: a.fetchFn,
+  });
+  if (ergebnis.art === 'vorhanden') return { apiKey: ergebnis.apiKey, instanzId: ergebnis.instanzId, hinweis: '' };
+  if (ergebnis.art !== 'angelegt') return null;
+  if (startwissenEingeschaltet(a.umfeld.env)) {
+    schreibeAuftrag({ instanzId: ergebnis.test.instanzId, projekt: a.umfeld.projekt }, { home: a.umfeld.heim });
+  }
+  return { apiKey: ergebnis.test.apiKey, instanzId: ergebnis.test.instanzId, hinweis: sofortTestHinweis(ergebnis.test) };
+}
+
+/** Haengt den Hinweis VOR den Inhalt der SessionStart-Antwort (oder macht ihn zur Antwort). */
+function mitHinweis(ausgabe: string, hinweis: string): string {
+  const kopf = hinweis.replace(/^\s+/, '');
+  if (!ausgabe) return hookAusgabe('SessionStart', kopf);
+  try {
+    const j = JSON.parse(ausgabe) as { hookSpecificOutput?: { additionalContext?: unknown } };
+    const kontext = j.hookSpecificOutput?.additionalContext;
+    if (!j.hookSpecificOutput || typeof kontext !== 'string') return ausgabe;
+    j.hookSpecificOutput.additionalContext = `${kopf}\n\n${kontext}`;
+    return JSON.stringify(j);
+  } catch {
+    return ausgabe;
+  }
+}
+
 /** Was der Hook auf stdout schreibt — oder '' (nichts). Wirft nie. */
 export async function hookAntwort(aufruf: HookAufruf): Promise<string> {
   try {
@@ -183,8 +247,22 @@ export async function hookAntwort(aufruf: HookAufruf): Promise<string> {
       }
     }
 
-    const jwt = findeSchluessel(a.umfeld);
-    const instanceId = findeInstanz(a.umfeld);
+    let jwt = findeSchluessel(a.umfeld);
+    let instanceId = findeInstanz(a.umfeld);
+
+    // Frische Installation (12.10.2026): kein Schluessel, SessionStart, als
+    // Plugin installiert. Das Konto entsteht JETZT, nicht erst beim ersten
+    // Werkzeugaufruf des Modells — sonst bekommt der Nutzer im ersten Prompt
+    // nichts, und der Start-Import beginnt nie, wenn kein Werkzeug gerufen wird.
+    let kontoHinweis = '';
+    if (!jwt && ereignis === 'SessionStart' && a.args.includes('--plugin') && !istInstanzKennung(instanceId)) {
+      const konto = await legeKontoAn(a);
+      if (konto) {
+        jwt = konto.apiKey;
+        instanceId = konto.instanzId ?? instanceId;
+        kontoHinweis = konto.hinweis;
+      }
+    }
     if (!jwt || !instanceId) return '';
     const cfg = { apiUrl: a.apiUrl, jwt, instanceId };
 
@@ -219,7 +297,7 @@ export async function hookAntwort(aufruf: HookAufruf): Promise<string> {
     });
     // Begrenzt warten, damit die Meldung process.exit ueberlebt — nie mehr als 500 ms.
     if (gemeldet) await Promise.race([gemeldet, new Promise((r) => setTimeout(r, 500))]);
-    return out;
+    return kontoHinweis ? mitHinweis(out, kontoHinweis) : out;
   } catch {
     return '';
   }

@@ -90,6 +90,47 @@ export interface EinblendConfig {
  * soll nicht im Minutentakt laufen.
  */
 export const BESTAND_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Junges Brain (12.10.2026): so lange nach dem ersten Bestand gilt ein Brain
+ * als im Aufbau. Probe mit dem echten Plugin an einer frischen Installation:
+ * Der erste Treffer speicherte 9 von spaeter 21 Lektionen, weil der Start-
+ * Import (startwissen.ts) 25 s bis 200 s braucht — und der Bestand blieb
+ * zehn Minuten stehen. Ein Brain im Aufbau wird deshalb oefter und ohne
+ * Verzoegerung neu geholt.
+ */
+export const JUNG_FENSTER_MS = 5 * 60 * 1000;
+/** Im Aufbau gilt der Bestand nur so lange als frisch. */
+export const BESTAND_TTL_JUNG_MS = 10 * 1000;
+/** Zeitdeckel fuer das Neuholen im Aufbau: der Prompt wartet hoechstens so lange. */
+export const JUNG_ABRUF_MS = 2000;
+/** Ein Brain mit weniger Lektionen ist klein: sein Neuholen kostet fast nichts (ein Export von 50 Lektionen ist rund 100 KB). */
+export const KLEIN_LEKTIONEN = 50;
+/** Ein kleines Brain ausserhalb des Aufbaus: halbe Minute statt zehn. */
+export const BESTAND_TTL_KLEIN_MS = 60 * 1000;
+
+/** Wie lange der Bestand auf der Platte als frisch gilt — und ob ein Veralteter sofort neu geholt wird. */
+export interface BestandFrist {
+  ttlMs: number;
+  /** true: der Prompt holt neu und wartet (hoechstens JUNG_ABRUF_MS). false: alter Stand, Auffrischen im Nebenlauf. */
+  sofort: boolean;
+}
+
+/**
+ * Die Frist fuer einen Bestand, nach Alter des Brains und Zahl der Lektionen.
+ *
+ *   Aufbau  (erster Bestand juenger als 5 min)  10 s, der Prompt holt neu
+ *   klein   (weniger als 50 Lektionen)          60 s, Nebenlauf
+ *   sonst                                       10 min, Nebenlauf (wie bisher)
+ *
+ * `seitMs` ist das Alter des ERSTEN Bestands dieser Instanz auf der Platte.
+ */
+export function bestandFrist(anzahl: number, seitMs: number): BestandFrist {
+  if (seitMs < JUNG_FENSTER_MS) return { ttlMs: BESTAND_TTL_JUNG_MS, sofort: true };
+  if (anzahl < KLEIN_LEKTIONEN) return { ttlMs: BESTAND_TTL_KLEIN_MS, sofort: false };
+  return { ttlMs: BESTAND_TTL_MS, sofort: false };
+}
+
 /** Obergrenze fuer den Abruf, damit ein langsamer Server nie einen Zug aufhaelt. */
 export const ABRUF_TIMEOUT_MS = 8000;
 /** Fruehestens so oft darf ein Nebenlauf starten — gegen einen Prozess-Schwarm bei Dauerfehler. */
@@ -209,17 +250,26 @@ function sicherParsen(s: string): unknown {
   try { return JSON.parse(s); } catch { return null; }
 }
 
+/**
+ * `seit` ist der Zeitpunkt des ERSTEN Bestands dieser Instanz und bleibt bei
+ * jedem Neuschreiben stehen. Alte Dateien ohne das Feld gelten als `at`.
+ */
 function schreibeBestand(pfad: string, lektionen: EinblendLektion[]): void {
   try {
+    const jetzt = Date.now();
+    const seit = leseBestand(pfad)?.seit ?? jetzt;
     mkdirSync(dirname(pfad), { recursive: true });
-    writeFileSync(pfad, JSON.stringify({ at: Date.now(), lessons: lektionen }), { mode: 0o600 });
+    writeFileSync(pfad, JSON.stringify({ at: jetzt, seit, lessons: lektionen }), { mode: 0o600 });
   } catch { /* der Zwischenspeicher ist bestes Bemuehen, kein Muss */ }
 }
 
-function leseBestand(pfad: string): { at: number; lessons: EinblendLektion[] } | null {
+function leseBestand(pfad: string): { at: number; seit: number; lessons: EinblendLektion[] } | null {
   try {
     const c = JSON.parse(readFileSync(pfad, 'utf8'));
-    if (Array.isArray(c?.lessons)) return { at: Number(c.at) || 0, lessons: c.lessons };
+    if (Array.isArray(c?.lessons)) {
+      const at = Number(c.at) || 0;
+      return { at, seit: Number(c.seit) || at, lessons: c.lessons };
+    }
   } catch { /* kaputte Datei = kein Bestand */ }
   return null;
 }
@@ -308,9 +358,20 @@ export async function holeBestand(
 
   const da = leseBestand(pfad);
   if (da) {
-    const frischGenug = Date.now() - da.at < BESTAND_TTL_MS;
-    if (!frischGenug && nebenlauf) starteNebenlauf(cfg, nebenlauf);
-    return { lessons: da.lessons, quelle: frischGenug ? 'platte' : 'platte-alt' };
+    const jetzt = Date.now();
+    const frist = bestandFrist(da.lessons.length, jetzt - da.seit);
+    const frischGenug = jetzt - da.at < frist.ttlMs;
+    if (frischGenug) return { lessons: da.lessons, quelle: 'platte' };
+    if (frist.sofort) {
+      // Brain im Aufbau: nicht auf den Nebenlauf warten, sonst sieht der
+      // naechste Prompt wieder den alten Stand. Scheitert das Holen oder
+      // dauert es zu lange, bleibt der alte Stand von der Platte.
+      const frisch = await holeVomServer(cfg, { fetchFn, zeitlimitMs: Math.min(abrufMs, JUNG_ABRUF_MS) });
+      if (frisch) { schreibeBestand(pfad, frisch); return { lessons: frisch, quelle: 'server' }; }
+      return { lessons: da.lessons, quelle: 'platte-alt' };
+    }
+    if (nebenlauf) starteNebenlauf(cfg, nebenlauf);
+    return { lessons: da.lessons, quelle: 'platte-alt' };
   }
 
   const frisch = await holeVomServer(cfg, { fetchFn, zeitlimitMs: abrufMs });

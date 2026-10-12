@@ -155,7 +155,17 @@ Was ein Lauf mit `--plugin` tut:
    (`CLAUDE_PLUGIN_OPTION_API_KEY` / `_INSTANCE_ID`), Umgebung,
    `~/.cachly/credentials.json`, dann `mcpServers.cachly.env` in
    `~/.claude/mcp.json`, `.mcp.json` im Projekt, Cursor und Windsurf.
-3. **Ohne Schlüssel oder ohne Instanz** endet er mit Exit 0 und ohne Ausgabe.
+3. **Ohne Schlüssel** legt `SessionStart` das Konto an (seit 12.10.2026). Vorher
+   entstand es erst im MCP-Server beim ersten Werkzeugaufruf; ruft das Modell
+   kein Werkzeug, bekam der Nutzer im ersten Prompt nichts. Der Hook nutzt
+   dieselbe Funktion wie der Server (`src/konto-anlegen.ts`): Sperrdatei
+   `~/.cachly/anlegen.lock`, ein Konto auch bei gleichzeitigem Start, höchstens
+   5 s. Er legt nur an, wenn kein Schlüssel und keine Instanz in UUID-Form
+   bekannt ist, nur beim Plugin-Lauf (`--plugin`) und nur in `SessionStart`.
+   Nach einem Fehlschlag versucht er es 10 Minuten nicht wieder. Den Start-Import
+   aus der Git-Geschichte macht der MCP-Server: der Hook hinterlässt ihm
+   `~/.cachly/startwissen-auftrag.json`. `CACHLY_STARTWISSEN=false` schaltet ihn ab.
+4. **Ohne Instanz** (Schlüssel da) endet er mit Exit 0 und ohne Ausgabe.
 
 Kein `${user_config...}` im Hook-Befehl: so läuft der Hook auch, wenn der
 Nutzer die Optionen leer lässt (siehe die Falle oben).

@@ -7,6 +7,34 @@
 
 ---
 
+## [0.10.192] – 2026-10-12 — *"The first prompt already has a Brain."*
+
+**The plugin's SessionStart hook creates the trial Brain itself.** Until now
+the account appeared only when the model made its first tool call. A session
+without a tool call got no injection at all, and the import from git history
+never started. Measured on a fresh install (plugin 0.10.184, real Claude Code
+CLI, empty home folder): both hooks returned 0 characters at the first prompt.
+Now the hook creates the account in 0.8 s (up to 1.6 s under load), stores key
+and instance in `~/.cachly/credentials.json`, and leaves a job note for the
+MCP server, which starts the import in the background (same code as after a
+tool-call sign-up: git repos only, empty Brains only, once per instance).
+Replayed with the local build and no tool call: 21 lessons imported in 26 s,
+the Brain stock the hook sees went 0 → 14 → 21 lessons across the first three
+prompts (at 11 s, 32 s and 62 s).
+
+**Hook and MCP server never create two accounts.** Both go through one
+function (`konto-anlegen.ts`) behind a lock file (`~/.cachly/anlegen.lock`); the
+one that loses waits for the key instead of creating its own. The hook has a
+5 s budget, tries again at most every 10 minutes after a failure, and only
+creates an account for a plugin install (`--plugin`), never when a key or a
+Brain ID is known.
+
+**A young Brain refreshes its stock sooner.** The hook kept its lesson stock
+on disk for 10 minutes; the first hit stored 9 of the eventual 21 lessons. In
+the first 5 minutes after the first stock it now refetches after 10 s (the
+prompt waits at most 2 s), a Brain with fewer than 50 lessons after 60 s, and
+a grown Brain keeps the 10 minutes.
+
 ## [0.10.191] – 2026-10-13 — *"The hook keeps score."*
 
 **Each prompt hint now records what it decided, and the end of the turn

@@ -24,8 +24,9 @@ problem returns. Your Brain (the store of your lessons) lives on EU servers.
 /plugin install cachly-brain@cachly
 ```
 
-There is no JSON to write, no path to set and no key to copy. On the first tool call
-without a key, cachly creates a test Brain on EU servers. The test Brain has 14 days of
+There is no JSON to write, no path to set and no key to copy. Without a key, cachly creates
+a test Brain on EU servers when the session starts (the plugin hook does it; the first tool
+call does it if the hook did not). The test Brain has 14 days of
 the Dev tier. After that it runs on the free tier with the same key.
 
 Check it with `claude mcp list`. You should see `plugin:cachly-brain:cachly … ✔ Connected`.
@@ -310,7 +311,7 @@ Manual snippets are in [Manual Setup](#manual-setup).
 
 | Editor / client | Auto-setup | Config file written | Global config | Notes |
 |---|---|---|---|---|
-| **Claude Code** | yes | `~/.claude/mcp.json` + `.mcp.json` | yes, always | Without a key: test Brain on the first tool call; browser sign-in only as fallback |
+| **Claude Code** | yes | `~/.claude/mcp.json` + `.mcp.json` | yes, always | Without a key: test Brain at session start (plugin) or on the first tool call; browser sign-in only as fallback |
 | **Cursor** | yes, detected via `.cursor/` | `.cursor/mcp.json`, hooks in `.cursor/hooks.json` | no | Project-level; restart Cursor after setup. Lessons arrive with the first tool call of a turn |
 | **Windsurf** | yes, detected via `.windsurf/` | `.windsurf/mcp.json` | no | Project-level; restart Windsurf after setup |
 | **VS Code + Copilot** | yes, detected via `.vscode/` | `.vscode/mcp.json`, hooks in `.github/hooks/cachly-ambient.json` | no | Needs the VS Code MCP support or Copilot chat. Briefing at session start, lessons before each prompt |

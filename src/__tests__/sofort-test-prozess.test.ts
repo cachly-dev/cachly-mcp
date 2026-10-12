@@ -2,11 +2,12 @@ import { describe, expect, it, afterEach } from 'vitest';
 import { spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { auftragLiegt, schreibeAuftrag } from '../konto-anlegen.js';
 
 /*
  * Der echte Server ohne Schluessel, gegen eine nachgebaute Gegenstelle.
@@ -67,7 +68,7 @@ async function starteGegenstelle(sofortTestStatus: number): Promise<{ url: strin
 }
 
 /** Startet den Server, schickt initialize + EINEN Werkzeugaufruf, liefert die Antwort. */
-async function rufeWerkzeug(apiUrl: string, heim: string): Promise<string> {
+async function rufeWerkzeug(apiUrl: string, heim: string, vorAufruf?: () => Promise<void> | void): Promise<string> {
   // Umgebung wie beim Claude-Code-Plugin mit leeren Feldern: die Platzhalter
   // kommen unersetzt an. Beide muessen als "nichts" gelten.
   const env: Record<string, string> = {};
@@ -92,6 +93,7 @@ async function rufeWerkzeug(apiUrl: string, heim: string): Promise<string> {
   const kind = spawn(process.execPath, [tsxCli, einstieg], { env, cwd: heim, stdio: ['pipe', 'pipe', 'pipe'] });
   let puffer = '';
   let antwort: { result?: { content?: Array<{ text?: string }> }; error?: { message?: string } } | null = null;
+  let bereit = false;
   kind.stdout.on('data', (c) => {
     puffer += String(c);
     let nl;
@@ -101,16 +103,26 @@ async function rufeWerkzeug(apiUrl: string, heim: string): Promise<string> {
       if (!z.startsWith('{')) continue;
       try {
         const j = JSON.parse(z);
+        if (j.id === 0) bereit = true;
         if (j.id === 1) antwort = j;
       } catch { /* Teilzeile */ }
     }
   });
   kind.stderr.on('data', () => { /* Protokoll des Servers, hier ohne Belang */ });
 
-  kind.stdin.write([
-    JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } } }),
-    JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_api_status', arguments: {} } }),
-  ].join('\n') + '\n');
+  const initialisiere = JSON.stringify({ jsonrpc: '2.0', id: 0, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } } });
+  const aufruf = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_api_status', arguments: {} } });
+  if (vorAufruf) {
+    // Der Server laeuft schon, ohne Schluessel. DANACH passiert etwas (der
+    // SessionStart-Hook legt ein Konto an), und erst dann kommt der Aufruf.
+    kind.stdin.write(initialisiere + '\n');
+    const bereitBis = Date.now() + 40_000;
+    while (!bereit && Date.now() < bereitBis) await new Promise((r) => setTimeout(r, 50));
+    await vorAufruf();
+    kind.stdin.write(aufruf + '\n');
+  } else {
+    kind.stdin.write([initialisiere, aufruf].join('\n') + '\n');
+  }
 
   const bis = Date.now() + 50_000;
   while (!antwort && Date.now() < bis) await new Promise((r) => setTimeout(r, 100));
@@ -197,4 +209,79 @@ describe('Start ohne Schluessel: Sofort-Test vor der Browser-Anmeldung (echter P
     expect(existsSync(join(heim, '.cachly', 'credentials.json'))).toBe(false);
     expect(ereignisse(g.anfragen)).toContain('device_flow_started');
   }, 60_000);
+});
+
+describe('Der SessionStart-Hook war schneller: der Server uebernimmt das Konto (echter Prozess)', () => {
+  let aufraeumen: Array<() => void> = [];
+  afterEach(() => { for (const f of aufraeumen) f(); aufraeumen = []; });
+
+  /** Was der Hook hinterlaesst, wenn er das Konto angelegt hat (ambient-hook.ts). */
+  function hookLegtKontoAn(heim: string): void {
+    mkdirSync(join(heim, '.cachly'), { recursive: true });
+    writeFileSync(join(heim, '.cachly', 'credentials.json'), JSON.stringify({ apiKey: SCHLUESSEL, instanceId: INSTANZ }));
+    schreibeAuftrag({ instanzId: INSTANZ, projekt: heim }, { home: heim });
+  }
+
+  it('Konto erscheint, nachdem der Server gestartet ist: er nimmt Schluessel und Auftrag, KEIN zweiter Sofort-Test', async () => {
+    const g = await starteGegenstelle(201);
+    const heim = mkdtempSync(join(tmpdir(), 'cachly-hookkonto-'));
+    aufraeumen.push(() => g.server.close(), () => rmSync(heim, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+
+    let auftragNachSekunden = -1;
+    const text = await rufeWerkzeug(g.url, heim, async () => {
+      hookLegtKontoAn(heim);
+      // Noch KEIN Werkzeugaufruf: der Server soll es von selbst merken, damit der
+      // Start-Import auch ohne Werkzeug beginnt.
+      const start = Date.now();
+      while (auftragLiegt({ home: heim }) && Date.now() - start < 8000) await new Promise((r) => setTimeout(r, 50));
+      auftragNachSekunden = (Date.now() - start) / 1000;
+    });
+
+    expect(auftragNachSekunden, 'der Server hat den Auftrag nicht von selbst genommen').toBeLessThan(3);
+    expect(auftragLiegt({ home: heim })).toBe(false);
+    expect(g.anfragen.filter((a) => a.pfad === '/auth/instant-trial'), 'zweites Konto angelegt').toEqual([]);
+    expect(g.anfragen.some((a) => a.pfad === '/auth/device'), 'Browser-Anmeldung gestartet').toBe(false);
+    expect(text).not.toContain('must sign in');
+    // Den Hinweis auf das Test-Brain gab schon der Hook; hier kommt er nicht noch einmal.
+    expect(text).not.toContain('test Brain was created');
+
+    await warteAufEreignis(g.anfragen, 'instant_trial_started');
+    const ev = g.anfragen.filter((a) => a.pfad === '/api/v1/telemetry/mcp').map((a) => JSON.parse(a.koerper));
+    const gestartet = ev.find((e) => e.event === 'instant_trial_started');
+    expect(gestartet?.tool).toBe('sessionstart-hook');
+    expect(gestartet?.instance_id).toBe(INSTANZ);
+    expect(ev.map((e) => e.event)).not.toContain('first_call_no_jwt');
+  }, 90_000);
+
+  it('Konto erscheint genau vor dem Werkzeugaufruf: der Aufruf uebernimmt es, KEIN zweiter Sofort-Test', async () => {
+    const g = await starteGegenstelle(201);
+    const heim = mkdtempSync(join(tmpdir(), 'cachly-hookkonto-'));
+    aufraeumen.push(() => g.server.close(), () => rmSync(heim, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+
+    const text = await rufeWerkzeug(g.url, heim, () => hookLegtKontoAn(heim));
+
+    expect(g.anfragen.filter((a) => a.pfad === '/auth/instant-trial')).toEqual([]);
+    expect(g.anfragen.some((a) => a.pfad === '/auth/device')).toBe(false);
+    expect(text).not.toContain('must sign in');
+    expect(text).not.toContain('CACHLY_JWT not set');
+  }, 90_000);
+
+  it('Hook haelt gerade die Sperre (Anfrage laeuft): der Werkzeugaufruf wartet und legt nichts an', async () => {
+    const g = await starteGegenstelle(201);
+    const heim = mkdtempSync(join(tmpdir(), 'cachly-hookkonto-'));
+    aufraeumen.push(() => g.server.close(), () => rmSync(heim, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }));
+
+    const text = await rufeWerkzeug(g.url, heim, () => {
+      mkdirSync(join(heim, '.cachly'), { recursive: true });
+      writeFileSync(join(heim, '.cachly', 'anlegen.lock'), 'hook');
+      // 700 ms spaeter wird der "Hook" fertig: Schluessel und Instanz da, Sperre frei.
+      setTimeout(() => {
+        writeFileSync(join(heim, '.cachly', 'credentials.json'), JSON.stringify({ apiKey: SCHLUESSEL, instanceId: INSTANZ }));
+        rmSync(join(heim, '.cachly', 'anlegen.lock'), { force: true });
+      }, 700);
+    });
+
+    expect(g.anfragen.filter((a) => a.pfad === '/auth/instant-trial'), 'zweites Konto angelegt').toEqual([]);
+    expect(text).not.toContain('must sign in');
+  }, 90_000);
 });

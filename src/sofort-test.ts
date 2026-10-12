@@ -86,6 +86,9 @@ export function leseAntwort(roh: unknown): SofortTest | null {
   };
 }
 
+/** Wie lange die Anfrage hoechstens dauern darf, wenn niemand eine andere Frist nennt. */
+export const SOFORT_TEST_FRIST_MS = 8000;
+
 let versuchtInDiesemProzess = false;
 
 /** Nur fuer Tests: setzt die Einmal-Sperre zurueck. */
@@ -101,6 +104,12 @@ export interface SofortTestOptionen {
   /** Zum Einspeisen in Tests. */
   speichern?: (key: string) => void;
   env?: Record<string, string | undefined>;
+  /**
+   * Frist der Anfrage in Millisekunden. Der MCP-Server wartet bis zu 8 s
+   * (Standard); der SessionStart-Hook hat ein Zeitbudget und nimmt weniger
+   * (konto-anlegen.ts).
+   */
+  fristMs?: number;
 }
 
 /**
@@ -125,7 +134,7 @@ export async function holeSofortTest(opt: SofortTestOptionen): Promise<SofortTes
         'User-Agent': userAgent(opt.version, opt.env ?? process.env),
       },
       body: '{}',
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(opt.fristMs ?? SOFORT_TEST_FRIST_MS),
     });
     if (!antwort.ok) return null;
     const test = leseAntwort(await antwort.json());

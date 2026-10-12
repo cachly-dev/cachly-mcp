@@ -136,7 +136,7 @@ async function projektOrdnerVomClient(): Promise<string> {
 /** Darf dieser Prozess nach dem Anlegen eines Brains aus der Git-Geschichte lernen? */
 function startwissenMoeglich(): boolean {
   if (!_startwissenErlaubt) return false;
-  return !/^(0|false|off|no|nein)$/i.test((process.env.CACHLY_STARTWISSEN ?? '').trim());
+  return startwissenEingeschaltet(process.env);
 }
 
 /**
@@ -144,13 +144,14 @@ function startwissenMoeglich(): boolean {
  * Git-Geschichte des Projekts lernen. Wartet auf nichts und wirft nie.
  * CACHLY_STARTWISSEN=false schaltet es ab.
  */
-function starteStartwissenImHintergrund(instanzId: string): void {
+function starteStartwissenImHintergrund(instanzId: string, ordner?: string): void {
   if (!instanzId || !startwissenMoeglich()) return;
   void starteStartwissen({
     instanzId,
     verbindung: getConnection,
     ausGit: (a) => handleFedbrainTool('brain_from_git', a, getConnection, apiFetch),
-    projektOrdner: projektOrdnerVomClient,
+    // Den Ordner nennt der Hook, wenn ER das Brain angelegt hat (CLAUDE_PROJECT_DIR).
+    projektOrdner: ordner ? async () => ordner : projektOrdnerVomClient,
     einbetten: (text) => computeEmbedding(text, { geduld: 'lang' }),
     hatEinbettung: hasEmbedProvider,
     // Wirft bei Anbietern ohne Modellwahl (embeddings.ts) — dann bleibt vec2 leer.
@@ -169,6 +170,84 @@ function starteStartwissenImHintergrund(instanzId: string): void {
 /** Laedt ein neues Brain in einem Ordner ohne Git den Startvorrat? (startwissen.ts) */
 function startvorratMoeglich(): boolean {
   return startwissenMoeglich() && startvorratErlaubt();
+}
+
+// ── Das Konto aus dem SessionStart-Hook (12.10.2026) ────────────────────────
+//
+// Das Claude-Code-Plugin legt das Konto jetzt im SessionStart-Hook an
+// (ambient-hook.ts), nicht erst beim ersten Werkzeugaufruf. Dieser Server
+// laeuft zu dem Zeitpunkt schon oder startet gleichzeitig und hat dann KEINEN
+// Schluessel im Prozess. Er uebernimmt ihn hier aus ~/.cachly/credentials.json
+// und nimmt den Auftrag fuer den Start-Import entgegen, den der Hook dort
+// hinterlassen hat: der Import braucht die Verbindung zum Brain, die nur der
+// Server hat. Kein zweiter Sofort-Test, kein zweites Konto (konto-anlegen.ts).
+
+/** So lange wartet ein Werkzeugaufruf auf einen Hook, der gerade anlegt (Hook-Frist: 5 s). */
+const SERVER_KONTO_WARTEN_MS = 7_000;
+/** Warten auf die Sperre UND Anfrage, wenn der Server selbst anlegt. */
+const SERVER_KONTO_FRIST_MS = 12_000;
+/** So lange sieht der Server nach dem Start nach, ob der Hook ein Konto angelegt hat. */
+const HOOK_KONTO_BEOBACHTEN_MS = 60_000;
+
+let _hookKontoLauf: Promise<boolean> | null = null;
+
+/**
+ * Uebernimmt Schluessel und Auftrag des Hooks. true = danach gibt es einen
+ * Schluessel im Prozess. Wartet hoechstens `wartenMs`, solange der Hook die
+ * Sperre haelt. Wirft nie.
+ */
+function uebernimmHookKonto(wartenMs: number): Promise<boolean> {
+  if (!_hookKontoLauf) {
+    _hookKontoLauf = hookKontoUebernehmen(wartenMs).finally(() => { _hookKontoLauf = null; });
+  }
+  return _hookKontoLauf;
+}
+
+async function hookKontoUebernehmen(wartenMs: number): Promise<boolean> {
+  try {
+    if (!JWT) {
+      const frist = Date.now() + wartenMs;
+      while (!readSavedApiKey() && sperreLiegt({}) && Date.now() < frist) {
+        await new Promise<void>((r) => setTimeout(r, WARTE_TAKT_MS));
+      }
+      const schluessel = readSavedApiKey();
+      if (!schluessel) return false;
+      JWT = schluessel;
+      setEmbedJwt(schluessel);
+      const instanz = readInstanceId();
+      if (instanz && !_defaultInstanceId) { _defaultInstanceId = instanz; _defaultInstanceLastAttempt = 0; }
+      // Dieselben Ablagen wie nach dem Sofort-Test dieses Servers (zugang.ts).
+      await persistApiKeyToConfig(schluessel);
+      if (instanz) await persistInstanceIdToConfig(instanz);
+      sendFunnelEvent('instant_trial_started', { tool: 'sessionstart-hook', ...(instanz ? { instance_id: instanz } : {}) });
+    }
+    if (startwissenMoeglich() && auftragLiegt()) {
+      const auftrag = nimmAuftrag();
+      if (auftrag) {
+        merkeNeuesBrain(auftrag.instanzId, startwissenMoeglich(), startvorratMoeglich());
+        starteStartwissenImHintergrund(auftrag.instanzId, auftrag.projekt || undefined);
+      }
+    }
+  } catch { /* der Hook-Weg ist ein Zugewinn; ohne ihn bleibt der bisherige Weg */ }
+  return !!JWT;
+}
+
+/**
+ * Beobachtet nach dem Start eine Minute lang, ob der Hook ein Konto anlegt
+ * (der Server kann vor dem Hook fertig sein) und ob sein Auftrag bereitliegt.
+ * Eine Abfrage der Platte je halbe Sekunde; der Zeitgeber haelt den Prozess
+ * nicht am Leben.
+ */
+function beobachteHookKonto(): void {
+  if (!startwissenEingeschaltet(process.env)) return;
+  const bis = Date.now() + HOOK_KONTO_BEOBACHTEN_MS;
+  const takt = setInterval(() => {
+    if (Date.now() > bis) { clearInterval(takt); return; }
+    if (JWT && !auftragLiegt()) return;
+    void uebernimmHookKonto(0);
+  }, 500);
+  takt.unref();
+  void uebernimmHookKonto(0);
 }
 
 /**
@@ -934,12 +1013,17 @@ import {
 import { hookHauptlauf, auffrischenHauptlauf } from './ambient-hook.js';
 import { rahmeAntwort } from './antwort-rahmen.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath, reportLedgerEntry } from './ambient-ledger.js';
-import { resolveApiKey, saveApiKey, saveInstanceId, readSavedApiKey, type CredentialsHomeOptions } from './credentials.js';
+import {
+  resolveApiKey, saveApiKey, saveInstanceId, readSavedApiKey, readInstanceId, type CredentialsHomeOptions,
+} from './credentials.js';
 import {
   KEYCLOAK_BASIS, istTestSchluessel, waehleTestSchluessel, starteKeycloakAnmeldung, warteAufKeycloakAnmeldung, uebernimm, brainImKonto,
   erfolgsText, fehlerText, ersetzeSchluessel, type UebernahmeAntwort,
 } from './uebernahme.js';
-import { holeSofortTest } from './sofort-test.js';
+import type { SofortTest } from './sofort-test.js';
+import {
+  WARTE_TAKT_MS, auftragLiegt, nimmAuftrag, sichereKonto, sperreLiegt, startwissenEingeschaltet,
+} from './konto-anlegen.js';
 import { sichereZugang, echterWert } from './zugang.js';
 import { zeitpunkt } from './zeitmessung.js';
 import { warteAufLaufendeInstanz, gemeinsamerAufbau } from './instanz-warten.js';
@@ -1291,6 +1375,10 @@ async function gitStartFrei(instanceId: string): Promise<boolean> {
 }
 
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
+  // Hat der SessionStart-Hook das Konto angelegt, seit dieser Server gestartet
+  // ist? Dann gibt es jetzt einen Schluessel — KEIN zweiter Sofort-Test.
+  if (!JWT && await uebernimmHookKonto(SERVER_KONTO_WARTEN_MS)) return handleTool(name, args);
+
   // Guard: if no JWT, return actionable onboarding message instead of HTTP 401
   if (!JWT) {
     void sendAnonymousTelemetry(name);
@@ -1331,11 +1419,16 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       konfigurierteInstanz: _defaultInstanceId,
       aufrufInstanz: args.instance_id,
       werkzeugName: name,
-      // speichern: no-op — alle Ablagen macht sichereZugang an EINER Stelle,
-      // sonst schriebe credentials.json zweimal und an zwei Orten im Code.
+      // Ueber sichereKonto (konto-anlegen.ts): dieselbe Sperre wie im SessionStart-
+      // Hook, damit Hook und Server zusammen hoechstens EIN Konto anlegen.
+      // sichereKonto schreibt Schluessel und Instanz in credentials.json, bevor es
+      // die Sperre freigibt; die uebrigen Ablagen macht sichereZugang.
       holeSofortTest: async () => {
         zeitpunkt('sofort-test: Anfang');
-        const test = await holeSofortTest({ apiUrl: API_URL, version: CURRENT_VERSION, speichern: () => {} });
+        const konto = await sichereKonto({ apiUrl: API_URL, version: CURRENT_VERSION, fristMs: SERVER_KONTO_FRIST_MS });
+        const test: SofortTest | null = konto.art === 'angelegt'
+          ? konto.test
+          : konto.art === 'vorhanden' && konto.instanzId ? { apiKey: konto.apiKey, instanzId: konto.instanzId } : null;
         zeitpunkt(`sofort-test: ${test ? 'Brain angelegt' : 'kein Test'}`);
         // Jeder Sofort-Test legt ein neues Konto mit neuer Instanz an: sie ist
         // leer, solange sie startet (leeres-brain.ts).
@@ -5105,6 +5198,7 @@ if (httpPort) {
   const cliBefehl = typeof process.argv[2] === 'string' && !process.argv[2].startsWith('-');
   if (!cliBefehl) {
     _startwissenErlaubt = true;
+    beobachteHookKonto();
     starteBrandWachhund();
     beiStdinEnde(process.stdin, (grund) => {
       process.stderr.write(`[cachly-mcp] ${grund} — Session zu Ende, Server geht mit

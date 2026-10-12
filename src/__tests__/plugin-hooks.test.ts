@@ -244,14 +244,16 @@ function schreibeJson(pfad: string, inhalt: unknown) {
 const prompt = (e = 'UserPromptSubmit') => ({ hook_event_name: e, prompt: FRAGE, session_id: 's1', cwd: '/repo' });
 
 describe('Plugin-Lauf — das echte Buendel', () => {
-  it('ohne Schluessel: Exit 0, keine Ausgabe, keine Anfrage — und schnell', async () => {
+  it('ohne Schluessel: Exit 0, keine Ausgabe — und schnell; nur SessionStart fragt (den Sofort-Test, hier abgelehnt)', async () => {
     for (const e of PLUGIN_HOOK_EVENTS) {
       const r = await lauf(BUENDEL, [e, '--plugin'], prompt(e));
       expect(r.status, e).toBe(0);
       expect(r.stdout, e).toBe('');
       expect(r.ms, `${e}: ${r.ms} ms`).toBeLessThan(5000);
     }
-    expect(anfragen).toEqual([]);
+    // Seit dem 12.10.2026 legt SessionStart das Konto an (erster-prompt.test.ts).
+    // Die Gegenstelle dieses Tests lehnt ab; sonst fragt kein Ereignis etwas.
+    expect(anfragen.map((a) => `${a.methode} ${a.pfad}`)).toEqual(['POST /auth/instant-trial']);
   });
 
   it('nach dem Sofort-Test: Schluessel UND Instanz aus ~/.cachly/credentials.json — Einblendung kommt', async () => {

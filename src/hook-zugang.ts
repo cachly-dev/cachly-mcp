@@ -77,6 +77,20 @@ export function findeInstanz(u: HookUmfeld): string {
   );
 }
 
+/**
+ * Die Nummer des Plugins, aus `.claude-plugin/plugin.json` neben `hooks/`.
+ * Sie steht im User-Agent des Sofort-Tests (sofort-test.ts) und damit in
+ * `tenants.signup_client`. Eine eigene Nummer im Buendel braeuchte eine
+ * weitere Stelle, die bei jedem Sprung nachgezogen werden muesste
+ * (nummer-nachziehen.mjs). Ohne Plugin-Ordner: `unbekannt`.
+ */
+export function pluginVersion(u: HookUmfeld): string {
+  const wurzel = echterWert(u.env.CLAUDE_PLUGIN_ROOT);
+  if (!wurzel) return 'unbekannt';
+  const v = (lies(join(wurzel, '.claude-plugin', 'plugin.json')) as { version?: unknown } | null)?.version;
+  return typeof v === 'string' && /^\d[0-9A-Za-z.+-]{0,30}$/.test(v) ? v : 'unbekannt';
+}
+
 /** Jeder Hook, den init/setup/autopilot schreiben, traegt das im Befehl. */
 export const PROJEKT_HOOK_MARKE = 'cachly-ambient-';
 
