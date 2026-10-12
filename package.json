@@ -55,7 +55,8 @@
     "typecheck": "tsc --noEmit",
     "bench:cost": "tsx src/bench/cost.ts",
     "bench:zurueckhaltung": "tsx src/bench/zurueckhaltung-messen.ts",
-    "bench:ausgabe": "tsx src/bench/ausgabe-reihenfolge-messen.ts"
+    "bench:ausgabe": "tsx src/bench/ausgabe-reihenfolge-messen.ts",
+    "bench:entscheider-satz": "tsx src/bench/entscheider-trainingssatz.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.0",
