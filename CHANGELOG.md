@@ -7,6 +7,26 @@
 
 ---
 
+## [0.10.187] – 2026-10-12 — *"A lesson can say which version it is true for."*
+
+**`learn_from_attempts` takes `gilt_fuer`.** A list of `package@range` entries,
+for example `["next@<15", "react@>=18 <19", "go@>=1.22", "python:fastapi@<0.110"]`.
+The prefix `npm:` / `go:` / `python:` is optional; several entries must all hold;
+`a || b` inside one entry means either. Unreadable entries are not stored and the
+reply says which. An update without the field keeps the previous scope; `[]`
+clears it.
+
+**Recall reads the versions of the current project and marks what does not fit.**
+`smart_recall`, `recall_best_solution` and the prompt hook compare `gilt_fuer`
+with `node_modules`, `package-lock.json`, `package.json`, `go.mod`,
+`requirements.txt` and `pyproject.toml`. A lesson whose range the project
+violates is ranked behind the fitting ones and marked ("gilt fuer next@<15,
+hier 15.2.0") — never hidden. An unknown version changes nothing, and a
+lesson without `gilt_fuer` costs no file read. The read is cached per working
+folder, in memory and on disk, and has a 25 ms budget on a cold start.
+
+This is about the scope of a fact, not its age: nothing is decayed.
+
 ## [0.10.186] – 2026-10-12 — *"A key you set for another tool stays that tool's key."*
 
 **`health` no longer says your `OPENAI_API_KEY` is in use.** A key such as

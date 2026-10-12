@@ -74,6 +74,10 @@ ok "Build complete"
 # ── Select test suite ─────────────────────────────────────────────────────────
 SUITE="${1:-all}"
 
+# Die E2E-Tests laufen ausdruecklich LIVE gegen E2E_API_URL. Nur sie duerfen aus
+# der Netzsperre der Testumgebung (vitest.config.ts, scripts/kein-netz-vorlauf.cjs).
+export CACHLY_NETZSPERRE=aus
+
 VITEST_BASE="npx vitest run --reporter=verbose"
 E2E_DIR="src/__tests__/e2e"
 

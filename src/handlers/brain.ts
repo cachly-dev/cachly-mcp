@@ -65,6 +65,8 @@ import { ordneNachHausordnung, rangWerte } from '../ausgabe-ordnung.js';
 import { Seltenheitsbestand } from '../seltenheitsbestand.js';
 import { spurLegen } from '../spuren.js';
 import { schlageErsetzungVor } from '../ersetzung-vorschlag.js';
+// Gueltigkeit nach Version (Abhakliste 4.5): Logik und Begruendung in der Datei selbst.
+import { loeseGiltFuerAuf, stufeSucheNachProjektversion, versionsNotizen, versionsBanner } from '../gueltigkeit-version.js';
 
 // Themen, deren Volltext-Vektor beim Schreiben scheiterte — Nachtrag beim
 // naechsten Schreiben (Karte hcg8neyut0kd Teil c).
@@ -928,6 +930,7 @@ async function handleBrainToolInner(
         grund = '',
         ersetzt = '',
         gilt_ab = '',
+        gilt_fuer: giltFuerEingabe,
       } = geschwaerzt.felder as {
         instance_id: string;
         topic: string;
@@ -944,6 +947,7 @@ async function handleBrainToolInner(
         grund?: string;
         ersetzt?: string;
         gilt_ab?: string;
+        gilt_fuer?: unknown;
         visibility?: 'public' | 'team' | 'private';
         service?: string;
         service_kind?: 'service' | 'system';
@@ -980,6 +984,9 @@ async function handleBrainToolInner(
       const redis = await getConnection(instance_id);
       const jetzt = new Date();
       const ts = jetzt.toISOString();
+      // Geltungsbereich nach Version (gueltigkeit-version.ts). Beim Update ohne
+      // das Feld wird er unten aus der Vorfassung uebernommen.
+      let giltFuer = loeseGiltFuerAuf(giltFuerEingabe, undefined);
 
       /*
        * ── Relative Zeitangaben aufloesen, solange der Bezugspunkt noch da ist ──
@@ -1046,6 +1053,7 @@ async function handleBrainToolInner(
         return storeLessonProposal(redis, topic, {
           topic, outcome, what_worked, what_failed, context: ctx, severity,
           file_paths, commands, tags, depends_on,
+          ...(giltFuer.angaben.length ? { gilt_fuer: giltFuer.angaben } : {}),
           ...(autorFeld ? { author: autorFeld } : {}),
           source: ermittleQuelle(),
           ...(service ? { service } : {}),
@@ -1104,8 +1112,10 @@ async function handleBrainToolInner(
             recall_count?: number;
             last_recalled_at?: string;
             outcome?: string;
+            gilt_fuer?: unknown;
             audit_trail?: Array<{ ts: string; action: string; prev_outcome?: string; grund?: string }>;
           };
+          giltFuer = loeseGiltFuerAuf(giltFuerEingabe, prev.gilt_fuer);
           recallCount = prev.recall_count ?? 0;
           lastRecalledAt = prev.last_recalled_at; // learn never stamps it — only recall does
           auditTrail = prev.audit_trail ?? [];
@@ -1223,6 +1233,7 @@ async function handleBrainToolInner(
         ...(gilt_ab && !Number.isNaN(Date.parse(String(gilt_ab)))
           ? { gilt_ab: new Date(String(gilt_ab)).toISOString() }
           : {}),
+        ...(giltFuer.angaben.length ? { gilt_fuer: giltFuer.angaben } : {}),
         ts,
         verified_at: outcome === 'success' || outcome === 'partial' ? ts : undefined,
         confidence: 1.0,
@@ -1747,6 +1758,10 @@ async function handleBrainToolInner(
           ? `🔗 Depends on: ${depends_on.map(d => `\`${d}\``).join(', ')} → trace with \`trace_dependency\``
           : '',
         ersetzungsVorschlag,
+        giltFuer.angaben.length
+          ? `📦 Gilt fuer ${giltFuer.angaben.map((a) => `\`${a}\``).join(', ')}${giltFuer.uebernommen ? ' (aus der Vorfassung uebernommen)' : ''} — passt das Projekt nicht, steht die Lektion im Abruf hinten und ist markiert.`
+          : '',
+        ...giltFuer.fehler.map((f) => `⚠️ gilt_fuer nicht gespeichert, ${f}. Form: paket@bereich, zum Beispiel next@<15 oder python:fastapi@>=0.100 <0.110.`),
         ersetztAltRaw && bestGeschrieben
           ? warumZeile
             ? `↷ Ersetzt \`${ersetztZiel}\` — die alte Fassung wird im Abruf verdraengt und nennt ihre Nachfolgerin samt Grund.`
@@ -2149,6 +2164,8 @@ async function handleBrainToolInner(
         return [
           ersetztBanner,
           abgelaufen,
+          // Abhakliste 4.5: gilt die Lektion fuer die Versionen DIESES Projekts?
+          versionsBanner((lesson as { gilt_fuer?: unknown }).gilt_fuer),
           giltZeile,
           entZeile,
           rememberWhen,
@@ -3059,6 +3076,11 @@ async function handleBrainToolInner(
         }
       }
 
+      // Abhakliste 4.5: Lektionen, deren `gilt_fuer` nicht zu den Versionen dieses
+      // Projekts passt, stehen hinter den passenden (nichts wird entfernt). Ohne
+      // `gilt_fuer` unter den Treffern: kein Dateizugriff, keine Aenderung.
+      const versionsHinweise = stufeSucheNachProjektversion(hybridResults, contextFiles);
+
       /*
        * ── Beinahe-Duplikate benennen, nicht aufloesen (01.09.2026) ─────────
        *
@@ -3334,6 +3356,7 @@ async function handleBrainToolInner(
               `\n`,
           );
         }
+        ersetzungsNotizen.push(...versionsNotizen(hybridResults.slice(0, visibleCount), versionsHinweise));
         if (ersetzungsNotizen.length > 0) {
           lines.push(...ersetzungsNotizen.map((n) => `> ${n}`), '');
         }

@@ -50,6 +50,8 @@ import { leserText as leserTextZuschnitt } from './seltenheitsbestand.js';
 import { mischeMitLeser } from './leser.js';
 import { LeserSicherung, dateiSpeicher, frageLeser, type LeserAntwort } from './leser-sicherung.js';
 import { LESER_TIEFE_EINBLENDUNG, LESER_ZEITLIMIT_MS } from './rangfolge-stellschrauben.js';
+// Gueltigkeit nach Version (Abhakliste 4.5): Logik und Begruendung in der Datei selbst.
+import { stufeEinblendungNachVersion } from './gueltigkeit-version.js';
 
 // Alles, was der abhaengigkeitsfreie Hook braucht, reist ueber diese Datei.
 export * from './einblendung-kern.js';
@@ -299,7 +301,9 @@ export function renderLesson(l: EinblendLektion): string {
   const sev = l.severity ? `[${l.severity}] ` : '';
   const what = String(l.what_worked ?? '').replace(/\s+/g, ' ').trim();
   const kurz = what.length > ANZEIGE_ZEICHEN ? `${what.slice(0, ANZEIGE_ZEICHEN)}…` : what;
-  return `- ${sev}${l.topic}: ${kurz}`;
+  // Gueltigkeit nach Version: "gilt fuer next@<15, hier 15.2.0" (nur bei Abweichlern gesetzt).
+  const vh = typeof l.versionshinweis === 'string' ? ` [${l.versionshinweis}]` : '';
+  return `- ${sev}${l.topic}${vh}: ${kurz}`;
 }
 
 export interface AuswahlOptionen {
@@ -325,6 +329,10 @@ function waehleAus(
 ): Auswahl {
   const gewaehlt: EinblendLektion[] = [];
   let verbraucht = 0;
+  // Gueltigkeit nach Version: Lektionen, die nicht zu den Versionen dieses
+  // Projekts passen, stehen hinten und tragen einen Hinweis. Ohne `gilt_fuer`
+  // unter den Kandidaten: dieselbe Liste, kein Dateizugriff.
+  sortiert = stufeEinblendungNachVersion(sortiert);
   for (const { lektion } of sortiert.slice(0, topK)) {
     const t = estimateTokens(renderLesson(lektion));
     if (verbraucht + t > tokenBudget) break;

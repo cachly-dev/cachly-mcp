@@ -603,6 +603,13 @@ const TOOLS = [
           type: 'string',
           description: 'ISO date since when the FACT is true (vs. when written). Omit if unknown. A replacement sets gilt_bis on the old lesson (then shown as history). About the fact, NOT an age decay.',
         },
+        gilt_fuer: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Version scope of the FACT, package@range, all must hold: ["next@<15", "react@>=18 <19", "go@>=1.22", "python:fastapi@<0.110"]. ' +
+            'Recall ranks a lesson that does not fit the project versions last, marked, never hidden; unknown = no change. Omit on update to keep, [] clears.',
+        },
         visibility: {
           type: 'string',
           enum: ['team', 'private', 'public'],
