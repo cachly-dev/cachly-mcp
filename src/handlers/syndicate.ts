@@ -7,6 +7,7 @@ import { keywordSearch } from '../search.js';
 import { safeJsonParse } from '../utils.js';
 import type { Instance } from './brain.js';
 import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
+import { fuerEigenenSpeicher, fuerWeitergabe, markiert, weitergabeHinweis, zaehlHinweise } from '../schreibtor.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -149,7 +150,12 @@ export async function handleSyndicateTool(
         throw new McpError(ErrorCode.InvalidParams, 'topic and what_worked are required');
       }
 
-      const body = { topic, outcome, what_worked, what_failed, severity, tags, scope };
+      // Tor zu den Fremden (schreibtor.ts): die Lektion geht in die Commons bzw. an die ganze Org.
+      // Geheimnisse werden geschwaerzt, ein Verdacht auf Anweisung oder Befehl stoppt die Weitergabe.
+      const ziel = fuerWeitergabe({ topic, what_worked, what_failed, tags }, scope === 'org' ? 'die Org' : 'die Commons');
+      if (!ziel.ok) return ziel.meldung;
+
+      const body = { ...ziel.felder, outcome, severity, scope };
       const res = await apiFetch<{ id: string; topic: string; outcome: string; message: string; deduped?: boolean }>(
         '/api/v1/syndication/contribute',
         { method: 'POST', body: JSON.stringify(body) }
@@ -171,7 +177,8 @@ export async function handleSyndicateTool(
           : `Your lesson is now searchable by every AI brain in the network.`,
         `When another instance confirms it works, its trust score rises — and so does your contributor reputation.`,
         ``,
-        `**Tip:** Use \`syndicate_search(q="${topic}")\` to see all community lessons on this topic.`,
+        `**Tip:** Use \`syndicate_search(q="${ziel.felder.topic}")\` to see all community lessons on this topic.`,
+        ...(ziel.geschwaerzt.length ? [``, weitergabeHinweis(ziel.geschwaerzt)] : []),
       ].join('\n');
     }
 
@@ -807,9 +814,22 @@ export async function handleSyndicateTool(
       const now = new Date().toISOString();
       let installed = 0;
       let skipped = 0;
+      let geschwaerztAnzahl = 0;
+      let markiertAnzahl = 0;
 
-      for (const l of pack.lessons) {
-        if (!l.topic || !l.what_worked) { skipped++; continue; }
+      for (const rohL of pack.lessons) {
+        if (!rohL.topic || !rohL.what_worked) { skipped++; continue; }
+        // Tags arrive as a JSON string from the commons; normalise to an array.
+        const rohTags = ((): string[] => {
+          const t = safeJsonParse<unknown>(rohL.tags, []);
+          return Array.isArray(t) ? t.filter((x): x is string => typeof x === 'string') : [];
+        })();
+        // Das Paket kommt aus den Commons, also von Fremden: Geheimnisse schwaerzen, Verdacht
+        // markieren (schreibtor.ts).
+        const tor = fuerEigenenSpeicher({ topic: rohL.topic, what_worked: rohL.what_worked, what_failed: rohL.what_failed ?? '', tags: rohTags });
+        if (tor.geschwaerzt.length) geschwaerztAnzahl++;
+        if (tor.verdacht.length) markiertAnzahl++;
+        const l = { ...rohL, ...tor.felder };
         const bestKey = `cachly:lesson:best:${l.topic}`;
 
         // Never clobber a user's own lesson (or a prior install from a different brain).
@@ -819,19 +839,13 @@ export async function handleSyndicateTool(
           if (parsed && parsed.source !== source) { skipped++; continue; }
         }
 
-        // Tags arrive as a JSON string from the commons; normalise to an array.
-        const tags = ((): string[] => {
-          const t = safeJsonParse<unknown>(l.tags, []);
-          return Array.isArray(t) ? t.filter((x): x is string => typeof x === 'string') : [];
-        })();
-
         const record = JSON.stringify({
           topic: l.topic,
           outcome: l.outcome || 'success',
           what_worked: l.what_worked,
           what_failed: l.what_failed || '',
           severity: l.severity || 'minor',
-          tags,
+          tags: markiert(tor.felder.tags, tor.verdacht),
           visibility: 'team',
           confidence: calculateConfidence({ ts: now, verified_at: now, recall_count: l.confirm_count }),
           recall_count: 0,
@@ -861,6 +875,7 @@ export async function handleSyndicateTool(
         `  • \`smart_recall(query="${pack.lessons[0]?.topic.split(':').pop() ?? 'your problem'}")\``,
         ``,
         `_Installed lessons are tagged \`source: "${source}"\` and never override your own. Re-run anytime to pull updates._`,
+        ...(geschwaerztAnzahl + markiertAnzahl > 0 ? [``, ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${pack.lessons.length} Lektionen`)] : []),
       ].join('\n');
     }
 

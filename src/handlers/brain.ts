@@ -258,7 +258,8 @@ import { autorAbzeichen, fremdanteil } from '../autor-abzeichen.js';
 import { cachlyUrl } from '../cachly-url.js';
 import { belegFuer } from '../schreibbeleg.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
-import { mitVerdachtTag, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
+import { VERDACHT_TAG, mitVerdachtTag, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
+import { fuerEigenenSpeicher, hinweise, markiert, zaehlHinweise } from '../schreibtor.js';
 import { zeitpunkt } from '../zeitmessung.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
@@ -1827,7 +1828,11 @@ async function handleBrainToolInner(
       const redis = await getConnection(instance_id);
       const jetzt = new Date().toISOString();
 
-      const geprueft = pruefeMeldung(args as Pruefmeldung, jetzt);
+      // Befehl und Befund landen als Text in der Lektion: Geheimnisse schwaerzen, Verdacht markieren
+      // (schreibtor.ts).
+      const meldung = args as Pruefmeldung;
+      const tor = fuerEigenenSpeicher({ geprueft_mit: meldung.geprueft_mit, befund: meldung.befund });
+      const geprueft = pruefeMeldung({ ...meldung, ...tor.felder }, jetzt);
       if (!geprueft.ok) {
         return [
           `⚠️ ${geprueft.grund}`,
@@ -1849,7 +1854,8 @@ async function handleBrainToolInner(
           + 'Tippfehler im Themennamen?';
       }
       const lektion = safeJsonParse<Record<string, unknown>>(roh, {});
-      await redis.set(schluessel, JSON.stringify(wendeAn(lektion, eintrag)));
+      const neu = wendeAn(lektion, eintrag);
+      await redis.set(schluessel, JSON.stringify(tor.verdacht.length ? { ...neu, tags: markiert(neu.tags, tor.verdacht) } : neu));
       wortindexEntwerten();
 
       if (eintrag.haelt) {
@@ -1858,6 +1864,7 @@ async function handleBrainToolInner(
           eintrag.geprueft_mit ? `   geprueft mit: \`${eintrag.geprueft_mit}\`` : '',
           '',
           'Das ist die einzige Handlung, die `verified_at` setzt. Ein Abruf tut es nicht.',
+          ...hinweise(tor),
         ].filter(Boolean).join('\n');
       }
       return [
@@ -1867,6 +1874,7 @@ async function handleBrainToolInner(
         'Geloescht wurde nichts — eine Pruefung kann aus Gruenden fehlschlagen,',
         'die mit der Lektion nichts zu tun haben. Wenn du weisst, was jetzt gilt:',
         `\`learn_from_attempts(topic="${eintrag.topic}", …, grund="…")\`.`,
+        ...hinweise(tor),
       ].join('\n');
     }
 
@@ -4622,8 +4630,8 @@ async function handleBrainToolInner(
     case 'session_end': {
       const {
         instance_id,
-        summary,
-        files_changed = [],
+        summary: rohSummary,
+        files_changed: rohDateien = [],
         lessons_learned,
         workspace_path = '',
       } = args as {
@@ -4633,6 +4641,12 @@ async function handleBrainToolInner(
         lessons_learned?: number;
         workspace_path?: string;
       };
+
+      // Die Zusammenfassung wird dauerhaft abgelegt, beim naechsten session_start dem Modell gezeigt
+      // und unten in Lektionen zerlegt: Geheimnisse schwaerzen, Verdacht markieren (schreibtor.ts).
+      const tor = fuerEigenenSpeicher({ summary: rohSummary, files_changed: rohDateien });
+      const summary = tor.felder.summary;
+      const files_changed = tor.felder.files_changed;
 
       const redis = await getConnection(instance_id);
       const now = new Date();
@@ -4669,6 +4683,7 @@ async function handleBrainToolInner(
         summary,
         files_changed,
         ...(kosten.recalls > 0 ? { memory_cost: kosten } : {}),
+        ...(tor.verdacht.length ? { verdacht: tor.verdacht } : {}),
         ...(lessons_learned !== undefined ? { lessons_learned } : {}),
         ...(durationMin !== undefined ? { duration_min: durationMin } : {}),
         ...(decisionLog.length > 0 ? { decision_log: decisionLog } : {}),
@@ -4727,6 +4742,7 @@ async function handleBrainToolInner(
             auto_learned: true,
             session_ts: now.toISOString(),
             version: 2,
+            ...(tor.verdacht.length ? { tags: [VERDACHT_TAG] } : {}),
           };
           await redis.set(key, JSON.stringify(lesson));
           // 90-day TTL for auto-learned lessons
@@ -4742,6 +4758,8 @@ async function handleBrainToolInner(
       const ambientLearned: string[] = [];
       // workspace_path kommt vom Modell: ohne Shell, und nur wenn der Ordner existiert.
       const endeOrdner = pruefeOrdner(workspace_path);
+      let ambientGeschwaerzt = 0;
+      let ambientMarkiert = 0;
       if (endeOrdner) {
         try {
           // Get the session start time (stored by session_start)
@@ -4761,7 +4779,12 @@ async function handleBrainToolInner(
             const commitActionRe = /\b(fix|add|remove|refactor|migrate|update|resolve|implement|improve|optimize|configure|create|delete|disable|enable|debug|patch|upgrade|build|rewrite|deploy|feat|chore|docs|test|perf|ci)\b/i;
             const commitBlocks = gitOut.split('|||ENDE').map(b => b.trim()).filter(Boolean);
             for (const block of commitBlocks.slice(0, 10)) {
-              const [hash, msg, rawBody, dateStr] = block.split('|||');
+              const [hash, rohMsg, rohBody, dateStr] = block.split('|||');
+              // Commit-Betreff und -Text koennen von Dritten stammen (Pull-Requests, Rebase):
+              // Geheimnisse schwaerzen, Verdacht markieren (schreibtor.ts).
+              const commitTor = fuerEigenenSpeicher({ msg: rohMsg ?? '', body: rohBody ?? '' });
+              const msg = commitTor.felder.msg;
+              const rawBody = commitTor.felder.body;
 
               // Files touched together in one commit are recorded as co-occurs
               // edges between file nodes in the graph ("who touches A usually
@@ -4824,10 +4847,13 @@ async function handleBrainToolInner(
                 auto_learned: true,
                 source: 'ambient-git',
                 version: 3,
+                ...(commitTor.verdacht.length ? { tags: [VERDACHT_TAG] } : {}),
               };
               await redis.set(key, JSON.stringify(commitLesson));
               await redis.expire(key, 60 * 86400); // 60 day TTL for git lessons
               ambientLearned.push(topic);
+              if (commitTor.geschwaerzt.length) ambientGeschwaerzt++;
+              if (commitTor.verdacht.length) ambientMarkiert++;
             }
           }
         } catch { /* git not available or not a repo — silent skip */ }
@@ -4870,6 +4896,8 @@ async function handleBrainToolInner(
         ...kostenZeilen(kosten),
         autoLearned.length > 0 ? `🤖 **Auto-learned:** ${autoLearned.length} lessons extracted from summary (${autoLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${autoLearned.length > 3 ? '…' : ''})` : '',
         ambientLearned.length > 0 ? `🌿 **Ambient git learning:** ${ambientLearned.length} commit${ambientLearned.length > 1 ? 's' : ''} auto-learned (${ambientLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${ambientLearned.length > 3 ? '…' : ''})` : '',
+        ...hinweise(tor, 'notiz'),
+        ...zaehlHinweise(ambientGeschwaerzt, ambientMarkiert, `${ambientLearned.length} Git-Lektionen`),
         sessionCard,
         ``,
         `💡 Next session: \`session_start(focus="...")\` to see this summary.`,
@@ -4880,10 +4908,10 @@ async function handleBrainToolInner(
     case 'session_ping': {
       const {
         instance_id,
-        task,
-        files_touched = [],
-        next_step = '',
-        provider = '',
+        task: rohTask,
+        files_touched: rohDateien = [],
+        next_step: rohNaechster = '',
+        provider: rohProvider = '',
       } = args as {
         instance_id: string;
         task: string;
@@ -4892,6 +4920,11 @@ async function handleBrainToolInner(
         provider?: string;
       };
 
+      // Der Stand wird beim naechsten session_start dem Modell gezeigt: Geheimnisse schwaerzen,
+      // Verdacht markieren (schreibtor.ts).
+      const tor = fuerEigenenSpeicher({ task: rohTask, files_touched: rohDateien, next_step: rohNaechster, provider: rohProvider });
+      const { task, files_touched, next_step, provider } = tor.felder;
+
       const redis = await getConnection(instance_id);
       const checkpoint = {
         ts: new Date().toISOString(),
@@ -4899,6 +4932,7 @@ async function handleBrainToolInner(
         files_touched,
         next_step,
         provider,
+        ...(tor.verdacht.length ? { verdacht: tor.verdacht } : {}),
       };
 
       // Store as the latest checkpoint — session_start reads this when no session_end found
@@ -4918,6 +4952,7 @@ async function handleBrainToolInner(
         nextStr,
         ``,
         `💡 If you switch providers, \`session_start\` will show this checkpoint automatically.`,
+        ...hinweise(tor, 'notiz'),
       ].filter(l => l !== '').join('\n');
     }
 
@@ -4925,12 +4960,12 @@ async function handleBrainToolInner(
     case 'session_handoff': {
       const {
         instance_id,
-        completed_tasks = [],
-        remaining_tasks = [],
-        files_changed = [],
-        instructions = '',
-        context_summary = '',
-        blocked_on = '',
+        completed_tasks: rohErledigt = [],
+        remaining_tasks: rohOffen = [],
+        files_changed: rohDateien = [],
+        instructions: rohAnweisungen = '',
+        context_summary: rohKontext = '',
+        blocked_on: rohBlockiert = '',
       } = args as {
         instance_id: string;
         completed_tasks: string[];
@@ -4940,6 +4975,15 @@ async function handleBrainToolInner(
         context_summary?: string;
         blocked_on?: string;
       };
+
+      // Die Uebergabe liest das naechste Fenster als Arbeitsauftrag: Geheimnisse schwaerzen, Verdacht
+      // markieren (schreibtor.ts). Das Feld `instructions` ist fuer Anweisungen an die eigene naechste
+      // Sitzung gedacht; der Tuersteher sucht nur Floskeln, die fremde Regeln aushebeln wollen.
+      const tor = fuerEigenenSpeicher({
+        completed_tasks: rohErledigt, remaining_tasks: rohOffen, files_changed: rohDateien,
+        instructions: rohAnweisungen, context_summary: rohKontext, blocked_on: rohBlockiert,
+      });
+      const { completed_tasks, remaining_tasks, files_changed, instructions, context_summary, blocked_on } = tor.felder;
 
       const redis = await getConnection(instance_id);
       const now = new Date();
@@ -4952,6 +4996,7 @@ async function handleBrainToolInner(
         instructions,
         context_summary,
         blocked_on,
+        ...(tor.verdacht.length ? { verdacht: tor.verdacht } : {}),
       };
 
       // Store handoff — never expires until next handoff overwrites it
@@ -4975,6 +5020,7 @@ async function handleBrainToolInner(
         instructions ? `\n📝 **Instructions:** ${instructions}` : '',
         ``,
         `💡 The next \`session_start\` will include this handoff automatically.`,
+        ...hinweise(tor, 'notiz'),
       ].filter(l => l !== '').join('\n');
     }
 
@@ -4987,8 +5033,13 @@ async function handleBrainToolInner(
       const redis = await getConnection(instance_id);
       const stored: string[] = [];
       const skipped: string[] = [];
+      let geschwaerztAnzahl = 0;
+      let markiertAnzahl = 0;
 
-      for (const obs of observations) {
+      for (const rohObs of observations) {
+        // Beobachtungen werden zu Lektionen: Geheimnisse schwaerzen, Verdacht markieren (schreibtor.ts).
+        const tor = fuerEigenenSpeicher(rohObs);
+        const obs = tor.felder;
         // Auto-generate topic from action if not provided
         const rawTopic = obs.topic ?? obs.action
           .toLowerCase()
@@ -5025,8 +5076,11 @@ async function handleBrainToolInner(
           recall_count: 0,
           auto_learned: true,
           version: 2,
+          ...(tor.verdacht.length ? { tags: [VERDACHT_TAG] } : {}),
         };
         const lessonStr = JSON.stringify(lesson);
+        if (tor.geschwaerzt.length) geschwaerztAnzahl++;
+        if (tor.verdacht.length) markiertAnzahl++;
 
         await redis.set(key, lessonStr);
 
@@ -5064,6 +5118,7 @@ async function handleBrainToolInner(
       ];
       if (stored.length > 0) lines.push('**Stored:**', ...stored.map(s => '  ' + s), '');
       if (skipped.length > 0) lines.push(`**Skipped** (better lesson already exists): ${skipped.map(t => `\`${t}\``).join(', ')}`);
+      lines.push(...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${stored.length} Beobachtungen`));
       return lines.join('\n');
     }
 
@@ -6421,16 +6476,21 @@ async function handleBrainToolInner(
       const {
         instance_id,
         key,
-        value,
+        value: rohWert,
       } = args as { instance_id: string; key: string; value: string };
 
       if (!key || !key.trim()) throw new Error('key is required');
 
+      // Geheimnisse schwaerzen (schreibtor.ts). Eine Einstellung hat keinen Platz fuer ein Tag;
+      // bei Verdacht bleibt es bei der Warnung in der Antwort.
+      const tor = fuerEigenenSpeicher({ value: String(rohWert) });
+      const value = tor.felder.value;
+
       const redis = await getConnection(instance_id);
       const redisKey = `cachly:prefs:${key.trim()}:${instance_id}`;
-      await redis.set(redisKey, String(value));
+      await redis.set(redisKey, value);
 
-      return `✅ Preference \`${key}\` set to \`${value}\` for this Brain instance.`;
+      return [`✅ Preference \`${key}\` set to \`${value}\` for this Brain instance.`, ...hinweise(tor, 'wert')].join('\n');
     }
 
     // ── brain_get_pref ────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import type { Redis } from 'ioredis';
 import { safeJsonParse } from '../utils.js';
 import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
+import { fuerEigenenSpeicher, hinweise } from '../schreibtor.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -19,15 +20,19 @@ export async function handleRoadmapTool(
     case 'roadmap_add': {
       const {
         instance_id: rid,
-        title,
-        description: desc = '',
+        title: rohTitel,
+        description: rohDesc = '',
         priority = 'medium',
-        tags: rtags = [],
-        milestone = '',
+        tags: rohTags = [],
+        milestone: rohMeilenstein = '',
       } = args as {
         instance_id: string; title: string; description?: string;
         priority?: string; tags?: string[]; milestone?: string;
       };
+      // Roadmap-Eintraege werden spaeter als Arbeitsauftrag gezeigt (roadmap_list, roadmap_next):
+      // Geheimnisse schwaerzen, Verdacht vermerken (schreibtor.ts).
+      const tor = fuerEigenenSpeicher({ title: rohTitel, description: rohDesc, tags: rohTags, milestone: rohMeilenstein });
+      const { title, description: desc, tags: rtags, milestone } = tor.felder;
       const redis = await getConnection(rid);
       const id = `rm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
       const item = {
@@ -36,6 +41,7 @@ export async function handleRoadmapTool(
         created: new Date().toISOString(),
         updated: new Date().toISOString(),
         notes: '',
+        ...(tor.verdacht.length ? { verdacht: tor.verdacht } : {}),
       };
       await redis.hset(`cachly:roadmap:${rid}`, id, JSON.stringify(item));
       const PRIORITY_ICON: Record<string, string> = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
@@ -50,6 +56,7 @@ export async function handleRoadmapTool(
         rtags.length ? `  Tags:     ${rtags.join(', ')}` : '',
         ``,
         `💡 Use \`roadmap_update(id: "${id}", status: "in-progress")\` when you start working on it.`,
+        ...hinweise(tor, 'notiz'),
       ].filter(Boolean).join('\n');
     }
 
@@ -59,13 +66,16 @@ export async function handleRoadmapTool(
         id: itemId,
         status: newStatus,
         priority: newPriority,
-        notes: newNotes,
-        title: newTitle,
-        description: newDesc,
+        notes: rohNotizen,
+        title: rohTitel,
+        description: rohBeschreibung,
       } = args as {
         instance_id: string; id: string; status?: string; priority?: string;
         notes?: string; title?: string; description?: string;
       };
+      // Geheimnisse schwaerzen, Verdacht vermerken (schreibtor.ts).
+      const tor = fuerEigenenSpeicher({ notes: rohNotizen, title: rohTitel, description: rohBeschreibung });
+      const { notes: newNotes, title: newTitle, description: newDesc } = tor.felder;
       const redis = await getConnection(rid);
       const raw = await redis.hget(`cachly:roadmap:${rid}`, itemId);
       if (!raw) return `⚠️ **roadmap_update** – Item \`${itemId}\` not found. Use \`roadmap_list\` to see all items.`;
@@ -78,6 +88,7 @@ export async function handleRoadmapTool(
       if (newDesc) item.description = newDesc;
       if (newNotes) item.notes = item.notes ? `${item.notes}\n[${new Date().toISOString().slice(0, 10)}] ${newNotes}` : `[${new Date().toISOString().slice(0, 10)}] ${newNotes}`;
       item.updated = new Date().toISOString();
+      if (tor.verdacht.length) item.verdacht = [...new Set([...(Array.isArray(item.verdacht) ? (item.verdacht as string[]) : []), ...tor.verdacht])];
       await redis.hset(`cachly:roadmap:${rid}`, itemId, JSON.stringify(item));
       const statusEmoji: Record<string, string> = { planned: '📋', 'in-progress': '⚡', done: '✅', blocked: '🚫', cancelled: '🗑️' };
       return [
@@ -87,6 +98,7 @@ export async function handleRoadmapTool(
         // Ohne neuen Status bleibt der alte — "→ undefined" war nur ein Fehler der Antwort.
         newStatus && oldStatus !== newStatus ? `  Status: ${oldStatus} → ${newStatus}` : `  Status: ${item.status}`,
         newNotes ? `  Notes:  ${newNotes}` : '',
+        ...hinweise(tor, 'notiz'),
       ].filter(Boolean).join('\n');
     }
 

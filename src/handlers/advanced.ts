@@ -5,6 +5,7 @@ import { safeJsonParse, darfHeraus } from '../utils.js';
 import { ersparteMinuten, zaehltAlsErsparnis } from '../wertbeitrag.js';
 import { findePaare } from '../zulassung-und-urteil.js';
 import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
+import { fuerWeitergabe } from '../schreibtor.js';
 
 /**
  * Der dritte Lesepfad (Karte lr9c9h26kmb5). `causal_trace` kennt den Fragenden
@@ -585,9 +586,20 @@ export async function handleAdvancedTool(
 
     // ── v0.6 Cognitive Cache: autopilot ──────────────────────────────────────
     case 'autopilot': {
-      const { instance_id, editor = 'claude', project_name = 'this project', style = 'full' } = args as {
+      const { instance_id, editor: rohEditor = 'claude', project_name: rohProjekt = 'this project', style = 'full' } = args as {
         instance_id: string; editor?: string; project_name?: string; style?: 'minimal' | 'full';
       };
+
+      // Dieser Text soll dauerhaft in CLAUDE.md & Co. landen (per `cat >> … << 'EOF'`), also in eine
+      // Datei, die jede kuenftige Sitzung als Anweisung liest. Projektname und Editor sind freie
+      // Eingaben: Geheimnisse werden geschwaerzt, ein Verdacht stoppt die Ausgabe, und beide bleiben
+      // einzeilig und kurz, damit sie weder die Heredoc-Klammer noch die Ueberschrift verlassen
+      // koennen (schreibtor.ts).
+      const tor = fuerWeitergabe({ editor: String(rohEditor), project_name: String(rohProjekt) }, 'die Anweisungsdatei (CLAUDE.md)');
+      if (!tor.ok) return tor.meldung;
+      const einzeilig = (t: string, max: number) => t.replace(/[\p{C}\s]+/gu, ' ').trim().slice(0, max);
+      const editor = einzeilig(tor.felder.editor, 30) || 'claude';
+      const project_name = einzeilig(tor.felder.project_name, 80) || 'this project';
 
       const minimal = `## Cachly AI Brain — Autopilot
 

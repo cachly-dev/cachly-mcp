@@ -7,6 +7,40 @@
 
 ---
 
+## [0.10.189] – 2026-10-12 — *"Every door has the doorman."*
+
+**Nothing leaves your Brain unchecked.** 0.10.188 put the doorman at four write
+paths. This release puts the same two checks (secret filter, doorman) at every
+other path that stores or passes on free text:
+
+- **Handing text to other people** (`fedbrain_contribute`,
+  `brain_contribute_signal`, `syndicate`, `brain_share`, `publish_lesson`, and
+  the text `autopilot` tells you to append to `CLAUDE.md`): secrets are
+  redacted; text that looks like an instruction or a dangerous command is
+  **not sent**. The reply names the field and the rule, never the text. A
+  lesson that was tagged `tuersteher:verdacht` when it was saved is never
+  passed on. `brain_share` leaves out the flagged lessons, names them, and
+  shares the rest; a flagged title or description stops the whole share.
+- **Taking text in from other people or tools** (`brain_import`,
+  `brain_install`, `brain_import_meta`, `brain_federate`, `brain_from_git`,
+  `brain_from_ci`, `cls_ingest`, the git step of `session_end`): secrets are
+  redacted, a hit is saved with the tag `tuersteher:verdacht`, the reply warns.
+- **Your own notes and sessions** (`session_end`, `session_ping`,
+  `session_handoff`, `auto_learn_session`, `lesson_verified`, `global_learn`,
+  `team_confirm`, `sync_file_changes`, `roadmap_add`, `roadmap_update`,
+  `brain_set_pref`): the same, with a `verdacht` note in the stored entry where
+  a tag does not fit.
+
+**One more fix on the way.** `autopilot` puts the project name into a shell
+heredoc; a name with a line break could close the heredoc early. It is now one
+short line.
+
+**Not changed:** the API still takes what clients send it
+(`/api/v1/syndication/contribute`, `/api/v1/brains/share`,
+`/api/v1/federation/signals`), and `memory_crystalize` / `team_crystallize`
+summarise lessons that were stored before the filter existed. The 0.10.188
+bench numbers do not move (`npm run bench:tuersteher`): no pattern changed.
+
 ## [0.10.188] – 2026-10-12 — *"The doorman reads before it writes."*
 
 **Lessons that smuggle in instructions are marked when they are saved.**

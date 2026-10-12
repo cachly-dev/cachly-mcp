@@ -3,6 +3,8 @@ import { safeJsonParse } from '../utils.js';
 import { STARTER_CORPUS, STARTER_CORPUS_SIZE } from '../starter-corpus.js';
 import { cachlyUrl } from '../cachly-url.js';
 import { VEKTOR_NACHTRAG } from '../bedeutung.js';
+import { schwaerze } from '../geheimnis-filter.js';
+import { fuerEigenenSpeicher, fuerWeitergabe, hinweise, istMarkiert, markiert, weitergabeHinweis, zaehlHinweise } from '../schreibtor.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -84,8 +86,8 @@ export async function handleShareTool(
     case 'brain_share': {
       const {
         instance_id,
-        title = 'My Brain Snapshot',
-        description = '',
+        title: rohTitel = 'My Brain Snapshot',
+        description: rohBeschreibung = '',
         topic_filter,
         visibility = 'unlisted',
         max_lessons = 100,
@@ -102,18 +104,48 @@ export async function handleShareTool(
 
       if (!instance_id) return '⚠️ `brain_share` requires `instance_id`.';
 
+      // Tor zu den Fremden (schreibtor.ts): Titel und Beschreibung stehen auf der oeffentlichen
+      // Seite. Ein Verdacht darin stoppt die ganze Share; Geheimnisse werden geschwaerzt.
+      const kopf = fuerWeitergabe({ title: rohTitel, description: rohBeschreibung }, 'die Share');
+      if (!kopf.ok) return kopf.meldung;
+      const geschwaerzt: string[] = [...kopf.geschwaerzt];
+      const title = kopf.felder.title;
+      const description = kopf.felder.description;
+
       const redis = await getConnection(instance_id);
       const topicFilter = Array.isArray(topic_filter) && topic_filter.length > 0 ? topic_filter : undefined;
       const allLessons = await scanAllLessons(redis, topicFilter);
-      const lessons = allLessons.slice(0, max_lessons as number);
+
+      // Jede Lektion einzeln: eine verdaechtige oder beim Speichern markierte bleibt zurueck und wird
+      // genannt, die uebrigen gehen mit geschwaerzten Geheimnissen weiter. Erst filtern, dann kuerzen,
+      // damit zurueckgehaltene Lektionen keinen Platz in max_lessons belegen.
+      const zurueckgehalten: string[] = [];
+      const freigegeben: StoredLesson[] = [];
+      for (const l of allLessons) {
+        if (freigegeben.length >= (max_lessons as number)) break;
+        const name = schwaerze(l.topic).text;
+        if (istMarkiert(l)) { zurueckgehalten.push(`${name} (beim Speichern markiert)`); continue; }
+        const tor = fuerWeitergabe(l, 'die Share');
+        if (!tor.ok) { zurueckgehalten.push(`${name} (${tor.verdacht.join('; ')})`); continue; }
+        geschwaerzt.push(...tor.geschwaerzt);
+        freigegeben.push(tor.felder);
+      }
+      const lessons = freigegeben;
+      const torZeilen = [
+        weitergabeHinweis(geschwaerzt),
+        zurueckgehalten.length
+          ? `⛔ Tuersteher: ${zurueckgehalten.length} Lektion(en) NICHT in die Share aufgenommen (Anweisung oder gefaehrlicher Befehl erkannt): ${zurueckgehalten.slice(0, 10).join(', ')}${zurueckgehalten.length > 10 ? ', …' : ''}. Pruefen und einzeln neu speichern; die Lektionen im Brain bleiben unveraendert.`
+          : '',
+      ].filter(Boolean);
 
       if (lessons.length === 0) {
         return [
           `📤 **brain_share** — nothing to share yet`,
           ``,
-          `No lessons found in Brain \`${instance_id}\`${topicFilter ? ` matching topics: ${topicFilter.join(', ')}` : ''}.`,
+          `No lessons found in Brain \`${instance_id}\`${topicFilter ? ` matching topics: ${topicFilter.join(', ')}` : ''}${zurueckgehalten.length ? ' that can be shared' : ''}.`,
           ``,
           `Store lessons first with \`learn_from_attempts(topic="...", what_worked="...")\`.`,
+          ...torZeilen,
         ].join('\n');
       }
 
@@ -133,6 +165,7 @@ export async function handleShareTool(
           ...sample,
           lessons.length > 5 ? `  _...and ${lessons.length - 5} more_` : '',
           ``,
+          ...torZeilen,
           `_Remove \`dry_run=true\` to create the public share._`,
         ].filter(l => l !== '').join('\n');
       }
@@ -163,6 +196,7 @@ export async function handleShareTool(
             `\`\`\``,
             ``,
             `_To import this on another Brain, use \`brain_import\` with the JSON payload._`,
+            ...torZeilen,
           ].join('\n');
         }
         return `❌ brain_share failed: ${(e as Error).message}`;
@@ -196,6 +230,7 @@ export async function handleShareTool(
         `\`brain_import(instance_id="<their-id>", share_id="${shareId}")\``,
         ``,
         `_To list all your shares, run \`brain_share_list\`._`,
+        ...(torZeilen.length ? [``, ...torZeilen] : []),
       ].filter(l => l !== '').join('\n');
     }
 
@@ -251,9 +286,20 @@ export async function handleShareTool(
       let skipped = 0;
       let conflicts = 0;
       const importLog: string[] = [];
+      let geschwaerztAnzahl = 0;
+      let markiertAnzahl = 0;
+      // Die Share stammt von Fremden: Geheimnisse schwaerzen, Verdacht markieren (schreibtor.ts).
+      const titelTor = fuerEigenenSpeicher({ title: payload.title ?? '' });
+      const shareTitel = titelTor.felder.title || cleanShareId;
 
-      for (const lesson of lessons) {
-        if ((lesson.confidence ?? 1.0) < (min_confidence as number)) { skipped++; continue; }
+      for (const rohLesson of lessons) {
+        if ((rohLesson.confidence ?? 1.0) < (min_confidence as number)) { skipped++; continue; }
+        const tor = fuerEigenenSpeicher(rohLesson);
+        if (tor.geschwaerzt.length) geschwaerztAnzahl++;
+        if (tor.verdacht.length) markiertAnzahl++;
+        const lesson: StoredLesson = tor.verdacht.length
+          ? { ...tor.felder, tags: markiert(tor.felder.tags, tor.verdacht) }
+          : tor.felder;
 
         const topic = topic_prefix ? `${topic_prefix}:${lesson.topic}` : lesson.topic;
         const bestKey = `cachly:lesson:best:${topic}`;
@@ -290,7 +336,8 @@ export async function handleShareTool(
       if (!dry_run && imported > 0) {
         try {
           const prov = JSON.stringify({
-            share_id: cleanShareId, title: payload.title,
+            share_id: cleanShareId, title: titelTor.felder.title || undefined,
+            ...(titelTor.verdacht.length ? { verdacht: titelTor.verdacht } : {}),
             imported: imported, skipped, conflicts,
             topic_prefix, imported_at: new Date().toISOString(),
           });
@@ -300,14 +347,15 @@ export async function handleShareTool(
       }
 
       const dryTag = dry_run ? ' (DRY RUN — no writes)' : '';
-      const shareTitle = payload.title ?? cleanShareId;
       const lines = [
-        `📥 **brain_import${dryTag}** — from "${shareTitle}"`,
+        `📥 **brain_import${dryTag}** — from "${shareTitel}"`,
         ``,
         `**Share ID:** \`${cleanShareId}\``,
         `**Lessons imported:** ${imported}`,
         ...(skipped > 0 ? [`**Skipped (low confidence):** ${skipped}`] : []),
         ...(conflicts > 0 ? [`**Skipped (already exist):** ${conflicts}  _(pass \`overwrite=true\` to replace)_`] : []),
+        ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${lessons.length} Eintraegen`),
+        ...hinweise(titelTor, 'notiz'),
         ``,
       ];
 

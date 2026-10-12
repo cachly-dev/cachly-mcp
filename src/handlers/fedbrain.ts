@@ -11,6 +11,7 @@ import { keywordSearch, wortindexEntwerten } from '../search.js';
 import { buildFirstContactReport, suggestRecallQueries, type FirstContactProof } from '../first-contact.js';
 import { classifyCommit, extractDomain } from '../commit-art.js';
 import { VEKTOR_NACHTRAG } from '../bedeutung.js';
+import { VERDACHT_TAG, fuerEigenenSpeicher, fuerWeitergabe, hinweise, istMarkiert, markiert, weitergabeHinweis, zaehlHinweise } from '../schreibtor.js';
 
 // Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
 export let _lastBrainFromGitCounts: { fixes: number; features: number; refactors: number; total: number } | null = null;
@@ -201,11 +202,15 @@ export async function handleFedbrainTool(
 
     // ── Layer 5: CLS — cls_ingest ─────────────────────────────────────────────
     case 'cls_ingest': {
-      const { instance_id, source, payload } = args as {
+      const { instance_id, source, payload: rohPayload } = args as {
         instance_id: string;
         source: 'git_commit' | 'ci_outcome' | 'ide_diagnostic';
         payload: Record<string, unknown>;
       };
+      // Commit-Texte, CI-Kontext und Compiler-Meldungen kommen von Dritten: Geheimnisse
+      // schwaerzen, Verdacht markieren (schreibtor.ts).
+      const tor = fuerEigenenSpeicher(rohPayload);
+      const payload = tor.felder;
       const redis = await getConnection(instance_id);
       const ts = new Date().toISOString();
       const clsKey = 'cachly:cls:events';
@@ -231,7 +236,7 @@ export async function handleFedbrainTool(
           topic: slug, outcome: 'success' as const, what_worked: message, what_failed: '',
           context: `CLS/git: sha=${sha}`, severity: 'minor' as const,
           file_paths: files.slice(0, 10), commands: sha ? [`git show ${sha}`] : [],
-          tags: ['cls', 'git'], depends_on: [], recall_count: 0, ts, verified_at: ts,
+          tags: markiert(['cls', 'git'], tor.verdacht), depends_on: [], recall_count: 0, ts, verified_at: ts,
           confidence: 0.6, audit_trail: [{ ts, action: 'cls_git_commit' }], version: 3,
         };
         await redis.rpush(`cachly:lessons:${slug}`, JSON.stringify(lessonObj));
@@ -247,6 +252,7 @@ export async function handleFedbrainTool(
           `Concept: \`${conceptId}\` (${domain}) · Files: ${files.length}`,
           '', `🕸️ CKG: \`${conceptId}\` + ${files.length} file edges · Lesson: \`${slug}\``,
           `💡 Inspect: \`ckg_inspect(concept="${domain}")\``,
+          ...hinweise(tor),
         ].join('\n');
       }
 
@@ -271,7 +277,7 @@ export async function handleFedbrainTool(
             topic: slug, outcome: 'success' as const,
             what_worked: `CI job "${job}" went ${prev_status} → ${status}`,
             what_failed: `Job "${job}" was failing`, context: `CLS/ci: ${ciCtx}`,
-            severity: 'major' as const, file_paths: [], commands: [], tags: ['cls', 'ci'],
+            severity: 'major' as const, file_paths: [], commands: [], tags: markiert(['cls', 'ci'], tor.verdacht),
             depends_on: [], recall_count: 0, ts, verified_at: ts, confidence: 0.75,
             audit_trail: [{ ts, action: 'cls_ci_fixed' }], version: 3,
           };
@@ -292,6 +298,7 @@ export async function handleFedbrainTool(
           `${statusIcon}: \`${job}\` — ${prev_status || '?'} → ${status}`,
           isFixed ? `🔧 CKG \`fixes\` edge added (75% confidence)` : isBroken ? `⚡ CKG \`causes\` edge added` : `📊 State recorded`,
           `💡 Lesson: \`${slug}\`  |  Predict: \`brain_predict(context="${job}")\``,
+          ...hinweise(isFixed ? tor : { geschwaerzt: tor.geschwaerzt, verdacht: [] }),
         ].join('\n');
       }
 
@@ -312,7 +319,7 @@ export async function handleFedbrainTool(
         const lessonObj = {
           topic: slug, outcome: 'success' as const, what_worked: fix, what_failed: error,
           context: `CLS/ide: ${file}`, severity: 'minor' as const,
-          file_paths: file ? [file] : [], commands: [], tags: ['cls', 'ide-diagnostic'],
+          file_paths: file ? [file] : [], commands: [], tags: markiert(['cls', 'ide-diagnostic'], tor.verdacht),
           depends_on: [], recall_count: 0, ts, verified_at: ts, confidence: 0.65,
           audit_trail: [{ ts, action: 'cls_ide_diagnostic' }], version: 3,
         };
@@ -329,6 +336,7 @@ export async function handleFedbrainTool(
           `Fix: ${fix.slice(0, 100)}`,
           file ? `File: \`${file}\`` : '',
           '', `🕸️ CKG: \`${conceptId}\` → fixes → \`${problemId}\`  |  Lesson: \`${slug}\``,
+          ...hinweise(tor),
         ].filter(l => l !== '').join('\n');
       }
 
@@ -406,8 +414,21 @@ export async function handleFedbrainTool(
       const raw = await redis.get(`cachly:lesson:best:${lesson_key}`);
       if (!raw) return `❌ Lesson \`${lesson_key}\` not found. Store it first with \`learn_from_attempts\`.`;
 
-      const lesson = safeJsonParse(raw, null as null | { topic: string; outcome: string; what_worked: string; what_failed?: string; tags?: string[]; commands?: string[]; severity?: string; ts?: string });
-      if (!lesson) return `❌ Lesson \`${lesson_key}\` data is corrupted. Re-store with \`learn_from_attempts\`.`;
+      const gespeichert = safeJsonParse(raw, null as null | { topic: string; outcome: string; what_worked: string; what_failed?: string; tags?: string[]; commands?: string[]; severity?: string; ts?: string });
+      if (!gespeichert) return `❌ Lesson \`${lesson_key}\` data is corrupted. Re-store with \`learn_from_attempts\`.`;
+
+      // Tor zu den Fremden (schreibtor.ts): alles, was in die Commons geht, laeuft vorher durch den
+      // Geheimnis-Filter und den Tuersteher. Aeltere Lektionen sind nie gefiltert worden; eine beim
+      // Speichern markierte Lektion geht nie weiter. Verdacht = nichts wird gesendet, auch kein Zertifikat.
+      const ziel = fuerWeitergabe(
+        { topic: gespeichert.topic, what_worked: gespeichert.what_worked, what_failed: gespeichert.what_failed ?? '', tags: gespeichert.tags ?? [] },
+        'die Commons',
+      );
+      if (!ziel.ok) return ziel.meldung;
+      if (istMarkiert(gespeichert)) {
+        return `⛔ Tuersteher: Die Lektion \`${lesson_key}\` ist beim Speichern als verdaechtig markiert worden — NICHT an die Commons weitergegeben. Nichts wurde gesendet. Inhalt pruefen, dann mit \`learn_from_attempts\` ohne die Anweisung neu speichern.`;
+      }
+      const lesson = { ...gespeichert, ...ziel.felder };
 
       const domainTokens = [lesson.topic.split(':')[0], ...(lesson.tags ?? [])].filter(Boolean);
       const domainFingerprint = [...new Set(domainTokens)].sort().join(',');
@@ -448,7 +469,8 @@ export async function handleFedbrainTool(
         `📜 Certificate: \`${certId}\``,
         `🏷️ Domain fingerprint: ${domainTokens.slice(0, 6).map(t => `\`${t}\``).join(', ')}`,
         `🔒 Visibility: ${visibility}`,
-        '', syndicationResult, '',
+        '', syndicationResult,
+        ...(ziel.geschwaerzt.length ? [weitergabeHinweis(ziel.geschwaerzt)] : []), '',
         `💡 At 10 independent confirms → 🏆 Gold Standard`,
         `🔍 Search: \`fedbrain_search(query="${lesson.topic.split(':').slice(-1)[0]}")\``,
       ].join('\n');
@@ -690,6 +712,8 @@ export async function handleFedbrainTool(
       let edgesTransferred = 0;
       let lessonsTransferred = 0;
       let skippedLowConf = 0;
+      let geschwaerztAnzahl = 0;
+      let markiertAnzahl = 0;
       const transferLog: string[] = [];
 
       for (const nk of nodeKeys) {
@@ -721,14 +745,19 @@ export async function handleFedbrainTool(
         const lessonKey = `cachly:lesson:best:${node.id}`;
         const lessonRaw = await srcRedis.get(lessonKey);
         if (lessonRaw) {
-          if (!dry_run) await destRedis.set(lessonKey, lessonRaw);
+          // Die Lektion kommt aus einem anderen Brain und wurde dort vielleicht nie gefiltert:
+          // beim Kopieren Geheimnisse schwaerzen, Verdacht markieren (schreibtor.ts).
+          const quelle = safeJsonParse<(Record<string, unknown> & { topic: string; outcome: string; what_worked?: string }) | null>(lessonRaw, null);
+          if (!quelle || typeof quelle !== 'object') continue;
+          const tor = fuerEigenenSpeicher(quelle);
+          if (tor.geschwaerzt.length) geschwaerztAnzahl++;
+          if (tor.verdacht.length) markiertAnzahl++;
+          const l = tor.verdacht.length ? { ...tor.felder, tags: markiert(tor.felder.tags, tor.verdacht) } : tor.felder;
+          if (!dry_run) await destRedis.set(lessonKey, JSON.stringify(l));
           lessonsTransferred++;
           if (transferLog.length < 8) {
-            try {
-              const l = JSON.parse(lessonRaw) as { topic: string; outcome: string; what_worked?: string };
-              const icon = l.outcome === 'success' ? '✅' : l.outcome === 'failure' ? '❌' : '⚠️';
-              transferLog.push(`  ${icon} \`${l.topic}\` — ${(l.what_worked ?? '').slice(0, 80)}`);
-            } catch { /* skip */ }
+            const icon = l.outcome === 'success' ? '✅' : l.outcome === 'failure' ? '❌' : '⚠️';
+            transferLog.push(`  ${icon} \`${l.topic}\` — ${(l.what_worked ?? '').slice(0, 80)}`);
           }
         }
       }
@@ -754,6 +783,7 @@ export async function handleFedbrainTool(
         `  🕸️ CKG nodes:  ${nodesTransferred}`,
         `  🔗 CKG edges:  ${edgesTransferred}  (${skippedLowConf} skipped, confidence < ${min_confidence})`,
         `  📚 Lessons:    ${lessonsTransferred}`,
+        ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${lessonsTransferred} kopierten Lektionen`),
         '',
       ];
       if (transferLog.length > 0) {
@@ -1050,8 +1080,17 @@ export async function handleFedbrainTool(
 
       process.stderr.write(`\n🧠 brain_from_git: processing ${total} commits from ${repoDir}...\n`);
 
+      // Commit-Betreffs und Dateinamen stammen aus einem Repo, das auch fremde Pull-Requests
+      // enthaelt: Geheimnisse schwaerzen, Verdacht markieren (schreibtor.ts).
+      let geschwaerztAnzahl = 0;
+      let markiertAnzahl = 0;
+
       for (let i = 0; i < commits.length; i++) {
-        const commit = commits[i]!;
+        const rohCommit = commits[i]!;
+        const tor = fuerEigenenSpeicher({ subject: rohCommit.subject, author: rohCommit.author, files: rohCommit.files.slice(0, 12) });
+        if (tor.geschwaerzt.length) geschwaerztAnzahl++;
+        if (tor.verdacht.length) markiertAnzahl++;
+        const commit = { ...rohCommit, ...tor.felder };
 
         // Emit progress to stderr so editors can display it in MCP logs
         if (i - lastProgressAt >= progressInterval) {
@@ -1079,7 +1118,7 @@ export async function handleFedbrainTool(
           author: commit.author || undefined,
           file_paths: commitFiles,
           commands: [`git show ${commit.sha.slice(0, 8)}`],
-          tags: ['brain_from_git', category, 'git-history'],
+          tags: markiert(['brain_from_git', category, 'git-history'], tor.verdacht),
           visibility: 'team',
           depends_on: [], recall_count: 0, ts, verified_at: ts,
           confidence: 0.55, // lower confidence for auto-inferred lessons
@@ -1164,7 +1203,7 @@ export async function handleFedbrainTool(
         } catch { /* proof is best-effort — never fail the seeding response */ }
       }
 
-      return buildFirstContactReport({
+      const bericht = buildFirstContactReport({
         repoDir, revRange,
         processed: commits.length, ingested, skipped,
         durationMs: Date.now() - startedAt,
@@ -1175,6 +1214,8 @@ export async function handleFedbrainTool(
         proof,
         suggestedQueries: suggestRecallQueries(seededTopics, instance_id),
       });
+      const torZeilen = zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${commits.length} Commits`);
+      return torZeilen.length ? [bericht, '', ...torZeilen].join('\n') : bericht;
       } finally {
         _gitSemRelease();
       }
@@ -1192,13 +1233,19 @@ export async function handleFedbrainTool(
       let fixes = 0;
       let breaks = 0;
       let stable = 0;
+      let geschwaerztAnzahl = 0;
+      let markiertAnzahl = 0;
       const total = outcomes.length;
 
       for (const entry of outcomes) {
+        // Jobname und Kontext stammen aus der CI und damit auch aus fremden Pull-Requests:
+        // Geheimnisse schwaerzen, Verdacht markieren (schreibtor.ts).
+        const tor = fuerEigenenSpeicher({ job: String(entry.job ?? 'unknown'), context: String(entry.context ?? '') });
+        if (tor.geschwaerzt.length) geschwaerztAnzahl++;
         const status = String(entry.status ?? '');
         const prev_status = String(entry.prev_status ?? '');
-        const job = String(entry.job ?? 'unknown');
-        const ciCtx = String(entry.context ?? '');
+        const job = tor.felder.job;
+        const ciCtx = tor.felder.context;
 
         const isFixed = ['failure', 'red', 'error'].includes(prev_status) && ['success', 'green', 'passed'].includes(status);
         const isBroken = ['success', 'green', 'passed'].includes(prev_status) && ['failure', 'red', 'error'].includes(status);
@@ -1215,13 +1262,14 @@ export async function handleFedbrainTool(
             topic: slug, outcome: 'success' as const,
             what_worked: `CI job "${job}" went ${prev_status} → ${status}`,
             what_failed: `Job "${job}" was failing`, context: `brain_from_ci: ${ciCtx}`,
-            severity: 'major' as const, file_paths: [], commands: [], tags: ['brain_from_ci', 'ci'],
+            severity: 'major' as const, file_paths: [], commands: [], tags: markiert(['brain_from_ci', 'ci'], tor.verdacht),
             depends_on: [], recall_count: 0, ts, verified_at: ts, confidence: 0.65,
             audit_trail: [{ ts, action: 'brain_from_ci_fixed' }], version: 3,
           };
           await redis.rpush(`cachly:lessons:${slug}`, JSON.stringify(lessonObj));
           await redis.ltrim(`cachly:lessons:${slug}`, -100, -1);
           await redis.set(`cachly:lesson:best:${slug}`, JSON.stringify(lessonObj));
+          if (tor.verdacht.length) markiertAnzahl++;
           fixes++;
         } else if (isBroken) {
           const causeId = ckgSlug(`cause:${ckgSlug(job)}`);
@@ -1247,6 +1295,7 @@ export async function handleFedbrainTool(
         stable > 0 ? `📊 ${stable} stable outcome${stable !== 1 ? 's' : ''} recorded` : '',
         '',
         `💡 Explore: \`brain_search(query="ci")\`  |  \`brain_predict(context="<job-name>")\``,
+        ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${total} CI-Ergebnissen`),
       ].filter(Boolean).join('\n');
     }
 
@@ -1399,6 +1448,12 @@ export async function handleFedbrainTool(
         throw new Error('outcome must be success, failure, or partial');
       }
 
+      // Auch die Kategorie verlaesst die Instanz und wird von Fremden gelesen: Geheimnisse
+      // schwaerzen, Verdacht = nichts senden (schreibtor.ts).
+      const tor = fuerWeitergabe({ topic_category: topic_category.trim() }, 'die Commons');
+      if (!tor.ok) return tor.meldung;
+      const kategorie = tor.felder.topic_category;
+
       // Bucket locally before sending — no raw confidence value leaves the instance.
       const bucket = confidence >= 0.75 ? 'high' : confidence >= 0.5 ? 'medium' : 'low';
 
@@ -1407,7 +1462,7 @@ export async function handleFedbrainTool(
         await apiFetch<{ accepted: boolean; k_threshold: number }>('/api/v1/federation/signals', {
           method: 'POST',
           body: JSON.stringify({
-            topic_category: topic_category.trim().toLowerCase(),
+            topic_category: kategorie.toLowerCase(),
             outcome,
             confidence: confidence,
           }),
@@ -1417,16 +1472,17 @@ export async function handleFedbrainTool(
         // Store in local outbox for later sync
         const redis = await getConnection(instance_id);
         const outboxKey = `cachly:fed:outbox:${Date.now()}`;
-        await redis.set(outboxKey, JSON.stringify({ topic_category, outcome, bucket, ts: new Date().toISOString() }), 'EX', 60 * 60 * 24 * 7).catch(() => {});
+        await redis.set(outboxKey, JSON.stringify({ topic_category: kategorie, outcome, bucket, ts: new Date().toISOString() }), 'EX', 60 * 60 * 24 * 7).catch(() => {});
       }
 
       return [
-        `🔒 **Brain Contribute Signal: \`${topic_category}\`**`,
+        `🔒 **Brain Contribute Signal: \`${kategorie}\`**`,
         '',
         `📊 Outcome: **${outcome}** · Confidence bucket: **${bucket}**`,
         `🛡️ Privacy: topic category only — no lesson text, no org identity`,
         '',
         apiResult,
+        ...(tor.geschwaerzt.length ? [weitergabeHinweis(tor.geschwaerzt)] : []),
         '',
         `💡 When ≥ k orgs contribute the same pattern, a meta-lesson appears in \`brain_import_meta\`.`,
       ].join('\n');
@@ -1475,6 +1531,17 @@ export async function handleFedbrainTool(
         ].join('\n');
       }
 
+      // Die Kategorien kommen aus den Commons, also von Fremden: Geheimnisse schwaerzen, Verdacht
+      // markieren (schreibtor.ts).
+      let geschwaerztAnzahl = 0;
+      const verdaechtig = new Set<string>();
+      metas = metas.map((m) => {
+        const tor = fuerEigenenSpeicher({ topic_category: m.topic_category, dominant_outcome: m.dominant_outcome });
+        if (tor.geschwaerzt.length) geschwaerztAnzahl++;
+        if (tor.verdacht.length) verdaechtig.add(tor.felder.topic_category);
+        return { ...m, ...tor.felder };
+      });
+
       // Store meta-lessons in local Brain as state:'meta' (never overwrite real lessons).
       const redis = await getConnection(instance_id);
       let imported = 0;
@@ -1495,6 +1562,7 @@ export async function handleFedbrainTool(
             recall_count: 0,
             ts: m.derived_at,
             state: 'meta',
+            ...(verdaechtig.has(m.topic_category) ? { tags: [VERDACHT_TAG] } : {}),
             avg_confidence: m.avg_confidence,
             signal_count: m.signal_count,
             audit_trail: [{ ts: new Date().toISOString(), action: 'imported_meta' }],
@@ -1518,6 +1586,7 @@ export async function handleFedbrainTool(
       if (imported < metas.length) {
         lines.push(`_(${metas.length - imported} already present — not overwritten)_`);
       }
+      lines.push(...zaehlHinweise(geschwaerztAnzahl, verdaechtig.size, `${metas.length} Kategorienamen`));
       return lines.join('\n');
     }
 

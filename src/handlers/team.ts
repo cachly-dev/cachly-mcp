@@ -13,6 +13,7 @@ import { cachlyUrl } from '../cachly-url.js';
 import { leseVermerke } from '../aussetzer.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
 import { VERDACHT_TAG, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
+import { fuerEigenenSpeicher, fuerWeitergabe, hinweise, markiert, weitergabeHinweis } from '../schreibtor.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -205,12 +206,16 @@ export async function handleTeamTool(
 ): Promise<string | null> {
   switch (name) {
     case 'sync_file_changes': {
-      const { instance_id, changed_files, git_diff_stat, commit_msg } = args as {
+      const { instance_id, changed_files: rohDateien, git_diff_stat: rohStat, commit_msg: rohMsg } = args as {
         instance_id: string;
         changed_files: string[];
         git_diff_stat?: string;
         commit_msg?: string;
       };
+      // Commit-Text und Diff-Zusammenfassung werden abgelegt: Geheimnisse schwaerzen, Verdacht
+      // vermerken (schreibtor.ts).
+      const tor = fuerEigenenSpeicher({ changed_files: rohDateien, git_diff_stat: rohStat, commit_msg: rohMsg });
+      const { changed_files, git_diff_stat, commit_msg } = tor.felder;
       const redis = await getConnection(instance_id);
 
       // Store file change event in session history
@@ -219,6 +224,7 @@ export async function handleTeamTool(
         files: changed_files,
         commit_msg,
         diff_stat: git_diff_stat?.slice(0, 500),
+        ...(tor.verdacht.length ? { verdacht: tor.verdacht } : {}),
       };
       await redis.lpush('cachly:session:file_changes', JSON.stringify(changeRecord));
       await redis.ltrim('cachly:session:file_changes', 0, 99);
@@ -259,6 +265,7 @@ export async function handleTeamTool(
         '',
         `**Changed:** ${changed_files.slice(0, 8).map(f => `\`${f}\``).join(', ')}${changed_files.length > 8 ? ` +${changed_files.length - 8} more` : ''}`,
         '',
+        ...hinweise(tor, 'notiz'),
       ];
       if (relevant.length > 0) {
         lines.push(`🧠 **Relevant brain lessons (${relevant.length}):**`, ...relevant);
@@ -325,10 +332,14 @@ export async function handleTeamTool(
     // lesson's recall ranking (see src/rerank.ts), so trusted, reviewed knowledge
     // surfaces above unreviewed auto-learned entries.
     case 'team_confirm': {
-      const { instance_id, topic, reviewer, level, note = '' } = args as {
+      const { instance_id, topic, reviewer, level, note: rohNotiz = '' } = args as {
         instance_id: string; topic: string; reviewer: string;
         level?: 'senior' | 'peer'; note?: string;
       };
+      // Die Anmerkung des Pruefers wird abgelegt und angezeigt: Geheimnisse schwaerzen, Verdacht
+      // vermerken (schreibtor.ts).
+      const torNotiz = fuerEigenenSpeicher({ note: rohNotiz });
+      const note = torNotiz.felder.note;
       if (!instance_id) return '❌ instance_id required';
       if (!topic || !reviewer) return '❌ Required: topic, reviewer';
       const redis = await getConnection(instance_id);
@@ -382,6 +393,7 @@ export async function handleTeamTool(
       // Append an immutable review record for the audit trail.
       const reviewLog = {
         reviewer, level: reviewLevel, note: note.slice(0, 280), ts: new Date().toISOString(),
+        ...(torNotiz.verdacht.length ? { verdacht: torNotiz.verdacht } : {}),
       };
       const logKey = `cachly:lesson:reviews:${topic}`;
       await redis.rpush(logKey, JSON.stringify(reviewLog));
@@ -396,7 +408,7 @@ export async function handleTeamTool(
 
       const badge = effectiveLevel === 'senior' ? '🛡️ senior-reviewed' : '✔️ peer-reviewed';
       const alreadyNote = isNewEndorser ? '' : ` (already endorsed by ${reviewer} — no change to rank)`;
-      return `${badge} — \`${topic}\` confirmed by **${reviewer}**${roleNote} (${endorsements} distinct endorsement${endorsements === 1 ? '' : 's'})${alreadyNote}.\n📈 This lesson now ranks higher in \`smart_recall\` / \`team_recall\`.${note ? `\n📝 ${note.slice(0, 200)}` : ''}`;
+      return `${badge} — \`${topic}\` confirmed by **${reviewer}**${roleNote} (${endorsements} distinct endorsement${endorsements === 1 ? '' : 's'})${alreadyNote}.\n📈 This lesson now ranks higher in \`smart_recall\` / \`team_recall\`.${note ? `\n📝 ${note.slice(0, 200)}` : ''}${hinweise(torNotiz, 'notiz').map(z => `\n${z}`).join('')}`;
     }
 
     // ── team_recall ───────────────────────────────────────────────────────────
@@ -1468,20 +1480,24 @@ export async function handleTeamTool(
 
     // ── global_learn ──────────────────────────────────────────────────────────
     case 'global_learn': {
-      const { instance_id, topic, lesson, severity = 'minor', tags = [] } = args as {
+      const { instance_id, topic: rohTopic, lesson: rohLektion, severity = 'minor', tags: rohTags = [] } = args as {
         instance_id: string;
         topic: string;
         lesson: string;
         severity?: string;
         tags?: string[];
       };
+      // Die globale Lektion gilt in jedem Projekt: Geheimnisse schwaerzen, Verdacht markieren
+      // (schreibtor.ts).
+      const tor = fuerEigenenSpeicher({ topic: rohTopic, lesson: rohLektion, tags: rohTags });
+      const { topic, lesson } = tor.felder;
       const redis = await getConnection(instance_id);
       const key = `cachly:global:lesson:${topic}`;
       const record = {
         topic,
         lesson,
         severity,
-        tags,
+        tags: markiert(tor.felder.tags, tor.verdacht),
         ts: new Date().toISOString(),
         scope: 'global',
         recall_count: 0,
@@ -1493,7 +1509,10 @@ export async function handleTeamTool(
         record.recall_count = prev?.recall_count ?? 0;
       }
       await redis.set(key, JSON.stringify(record));
-      return `🌐 **Global lesson stored**: \`${topic}\`\n\n${lesson}\n\nRecallable from any project via \`global_recall(topic="${topic}")\`.`;
+      return [
+        `🌐 **Global lesson stored**: \`${topic}\`\n\n${lesson}\n\nRecallable from any project via \`global_recall(topic="${topic}")\`.`,
+        ...hinweise(tor),
+      ].join('\n');
     }
 
     // ── global_recall ─────────────────────────────────────────────────────────
@@ -1552,13 +1571,18 @@ export async function handleTeamTool(
 
     // ── publish_lesson ────────────────────────────────────────────────────────
     case 'publish_lesson': {
-      const { instance_id, topic, lesson, framework = 'general', severity = 'minor' } = args as {
+      const { instance_id, topic: rohTopic, lesson: rohLektion, framework: rohFramework = 'general', severity = 'minor' } = args as {
         instance_id: string;
         topic: string;
         lesson: string;
         framework?: string;
         severity?: string;
       };
+      // Tor zu den Fremden (schreibtor.ts): diese Lektion wird fuer andere Entwickler veroeffentlicht.
+      // Geheimnisse werden geschwaerzt, ein Verdacht auf Anweisung oder Befehl stoppt die Veroeffentlichung.
+      const ziel = fuerWeitergabe({ topic: rohTopic, lesson: rohLektion, framework: rohFramework }, 'die oeffentliche Bibliothek');
+      if (!ziel.ok) return ziel.meldung;
+      const { topic, lesson, framework } = ziel.felder;
       const redis = await getConnection(instance_id);
 
       // Strip potential PII patterns (emails, tokens, paths)
@@ -1591,6 +1615,7 @@ export async function handleTeamTool(
         ``,
         `This lesson is now available in the Public Brain for other developers.`,
         `Import it anywhere: \`import_public_brain(framework="${framework}")\``,
+        ...(ziel.geschwaerzt.length ? [``, weitergabeHinweis(ziel.geschwaerzt)] : []),
       ].join('\n');
     }
 
