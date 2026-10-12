@@ -281,10 +281,12 @@ describe('Giftproben', () => {
     }
   });
 
-  it('der Muster-Filter im Produkt kennt die meisten, aber nicht alle Klartext-Geheimnisse', () => {
+  // Bis 0.10.187 fing der Muster-Filter nur einen Teil dieser Proben. Seit dem
+  // erweiterten Filter aus 0.10.188 (Tuersteher) faengt er alle 13. Die Proben
+  // bleiben als Rueckfall-Waechter: faellt eine wieder durch, ist das ein Rueckschritt.
+  it('der Muster-Filter im Produkt erkennt alle Klartext-Geheimnisse der Giftproben', () => {
     const gift = GIFT_PROBEN.filter((x) => x.art === 'geheimnis_klartext');
-    const erkannt = gift.filter((p) => schwaerze(p.text).funde.length > 0).length;
-    expect(erkannt).toBeGreaterThanOrEqual(8);
-    expect(erkannt).toBeLessThan(gift.length);
+    const durch = gift.filter((p) => schwaerze(p.text).funde.length === 0).map((p) => p.text.slice(0, 60));
+    expect(durch).toEqual([]);
   });
 });

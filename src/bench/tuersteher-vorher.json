@@ -1,0 +1,60 @@
+{
+  "stand": "origin/main f2786627 (12.10.2026): nur Geheimnis-Filter, kein Tuersteher",
+  "probenSumme": "5e5ea632f0c1890c9891de6e1355d852a3bafb8f1c2a2f88bf215e267a1ee75a",
+  "einstell": {
+    "befehl_einschleusung": {
+      "gift": 6,
+      "giftErkannt": 0,
+      "harmlos": 6,
+      "harmlosAlarm": 0
+    },
+    "falschaussage": {
+      "gift": 7,
+      "giftErkannt": 0,
+      "harmlos": 7,
+      "harmlosAlarm": 0
+    },
+    "geheimnis_klartext": {
+      "gift": 7,
+      "giftErkannt": 5,
+      "harmlos": 7,
+      "harmlosAlarm": 1
+    },
+    "prompt_injektion": {
+      "gift": 6,
+      "giftErkannt": 0,
+      "harmlos": 6,
+      "harmlosAlarm": 0
+    }
+  },
+  "pruef": {
+    "befehl_einschleusung": {
+      "gift": 6,
+      "giftErkannt": 0,
+      "harmlos": 6,
+      "harmlosAlarm": 0
+    },
+    "falschaussage": {
+      "gift": 6,
+      "giftErkannt": 0,
+      "harmlos": 6,
+      "harmlosAlarm": 0
+    },
+    "geheimnis_klartext": {
+      "gift": 6,
+      "giftErkannt": 5,
+      "harmlos": 6,
+      "harmlosAlarm": 0
+    },
+    "prompt_injektion": {
+      "gift": 6,
+      "giftErkannt": 0,
+      "harmlos": 6,
+      "harmlosAlarm": 0
+    }
+  },
+  "haus": {
+    "lektionen": 499,
+    "treffer": 0
+  }
+}

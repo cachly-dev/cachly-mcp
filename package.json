@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.10.187",
+  "version": "0.10.188",
   "mcpName": "io.github.cachly-dev/mcp-server",
   "description": "Solve it once. From then on, your AI knows. Experience for coding agents, EU-hosted: an MCP server for Claude Code, Cursor, Copilot & Windsurf. Learns from every bug fix, commit and CI run.",
   "type": "module",
@@ -56,7 +56,8 @@
     "bench:cost": "tsx src/bench/cost.ts",
     "bench:zurueckhaltung": "tsx src/bench/zurueckhaltung-messen.ts",
     "bench:ausgabe": "tsx src/bench/ausgabe-reihenfolge-messen.ts",
-    "bench:entscheider-satz": "tsx src/bench/entscheider-trainingssatz.ts"
+    "bench:entscheider-satz": "tsx src/bench/entscheider-trainingssatz.ts",
+    "bench:tuersteher": "tsx src/bench/tuersteher-messen.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.10.0",

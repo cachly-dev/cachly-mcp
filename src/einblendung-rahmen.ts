@@ -23,7 +23,8 @@
  *
  * Was der Rahmen NICHT leistet: er erkennt keine sachlich falsche Lektion und
  * haelt keine Anweisung zurueck — er sagt dem Modell nur, wie es sie lesen
- * soll. Das Abweisen beim Schreiben ist eine eigene Stufe (Tuersteher).
+ * soll. Die Stufe davor, beim Schreiben, ist der Tuersteher (tuersteher.ts): er
+ * markiert verdaechtige Lektionen mit dem Tag `tuersteher:verdacht`.
  */
 
 export const RAHMEN_ETIKETT = 'cachly-memory';

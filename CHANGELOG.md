@@ -7,6 +7,31 @@
 
 ---
 
+## [0.10.188] – 2026-10-12 — *"The doorman reads before it writes."*
+
+**Lessons that smuggle in instructions are marked when they are saved.**
+`learn_from_attempts`, `team_learn` and `remember_context` now check the text
+for override phrases ("ignore all previous rules"), a lesson that addresses
+the model that reads it, hiding things from the user, and commands that pipe
+downloaded code into a shell or send key files away. A hit does not drop the
+lesson: it is saved with the tag `tuersteher:verdacht` and the writer gets a
+warning line. Quoted phrases are skipped, so a lesson that only describes
+such an attack passes. The REST path (VS Code, JetBrains, stop hook) does the
+same through the API.
+
+**Measured on the check half of 100 poison samples (fixed seed):** 17 of 18
+poison samples in the three kinds a pattern can see (before: 5), 0 of 18
+harmless ones flagged (before: 0). On the tuning half 19 of 19 and 0 of 19
+(before: 5 and 1). 0 hits on 499 house lessons; on 4,000 foreign texts the
+doorman has 0 hits and the secret filter the same 2 as before. False statements stay with the decider (checklist 4.3): the patterns catch
+0 of 13. Run it yourself: `npm run bench:tuersteher`.
+
+**The secret filter knows more.** Telegram, npm, Google, SendGrid, Hugging
+Face, PyPI, Docker Hub and Resend keys, `Authorization: Basic`, `DB_PASSWORD=`
+and `AWS_SECRET_ACCESS_KEY=` (the leading `_` hid them before), a password in
+quotes, TOTP seeds, and `token:` followed by a mixed letter-and-digit value.
+Documentation placeholders such as `AKIAXXXXXXXXXXXXXXXX` are left alone.
+
 ## [0.10.187] – 2026-10-12 — *"A lesson can say which version it is true for."*
 
 **`learn_from_attempts` takes `gilt_fuer`.** A list of `package@range` entries,

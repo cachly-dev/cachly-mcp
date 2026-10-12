@@ -12,6 +12,7 @@ import { ersparteMinuten, istStarterLektion, fmtStunden } from '../wertbeitrag.j
 import { cachlyUrl } from '../cachly-url.js';
 import { leseVermerke } from '../aussetzer.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
+import { VERDACHT_TAG, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -269,9 +270,10 @@ export async function handleTeamTool(
 
     // ── team_learn ────────────────────────────────────────────────────────────
     case 'team_learn': {
-      const { instance_id, author, topic, outcome, what_worked, what_failed, severity, file_paths, commands, tags } = schwaerzeFelder(
-        args as Record<string, unknown>,
-      ).felder as {
+      const teamFelder = schwaerzeFelder(args as Record<string, unknown>).felder;
+      // Tuersteher: markieren, nicht verwerfen (tuersteher.ts).
+      const verdacht = pruefeFelder(teamFelder);
+      const { instance_id, author, topic, outcome, what_worked, what_failed, severity, file_paths, commands, tags } = teamFelder as {
         instance_id: string; author: string; topic: string; outcome: string;
         what_worked: string; what_failed?: string; severity?: string;
         file_paths?: string[]; commands?: string[]; tags?: string[];
@@ -296,7 +298,7 @@ export async function handleTeamTool(
         author,
         file_paths: file_paths ?? [],
         commands: commands ?? [],
-        tags: [...(tags ?? []), 'team'],
+        tags: [...(tags ?? []), 'team', ...(verdacht.length ? [VERDACHT_TAG] : [])],
         timestamp: new Date().toISOString(),
         recall_count: 0,
         version: 2,
@@ -315,7 +317,7 @@ export async function handleTeamTool(
         await redisTL.set(`cachly:lesson:best:${topic}`, JSON.stringify(lesson));
       }
 
-      return `✅ Team lesson stored by **${author}**: \`${topic}\` (${outcome})\n💡 ${what_worked.slice(0, 120)}`;
+      return `✅ Team lesson stored by **${author}**: \`${topic}\` (${outcome})\n💡 ${what_worked.slice(0, 120)}${verdacht.length ? `\n${verdachtsWarnung(verdacht)}` : ''}`;
     }
 
     // ── team_confirm — knowledge governance (Phase 3) ─────────────────────────

@@ -258,6 +258,7 @@ import { autorAbzeichen, fremdanteil } from '../autor-abzeichen.js';
 import { cachlyUrl } from '../cachly-url.js';
 import { belegFuer } from '../schreibbeleg.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
+import { mitVerdachtTag, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
 import { zeitpunkt } from '../zeitmessung.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
@@ -910,6 +911,12 @@ async function handleBrainToolInner(
       // Geheimnis-Filter VOR allem anderen: kein Schluessel erreicht Bestand,
       // Kausalgraph, Team-Kopie oder Antworttext (geheimnis-filter.ts).
       const geschwaerzt = schwaerzeFelder(args as Record<string, unknown>);
+      // Tuersteher: Anweisungen und gefaehrliche Befehle im Text werden MARKIERT (Tag +
+      // Warnung), nicht verworfen — ein Muster irrt, Verwerfen loescht still (tuersteher.ts).
+      const verdacht = pruefeFelder(geschwaerzt.felder as Record<string, unknown>);
+      const geprueft = verdacht.length
+        ? { ...geschwaerzt.felder, tags: mitVerdachtTag((geschwaerzt.felder as Record<string, unknown>).tags) }
+        : geschwaerzt.felder;
       const {
         instance_id,
         topic,
@@ -931,7 +938,7 @@ async function handleBrainToolInner(
         ersetzt = '',
         gilt_ab = '',
         gilt_fuer: giltFuerEingabe,
-      } = geschwaerzt.felder as {
+      } = geprueft as {
         instance_id: string;
         topic: string;
         outcome: 'success' | 'failure' | 'partial';
@@ -1738,6 +1745,7 @@ async function handleBrainToolInner(
         geschwaerzt.funde.length
           ? `🔒 **${geschwaerzt.funde.length} Geheimnis(se) geschwaerzt** vor dem Speichern (${geschwaerzt.funde.join('; ')}). Der Wert ist nicht im Brain — verweise kuenftig auf den Ort (z. B. Infisical-Pfad oder Variablenname).`
           : '',
+        verdachtsWarnung(verdacht),
         beliefConflict ?? '',
         ``,
         `**What worked:** ${what_worked}`,

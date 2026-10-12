@@ -2,6 +2,7 @@ import type { Redis } from 'ioredis';
 import { computeEmbedding } from '../embeddings.js';
 import type { Instance } from './brain.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
+import { pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
 import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
@@ -19,13 +20,16 @@ export async function handleContextTool(
 ): Promise<string | null> {
   switch (name) {
     case 'remember_context': {
+      const geschwaerzt = schwaerzeFelder(args as Record<string, unknown>).felder;
+      // Tuersteher: markieren (meta.verdacht + Warnung), nicht verwerfen (tuersteher.ts).
+      const verdacht = pruefeFelder(geschwaerzt);
       const {
         instance_id,
         key,
         content,
         category = 'custom',
         ttl = 86400,
-      } = schwaerzeFelder(args as Record<string, unknown>).felder as {
+      } = geschwaerzt as {
         instance_id: string;
         key: string;
         content: string;
@@ -40,6 +44,7 @@ export async function handleContextTool(
         category,
         size: content.length,
         created: new Date().toISOString(),
+        ...(verdacht.length ? { verdacht } : {}),
       });
 
       if (ttl && ttl > 0) {
@@ -90,6 +95,7 @@ export async function handleContextTool(
         ``,
         `💡 Use \`recall_context("${key}")\` to retrieve this later.`,
         `   Or \`smart_recall("${key.split('_').join(' ')}")\` for semantic search.`,
+        ...(verdacht.length ? [verdachtsWarnung(verdacht)] : []),
       ].join('\n');
     }
 
