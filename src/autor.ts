@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 /**
  * Wer hat diese Lektion geschrieben?
@@ -45,11 +45,15 @@ export const echterGitLeser =
   (cwd?: string): GitLeser =>
     (schluessel) => {
       try {
-        return execSync(`git config ${schluessel}`, {
+        // Argumentliste statt Befehlszeile: der Schluessel geht nie durch eine
+        // Shell, und mit "-" am Anfang wuerde Git ihn als Option lesen.
+        if (schluessel.startsWith('-')) return '';
+        return execFileSync('git', ['config', schluessel], {
           cwd,
           encoding: 'utf-8',
           stdio: 'pipe',
           timeout: 1500,
+          windowsHide: true,
         }).trim();
       } catch {
         return '';

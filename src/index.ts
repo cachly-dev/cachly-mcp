@@ -458,14 +458,23 @@ function openInBrowser(url: string, onResult?: (ok: boolean, err?: string) => vo
     if (e) fertig(false, (e as NodeJS.ErrnoException).code ?? e.message);
     else fertig(true);
   };
+  // Nur http(s)-Adressen: `start`, `open` und `xdg-open` starten sonst auch
+  // Programme und Dateien. Fuer `cmd` (eine Shell) werden seine Sonderzeichen
+  // entwertet. Siehe browser-adresse.ts.
+  const adresse = browserAdresse(url);
+  if (!adresse) {
+    fertig(false, 'keine-http-adresse');
+    return;
+  }
+  const cmdAdresse = fuerCmd(adresse);
   try {
     if (process.platform === 'win32') {
       // Empty-string title arg is required so `start` does not treat the URL as the title.
-      execFile('cmd', ['/c', 'start', '', url], { windowsHide: true }, nachStart);
+      execFile('cmd', ['/c', 'start', '', cmdAdresse], { windowsHide: true }, nachStart);
     } else if (process.platform === 'darwin') {
-      execFile('open', [url], nachStart);
+      execFile('open', [adresse], nachStart);
     } else {
-      execFile('xdg-open', [url], nachStart);
+      execFile('xdg-open', [adresse], nachStart);
     }
   } catch (e) {
     // Synchronous throw (rare, e.g. bad argv) — the async path covers the rest.
@@ -908,6 +917,8 @@ import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
 import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-proof.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
+import { gitLesen } from './git-ohne-shell.js';
+import { browserAdresse, fuerCmd } from './browser-adresse.js';
 import {
   installAmbientHooks,
   installCursorHooks,
@@ -3010,7 +3021,6 @@ if (process.argv[2] === 'bench') {
 // The fastest path from "what is this?" to "I need this".
 
 if (process.argv[2] === 'demo') {
-  const { execSync } = await import('node:child_process');
   const { existsSync, readFileSync } = await import('node:fs');
   const { resolve, basename } = await import('node:path');
   const cwd = process.cwd();
@@ -3029,7 +3039,7 @@ if (process.argv[2] === 'demo') {
   // Get developer name from git config
   let devName = '';
   try {
-    devName = execSync('git config user.name', { cwd, encoding: 'utf-8', stdio: 'pipe' }).trim().split(' ')[0] ?? '';
+    devName = gitLesen(cwd, ['config', 'user.name']).trim().split(' ')[0] ?? '';
   } catch { /* ignore */ }
 
   // Get project name from package.json or directory name
@@ -3042,9 +3052,10 @@ if (process.argv[2] === 'demo') {
   // Read git log
   let logOutput = '';
   try {
-    logOutput = execSync(
-      'git log HEAD --pretty=format:"%H|||%s|||%ad|||%an" --date=short --no-merges -n 200',
-      { cwd, encoding: 'utf-8', stdio: 'pipe' }
+    logOutput = gitLesen(
+      cwd,
+      ['log', 'HEAD', '--pretty=format:%H|||%s|||%ad|||%an', '--date=short', '--no-merges', '-n', '200'],
+      { timeoutMs: 30_000 },
     );
   } catch {
     console.log('⚠️  Could not read git log. Make sure you have commits.\n');

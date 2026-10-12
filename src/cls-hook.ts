@@ -17,6 +17,7 @@
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { instanzIdFuerSkript, schluesselFuerSkript } from './git-ohne-shell.js';
 
 /** Bumped whenever the hook script changes so installers can upgrade old hooks. */
 export const CLS_HOOK_VERSION = 'v2';
@@ -33,7 +34,9 @@ export type ClsHookResult = 'written' | 'upgraded' | 'appended' | 'unchanged' | 
 
 /**
  * Idempotently install/upgrade the CLS post-commit hook in `projectDir`.
- * Never throws — returns a status the caller can log. Shared by `init`, `setup`
+ * Returns a status the caller can log; throws only for an `instanceId` or
+ * `apiKey` with shell-significant characters (see `buildClsPostCommitHook`).
+ * Shared by `init`, `setup`
  * and `autopilot` so all paths stay in lock-step.
  */
 export async function installClsPostCommitHook(
@@ -87,6 +90,11 @@ const CLS_NODE_PROGRAM =
  * @param apiKey      Optional cky_… key embedded for authentication.
  */
 export function buildClsPostCommitHook(instanceId: string, apiKey?: string): string {
+  // Beide Werte stehen in doppelten Anfuehrungszeichen im Shell-Skript, das bei
+  // jedem Commit laeuft. Ein Anfuehrungszeichen oder `$(…)` darin wuerde dort
+  // ausgefuehrt: deshalb nur Zeichen ohne Bedeutung fuer die Shell.
+  instanceId = instanzIdFuerSkript(instanceId);
+  if (apiKey) apiKey = schluesselFuerSkript(apiKey);
   return [
     `#!/bin/sh`,
     `# cachly CLS — Continuous Learning Stream ${CLS_HOOK_VERSION}`,

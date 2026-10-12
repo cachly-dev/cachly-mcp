@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { gitLesen, istCommitHash, pruefeOrdner } from '../git-ohne-shell.js';
 import { createRequire } from 'node:module';
 import type { Redis } from 'ioredis';
 import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
@@ -3872,17 +3872,18 @@ async function handleBrainToolInner(
       }
 
       // ── Git reconstruction — when no session_end + workspace_path given ─────
-      if (workspace_path && !lastSession) {
+      // workspace_path kommt vom Modell: ohne Shell, und nur wenn der Ordner existiert.
+      const startOrdner = lastSession ? null : pruefeOrdner(workspace_path);
+      if (startOrdner) {
         try {
-          const { execSync } = await import('node:child_process');
-          const gitLog = execSync(
-            `git -C "${workspace_path}" log --oneline --format="%h %s" -15 2>/dev/null`,
-            { encoding: 'utf-8', timeout: 5000 },
-          ).trim();
-          const gitDiff = execSync(
-            `git -C "${workspace_path}" diff --stat HEAD~3 2>/dev/null || git -C "${workspace_path}" diff --stat 2>/dev/null`,
-            { encoding: 'utf-8', timeout: 5000 },
-          ).trim();
+          const gitLog = gitLesen(startOrdner, ['log', '--oneline', '--format=%h %s', '-15']).trim();
+          let gitDiff: string;
+          try {
+            gitDiff = gitLesen(startOrdner, ['diff', '--stat', 'HEAD~3']).trim();
+          } catch {
+            // Weniger als vier Commits: dann gegen den Arbeitsstand vergleichen.
+            gitDiff = gitLesen(startOrdner, ['diff', '--stat']).trim();
+          }
           if (gitLog) {
             lines.push(`🔍 **Git reconstruction** (no session_end found — reconstructed from git):`);
             for (const l of gitLog.split('\n').slice(0, 8)) lines.push(`   ${l}`);
@@ -4708,20 +4709,22 @@ async function handleBrainToolInner(
       // The commit BODY (%b) carries the reasoning — what was measured, what the
       // cause was, what trap it avoided. The subject (%s) alone is just a heading.
       const ambientLearned: string[] = [];
-      if (workspace_path) {
+      // workspace_path kommt vom Modell: ohne Shell, und nur wenn der Ordner existiert.
+      const endeOrdner = pruefeOrdner(workspace_path);
+      if (endeOrdner) {
         try {
           // Get the session start time (stored by session_start)
           const sessionStartTs = currentRaw
             ? (() => { try { return (JSON.parse(currentRaw) as { started?: string }).started ?? ''; } catch { return ''; } })()
             : '';
-          const sinceArg = sessionStartTs ? `--since="${sessionStartTs}"` : '--since="1 hour ago"';
+          const sinceArg = `--since=${sessionStartTs || '1 hour ago'}`;
           // '|||ENDE' terminates one commit's record. A commit body can contain
           // blank lines and newlines of its own, so splitting the raw output on
           // '\n' would tear a single multi-line body apart into several fake
           // "commits" — splitting on the marker keeps each body intact.
-          const gitOut = execSync(
-            `git -C "${workspace_path}" log ${sinceArg} --oneline --format="%H|||%s|||%b|||%ai|||ENDE"`,
-            { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+          const gitOut = gitLesen(
+            endeOrdner,
+            ['log', sinceArg, '--oneline', '--format=%H|||%s|||%b|||%ai|||ENDE'],
           ).trim();
           if (gitOut) {
             const commitActionRe = /\b(fix|add|remove|refactor|migrate|update|resolve|implement|improve|optimize|configure|create|delete|disable|enable|debug|patch|upgrade|build|rewrite|deploy|feat|chore|docs|test|perf|ci)\b/i;
@@ -4733,14 +4736,14 @@ async function handleBrainToolInner(
               // edges between file nodes in the graph ("who touches A usually
               // touches B") — that is independent of whether the commit message
               // itself is lesson-worthy, so it runs for every recent commit.
-              if (hash) {
+              if (istCommitHash(hash)) {
                 try {
                   // '--root' matters for a repo's very first commit: without it,
                   // diff-tree has no parent to compare against and silently
                   // reports zero changed files for that commit.
-                  const nameOut = execSync(
-                    `git -C "${workspace_path}" diff-tree --no-commit-id --name-only -r --root "${hash}"`,
-                    { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+                  const nameOut = gitLesen(
+                    endeOrdner,
+                    ['diff-tree', '--no-commit-id', '--name-only', '-r', '--root', hash],
                   ).trim();
                   // Pairing is quadratic, so the cap decides the cost — and this
                   // runs inside session_end, which must stay quick. At 12 files
@@ -4783,7 +4786,7 @@ async function handleBrainToolInner(
                 topic,
                 outcome: 'success' as const,
                 what_worked: `${msg}\n\n${body.slice(0, 1200)}`,
-                context: `Auto-learned from git commit ${(hash ?? '').slice(0, 7)} at ${dateStr ?? ''} in ${workspace_path}`,
+                context: `Auto-learned from git commit ${(hash ?? '').slice(0, 7)} at ${dateStr ?? ''} in ${endeOrdner}`,
                 severity: 'minor' as const,
                 ts: now.toISOString(),
                 recall_count: 0,
@@ -5496,10 +5499,9 @@ async function handleBrainToolInner(
       let gitFileCount = 0;
       let _gitFileCountLabel = 'n/a';
       try {
-        const { execSync } = await import('node:child_process');
-        const { resolve } = await import('node:path');
-        const repoDir = resolve(repo_path);
-        const output = execSync('git ls-files', { cwd: repoDir, encoding: 'utf-8', stdio: 'pipe' });
+        const repoDir = pruefeOrdner(repo_path);
+        if (!repoDir) throw new Error('repo_path ist kein Ordner');
+        const output = gitLesen(repoDir, ['ls-files'], { timeoutMs: 30_000 });
         gitFileCount = output.trim().split('\n').filter(Boolean).length;
         _gitFileCountLabel = String(gitFileCount);
       } catch { /* not a git repo — skip */ }

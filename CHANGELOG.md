@@ -7,6 +7,16 @@
 
 ---
 
+## [0.10.185] – 2026-10-12 — *"Tool inputs no longer pass through a shell."*
+
+**Paths, branch names and instance ids from tool calls reach Git and hook
+scripts as separate arguments, never as part of a command line.**
+`session_start`, `session_end`, `brain_from_git`, `brain_coverage` and the
+`demo` command start `git` directly with an argument list. A folder that does
+not exist is skipped. Folders with spaces or `;` `&` `(` `)` `$` in the name
+work. `brain_watch` and `cls_install_hooks` accept only letters, digits, `_`
+and `-` in `instance_id`, and the browser opener accepts only `http(s)` links.
+
 ## [0.10.184] – 2026-10-12 — *"New Brains rank with all six signals sooner."*
 
 **A new Brain gets its second-model vectors right after the first import.**

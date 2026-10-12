@@ -13,6 +13,7 @@
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { instanzIdFuerSkript, schluesselFuerSkript } from './git-ohne-shell.js';
 
 /** Bumped whenever the hook script changes so installers can upgrade old hooks. */
 export const BRAIN_WATCH_HOOK_VERSION = 'v1';
@@ -28,7 +29,8 @@ export type BrainWatchHookResult = 'written' | 'upgraded' | 'appended' | 'unchan
 
 /**
  * Idempotently install/upgrade the brain_watch post-commit hook in `projectDir`.
- * Never throws — returns a status string the caller can report. Safe to run
+ * Returns a status string the caller can report; throws only for an
+ * `instanceId` or `apiKey` with shell-significant characters. Safe to run
  * repeatedly; a second call with the same version returns 'unchanged'.
  */
 export async function installBrainWatchHook(
@@ -76,6 +78,11 @@ export async function installBrainWatchHook(
  * @param apiKey      Optional cky_… key; if absent, the script reads $CACHLY_JWT from env.
  */
 export function buildBrainWatchHook(instanceId: string, apiKey?: string): string {
+  // Beide Werte stehen im Shell-Skript, das bei jedem Commit laeuft. Ein
+  // Anfuehrungszeichen oder `$(…)` darin wuerde dort ausgefuehrt: deshalb nur
+  // Zeichen ohne Bedeutung fuer die Shell.
+  instanceId = instanzIdFuerSkript(instanceId);
+  if (apiKey) apiKey = schluesselFuerSkript(apiKey);
   return [
     `#!/bin/sh`,
     `# cachly brain_watch — Auto-Learn ${BRAIN_WATCH_HOOK_VERSION}`,

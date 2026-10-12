@@ -5,6 +5,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse, normalizeGitPath } from '../utils.js';
 import { buildClsPostCommitHook } from '../cls-hook.js';
+import { alsShellWort, beginntMitBindestrich, gitLesen, instanzIdFuerSkript, istCommitHash, pruefeOrdner } from '../git-ohne-shell.js';
 import { installBrainWatchHook } from '../brain-watch-hook.js';
 import { keywordSearch, wortindexEntwerten } from '../search.js';
 import { buildFirstContactReport, suggestRecallQueries, type FirstContactProof } from '../first-contact.js';
@@ -342,8 +343,13 @@ export async function handleFedbrainTool(
       const hooksArr = Array.isArray(hooks) ? hooks : ['git', 'ci'];
       const lines: string[] = [`🔌 **CLS Hook Installation Guide**\n`];
 
+      // Die Bloecke unten sind Shell-Text, der ausgefuehrt wird. instance_id und
+      // repo_path kommen vom Modell: die ID nur ohne Sonderzeichen, der Pfad als
+      // ein einziges Wort in einfachen Anfuehrungszeichen.
+      instanzIdFuerSkript(instance_id);
       if (hooksArr.includes('git')) {
         const hookScript = buildClsPostCommitHook(instance_id);
+        const hookDatei = alsShellWort(`${repo_path}/.git/hooks/post-commit`);
 
         lines.push(`### Git post-commit hook`);
         lines.push(`**Quick install (run once per repo):**`);
@@ -353,11 +359,11 @@ export async function handleFedbrainTool(
         // Fehlerklasse wie der autopilot-Text, der CLAUDE.md plattmachte
         // (Bojan Tomic, dev.to, 02.09.2026). Der grep-Waechter davor haelt
         // den Anhang idempotent: zweimal installieren doppelt nichts.
-        lines.push(`touch ${repo_path}/.git/hooks/post-commit`);
-        lines.push(`grep -q 'cachly CLS' ${repo_path}/.git/hooks/post-commit || cat >> ${repo_path}/.git/hooks/post-commit << 'HOOK'`);
+        lines.push(`touch ${hookDatei}`);
+        lines.push(`grep -q 'cachly CLS' ${hookDatei} || cat >> ${hookDatei} << 'HOOK'`);
         lines.push(hookScript);
         lines.push(`HOOK`);
-        lines.push(`chmod +x ${repo_path}/.git/hooks/post-commit`);
+        lines.push(`chmod +x ${hookDatei}`);
         lines.push('```');
         lines.push(`After install: every \`git commit\` automatically updates your brain's CKG.`);
         lines.push('');
@@ -946,18 +952,23 @@ export async function handleFedbrainTool(
         instance_id: string; repo_path?: string; limit?: number; branch?: string; since?: string; incremental?: boolean;
       };
       const redis = await getConnection(instance_id);
-      const { execSync } = await import('node:child_process');
       const { resolve } = await import('node:path');
 
       const repoDir = resolve(repo_path);
-      const maxCommits = Math.min(Number(limit) || 100, 500);
+      const maxCommits = Math.max(1, Math.floor(Math.min(Number(limit) || 100, 500)));
+      // branch kommt vom Modell und steht als eigenes Argument bei Git. Beginnt
+      // er mit "-", liest Git ihn als Option ("--output=<datei>" schreibt eine Datei).
+      if (typeof branch !== 'string' || beginntMitBindestrich(branch)) {
+        return '❌ Ungueltiger `branch`: darf nicht mit "-" beginnen.';
+      }
 
       // Semaphore: max 10 concurrent git subprocesses per MCP process
       await _gitSemAcquire();
       try {
       // Verify it's a git repo
       try {
-        execSync('git rev-parse --git-dir', { cwd: repoDir, stdio: 'pipe' });
+        if (!pruefeOrdner(repoDir)) throw new Error('kein Ordner');
+        gitLesen(repoDir, ['rev-parse', '--git-dir'], { stderr: 'pipe' });
       } catch {
         return `❌ Not a git repository: \`${repoDir}\`. Pass \`repo_path\` pointing to a git checkout.`;
       }
@@ -968,18 +979,25 @@ export async function handleFedbrainTool(
       let isIncremental = false;
       if (incremental !== false && !since) {
         lastSha = (await redis.get(lastShaKey)) ?? '';
+        // Nur ein echter Commit-Hash darf als Start dienen; alles andere: voller Lauf.
+        if (!istCommitHash(lastSha)) lastSha = '';
         isIncremental = Boolean(lastSha);
       }
 
-      // Build git log command — use --name-only to get changed files per commit
-      const sinceFlag = since ? `--since="${since}"` : '';
+      // Build git log arguments — use --name-only to get changed files per commit.
+      // Als Argumentliste, ohne Shell: branch und since bleiben je EIN Argument.
       const afterFlag = isIncremental ? `${lastSha}..HEAD` : '';
-      const revRange = afterFlag || branch;
-      const logCmd = `git log ${revRange} ${sinceFlag} --pretty=format:"COMMIT|||%H|||%s|||%ad|||%an" --date=short --no-merges --name-only -n ${maxCommits}`;
+      const revRange = afterFlag || branch || 'HEAD';
+      const logArgs = [
+        'log', revRange,
+        ...(since ? [`--since=${since}`] : []),
+        '--pretty=format:COMMIT|||%H|||%s|||%ad|||%an', '--date=short', '--no-merges', '--name-only',
+        '-n', String(maxCommits),
+      ];
 
       let logOutput = '';
       try {
-        logOutput = execSync(logCmd, { cwd: repoDir, encoding: 'utf-8', stdio: 'pipe' });
+        logOutput = gitLesen(repoDir, logArgs, { stderr: 'pipe', timeoutMs: 60_000 });
       } catch (e) {
         return `❌ git log failed: ${(e as Error).message}. Check \`repo_path\` and \`branch\`.`;
       }
