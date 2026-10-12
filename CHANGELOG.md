@@ -7,6 +7,26 @@
 
 ---
 
+## [0.10.193] – 2026-10-12 — *"No key in the project folder, anywhere."*
+
+**The git hook and `join` no longer put your key into project files.** A real
+VS Code run on 12 October 2026 found the API key in clear text in `.mcp.json`
+and in the `.claude/hooks` scripts of the project; `git add .` checks such
+files in. Two writers inside this package still did the same:
+
+- `init`, `setup` and `autopilot` wrote `export CACHLY_JWT="…"` into
+  `.git/hooks/post-commit`. The hook (now v3) carries only the instance id;
+  `cls-ingest` finds the key in `~/.cachly/credentials.json`, like every other
+  entry point. A v2 hook with a key is replaced on the next `init`/`setup`.
+- `join` wrote the key into `.mcp.json`, `.cursor/mcp.json`,
+  `.windsurf/mcp.json` and `.vscode/mcp.json` in the project. Now only the
+  global `~/.claude/mcp.json` in your home folder may carry it, and a key
+  obtained by the sign-in inside `join` is stored in `~/.cachly/credentials.json`.
+
+Proof against a stand-in server (no production): a server started without
+`CACHLY_JWT` sends `Authorization: Bearer <key from ~/.cachly/credentials.json>`;
+without that file it sends no key.
+
 ## [0.10.192] – 2026-10-12 — *"The first prompt already has a Brain."*
 
 **The plugin's SessionStart hook creates the trial Brain itself.** Until now

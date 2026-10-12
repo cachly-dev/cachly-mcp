@@ -282,8 +282,8 @@ describe('Hook-Skripte · instance_id und Schluessel bleiben frei von Shell-Zeic
     });
   }
 
-  it('beide Hooks lehnen einen Schluessel mit Shell-Zeichen ab', () => {
-    expect(() => buildClsPostCommitHook('inst-1', 'k"; node x; "')).toThrow(/Schluessel/);
+  it('cls-Hook schreibt keinen Schluessel, brain_watch lehnt Shell-Zeichen im Schluessel ab', () => {
+    expect(buildClsPostCommitHook('inst-1', 'k"; node x; "')).not.toContain('node x');
     expect(() => buildBrainWatchHook('inst-1', 'k$(node x)')).toThrow(/Schluessel/);
   });
 
@@ -291,7 +291,7 @@ describe('Hook-Skripte · instance_id und Schluessel bleiben frei von Shell-Zeic
     const uuid = '8e03addd-a2d9-406e-bcbb-d6d8c938a3d0';
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXI';
     expect(buildClsPostCommitHook(uuid, 'cky_live_abc123')).toContain(`CACHLY_BRAIN_INSTANCE_ID="${uuid}"`);
-    expect(buildClsPostCommitHook(uuid, jwt)).toContain(`CACHLY_JWT="${jwt}"`);
+    expect(buildClsPostCommitHook(uuid, jwt)).not.toContain(jwt);
     expect(buildBrainWatchHook(uuid, jwt)).toContain(`instances/${uuid}/learn`);
   });
 

@@ -7,8 +7,11 @@
  * vars (never JS source) and the payload reaches the CLI via execFileSync.
  */
 
-import { describe, it, expect } from 'vitest';
-import { buildClsPostCommitHook, CLS_HOOK_VERSION } from '../cls-hook.js';
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from '../cls-hook.js';
 
 describe('buildClsPostCommitHook', () => {
   it('embeds the instance id and version marker', () => {
@@ -19,9 +22,12 @@ describe('buildClsPostCommitHook', () => {
     expect(hook.trimEnd().endsWith('exit 0')).toBe(true);
   });
 
-  it('embeds the API key only when provided', () => {
-    expect(buildClsPostCommitHook('i', 'cky_live_abc')).toContain('export CACHLY_JWT="cky_live_abc"');
+  it('embeds NO API key (v3): .git/hooks/post-commit lies inside the project folder', () => {
+    expect(CLS_HOOK_VERSION).toBe('v3');
     expect(buildClsPostCommitHook('i')).not.toContain('CACHLY_JWT');
+    // a caller still passing a key (older code, other tools) must not get it written
+    expect(buildClsPostCommitHook('i', 'cky_live_abc')).not.toContain('cky_live_abc');
+    expect(buildClsPostCommitHook('i', 'cky_live_abc')).not.toContain('CACHLY_JWT');
   });
 
   it('passes commit data via env vars, never interpolated into JS source', () => {
@@ -45,5 +51,41 @@ describe('buildClsPostCommitHook', () => {
     const hook = buildClsPostCommitHook('i');
     // v1 did `tr '"' "'"` which corrupted messages — must be gone.
     expect(hook).not.toContain(`tr '"'`);
+  });
+});
+
+describe('installClsPostCommitHook (v3: kein Schluessel im Projekt)', () => {
+  const ordner: string[] = [];
+  afterEach(() => { for (const o of ordner.splice(0)) rmSync(o, { recursive: true, force: true }); });
+  const projekt = () => {
+    const p = mkdtempSync(join(tmpdir(), 'cachly-cls-'));
+    ordner.push(p);
+    mkdirSync(join(p, '.git', 'hooks'), { recursive: true });
+    return p;
+  };
+  const V2_MIT_SCHLUESSEL = [
+    '#!/bin/sh',
+    '# cachly CLS — Continuous Learning Stream v2',
+    'export CACHLY_BRAIN_INSTANCE_ID="i"',
+    'export CACHLY_JWT="cky_live_geheim"',
+    'exit 0',
+    '',
+  ].join('\n');
+
+  it('legt den Hook ohne Schluessel an, auch wenn der Aufrufer einen uebergibt', async () => {
+    const p = projekt();
+    expect(await installClsPostCommitHook(p, 'i', 'cky_live_geheim')).toBe('written');
+    const hook = readFileSync(join(p, '.git', 'hooks', 'post-commit'), 'utf8');
+    expect(hook).not.toContain('cky_live_geheim');
+    expect(hook).not.toContain('CACHLY_JWT');
+  });
+
+  it('ersetzt einen alten v2-Block MIT Schluessel beim naechsten init/setup', async () => {
+    const p = projekt();
+    writeFileSync(join(p, '.git', 'hooks', 'post-commit'), V2_MIT_SCHLUESSEL);
+    expect(await installClsPostCommitHook(p, 'i')).toBe('upgraded');
+    const hook = readFileSync(join(p, '.git', 'hooks', 'post-commit'), 'utf8');
+    expect(hook).not.toContain('cky_live_geheim');
+    expect(hook).toContain('Continuous Learning Stream v3');
   });
 });

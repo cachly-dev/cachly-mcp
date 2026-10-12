@@ -2921,6 +2921,10 @@ if (process.argv[2] === 'join') {
     }
   }
 
+  // Eine Anmeldung nur fuer diesen Befehl wuerde sonst nirgends landen, seit der
+  // Schluessel nicht mehr in die Projektdateien geschrieben wird.
+  if (joinJwt && joinJwt !== JWT) saveApiKey(joinJwt);
+
   // ── Step 4: Write instance ID into all editor MCP configs ────────────────
   const cwd  = process.cwd();
   const home = homedir();
@@ -2953,7 +2957,11 @@ if (process.argv[2] === 'join') {
       const existing = (servers['cachly'] ?? {}) as Record<string, unknown>;
       const env = (existing['env'] ?? {}) as Record<string, string>;
       env['CACHLY_BRAIN_INSTANCE_ID'] = instance_id;
-      if (joinJwt && !env['CACHLY_JWT']) env['CACHLY_JWT'] = joinJwt;
+      // Der Schluessel gehoert nur in die globale Datei im Heimordner. Bis 0.10.184
+      // stand er hier auch in .mcp.json, .cursor/mcp.json, .windsurf/mcp.json und
+      // .vscode/mcp.json IM PROJEKT — Dateien, die `git add .` einsammelt. Der
+      // Server findet ihn selbst (resolveApiKey: Umgebung, ~/.cachly/credentials.json).
+      if (joinJwt && isGlobal && !env['CACHLY_JWT']) env['CACHLY_JWT'] = joinJwt;
       // Only persist a self-hosted backend URL; leave default-cloud configs clean.
       if (API_URL !== DEFAULT_API_URL) env['CACHLY_API_URL'] = API_URL;
       servers['cachly'] = { ...existing, command: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'], env };
@@ -3636,7 +3644,7 @@ if (process.argv[2] === 'init') {
 
   // ── CLS Phase 4: Auto-install git post-commit hook ─────────────────────────
   try {
-    const r = await installClsPostCommitHook(projectDir, instanceId, JWT || undefined);
+    const r = await installClsPostCommitHook(projectDir, instanceId);
     if (r === 'written')        console.log(`✅ Written: .git/hooks/post-commit (CLS hook)`);
     else if (r === 'upgraded')  console.log(`✅ Upgraded: .git/hooks/post-commit (CLS hook → ${CLS_HOOK_VERSION})`);
     else if (r === 'appended')  console.log(`✅ Appended: .git/hooks/post-commit (CLS hook)`);
@@ -4701,7 +4709,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
 
   // ── CLS Phase 4: Auto-install git post-commit hook in setup flow ─────────
   try {
-    const r = await installClsPostCommitHook(process.cwd(), instance.id, token || undefined);
+    const r = await installClsPostCommitHook(process.cwd(), instance.id);
     if (r === 'written')        console.log(`\n✅  CLS git hook installed — your brain will learn from every commit.`);
     else if (r === 'upgraded')  console.log(`\n✅  CLS git hook upgraded to ${CLS_HOOK_VERSION}.`);
     else if (r === 'appended')  console.log(`\n✅  CLS git hook appended to existing post-commit.`);

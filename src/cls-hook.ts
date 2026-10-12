@@ -11,16 +11,19 @@
 //     never interpolated into JS source — no quoting or injection breakage.
 //   • The JSON payload is handed to the CLI via execFileSync (no shell), so the
 //     shell never re-parses quotes, `$`, or backticks from the message.
-//   • CACHLY_JWT is embedded only when provided so the `cls-ingest` CLI command
-//     can authenticate; absent it, that command exits 0 silently.
+//   • NO key is embedded (v3, 12.10.2026). v2 wrote `export CACHLY_JWT="…"`
+//     into .git/hooks/post-commit — a file inside the project folder, next to
+//     the .mcp.json and .claude/hooks scripts that GROW-015/GROW-033 already
+//     cleared of keys. `cls-ingest` resolves the key at run time like every
+//     other entry point (resolveApiKey: env, then ~/.cachly/credentials.json).
 
 import { existsSync } from 'node:fs';
 import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { instanzIdFuerSkript, schluesselFuerSkript } from './git-ohne-shell.js';
+import { instanzIdFuerSkript } from './git-ohne-shell.js';
 
 /** Bumped whenever the hook script changes so installers can upgrade old hooks. */
-export const CLS_HOOK_VERSION = 'v2';
+export const CLS_HOOK_VERSION = 'v3';
 
 /**
  * Matches any previously-installed cachly CLS block (from its marker comment
@@ -34,21 +37,22 @@ export type ClsHookResult = 'written' | 'upgraded' | 'appended' | 'unchanged' | 
 
 /**
  * Idempotently install/upgrade the CLS post-commit hook in `projectDir`.
- * Returns a status the caller can log; throws only for an `instanceId` or
- * `apiKey` with shell-significant characters (see `buildClsPostCommitHook`).
+ * Returns a status the caller can log; throws only for an `instanceId`
+ * with shell-significant characters (see `buildClsPostCommitHook`).
  * Shared by `init`, `setup`
  * and `autopilot` so all paths stay in lock-step.
  */
 export async function installClsPostCommitHook(
   projectDir: string,
   instanceId: string,
-  apiKey?: string,
+  /** Accepted for backward compatibility; never written (v3). */
+  _apiKey?: string,
 ): Promise<ClsHookResult> {
   if (!existsSync(resolve(projectDir, '.git'))) return 'skipped-no-git';
   const hookDir = resolve(projectDir, '.git', 'hooks');
   const hookPath = resolve(hookDir, 'post-commit');
   await mkdir(hookDir, { recursive: true });
-  const script = buildClsPostCommitHook(instanceId, apiKey);
+  const script = buildClsPostCommitHook(instanceId);
 
   let existing = '';
   try { existing = await readFile(hookPath, 'utf-8'); } catch { /* no existing hook */ }
@@ -87,20 +91,19 @@ const CLS_NODE_PROGRAM =
 /**
  * Build the `.git/hooks/post-commit` shell script.
  * @param instanceId  Cachly Brain instance to ingest into.
- * @param apiKey      Optional cky_… key embedded for authentication.
+ * @param _apiKey     Accepted for backward compatibility; never embedded (v3).
  */
-export function buildClsPostCommitHook(instanceId: string, apiKey?: string): string {
-  // Beide Werte stehen in doppelten Anfuehrungszeichen im Shell-Skript, das bei
+export function buildClsPostCommitHook(instanceId: string, _apiKey?: string): string {
+  // Die Instanz-ID steht in doppelten Anfuehrungszeichen im Shell-Skript, das bei
   // jedem Commit laeuft. Ein Anfuehrungszeichen oder `$(…)` darin wuerde dort
-  // ausgefuehrt: deshalb nur Zeichen ohne Bedeutung fuer die Shell.
+  // ausgefuehrt: deshalb nur Zeichen ohne Bedeutung fuer die Shell. Der Schluessel
+  // steht seit v3 gar nicht mehr im Skript.
   instanceId = instanzIdFuerSkript(instanceId);
-  if (apiKey) apiKey = schluesselFuerSkript(apiKey);
   return [
     `#!/bin/sh`,
     `# cachly CLS — Continuous Learning Stream ${CLS_HOOK_VERSION}`,
     `# Runs silently on every commit to keep your brain up to date.`,
     `export CACHLY_BRAIN_INSTANCE_ID="${instanceId}"`,
-    ...(apiKey ? [`export CACHLY_JWT="${apiKey}"`] : []),
     `CLS_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")`,
     // No `tr`/quote-mangling — the message is passed verbatim via env.
     `CLS_MSG=$(git log -1 --pretty=%B 2>/dev/null | head -1 | cut -c1-200)`,
