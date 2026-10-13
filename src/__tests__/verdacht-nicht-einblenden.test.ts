@@ -204,7 +204,10 @@ describe('A. Das ausgelieferte Hook-Buendel (Plugin) blendet markierte Lektionen
   function lauf(ereignis: string, payload: object): Promise<string> {
     const env: Record<string, string> = {};
     for (const k of ['PATH', 'PATHEXT', 'SystemRoot', 'ComSpec', 'WINDIR', 'TEMP', 'TMP']) if (process.env[k]) env[k] = process.env[k]!;
-    Object.assign(env, { HOME: join(tmp, 'heim'), USERPROFILE: join(tmp, 'heim'), CLAUDE_PROJECT_DIR: join(tmp, 'projekt'), CACHLY_API_URL: apiUrl });
+    // CACHLY_LERNEN=0 wie in vitest.config.ts: die Umgebung hier ist frisch gebaut und erbt ihn nicht.
+    // Ohne ihn faellt die zufaellige Instanz in 5 % der Laeufe in die Kontrollgruppe, die Ausgabe
+    // bleibt leer ("Unexpected end of JSON input", Veroeffentlichung 0.10.192 am 12.10.).
+    Object.assign(env, { HOME: join(tmp, 'heim'), USERPROFILE: join(tmp, 'heim'), CLAUDE_PROJECT_DIR: join(tmp, 'projekt'), CACHLY_API_URL: apiUrl, CACHLY_LERNEN: '0' });
     return new Promise((fertig) => {
       const kind = spawn(process.execPath, [BUENDEL, ereignis, '--plugin'], { env, cwd: join(tmp, 'projekt') });
       let aus = '';

@@ -440,13 +440,22 @@ describe('Cursor-Lauf — das echte Buendel mit Cursor-Beispiel-Eingaben', () =>
     await new Promise<void>((r) => stumm.listen(0, '127.0.0.1', () => r()));
     try {
       schreibeJson(join(heim, '.cachly', 'credentials.json'), { apiKey: 'cky_k', instanceId: instanz });
+      const stummUrl = `http://127.0.0.1:${(stumm.address() as AddressInfo).port}`;
+      // Leerlauf zum Vergleich: dasselbe Buendel, postToolUse liest nur die Ablage (kein Netz).
+      // Unter Last waechst er mit, die Grenze misst so die Frist und nicht den Runner.
+      // Befund 13.10.2026: fest 4000 ms, gemessen 4485 ms bei Last 45 auf 12 Kernen.
+      // Ohne Gesamtfrist endete der Lauf erst am Abruf-Limit (ABRUF_TIMEOUT_MS, 8 s):
+      // Leerlauf + 8 s liegt weiter klar ueber der Grenze.
+      const leer = await lauf(BUENDEL, ['postToolUse', '--cursor'], nachWerkzeug(), { CACHLY_API_URL: stummUrl });
+      expect(JSON.parse(leer.stdout)).toEqual({});
+      const frist = 1500;
       const r = await lauf(BUENDEL, ['beforeSubmitPrompt', '--cursor'], vorPrompt(), {
-        CACHLY_API_URL: `http://127.0.0.1:${(stumm.address() as AddressInfo).port}`,
-        CACHLY_HOOK_FRIST_MS: '1500',
+        CACHLY_API_URL: stummUrl,
+        CACHLY_HOOK_FRIST_MS: String(frist),
       });
       expect(r.status).toBe(0);
       expect(JSON.parse(r.stdout)).toEqual({ continue: true });
-      expect(r.ms, `${r.ms} ms`).toBeLessThan(4000);
+      expect(r.ms, `${r.ms} ms, Leerlauf ${leer.ms} ms`).toBeLessThan(leer.ms + frist + 2500);
     } finally {
       stumm.closeAllConnections();
       await new Promise<void>((r) => stumm.close(() => r()));

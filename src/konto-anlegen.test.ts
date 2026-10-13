@@ -173,6 +173,22 @@ describe('sichereKonto: wenn es nicht klappt', () => {
     expect(gut.aufrufe.length).toBe(0);
   });
 
+  it('Abkuehlung auch in derselben Millisekunde: die Dateizeit traegt Bruchteile, die Uhr nicht', async () => {
+    // Befund 13.10.2026: Der Test oben wurde beim Veroeffentlichen von 0.10.192
+    // rot. mtimeMs (mit Bruchteilen) lag knapp NACH Date.now() (ganze ms), das
+    // Alter war negativ und galt als "keine Abkuehlung". Hier fest nachgestellt.
+    const T = 1_760_000_000_000;
+    const uhr = { jetzt: () => T, abkuehlungMs: 600_000 };
+    await sichereKonto(opt(gegenstelle({ status: 500 }).holen, uhr));
+    const marke = join(heim, '.cachly', 'anlegen.fehler');
+    utimesSync(marke, (T + 0.5) / 1000, (T + 0.5) / 1000);
+
+    _sperreZuruecksetzen();
+    const gut = gegenstelle();
+    expect(await sichereKonto(opt(gut.holen, uhr))).toEqual({ art: 'gescheitert', grund: 'abgekuehlt' });
+    expect(gut.aufrufe.length).toBe(0);
+  });
+
   it('der MCP-Server kennt keine Abkuehlung: er versucht es beim Werkzeugaufruf trotzdem', async () => {
     const schlecht = gegenstelle({ status: 500 });
     await sichereKonto(opt(schlecht.holen, { abkuehlungMs: 600_000 }));

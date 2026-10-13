@@ -7,6 +7,21 @@
 
 ---
 
+## [0.10.194] – 2026-10-13 — *"The cooldown counts on one clock."*
+
+**After a failed sign-up, the session-start hook now always waits 10 minutes**
+**before it tries again.** The age of the failure mark was the file time
+(with fractions of a millisecond) minus the clock (whole milliseconds). A
+second start in the same millisecond got a slightly negative age and was let
+through. The mark now carries its own time from the same clock.
+
+**Release checks no longer fail on a busy build machine.** Four tests measured
+wall-clock time or started the hook without turning off the control group; on
+12 Oct they turned three releases red. They now measure CPU time, compare with
+an idle run of the same hook, or switch learning off like all other hook tests.
+Releases run one after another, and the version check compares with the
+current main branch.
+
 ## [0.10.193] – 2026-10-12 — *"No key in the project folder, anywhere."*
 
 **The git hook and `join` no longer put your key into project files.** A real

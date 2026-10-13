@@ -125,9 +125,11 @@ function umfeld(extra: Record<string, string>): Record<string, string> {
     const v = process.env[k];
     if (v) env[k] = v;
   }
+  // CACHLY_LERNEN=0 wie in vitest.config.ts: sonst faellt der Prompt je Lauf in 5 % in die
+  // Kontrollgruppe (keine Einblendung) — die Instanz ist je Lauf eine andere.
   return {
     ...env, HOME: heim, USERPROFILE: heim, CLAUDE_PROJECT_DIR: projekt, CLAUDE_PLUGIN_ROOT: pluginDir,
-    CACHLY_API_URL: g.url, ...extra,
+    CACHLY_API_URL: g.url, CACHLY_LERNEN: '0', ...extra,
   };
 }
 

@@ -351,7 +351,7 @@ describe('leseProjektVersionen', () => {
         .toEqual({ version: '15.2.0', quelle: 'package.json', ab: true });
     });
 
-    it('warme Aufrufe sind billig: im Mittel unter 15 ms je Hook-Prozess (gemessen 1-3 ms; die Grenze ist grosszuegig, damit ein belasteter Runner nicht flackert)', () => {
+    it('warme Aufrufe sind billig: im Mittel unter 15 ms Rechenzeit je Hook-Prozess (gemessen 1-3 ms)', () => {
       const d = neuerOrdner('zeit');
       const deps: Record<string, string> = {};
       const pakete: Record<string, { version: string }> = {};
@@ -359,7 +359,10 @@ describe('leseProjektVersionen', () => {
       schreibe(d, 'package.json', { dependencies: deps });
       schreibe(d, 'package-lock.json', { lockfileVersion: 3, packages: pakete });
       leseProjektVersionen(d, { ablageOrdner: ablage, ...stehendeUhr }); // kalt: baut und schreibt die Ablage
-      const t0 = performance.now();
+      // Rechenzeit statt Wanduhr: Warten auf einen freien Kern zaehlt nicht mit.
+      // Befund 13.10.2026: Wanduhr 17,2 ms je Aufruf bei Last 45 auf 12 Kernen
+      // (Veroeffentlichung 0.10.189 rot), gemessen sonst 1-3 ms.
+      const c0 = process.cpuUsage();
       const durchgaenge = 100;
       for (let i = 0; i < durchgaenge; i++) {
         leereVersionsSpeicher(); // jeder Durchgang wie ein neuer Hook-Prozess: stat + kleine JSON-Datei
@@ -367,7 +370,8 @@ describe('leseProjektVersionen', () => {
         expect(l.herkunft).toBe('platte');
         l.suche(null, 'paket-7');
       }
-      expect((performance.now() - t0) / durchgaenge).toBeLessThan(15);
+      const c = process.cpuUsage(c0);
+      expect((c.user + c.system) / 1000 / durchgaenge).toBeLessThan(15);
     });
   });
 

@@ -135,16 +135,30 @@ export function sperreLiegt(opt: CredentialsHomeOptions, jetzt: number = Date.no
   return alter !== null && alter < SPERRE_VERALTET_MS;
 }
 
+/*
+ * Das Alter der Fehlermarke kommt aus ihrem INHALT (dieselbe Uhr wie `jetzt`),
+ * die Dateizeit ist nur Rueckfall fuer Marken ohne lesbare Zahl.
+ *
+ * Warum (13.10.2026): `mtimeMs` traegt Bruchteile einer Millisekunde,
+ * `Date.now()` nur ganze. Kam der zweite Versuch in derselben Millisekunde,
+ * war das Alter leicht negativ — und `alter >= 0` liess ihn durch. Der Test
+ * "Abkuehlung (Hook)" wurde so beim Veroeffentlichen von 0.10.192 rot.
+ */
 function abgekuehlt(pfad: string, abkuehlungMs: number, jetzt: number): boolean {
   if (abkuehlungMs <= 0) return false;
-  const alter = dateiAlter(pfad, jetzt);
+  let seit: number | null = null;
+  try {
+    const n = Number(readFileSync(pfad, 'utf8').trim());
+    if (Number.isFinite(n) && n > 0) seit = n;
+  } catch { /* keine Marke */ }
+  const alter = seit !== null ? jetzt - seit : dateiAlter(pfad, jetzt);
   return alter !== null && alter >= 0 && alter < abkuehlungMs;
 }
 
-function merkeFehlschlag(pfad: string): void {
+function merkeFehlschlag(pfad: string, jetzt: number): void {
   try {
     mkdirSync(dirname(pfad), { recursive: true });
-    writeFileSync(pfad, String(Date.now()), { mode: 0o600 });
+    writeFileSync(pfad, String(jetzt), { mode: 0o600 });
   } catch { /* die Marke ist bestes Bemuehen */ }
 }
 
@@ -191,7 +205,7 @@ export async function sichereKonto(opt: KontoOptionen): Promise<KontoErgebnis> {
               speichern: (key) => saveApiKey(key, opt),
             });
             if (!test) {
-              merkeFehlschlag(fehlerMarke);
+              merkeFehlschlag(fehlerMarke, jetzt());
               return { art: 'gescheitert', grund: 'kein-test' };
             }
             saveInstanceId(test.instanzId, { ...opt, apiKey: test.apiKey });
