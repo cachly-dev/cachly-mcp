@@ -162,9 +162,15 @@ Was ein Lauf mit `--plugin` tut:
    `~/.cachly/anlegen.lock`, ein Konto auch bei gleichzeitigem Start, höchstens
    5 s. Er legt nur an, wenn kein Schlüssel und keine Instanz in UUID-Form
    bekannt ist, nur beim Plugin-Lauf (`--plugin`) und nur in `SessionStart`.
-   Nach einem Fehlschlag versucht er es 10 Minuten nicht wieder. Den Start-Import
-   aus der Git-Geschichte macht der MCP-Server: der Hook hinterlässt ihm
-   `~/.cachly/startwissen-auftrag.json`. `CACHLY_STARTWISSEN=false` schaltet ihn ab.
+   Nach einem Fehlschlag versucht er es 10 Minuten nicht wieder.
+   **Den Start-Import macht seit 14.10.2026 der Hook selbst**, in einem
+   abgekoppelten Nebenlauf (`src/startwissen-hook.ts`): je Thema ein Commit aus
+   den letzten 30 über `POST /learn`, ohne Git den Startvorrat. Das wartet nicht
+   mehr auf den npx-Kaltstart des MCP-Servers (~27 s). Gemessen am 13.10. kam der
+   erste Block nach 58 s; im Test mit nachgebauter API steht er nach unter 1 s.
+   Danach hinterlässt der Nebenlauf dem Server `~/.cachly/startwissen-auftrag.json`
+   mit `vomHook`; der Server rechnet nur noch die Zweitvektoren.
+   `CACHLY_STARTWISSEN=false` schaltet den Import ab.
 4. **Ohne Instanz** (Schlüssel da) endet er mit Exit 0 und ohne Ausgabe.
 
 Kein `${user_config...}` im Hook-Befehl: so läuft der Hook auch, wenn der

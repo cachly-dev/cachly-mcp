@@ -236,6 +236,25 @@ describe('Auftrag fuer den Start-Import', () => {
     expect(auftragLiegt({ home: heim })).toBe(false);
   });
 
+  it('vomHook reist mit (der Hook hat schon importiert); ohne Feld fehlt es', () => {
+    schreibeAuftrag({ instanzId: INSTANZ, projekt: '/p/repo', vomHook: { art: 'git', lektionen: 14 } }, { home: heim });
+    expect(nimmAuftrag({ home: heim })?.vomHook).toEqual({ art: 'git', lektionen: 14 });
+
+    schreibeAuftrag({ instanzId: INSTANZ, projekt: '/p/repo' }, { home: heim });
+    expect(nimmAuftrag({ home: heim })).not.toHaveProperty('vomHook');
+  });
+
+  it('ein unsinniges vomHook zaehlt nicht: der Server importiert dann selbst', () => {
+    for (const vomHook of [{ art: 'alles', lektionen: 3 }, { art: 'git', lektionen: 0 }, { art: 'git', lektionen: 'viele' }, 'git']) {
+      mkdirSync(join(heim, '.cachly'), { recursive: true });
+      writeFileSync(join(heim, '.cachly', 'startwissen-auftrag.json'),
+        JSON.stringify({ instanzId: INSTANZ, projekt: '/p', am: new Date().toISOString(), vomHook }));
+      const a = nimmAuftrag({ home: heim });
+      expect(a?.instanzId).toBe(INSTANZ);
+      expect(a).not.toHaveProperty('vomHook');
+    }
+  });
+
   it('ein Auftrag von gestern ist verfallen', () => {
     schreibeAuftrag({ instanzId: INSTANZ, projekt: '/p/repo' }, { home: heim });
     expect(nimmAuftrag({ home: heim }, Date.now() + AUFTRAG_VERFAELLT_MS + 60_000)).toBeNull();

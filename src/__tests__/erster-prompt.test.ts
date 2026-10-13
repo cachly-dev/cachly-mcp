@@ -12,10 +12,17 @@
  * Diese Tests starten das ECHTE Buendel (hooks/cachly-ambient-einblendung.mjs)
  * als Prozess gegen eine nachgebaute Gegenstelle. Sie waren gegen den Stand
  * vom 12.10. rot (Gegenprobe im PR beschrieben).
+ *
+ * ── Befund 13.10.2026, Folge 14.10. ─────────────────────────────────────────
+ *
+ * Die echte Probe mit 0.10.194 zeigte den ersten Block erst nach 58 s: den
+ * Import machte der MCP-Server nach seinem npx-Kaltstart (~27 s). Seit dem
+ * 14.10. importiert ein Nebenlauf des Hooks selbst ueber POST /learn
+ * (startwissen-hook.ts). Der Auftrag an den Server kommt danach.
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,6 +30,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { HOOK_BUENDEL, PLUGIN_HOOK_DIR } from '../ambient-hooks.js';
 import { bestandPfad } from '../einblendung.js';
+import { STARTER_CORPUS } from '../starter-corpus.js';
 
 const SDK = resolve(__dirname, '..', '..');
 const BUENDEL = join(SDK, PLUGIN_HOOK_DIR, HOOK_BUENDEL);
@@ -49,6 +57,10 @@ interface Gegenstelle {
   sofortTest: number | 'haengt';
   verzoegerungMs: number;
   instanz: string;
+  /** Was ueber POST /learn ankam (der Start-Import des Hooks). */
+  gelernt: Array<Record<string, unknown>>;
+  /** true: Gelerntes erscheint im /export (wie bei der echten API). */
+  lernenSichtbar: boolean;
   server: Server;
 }
 
@@ -59,9 +71,12 @@ async function starteGegenstelle(): Promise<Gegenstelle> {
     sofortTest: 201 as number | 'haengt',
     verzoegerungMs: 0,
     instanz: `11111111-2222-3333-4444-${Math.random().toString(16).slice(2, 14).padEnd(12, '0')}`,
+    gelernt: [] as Array<Record<string, unknown>>,
+    lernenSichtbar: false,
   };
   const server = createServer((req, res) => {
-    req.on('data', () => undefined);
+    let rumpf = '';
+    req.on('data', (d) => { rumpf += d; });
     req.on('end', () => {
       const pfad = (req.url ?? '').split('?')[0] ?? '';
       g.anfragen.push({
@@ -84,6 +99,12 @@ async function starteGegenstelle(): Promise<Gegenstelle> {
       if (pfad.endsWith('/export')) {
         return json(200, { lessons: g.lektionen.map((l) => JSON.stringify(l)) });
       }
+      if (req.method === 'POST' && pfad.endsWith('/learn')) {
+        const lektion = JSON.parse(rumpf) as Record<string, unknown>;
+        g.gelernt.push(lektion);
+        if (g.lernenSichtbar) g.lektionen.push({ ...lektion, recall_count: 0 });
+        return json(200, { ok: true, topic: lektion.topic });
+      }
       return json(503, {}); // Leser aus: lokale Reihenfolge
     });
   });
@@ -97,8 +118,11 @@ let tmp: string;
 let heim: string;
 let projekt: string;
 let pluginDir: string;
+/** Ein SessionStart mit Start-Import lief: afterEach wartet auf den Nebenlauf. */
+let importLief: boolean;
 
 beforeEach(async () => {
+  importLief = false;
   g = await starteGegenstelle();
   tmp = mkdtempSync(join(tmpdir(), 'cachly-erstprompt-'));
   heim = join(tmp, 'heim');
@@ -111,6 +135,9 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  // Der Nebenlauf des Start-Imports ist abgekoppelt. Er endet mit dem Auftrag;
+  // erst danach Gegenstelle und Ordner abbauen, sonst schreibt er ins Leere.
+  if (importLief && sofortTests().length > 0 && existsSync(credentials())) await warteAufAuftrag();
   g.server.closeAllConnections();
   await new Promise<void>((r) => g.server.close(() => r()));
   rmSync(bestandPfad(g.instanz), { force: true });
@@ -144,11 +171,34 @@ function lauf(ereignis: string, payload: object, extra: Record<string, string> =
   });
 }
 
-const sitzungsStart = (extra: Record<string, string> = {}) => lauf('SessionStart', { source: 'startup' }, extra);
+const sitzungsStart = (extra: Record<string, string> = {}) => {
+  if (extra.CACHLY_STARTWISSEN !== 'false') importLief = true;
+  return lauf('SessionStart', { source: 'startup' }, extra);
+};
 const prompt = (extra: Record<string, string> = {}) => lauf('UserPromptSubmit', { prompt: FRAGE }, extra);
 const sofortTests = () => g.anfragen.filter((a) => a.pfad === '/auth/instant-trial');
 const credentials = () => join(heim, '.cachly', 'credentials.json');
 const auftrag = () => join(heim, '.cachly', 'startwissen-auftrag.json');
+
+/** Wartet, bis der Nebenlauf den Auftrag fuer den Server hinterlassen hat (sein letzter Schritt). */
+async function warteAufAuftrag(fristMs = 15_000): Promise<Record<string, unknown>> {
+  const ende = Date.now() + fristMs;
+  while (Date.now() < ende) {
+    try { return JSON.parse(readFileSync(auftrag(), 'utf8')) as Record<string, unknown>; } catch { /* noch nicht */ }
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error(`kein Auftrag nach ${fristMs} ms`);
+}
+
+/** Macht den Projektordner zum Git-Repo mit diesen Commits (der aelteste zuerst). */
+function gitProjekt(betreffs: string[]): void {
+  const git = (...a: string[]) => execFileSync('git', a, { cwd: projekt, stdio: 'ignore' });
+  git('init', '-q');
+  git('config', 'user.email', 'test@example.invalid');
+  git('config', 'user.name', 'Test');
+  git('config', 'commit.gpgsign', 'false');
+  for (const b of betreffs) git('commit', '-q', '--allow-empty', '-m', b);
+}
 
 describe('SessionStart legt das Konto an — ohne dass ein Werkzeug gerufen wird', () => {
   it('ohne Schluessel: genau ein Konto, Schluessel + Instanz abgelegt, Hinweis fuer den Assistenten, schnell', async () => {
@@ -172,11 +222,19 @@ describe('SessionStart legt das Konto an — ohne dass ein Werkzeug gerufen wird
     // Der Hook hat das Zeitbudget nicht angerührt: Sofort-Test + Bestand in unter 5 s.
     expect(r.ms, `${r.ms} ms`).toBeLessThan(5000);
 
-    // Der Start-Import laeuft im MCP-Server (er hat die Brain-Verbindung): der Hook
-    // hinterlaesst den Auftrag mit Instanz und Projektordner.
-    const a = JSON.parse(readFileSync(auftrag(), 'utf8'));
+    // Der Start-Import laeuft in einem Nebenlauf des Hooks (seit 14.10.): der
+    // Projektordner hat kein Git, also kommt der Startvorrat ueber /learn. Danach
+    // hinterlaesst der Nebenlauf dem MCP-Server den Auftrag — mit `vomHook`, der
+    // Server rechnet nur noch nach.
+    const a = await warteAufAuftrag();
     expect(a.instanzId).toBe(g.instanz);
     expect(a.projekt).toBe(projekt);
+    expect(a.vomHook).toEqual({ art: 'startvorrat', lektionen: STARTER_CORPUS.length });
+    expect(g.gelernt.length).toBe(STARTER_CORPUS.length);
+    expect(new Set(g.gelernt.map((l) => l.source))).toEqual(new Set(['starter']));
+    // Jede /learn-Anfrage mit dem neuen Schluessel.
+    const lernAnfragen = g.anfragen.filter((x) => x.pfad.endsWith('/learn'));
+    expect(lernAnfragen.every((x) => x.auth === `Bearer ${SCHLUESSEL}`)).toBe(true);
   });
 
   it('zwei Starts gleichzeitig (zwei Sitzungen): ein Konto, beide enden still oder mit Hinweis', async () => {
@@ -261,9 +319,48 @@ describe('SessionStart legt das Konto an — ohne dass ein Werkzeug gerufen wird
 });
 
 describe('Der erste Prompt nach der Installation', () => {
-  it('SessionStart, dann Import bringt Lektionen, dann der erste Prompt: Einblendung kommt', async () => {
-    // t0: SessionStart legt das Konto an. Die Instanz startet noch, /export ist leer.
+  it('frisches Git-Projekt: der Hook importiert selbst, der erste Prompt hat den Block — ohne MCP-Server', async () => {
+    // Die Probe vom 13.10. als Test: kein Werkzeugaufruf, kein MCP-Server.
+    g.lernenSichtbar = true;
+    gitProjekt([
+      'Add project skeleton',
+      'Fix deploy connection refused on node-1: fail2ban banned the deploy channel, ignoreip 10.8.0.0/24',
+    ]);
+    const start = Date.now();
     await sitzungsStart();
+    const a = await warteAufAuftrag();
+    const dauer = Date.now() - start;
+
+    // Je Commit ein Thema, ueber /learn, als Import gekennzeichnet.
+    expect(a.vomHook).toEqual({ art: 'git', lektionen: 2 });
+    expect(g.gelernt.map((l) => l.source)).toEqual(['brain_from_git', 'brain_from_git']);
+    expect(g.gelernt.every((l) => (l.tags as string[]).includes('brain_from_git'))).toBe(true);
+    // Konto, Import und Bestand in wenigen Sekunden statt ~58 s.
+    expect(dauer, `${dauer} ms`).toBeLessThan(10_000);
+
+    // Der Nebenlauf hat den Bestand auf der Platte schon neu geschrieben: der
+    // erste Prompt liest ihn dort und blendet ein.
+    expect(JSON.parse(readFileSync(bestandPfad(g.instanz), 'utf8')).lessons).toHaveLength(2);
+    const r = await prompt();
+    expect(r.status).toBe(0);
+    const kontext: string = JSON.parse(r.stdout).hookSpecificOutput.additionalContext;
+    expect(kontext).toContain('fail2ban');
+    expect(sofortTests().length).toBe(1);
+  }, 30_000);
+
+  it('Brain hat schon Lektionen (ein anderer war schneller): der Hook schickt nichts, der Server bekommt den gewoehnlichen Auftrag', async () => {
+    g.lektionen = [LEKTION];
+    await sitzungsStart();
+    const a = await warteAufAuftrag();
+    expect(g.gelernt).toEqual([]);
+    expect(a.vomHook).toBeUndefined();
+  });
+
+  it('SessionStart, dann Import bringt Lektionen, dann der erste Prompt: Einblendung kommt', async () => {
+    // t0: SessionStart legt das Konto an. /export ist leer; der Startvorrat des
+    // Nebenlaufs bleibt hier unsichtbar (lernenSichtbar false).
+    await sitzungsStart();
+    await warteAufAuftrag();
     const bestand = bestandPfad(g.instanz);
     expect(existsSync(bestand)).toBe(true);
     expect(JSON.parse(readFileSync(bestand, 'utf8')).lessons).toEqual([]);

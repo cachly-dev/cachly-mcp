@@ -7,6 +7,40 @@
 
 ---
 
+## [0.10.195] – 2026-10-14 — *"The hook imports, the server only catches up."*
+
+**A fresh plugin install no longer waits for the MCP server before its first
+lessons arrive.** On 13 Oct a real install (plugin 0.10.194, Claude Code
+2.1.292, no tool call) showed the first `<cachly-memory>` block after 58 s:
+the start import ran inside the MCP server, and `npx` needs about 27 s to cold-start it.
+Now the session-start hook that creates the account also starts a detached
+background run. It reads `git log` itself and sends one lesson per topic from
+the last 30 commits through `POST /learn`; without git it sends the starter
+lessons. Then it rewrites the lesson stock on disk, so the next prompt has
+them without a fetch. In the test with a simulated API, account, import and
+first block take under one second.
+
+**Same rules as `brain_from_git`, from one place.** Commit parsing, topic,
+secret redaction and tags moved into `src/git-lektionen.ts`; `brain_from_git`
+and the hook both use it.
+
+**The server only does what the API cannot.** The background run leaves the
+start job (`~/.cachly/startwissen-auftrag.json`) with `vomHook`. The server
+then sets the import mark, adds the one-time note to its next answer and
+computes the second-model vectors (`vec2`). Vectors the API already wrote
+are not computed again. If the background run fails, the job goes out
+without `vomHook` and the server imports as before. The server now watches
+for the job for 3 minutes instead of 1.
+
+**Imported lessons are not user activity.** The API marks lessons with
+`source: "brain_from_git"` or `"starter"` as imports: confidence 0.55 or 0.9
+as on the MCP path, and no `vscode_lesson_saved` event. Otherwise every new
+plugin account would count as active after its start import.
+
+**The background run starts in the temp folder, not the project folder.** On
+Windows a running process locks its working directory against deletion and
+renaming.
+
 ## [0.10.194] – 2026-10-13 — *"The cooldown counts on one clock."*
 
 **After a failed sign-up, the session-start hook now always waits 10 minutes**

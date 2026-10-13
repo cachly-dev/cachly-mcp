@@ -359,3 +359,77 @@ describe('startwissen: welcher Ordner ist das Projekt', () => {
     expect(spur).toMatchObject({ verbindungen: 0, importe: 0 });
   });
 });
+
+/*
+ * Seit 14.10.2026 importiert der Nebenlauf des SessionStart-Hooks die
+ * Lektionen selbst ueber POST /learn (startwissen-hook.ts). Der Server bekommt
+ * danach einen Auftrag mit `vomHook` und tut nur noch, was die API nicht kann.
+ */
+describe('startwissen nach dem Import des Hooks (vomHook)', () => {
+  /** So legt die API eine Lektion aus dem Hook-Import ab (lesson_write.go). */
+  async function wieVonDerApi(redis: MockRedis, topic: string, extra: Record<string, unknown>, mitVektor: boolean) {
+    await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify({ topic, outcome: 'success', what_worked: `${topic} geht`, ...extra }));
+    if (mitVektor) await redis.set(`${VEKTOR_PRAEFIX}${topic}`, 'von-der-api');
+  }
+
+  it('Git: kein zweiter Import, Marke mit quelle hook, Satz und Ereignis; Erstvektoren der API werden nicht neu gerechnet, vec2 kommt', async () => {
+    const redis = new MockRedis();
+    const repo = repoMitCommits(['fix: alles']);
+    const git = { tags: ['brain_from_git', 'fix', 'git-history'], source: 'brain_from_git' };
+    await wieVonDerApi(redis, 'fix:login-token-expired', git, true);
+    await wieVonDerApi(redis, 'feat:invoice-export', git, false);
+    await wieVonDerApi(redis, 'eigen:vom-nutzer', { tags: [] }, true);
+    const dienst = zaehlenderDienst();
+    const gemeldet: number[] = [];
+    const { u, spur } = umfeld(redis, repo, {
+      vomHook: { art: 'git', lektionen: 2 },
+      einbetten: dienst.einbetten,
+      einbettenZweit: dienst.einbetten,
+      melde: (n) => gemeldet.push(n),
+    });
+
+    const e = await lerneAusGitGeschichte(u);
+
+    expect(e).toMatchObject({ art: 'fertig', lektionen: 2, vektoren: 2 });
+    expect(spur.importe, 'brain_from_git darf nicht laufen').toBe(0);
+    expect(JSON.parse((await redis.get(STARTWISSEN_MARKE))!)).toMatchObject({ stand: 'fertig', quelle: 'hook', lektionen: 2 });
+    expect(gemeldet).toEqual([2]);
+    expect(holeStartwissenHinweis()).toContain('learned 2 lessons');
+    // Der Vektor der API bleibt; nur die fehlende Lektion bekommt vec + vecname.
+    expect(await redis.get(`${VEKTOR_PRAEFIX}fix:login-token-expired`)).toBe('von-der-api');
+    expect(await redis.get(`${VEKTOR_PRAEFIX}feat:invoice-export`)).not.toBeNull();
+    expect(await redis.get(`${NAME_VEKTOR_PRAEFIX}fix:login-token-expired`)).toBeNull();
+    // vec2 fuer beide Hook-Lektionen, keiner fuer die eigene Lektion des Nutzers.
+    expect(await redis.get(`${ZWEIT_VEKTOR_PRAEFIX}fix:login-token-expired`)).not.toBeNull();
+    expect(await redis.get(`${ZWEIT_VEKTOR_PRAEFIX}feat:invoice-export`)).not.toBeNull();
+    expect(await redis.get(`${ZWEIT_VEKTOR_PRAEFIX}eigen:vom-nutzer`)).toBeNull();
+    // 1 x vec + 1 x vecname + 2 x vec2.
+    expect(dienst.stand.anfragen).toBe(4);
+    expect(await redis.smembers(VEKTOR_NACHTRAG)).toEqual([]);
+  });
+
+  it('Startvorrat: dieselben Marken wie brain_seed_starter, Satz fuer den Startvorrat', async () => {
+    const redis = new MockRedis();
+    const ordnerOhneGit = frischerOrdner();
+    await wieVonDerApi(redis, 'docker:layer-cache', { source: 'starter', tags: ['docker'] }, true);
+    const vorrat: number[] = [];
+    const { u } = umfeld(redis, ordnerOhneGit, { vomHook: { art: 'startvorrat', lektionen: 1 }, meldeStartvorrat: (n) => vorrat.push(n) });
+
+    const e = await lerneAusGitGeschichte(u);
+
+    expect(e).toMatchObject({ art: 'startvorrat', lektionen: 1 });
+    expect(await redis.get(`cachly:brain:starter_seeded:${INSTANZ}`)).not.toBeNull();
+    expect(await redis.get(`cachly:stats:born_at:${INSTANZ}`)).not.toBeNull();
+    expect(vorrat).toEqual([1]);
+    expect(holeStartwissenHinweis()).toContain('starter lesson');
+  });
+
+  it('Marke steht schon (ein anderer Server war zuerst): nichts, kein Satz', async () => {
+    const redis = new MockRedis();
+    const repo = repoMitCommits(['fix: alles']);
+    await redis.set(STARTWISSEN_MARKE, JSON.stringify({ stand: 'fertig' }));
+    const { u } = umfeld(redis, repo, { vomHook: { art: 'git', lektionen: 3 } });
+    expect((await lerneAusGitGeschichte(u)).art).toBe('schon-erledigt');
+    expect(holeStartwissenHinweis()).toBe('');
+  });
+});

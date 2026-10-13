@@ -210,8 +210,9 @@ export function sicherungsPfad(instanceId: string): string {
   return join(tmpdir(), `cachly-leser-sicherung-${kurzHash(instanceId)}.json`);
 }
 
-function sperrPfad(instanceId: string): string {
-  return join(tmpdir(), `cachly-ambient-auffrischen-${kurzHash(instanceId)}.lock`);
+/** Je Zweck eine Sperre: der Start-Import haelt das Auffrischen nicht auf. */
+function sperrPfad(instanceId: string, zweck = 'ambient-auffrischen'): string {
+  return join(tmpdir(), `cachly-${zweck}-${kurzHash(instanceId)}.lock`);
 }
 
 /**
@@ -282,19 +283,28 @@ function leseBestand(pfad: string): { at: number; seit: number; lessons: Einblen
  * bestand-auffrischen.mjs, die CLI sich selbst mit `ambient-auffrischen`.
  *
  * Die Sperrdatei verhindert einen Prozess-Schwarm, wenn der Server dauerhaft
- * nicht antwortet: hoechstens ein Nebenlauf je NEBENLAUF_SPERRE_MS.
+ * nicht antwortet: hoechstens ein Nebenlauf je NEBENLAUF_SPERRE_MS und Zweck.
+ * Der Start-Import (startwissen-hook.ts) nutzt dieselbe Funktion mit eigenem
+ * Zweck und `ordner`: er laeuft nicht im Projektordner, denn unter Windows
+ * sperrt ein Prozess sein Arbeitsverzeichnis gegen Loeschen und Umbenennen.
+ * true = der Nebenlauf ist gestartet.
  */
-export function starteNebenlauf(cfg: EinblendConfig, befehl: string[]): void {
-  const sperre = sperrPfad(cfg.instanceId);
+export function starteNebenlauf(
+  cfg: EinblendConfig,
+  befehl: string[],
+  { zweck, ordner }: { zweck?: string; ordner?: string } = {},
+): boolean {
+  const sperre = sperrPfad(cfg.instanceId, zweck);
   try {
-    if (existsSync(sperre) && Date.now() - statSync(sperre).mtimeMs < NEBENLAUF_SPERRE_MS) return;
+    if (existsSync(sperre) && Date.now() - statSync(sperre).mtimeMs < NEBENLAUF_SPERRE_MS) return false;
     writeFileSync(sperre, String(Date.now()), { mode: 0o600 });
-  } catch { return; }
+  } catch { return false; }
 
   try {
     const kind = spawn(process.execPath, befehl, {
       detached: true,
       stdio: 'ignore',
+      ...(ordner ? { cwd: ordner } : {}),
       env: {
         ...process.env,
         CACHLY_API_URL: cfg.apiUrl,
@@ -303,7 +313,11 @@ export function starteNebenlauf(cfg: EinblendConfig, befehl: string[]): void {
       },
     });
     kind.unref();
-  } catch { /* kein Nebenlauf ist kein Fehler: der naechste Prompt versucht es erneut */ }
+    return true;
+  } catch {
+    // kein Nebenlauf ist kein Fehler: der naechste Prompt versucht es erneut
+    return false;
+  }
 }
 
 export type BestandQuelle = 'nicht-eingerichtet' | 'server' | 'platte' | 'platte-alt' | 'server-nicht-erreichbar';

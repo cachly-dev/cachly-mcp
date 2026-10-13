@@ -3,13 +3,13 @@ import type { Redis } from 'ioredis';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
-import { safeJsonParse, normalizeGitPath } from '../utils.js';
+import { safeJsonParse } from '../utils.js';
 import { buildClsPostCommitHook } from '../cls-hook.js';
 import { alsShellWort, beginntMitBindestrich, gitLesen, instanzIdFuerSkript, istCommitHash, pruefeOrdner } from '../git-ohne-shell.js';
 import { installBrainWatchHook } from '../brain-watch-hook.js';
 import { keywordSearch, wortindexEntwerten } from '../search.js';
 import { buildFirstContactReport, suggestRecallQueries, type FirstContactProof } from '../first-contact.js';
-import { classifyCommit, extractDomain } from '../commit-art.js';
+import { commitAlsLektion, gitLogArgumente, leseCommits } from '../git-lektionen.js';
 import { VEKTOR_NACHTRAG } from '../bedeutung.js';
 import { VERDACHT_TAG, fuerEigenenSpeicher, fuerWeitergabe, hinweise, istMarkiert, markiert, weitergabeHinweis, zaehlHinweise } from '../schreibtor.js';
 
@@ -1018,12 +1018,7 @@ export async function handleFedbrainTool(
       // Als Argumentliste, ohne Shell: branch und since bleiben je EIN Argument.
       const afterFlag = isIncremental ? `${lastSha}..HEAD` : '';
       const revRange = afterFlag || branch || 'HEAD';
-      const logArgs = [
-        'log', revRange,
-        ...(since ? [`--since=${since}`] : []),
-        '--pretty=format:COMMIT|||%H|||%s|||%ad|||%an', '--date=short', '--no-merges', '--name-only',
-        '-n', String(maxCommits),
-      ];
+      const logArgs = gitLogArgumente(revRange, maxCommits, since);
 
       let logOutput = '';
       try {
@@ -1032,22 +1027,8 @@ export async function handleFedbrainTool(
         return `❌ git log failed: ${(e as Error).message}. Check \`repo_path\` and \`branch\`.`;
       }
 
-      // Parse multi-line output: each commit block = header line + blank line + file lines
-      type CommitEntry = { sha: string; subject: string; date: string; author: string; files: string[] };
-      const commits: CommitEntry[] = [];
-      let current: CommitEntry | null = null;
-      for (const raw of logOutput.split('\n')) {
-        const line = raw.trim();
-        if (line.startsWith('COMMIT|||')) {
-          if (current) commits.push(current);
-          const [, sha, subject, date, author] = line.split('|||');
-          current = { sha: (sha ?? '').trim(), subject: (subject ?? '').trim(), date: (date ?? '').trim(), author: (author ?? '').trim(), files: [] };
-        } else if (line && current) {
-          const norm = normalizeGitPath(line);
-          if (norm) current.files.push(norm);
-        }
-      }
-      if (current) commits.push(current);
+      // Je Commit eine Kopfzeile, dann die Dateien (git-lektionen.ts).
+      const commits = leseCommits(logOutput);
 
       if (commits.length === 0) {
         if (isIncremental) {
@@ -1063,9 +1044,10 @@ export async function handleFedbrainTool(
         });
       }
 
-      // Einteilung und Thema kommen aus src/commit-art.ts — dieselben Regeln
-      // nutzen `demo` und (als Abschrift, per Test gleich gehalten) das
-      // Repo-Roentgen auf cachly.dev.
+      // Commit -> Lektion steht in src/git-lektionen.ts (Einteilung und Thema aus
+      // src/commit-art.ts). Dieselben Regeln nutzen der Start-Import im
+      // SessionStart-Hook, `demo` und (als Abschrift, per Test gleich gehalten)
+      // das Repo-Roentgen auf cachly.dev.
       const ts = new Date().toISOString();
       let ingested = 0;
       let skipped = 0;
@@ -1086,11 +1068,9 @@ export async function handleFedbrainTool(
       let markiertAnzahl = 0;
 
       for (let i = 0; i < commits.length; i++) {
-        const rohCommit = commits[i]!;
-        const tor = fuerEigenenSpeicher({ subject: rohCommit.subject, author: rohCommit.author, files: rohCommit.files.slice(0, 12) });
-        if (tor.geschwaerzt.length) geschwaerztAnzahl++;
-        if (tor.verdacht.length) markiertAnzahl++;
-        const commit = { ...rohCommit, ...tor.felder };
+        const { commit, geschwaerzt, verdacht, lektion } = commitAlsLektion(commits[i]!);
+        if (geschwaerzt) geschwaerztAnzahl++;
+        if (verdacht) markiertAnzahl++;
 
         // Emit progress to stderr so editors can display it in MCP logs
         if (i - lastProgressAt >= progressInterval) {
@@ -1098,10 +1078,8 @@ export async function handleFedbrainTool(
           lastProgressAt = i;
         }
 
-        if (!commit.subject) { skipped++; continue; }
-        const { category, outcome, severity } = classifyCommit(commit.subject);
-        const domain = extractDomain(commit.subject);
-        const topic = `${category}:${domain}`;
+        if (!lektion) { skipped++; continue; }
+        const { topic, category, outcome, severity } = lektion;
         categoryCount.set(category, (categoryCount.get(category) ?? 0) + 1);
         severityCount.set(severity, (severityCount.get(severity) ?? 0) + 1);
         seededTopics.push(topic);
@@ -1109,16 +1087,16 @@ export async function handleFedbrainTool(
           proofCandidate = { topic, subject: commit.subject };
         }
 
-        const commitFiles = commit.files.filter(f => f.length > 0).slice(0, 12);
+        const commitFiles = lektion.file_paths;
         const lessonObj = {
           topic, outcome, severity,
-          what_worked: commit.subject.slice(0, 200),
-          what_failed: '',
-          context: `git:${commit.sha.slice(0, 8)} by ${commit.author} on ${commit.date}`,
-          author: commit.author || undefined,
+          what_worked: lektion.what_worked,
+          what_failed: lektion.what_failed,
+          context: lektion.context,
+          author: lektion.author,
           file_paths: commitFiles,
-          commands: [`git show ${commit.sha.slice(0, 8)}`],
-          tags: markiert(['brain_from_git', category, 'git-history'], tor.verdacht),
+          commands: lektion.commands,
+          tags: lektion.tags,
           visibility: 'team',
           depends_on: [], recall_count: 0, ts, verified_at: ts,
           confidence: 0.55, // lower confidence for auto-inferred lessons

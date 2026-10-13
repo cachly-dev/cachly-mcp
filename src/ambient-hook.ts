@@ -32,9 +32,11 @@
 // bilden nur Eingabe und Antwort ab; gerechnet wird hier.
 
 import { readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { parseHookPayload, runEinblendung, stopLernanfrage, stopObservation } from './ambient-cli.js';
 import { stopAntwort } from './schreibbeleg.js';
-import { holeBestand, hookAusgabe } from './einblendung.js';
+import { holeBestand, hookAusgabe, starteNebenlauf } from './einblendung.js';
+import { STARTWISSEN_IMPORT, hookImportFuerAuftrag, importiereStartwissen } from './startwissen-hook.js';
 import { belohnungMelden } from './lernen.js';
 import { appendLedgerEntry, reportLedgerEntry } from './ambient-ledger.js';
 import {
@@ -107,6 +109,8 @@ export interface HookAufruf {
   cursorAblage?: string;
   /** Nur Tests: Ordner der Copilot-CLI-Ablage (copilot-hook.ts). */
   copilotAblage?: string;
+  /** Nur Tests: startet den Nebenlauf des Start-Imports (einblendung.ts starteNebenlauf). */
+  nebenlauf?: typeof starteNebenlauf;
 }
 
 /**
@@ -163,10 +167,12 @@ export function editorVon(args: string[], payload: unknown): string {
  * Funktion wie der MCP-Server (konto-anlegen.ts: Sperre, ein Konto, nie zwei).
  *
  *   angelegt  -> Schluessel + Instanz stehen in ~/.cachly/credentials.json,
- *                der Hook hinterlaesst dem MCP-Server den Auftrag fuer den
- *                Start-Import (der laeuft im Server, der die Verbindung hat),
- *                und der Assistent bekommt den Hinweis, dem Nutzer einmal zu
- *                sagen, dass ein Test-Brain entstanden ist.
+ *                ein Nebenlauf importiert die Lektionen ueber die API
+ *                (startwissen-hook.ts) und hinterlaesst danach dem MCP-Server
+ *                den Auftrag, und der Assistent bekommt den Hinweis, dem Nutzer
+ *                einmal zu sagen, dass ein Test-Brain entstanden ist. Startet
+ *                der Nebenlauf nicht, geht der Auftrag sofort an den Server,
+ *                der dann selbst importiert (wie bis zum 13.10.2026).
  *   vorhanden -> ein anderer Prozess war schneller (z. B. der MCP-Server):
  *                weiter wie mit jedem Schluessel, ohne Hinweis und ohne Auftrag.
  *   sonst     -> null. Der Hook bleibt still; der MCP-Server versucht es beim
@@ -188,7 +194,16 @@ async function legeKontoAn(a: HookAufruf): Promise<{ apiKey: string; instanzId?:
   if (ergebnis.art === 'vorhanden') return { apiKey: ergebnis.apiKey, instanzId: ergebnis.instanzId, hinweis: '' };
   if (ergebnis.art !== 'angelegt') return null;
   if (startwissenEingeschaltet(a.umfeld.env)) {
-    schreibeAuftrag({ instanzId: ergebnis.test.instanzId, projekt: a.umfeld.projekt }, { home: a.umfeld.heim });
+    const cfg = { apiUrl: a.apiUrl, jwt: ergebnis.test.apiKey, instanceId: ergebnis.test.instanzId };
+    const gestartet = a.selbst
+      ? (a.nebenlauf ?? starteNebenlauf)(cfg, [a.selbst, STARTWISSEN_IMPORT, a.umfeld.projekt], {
+        zweck: STARTWISSEN_IMPORT,
+        ordner: tmpdir(),
+      })
+      : false;
+    if (!gestartet) {
+      schreibeAuftrag({ instanzId: ergebnis.test.instanzId, projekt: a.umfeld.projekt }, { home: a.umfeld.heim });
+    }
   }
   return { apiKey: ergebnis.test.apiKey, instanzId: ergebnis.test.instanzId, hinweis: sofortTestHinweis(ergebnis.test) };
 }
@@ -388,6 +403,29 @@ export async function auffrischenHauptlauf(): Promise<never> {
     if (jwt && instanceId) await holeBestand({ apiUrl: apiUrl(), jwt, instanceId }, { force: true, lernen: true });
   } catch {
     // ein gescheiterter Abruf behaelt den alten Bestand; der naechste Prompt versucht es erneut
+  }
+  process.exit(0);
+}
+
+/**
+ * Der Start-Import als abgekoppelter Prozess (startwissen-hook.ts), gestartet
+ * vom SessionStart-Hook, der gerade das Konto angelegt hat. Danach geht der
+ * Auftrag an den MCP-Server: mit `vomHook`, wenn die Lektionen da sind, sonst
+ * der gewoehnliche, und der Server importiert selbst.
+ */
+export async function startwissenImportHauptlauf(projekt: string): Promise<never> {
+  try {
+    const u = hookUmfeld();
+    const jwt = findeSchluessel(u);
+    const instanceId = findeInstanz(u);
+    if (jwt && istInstanzKennung(instanceId)) {
+      const ergebnis = await importiereStartwissen({ cfg: { apiUrl: apiUrl(), jwt, instanceId }, projekt, env: u.env });
+      if (ergebnis.art !== 'aus') {
+        schreibeAuftrag({ instanzId: instanceId, projekt, vomHook: hookImportFuerAuftrag(ergebnis) }, { home: u.heim });
+      }
+    }
+  } catch {
+    // Ohne Auftrag laeuft alles weiter; nur der Import fehlt.
   }
   process.exit(0);
 }

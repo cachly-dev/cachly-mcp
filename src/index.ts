@@ -144,10 +144,13 @@ function startwissenMoeglich(): boolean {
  * Git-Geschichte des Projekts lernen. Wartet auf nichts und wirft nie.
  * CACHLY_STARTWISSEN=false schaltet es ab.
  */
-function starteStartwissenImHintergrund(instanzId: string, ordner?: string): void {
+function starteStartwissenImHintergrund(instanzId: string, ordner?: string, vomHook?: HookImport): void {
   if (!instanzId || !startwissenMoeglich()) return;
   void starteStartwissen({
     instanzId,
+    // Der Nebenlauf des Hooks hat die Lektionen schon ueber die API geschickt
+    // (startwissen-hook.ts): nur noch Marke, Satz und Zweitvektoren.
+    vomHook,
     verbindung: getConnection,
     ausGit: (a) => handleFedbrainTool('brain_from_git', a, getConnection, apiFetch),
     // Den Ordner nennt der Hook, wenn ER das Brain angelegt hat (CLAUDE_PROJECT_DIR).
@@ -186,8 +189,13 @@ function startvorratMoeglich(): boolean {
 const SERVER_KONTO_WARTEN_MS = 7_000;
 /** Warten auf die Sperre UND Anfrage, wenn der Server selbst anlegt. */
 const SERVER_KONTO_FRIST_MS = 12_000;
-/** So lange sieht der Server nach dem Start nach, ob der Hook ein Konto angelegt hat. */
-const HOOK_KONTO_BEOBACHTEN_MS = 60_000;
+/**
+ * So lange sieht der Server nach dem Start nach, ob der Hook ein Konto angelegt
+ * hat. Drei Minuten: der Auftrag kommt seit dem 14.10.2026 erst NACH dem Import
+ * des Hooks, und der wartet bis zu 90 s auf eine startende Instanz
+ * (startwissen-hook.ts BEREIT_FRIST_MS).
+ */
+const HOOK_KONTO_BEOBACHTEN_MS = 180_000;
 
 let _hookKontoLauf: Promise<boolean> | null = null;
 
@@ -225,7 +233,7 @@ async function hookKontoUebernehmen(wartenMs: number): Promise<boolean> {
       const auftrag = nimmAuftrag();
       if (auftrag) {
         merkeNeuesBrain(auftrag.instanzId, startwissenMoeglich(), startvorratMoeglich());
-        starteStartwissenImHintergrund(auftrag.instanzId, auftrag.projekt || undefined);
+        starteStartwissenImHintergrund(auftrag.instanzId, auftrag.projekt || undefined, auftrag.vomHook);
       }
     }
   } catch { /* der Hook-Weg ist ein Zugewinn; ohne ihn bleibt der bisherige Weg */ }
@@ -233,7 +241,7 @@ async function hookKontoUebernehmen(wartenMs: number): Promise<boolean> {
 }
 
 /**
- * Beobachtet nach dem Start eine Minute lang, ob der Hook ein Konto anlegt
+ * Beobachtet nach dem Start drei Minuten lang, ob der Hook ein Konto anlegt
  * (der Server kann vor dem Hook fertig sein) und ob sein Auftrag bereitliegt.
  * Eine Abfrage der Platte je halbe Sekunde; der Zeitgeber haelt den Prozess
  * nicht am Leben.
@@ -1010,7 +1018,8 @@ import {
   GEMINI_SETTINGS_DATEI,
   type EditorInstallResult,
 } from './ambient-hooks.js';
-import { hookHauptlauf, auffrischenHauptlauf } from './ambient-hook.js';
+import { hookHauptlauf, auffrischenHauptlauf, startwissenImportHauptlauf } from './ambient-hook.js';
+import { STARTWISSEN_IMPORT } from './startwissen-hook.js';
 import { rahmeAntwort } from './antwort-rahmen.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath, reportLedgerEntry } from './ambient-ledger.js';
 import {
@@ -1022,7 +1031,7 @@ import {
 } from './uebernahme.js';
 import type { SofortTest } from './sofort-test.js';
 import {
-  WARTE_TAKT_MS, auftragLiegt, nimmAuftrag, sichereKonto, sperreLiegt, startwissenEingeschaltet,
+  WARTE_TAKT_MS, auftragLiegt, nimmAuftrag, sichereKonto, sperreLiegt, startwissenEingeschaltet, type HookImport,
 } from './konto-anlegen.js';
 import { sichereZugang, echterWert } from './zugang.js';
 import { zeitpunkt } from './zeitmessung.js';
@@ -4908,6 +4917,14 @@ if (process.argv[2] === 'ambient-recall') {
 // disk is older than ten minutes. The prompt that started it never waits for it.
 if (process.argv[2] === 'ambient-auffrischen') {
   await auffrischenHauptlauf();
+}
+
+// ── startwissen-import: detached start import of a brand-new Brain ───────────
+// Started by the SessionStart hook that just created the account
+// (ambient-hook.ts legeKontoAn, startwissen-hook.ts). Re-enters this binary when
+// the hook ran as `cachly ambient-recall`.
+if (process.argv[2] === STARTWISSEN_IMPORT) {
+  await startwissenImportHauptlauf(process.argv[3] ?? '');
 }
 
 // ── ambient-credit: agent-reported prevented-token credit (§6.2) ──────────────

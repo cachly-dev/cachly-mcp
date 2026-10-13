@@ -42,6 +42,10 @@
 // Server nimmt ihn mit einem atomaren Umbenennen entgegen (nur einer
 // gewinnt) und startet denselben Import wie nach einem Sofort-Test
 // (startwissen.ts: nur Git-Repo, nur leeres Brain, einmal je Instanz).
+//
+// Seit dem 14.10.2026 importiert ein Nebenlauf des Hooks die Lektionen selbst
+// ueber die API (startwissen-hook.ts) und schreibt den Auftrag erst danach,
+// mit `vomHook`. Der Server rechnet dann nur noch, was die API nicht kann.
 
 import {
   closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync,
@@ -235,15 +239,34 @@ export async function sichereKonto(opt: KontoOptionen): Promise<KontoErgebnis> {
 
 // ── Der Auftrag fuer den Start-Import ────────────────────────────────────────
 
+/** Was der Nebenlauf des Hooks schon ueber die API importiert hat (startwissen-hook.ts). */
+export interface HookImport {
+  art: 'git' | 'startvorrat';
+  /** So viele Lektionen hat die API angenommen. */
+  lektionen: number;
+}
+
 export interface StartwissenAuftrag {
   instanzId: string;
   /** Projektordner des Hooks (CLAUDE_PROJECT_DIR). Der Import liest dessen Git-Geschichte. */
   projekt: string;
   am: string;
+  /** Gesetzt: die Lektionen sind schon da, der Server rechnet nur noch nach. */
+  vomHook?: HookImport;
+}
+
+function leseHookImport(roh: unknown): HookImport | undefined {
+  const h = roh as Partial<HookImport> | null | undefined;
+  if (!h || (h.art !== 'git' && h.art !== 'startvorrat')) return undefined;
+  const lektionen = Number(h.lektionen);
+  return Number.isInteger(lektionen) && lektionen > 0 ? { art: h.art, lektionen } : undefined;
 }
 
 /** Hinterlaesst den Auftrag fuer den MCP-Server. Wirft nie. */
-export function schreibeAuftrag(a: { instanzId: string; projekt: string }, opt: CredentialsHomeOptions = {}): void {
+export function schreibeAuftrag(
+  a: { instanzId: string; projekt: string; vomHook?: HookImport },
+  opt: CredentialsHomeOptions = {},
+): void {
   try {
     const pfad = join(ordner(opt), AUFTRAG);
     mkdirSync(dirname(pfad), { recursive: true });
@@ -272,7 +295,13 @@ export function nimmAuftrag(opt: CredentialsHomeOptions = {}, jetzt: number = Da
     const am = Date.parse(String(roh?.am ?? ''));
     if (!roh || typeof roh.instanzId !== 'string' || !roh.instanzId) return null;
     if (!Number.isFinite(am) || jetzt - am > AUFTRAG_VERFAELLT_MS) return null;
-    return { instanzId: roh.instanzId, projekt: typeof roh.projekt === 'string' ? roh.projekt : '', am: String(roh.am) };
+    const vomHook = leseHookImport(roh.vomHook);
+    return {
+      instanzId: roh.instanzId,
+      projekt: typeof roh.projekt === 'string' ? roh.projekt : '',
+      am: String(roh.am),
+      ...(vomHook ? { vomHook } : {}),
+    };
   } catch {
     return null;
   } finally {

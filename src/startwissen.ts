@@ -40,6 +40,7 @@ import { homedir } from 'node:os';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import type { Redis } from 'ioredis';
 import { safeJsonParse, scanKeys } from './utils.js';
+import type { HookImport } from './konto-anlegen.js';
 import { STARTER_CORPUS_SIZE } from './starter-corpus.js';
 import {
   NAME_VEKTOR_PRAEFIX, VEKTOR_NACHTRAG, VEKTOR_PRAEFIX, ZWEIT_VEKTOR_PRAEFIX, packe, textFuerNamensVektor,
@@ -82,6 +83,12 @@ export type StartwissenErgebnis =
 
 export interface StartwissenUmfeld {
   instanzId: string;
+  /**
+   * Gesetzt, wenn der Nebenlauf des SessionStart-Hooks die Lektionen schon ueber
+   * die API geschickt hat (startwissen-hook.ts). Dann kein Import, nur noch
+   * Marke, Satz, Ereignis und Vektoren (vervollstaendigeHookImport).
+   */
+  vomHook?: HookImport;
   /** getConnection aus index.ts. */
   verbindung: (instanzId: string) => Promise<Redis>;
   /** Fuehrt brain_from_git aus (handleFedbrainTool). */
@@ -215,6 +222,7 @@ export async function lerneAusGitGeschichte(u: StartwissenUmfeld): Promise<Start
   const log = u.protokoll ?? ((z: string) => { process.stderr.write(z); });
   const env = u.env ?? process.env;
   try {
+    if (u.vomHook) return await vervollstaendigeHookImport(u, u.vomHook, log);
     const ordner = resolve(await u.projektOrdner());
     const wurzel = await (u.gitWurzel ?? echteGitWurzel)(ordner);
     if (!wurzel) {
@@ -349,14 +357,74 @@ async function ladeStartvorrat(
 }
 
 /**
+ * Der Nebenlauf des SessionStart-Hooks hat die Lektionen schon ueber POST /learn
+ * geschickt (startwissen-hook.ts), und die API rechnet vec und vecname selbst.
+ * Hier bleibt, was nur der Server kann: die Marke (kein zweiter Import), der
+ * Satz an die erste Antwort, das Ereignis und die Zweitvektoren — die API
+ * schreibt vec2 nur beim Anbieter ollama. Fehlt einer Lektion der Erstvektor
+ * noch, rechnet ihn der Server nach.
+ */
+async function vervollstaendigeHookImport(
+  u: StartwissenUmfeld,
+  vomHook: HookImport,
+  log: (z: string) => void,
+): Promise<StartwissenErgebnis> {
+  const ordner = resolve(await u.projektOrdner());
+  const git = vomHook.art === 'git';
+  const wurzel = git ? (await (u.gitWurzel ?? echteGitWurzel)(ordner)) || ordner : ordner;
+  const redis = await u.verbindung(u.instanzId);
+  const am = new Date().toISOString();
+  const beansprucht = await redis.set(
+    STARTWISSEN_MARKE,
+    JSON.stringify(git
+      ? { stand: 'fertig', am, ordner: wurzel, lektionen: vomHook.lektionen, quelle: 'hook' }
+      : { stand: 'fertig', am, ordner, startvorrat: vomHook.lektionen, quelle: 'hook' }),
+    'NX',
+  );
+  if (beansprucht !== 'OK') return { art: 'schon-erledigt' };
+
+  // Gezaehlt wird, was im Brain steht — nicht, was der Hook meldet.
+  const themen: Array<{ topic: string; lektion: Record<string, unknown> }> = [];
+  for (const schluessel of await scanKeys(redis, 'cachly:lesson:best:*', { max: 1000 })) {
+    const lektion = safeJsonParse<Record<string, unknown>>(await redis.get(schluessel), {});
+    const passt = git
+      ? Array.isArray(lektion.tags) && lektion.tags.includes('brain_from_git')
+      : lektion.source === 'starter';
+    if (passt) themen.push({ topic: schluessel.slice('cachly:lesson:best:'.length), lektion });
+  }
+  if (git) {
+    log(`cachly: the session hook learned ${themen.length} lessons from the git history of ${wurzel}.\n`);
+    if (themen.length > 0) _hinweis = startwissenSatz(themen.length, wurzel);
+    try { u.melde?.(themen.length); } catch { /* ein Ereignis stoert nie */ }
+  } else {
+    log(`cachly: the session hook loaded ${themen.length} starter lessons.\n`);
+    // Dieselben Marken wie brain_seed_starter (handlers/share.ts): kein zweites Saeen.
+    await redis.set(`cachly:stats:born_at:${u.instanzId}`, am, 'EX', 365 * 86400, 'NX').catch(() => undefined);
+    await redis.set(`cachly:brain:starter_seeded:${u.instanzId}`, am, 'EX', 365 * 86400).catch(() => undefined);
+    if (themen.length > 0) _hinweis = startvorratSatz(themen.length);
+    try { u.meldeStartvorrat?.(themen.length); } catch { /* ein Ereignis stoert nie */ }
+  }
+
+  const vektoren = await betteNacheinander(redis, themen, u, log, { nurFehlende: true });
+  return git
+    ? { art: 'fertig', ordner: wurzel, lektionen: themen.length, vektoren }
+    : { art: 'startvorrat', ordner, lektionen: themen.length, vektoren };
+}
+
+/**
  * Vektoren fuer die neuen Lektionen, EINE Anfrage zur Zeit. Gibt zurueck, wie
- * viele Volltext-Vektoren geschrieben wurden.
+ * viele Lektionen danach einen Volltext-Vektor haben.
+ *
+ * `nurFehlende` (Import des Hooks): Die API rechnet vec und vecname nach jedem
+ * /learn selbst, im Hintergrund. Steht der Vektor nach der Pause schon da,
+ * zaehlt er und wird nicht noch einmal gerechnet; ebenso ein vorhandener vec2.
  */
 async function betteNacheinander(
   redis: Redis,
   themen: Array<{ topic: string; lektion: Record<string, unknown> }>,
   u: StartwissenUmfeld,
   log: (z: string) => void,
+  { nurFehlende = false }: { nurFehlende?: boolean } = {},
 ): Promise<number> {
   const einbetten = u.einbetten;
   if (!einbetten || themen.length === 0) return 0;
@@ -373,6 +441,12 @@ async function betteNacheinander(
   for (const { topic, lektion } of themen) {
     try {
       await schlafen(pause);
+      if (nurFehlende && await redis.exists(`${VEKTOR_PRAEFIX}${topic}`)) {
+        await redis.srem(VEKTOR_NACHTRAG, topic);
+        geschrieben++;
+        fehlerInFolge = 0;
+        continue;
+      }
       const v = await einbetten(textFuerVektor({ ...lektion, topic }));
       if (v?.length) {
         await redis.set(`${VEKTOR_PRAEFIX}${topic}`, packe(v), 'EX', LEBENSDAUER_S);
@@ -392,7 +466,7 @@ async function betteNacheinander(
     }
   }
   log(`cachly: search vectors for git lessons: ${geschrieben}/${themen.length}.\n`);
-  if (geschrieben > 0) await betteZweitNach(redis, themen, u, log);
+  if (geschrieben > 0) await betteZweitNach(redis, themen, u, log, nurFehlende);
   return geschrieben;
 }
 
@@ -416,6 +490,7 @@ async function betteZweitNach(
   themen: Array<{ topic: string; lektion: Record<string, unknown> }>,
   u: StartwissenUmfeld,
   log: (z: string) => void,
+  nurFehlende = false,
 ): Promise<number> {
   const einbettenZweit = u.einbettenZweit;
   if (!einbettenZweit) return 0;
@@ -424,6 +499,7 @@ async function betteZweitNach(
   let geschrieben = 0;
   for (const { topic, lektion } of themen) {
     try {
+      if (nurFehlende && await redis.exists(`${ZWEIT_VEKTOR_PRAEFIX}${topic}`)) { geschrieben++; continue; }
       await schlafen(pause);
       const v2 = await einbettenZweit(textFuerVektor({ ...lektion, topic }));
       if (v2?.length) {
