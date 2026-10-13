@@ -16,6 +16,13 @@
 // er den Startvorrat (starter-corpus.ts), wie der Server. Danach schreibt er den
 // Bestand auf der Platte neu: der naechste Prompt hat ihn ohne Abruf.
 //
+// Vorab-Bestand (14.10.2026, Live-Probe mit 0.10.195): Der erste Block kam ab
+// 11 s, weil die neue Instanz so lange startet und /learn erst danach annimmt.
+// Die Lektionen kennt der Nebenlauf aber nach rund 0,3 s. Er legt sie deshalb
+// sofort als Bestand auf die Platte (einblendung.ts schreibeVorabBestand),
+// bevor er auf die Instanz wartet. Sobald sie laeuft, ersetzt der Bestand des
+// Servers den vorab geschriebenen.
+//
 // Was der Server danach noch tut: Er nimmt den Auftrag mit `vomHook` entgegen,
 // setzt die Marke `cachly:startwissen:git`, haengt den Satz an die erste Antwort
 // und rechnet die Zweitvektoren (vec2), die die API nicht schreibt.
@@ -28,7 +35,8 @@ import { gitLesen } from './git-ohne-shell.js';
 import { gitLogArgumente, leseCommits, lektionenJeThema, type GitCommit } from './git-lektionen.js';
 import { STARTWISSEN_COMMITS, ausschlussGrund, echteGitWurzel, startvorratErlaubt } from './startwissen.js';
 import { startwissenEingeschaltet, type HookImport } from './konto-anlegen.js';
-import { holeBestand, type EinblendConfig } from './einblendung.js';
+import { holeBestand, schreibeVorabBestand, type EinblendConfig } from './einblendung.js';
+import type { EinblendLektion } from './einblendung-kern.js';
 
 /** Unterbefehl des Hook-Buendels fuer den Nebenlauf. */
 export const STARTWISSEN_IMPORT = 'startwissen-import';
@@ -116,6 +124,25 @@ function standardGitLog(wurzel: string): string {
   return gitLesen(wurzel, gitLogArgumente('HEAD', STARTWISSEN_COMMITS), { timeoutMs: 20_000 });
 }
 
+/** Vertrauen wie in der API (importVertrauen, lesson_write.go). */
+const VERTRAUEN: Record<Lernanfrage['source'], number> = { brain_from_git: 0.55, starter: 0.9 };
+
+/**
+ * Die Anfragen in der Form, in der /export sie spaeter liefert (writeLesson in
+ * lesson_write.go) — fuer den Vorab-Bestand auf der Platte.
+ */
+export function alsBestand(anfragen: readonly Lernanfrage[], jetzt: Date = new Date()): EinblendLektion[] {
+  const ts = jetzt.toISOString();
+  return anfragen.map((a) => ({
+    ...a,
+    severity: a.severity || 'major',
+    recall_count: 0,
+    confidence: VERTRAUEN[a.source],
+    ts,
+    verified_at: ts,
+  }));
+}
+
 /**
  * Wartet, bis die Instanz laeuft, und sieht nach, ob sie leer ist. Eine
  * startende Instanz antwortet auf /export mit 200, leerer Liste und `note`
@@ -200,6 +227,11 @@ export async function importiereStartwissen(u: HookImportUmfeld): Promise<HookIm
       anfragen = gitAnfragen(leseCommits(aus));
       if (anfragen.length === 0) return { art, lektionen: 0, gesendet: 0 };
     }
+
+    // Die Instanz startet noch (live gemessen: erster Block erst ab 11 s). Die
+    // Lektionen liegen aber schon hier: auf die Platte damit, der naechste
+    // Prompt liest sie dort (einblendung.ts schreibeVorabBestand).
+    schreibeVorabBestand(u.cfg.instanceId, alsBestand(anfragen));
 
     const stand = await bereitUndLeer(u);
     if (stand !== 'leer') return { art: stand };

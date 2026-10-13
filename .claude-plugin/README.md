@@ -170,6 +170,9 @@ Was ein Lauf mit `--plugin` tut:
    erste Block nach 58 s; im Test mit nachgebauter API steht er nach unter 1 s.
    Danach hinterlässt der Nebenlauf dem Server `~/.cachly/startwissen-auftrag.json`
    mit `vomHook`; der Server rechnet nur noch die Zweitvektoren.
+   Live mit 0.10.195 kam der erste Block ab 11 s, so lange startet die Instanz.
+   Seit 0.10.196 legt der Nebenlauf die Lektionen sofort als Bestand auf die
+   Platte, bevor er auf die Instanz wartet; der nächste Prompt liest sie dort.
    `CACHLY_STARTWISSEN=false` schaltet den Import ab.
 4. **Ohne Instanz** (Schlüssel da) endet er mit Exit 0 und ohne Ausgabe.
 

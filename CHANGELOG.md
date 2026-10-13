@@ -7,6 +7,22 @@
 
 ---
 
+## [0.10.196] – 2026-10-14 — *"The first prompt does not wait for the Brain to boot."*
+
+**A fresh plugin install now shows its first lessons about one second after
+the session starts.** Measured live with 0.10.195: the first block came at
+11 s. That is how long the new Brain instance takes to start, and `/learn`
+accepts lessons only after that. The background import builds the lessons
+from `git log` in about 0.3 s, though. It now writes them to the lesson
+stock on disk right away, before it waits for the instance. The next prompt
+reads them there. As soon as the instance runs, the server's stock replaces
+them. In the process test with a starting instance: block in under 2 s.
+
+**A Brain that is not running is no longer read as an empty Brain.** For a
+starting or sleeping instance, `/export` answers with an empty list and a
+`note`. The hook used to overwrite its stock on disk with that empty list.
+It now keeps what it has.
+
 ## [0.10.195] – 2026-10-14 — *"The hook imports, the server only catches up."*
 
 **A fresh plugin install no longer waits for the MCP server before its first

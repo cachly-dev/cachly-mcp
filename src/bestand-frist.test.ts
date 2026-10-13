@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import {
   BESTAND_TTL_JUNG_MS, BESTAND_TTL_KLEIN_MS, BESTAND_TTL_MS, JUNG_FENSTER_MS, KLEIN_LEKTIONEN, bestandFrist,
-  bestandPfad, holeBestand, type EinblendConfig,
+  bestandPfad, holeBestand, schreibeVorabBestand, type EinblendConfig,
 } from './einblendung.js';
 
 /*
@@ -136,5 +136,42 @@ describe('holeBestand: ein junges Brain sieht seine neuen Lektionen', () => {
     const datei = JSON.parse(readFileSync(bestandPfad(cfg.instanceId), 'utf8'));
     expect(Date.now() - datei.seit).toBeLessThan(5000);
     expect(datei.at).toBe(datei.seit);
+  });
+
+  /*
+   * 14.10.2026: /export einer startenden oder schlafenden Instanz antwortet 200
+   * mit leerer Liste und `note` (export_handler.go). Das ist kein leeres Brain.
+   * Bis dahin ueberschrieb SessionStart (force) damit jeden Bestand auf der
+   * Platte, auch den Vorab-Bestand des Start-Imports.
+   */
+  const startet = (async () => {
+    abrufe++;
+    return { ok: true, json: async () => ({ lessons: [], note: 'instance is not running — nothing could be read' }) };
+  }) as unknown as typeof fetch;
+
+  it('Instanz laeuft nicht (leer + note): der Bestand auf der Platte bleibt', async () => {
+    lege(9, { alterMs: 1000, seitMs: 1000 });
+    const r = await holeBestand(cfg, { fetchFn: startet, force: true });
+    expect(r.quelle).toBe('platte-alt');
+    expect(r.lessons.length).toBe(9);
+    expect(JSON.parse(readFileSync(bestandPfad(cfg.instanceId), 'utf8')).lessons.length).toBe(9);
+  });
+
+  it('ein laufendes, leeres Brain (leer, OHNE note) ist leer — wie bisher', async () => {
+    lege(9, { alterMs: 1000, seitMs: 1000 });
+    serverLektionen = [];
+    const r = await holeBestand(cfg, { fetchFn: holen, force: true });
+    expect(r.quelle).toBe('server');
+    expect(r.lessons).toEqual([]);
+  });
+
+  it('Vorab-Bestand: nur auf eine Platte ohne Lektionen, nie ueber einen Bestand vom Server', () => {
+    expect(schreibeVorabBestand(cfg.instanceId, lektionen(3))).toBe(true);
+    expect(JSON.parse(readFileSync(bestandPfad(cfg.instanceId), 'utf8')).lessons.length).toBe(3);
+    lege(9, { alterMs: 1000, seitMs: 1000 });
+    expect(schreibeVorabBestand(cfg.instanceId, lektionen(3))).toBe(false);
+    expect(JSON.parse(readFileSync(bestandPfad(cfg.instanceId), 'utf8')).lessons.length).toBe(9);
+    lege(0, { alterMs: 1000, seitMs: 1000 });
+    expect(schreibeVorabBestand(cfg.instanceId, lektionen(3))).toBe(true);
   });
 });

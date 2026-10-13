@@ -224,6 +224,13 @@ function sperrPfad(instanceId: string, zweck = 'ambient-auffrischen'): string {
  * richtig sortieren KONNTE (api/internal/handler/export_handler.go).
  *
  * Rueckgabe: Array der Lektionen, oder null bei jedem Fehler.
+ *
+ * Eine leere Liste MIT `note` ist ebenfalls null: So antwortet /export, wenn
+ * die Instanz nicht laeuft ("instance is not running — nothing could be
+ * read", export_handler.go). Das ist kein leeres Brain. Bis zum 14.10.2026
+ * ueberschrieb diese Antwort den Bestand auf der Platte mit nichts — auch den
+ * Vorab-Bestand, den der Start-Import eines neuen Brains dort ablegt, waehrend
+ * seine Instanz noch startet (startwissen-hook.ts).
  */
 async function holeVomServer(
   cfg: EinblendConfig,
@@ -235,8 +242,9 @@ async function holeVomServer(
       signal: AbortSignal.timeout(zeitlimitMs),
     });
     if (!res.ok) return null;
-    const j = await res.json() as { lessons?: unknown };
+    const j = await res.json() as { lessons?: unknown; note?: unknown };
     if (!Array.isArray(j?.lessons)) return null;
+    if (j.lessons.length === 0 && typeof j.note === 'string' && j.note) return null;
     // Der Export reicht die gespeicherten Werte roh durch: als Objekt ODER als
     // JSON-Zeichenkette. Beides annehmen.
     return (j.lessons as unknown[])
@@ -262,6 +270,26 @@ function schreibeBestand(pfad: string, lektionen: EinblendLektion[]): void {
     mkdirSync(dirname(pfad), { recursive: true });
     writeFileSync(pfad, JSON.stringify({ at: jetzt, seit, lessons: lektionen }), { mode: 0o600 });
   } catch { /* der Zwischenspeicher ist bestes Bemuehen, kein Muss */ }
+}
+
+/**
+ * Legt einen Bestand ab, bevor der Server ihn liefern kann: die Lektionen, die
+ * der Start-Import eines neuen Brains gerade selbst gebaut hat
+ * (startwissen-hook.ts). Nur, wenn auf der Platte noch keine Lektion liegt —
+ * ein Bestand vom Server geht immer vor. true = geschrieben.
+ *
+ * Warum (14.10.2026): Live gemessen kam der erste Block ab 11 s. So lange
+ * braucht die neue Instanz zum Starten, erst dann nimmt /learn die Lektionen
+ * an. Der Nebenlauf kennt sie aber nach rund 0,3 s. Der naechste Prompt liest
+ * sie von hier; sobald die Instanz laeuft, ersetzt der Bestand des Servers
+ * diesen (BESTAND_TTL_JUNG_MS).
+ */
+export function schreibeVorabBestand(instanceId: string, lektionen: EinblendLektion[]): boolean {
+  if (!instanceId || lektionen.length === 0) return false;
+  const pfad = bestandPfad(instanceId);
+  if ((leseBestand(pfad)?.lessons.length ?? 0) > 0) return false;
+  schreibeBestand(pfad, lektionen);
+  return true;
 }
 
 function leseBestand(pfad: string): { at: number; seit: number; lessons: EinblendLektion[] } | null {

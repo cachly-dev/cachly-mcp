@@ -1,10 +1,15 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
+import { readFileSync, rmSync } from 'node:fs';
 import { STARTER_CORPUS } from './starter-corpus.js';
 import {
-  LERN_PARALLEL, LERN_VERSUCHE, gitAnfragen, hookImportFuerAuftrag, importiereStartwissen,
+  LERN_PARALLEL, LERN_VERSUCHE, alsBestand, gitAnfragen, hookImportFuerAuftrag, importiereStartwissen,
   type HookImportUmfeld,
 } from './startwissen-hook.js';
 import { leseCommits } from './git-lektionen.js';
+import { bestandPfad } from './einblendung.js';
+
+const ID = '11111111-2222-3333-4444-555555555555';
+afterEach(() => rmSync(bestandPfad(ID), { force: true }));
 
 /*
  * Der Start-Import im Nebenlauf des SessionStart-Hooks (14.10.2026): liest
@@ -58,7 +63,7 @@ const LEER = { status: 200, body: { lessons: [] } };
 
 function umfeld(g: Gegenstelle, ueber: Partial<HookImportUmfeld> = {}): HookImportUmfeld {
   return {
-    cfg: { apiUrl: 'http://api.test', jwt: 'cky_trial_x', instanceId: '11111111-2222-3333-4444-555555555555' },
+    cfg: { apiUrl: 'http://api.test', jwt: 'cky_trial_x', instanceId: ID },
     projekt: '/home/ada/projekt',
     env: { HOME: '/home/ada' },
     fetchFn: g.holen,
@@ -102,6 +107,27 @@ describe('importiereStartwissen', () => {
     expect(g.aufrufe[0]).toMatch(/GET .*\/export$/);
     expect(g.aufrufe.at(-1)).toMatch(/GET .*\/export$/);
     expect(hookImportFuerAuftrag(e)).toEqual({ art: 'git', lektionen: 2 });
+  });
+
+  it('Vorab-Bestand: die Lektionen liegen auf der Platte, bevor die Instanz laeuft', async () => {
+    let beimErstenLernen: number | null = null;
+    const g = gegenstelle([{ status: 200, body: { lessons: [], note: 'instance is not running' } }, LEER]);
+    const innen = g.holen;
+    const holen = (async (url: string | URL, init?: RequestInit) => {
+      if (beimErstenLernen === null && String(url).endsWith('/learn')) {
+        beimErstenLernen = JSON.parse(readFileSync(bestandPfad(ID), 'utf8')).lessons.length;
+      }
+      return innen(url, init);
+    }) as typeof fetch;
+    await importiereStartwissen(umfeld(g, { fetchFn: holen }));
+    expect(beimErstenLernen).toBe(2);
+  });
+
+  it('alsBestand: die Form von /export, mit dem Vertrauen der API', () => {
+    const [git] = alsBestand(gitAnfragen(leseCommits(LOG)), new Date('2026-10-14T00:00:00Z'));
+    expect(git).toMatchObject({ topic: 'fix:deploy-connection-refused', confidence: 0.55, recall_count: 0, ts: '2026-10-14T00:00:00.000Z' });
+    const [vorrat] = alsBestand([{ ...gitAnfragen(leseCommits(LOG))[0]!, source: 'starter', severity: undefined }]);
+    expect(vorrat).toMatchObject({ confidence: 0.9, severity: 'major' });
   });
 
   it('startende Instanz (200 mit note) und 503: wartet, bis sie laeuft', async () => {

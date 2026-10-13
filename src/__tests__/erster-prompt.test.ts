@@ -61,6 +61,8 @@ interface Gegenstelle {
   gelernt: Array<Record<string, unknown>>;
   /** true: Gelerntes erscheint im /export (wie bei der echten API). */
   lernenSichtbar: boolean;
+  /** false: die Instanz startet noch — /export leer mit note, /learn 409 (wie die echte API). */
+  laeuft: boolean;
   server: Server;
 }
 
@@ -73,6 +75,7 @@ async function starteGegenstelle(): Promise<Gegenstelle> {
     instanz: `11111111-2222-3333-4444-${Math.random().toString(16).slice(2, 14).padEnd(12, '0')}`,
     gelernt: [] as Array<Record<string, unknown>>,
     lernenSichtbar: false,
+    laeuft: true,
   };
   const server = createServer((req, res) => {
     let rumpf = '';
@@ -97,9 +100,11 @@ async function starteGegenstelle(): Promise<Gegenstelle> {
         return;
       }
       if (pfad.endsWith('/export')) {
+        if (!g.laeuft) return json(200, { lessons: [], note: 'instance is not running — nothing could be read' });
         return json(200, { lessons: g.lektionen.map((l) => JSON.stringify(l)) });
       }
       if (req.method === 'POST' && pfad.endsWith('/learn')) {
+        if (!g.laeuft) return json(409, { error: 'instance not running' });
         const lektion = JSON.parse(rumpf) as Record<string, unknown>;
         g.gelernt.push(lektion);
         if (g.lernenSichtbar) g.lektionen.push({ ...lektion, recall_count: 0 });
@@ -347,6 +352,36 @@ describe('Der erste Prompt nach der Installation', () => {
     expect(kontext).toContain('fail2ban');
     expect(sofortTests().length).toBe(1);
   }, 30_000);
+
+  it('Instanz startet noch: der erste Prompt hat den Block trotzdem — aus dem Vorab-Bestand', async () => {
+    // Live 14.10. mit 0.10.195: Block erst ab 11 s, so lange startet die Instanz.
+    g.laeuft = false;
+    g.lernenSichtbar = true;
+    gitProjekt([
+      'Add project skeleton',
+      'Fix deploy connection refused on node-1: fail2ban banned the deploy channel, ignoreip 10.8.0.0/24',
+    ]);
+    const start = Date.now();
+    await sitzungsStart();
+
+    // Der Nebenlauf legt die selbst gebauten Lektionen sofort auf die Platte.
+    const bestand = bestandPfad(g.instanz);
+    const anzahl = () => { try { return JSON.parse(readFileSync(bestand, 'utf8')).lessons.length as number; } catch { return 0; } };
+    while (anzahl() === 0 && Date.now() - start < 5000) await new Promise((r) => setTimeout(r, 50));
+    expect(anzahl()).toBe(2);
+
+    const r = await prompt();
+    const dauer = Date.now() - start;
+    expect(r.status).toBe(0);
+    expect(JSON.parse(r.stdout).hookSpecificOutput.additionalContext).toContain('fail2ban');
+    expect(dauer, `${dauer} ms`).toBeLessThan(5000);
+    expect(g.gelernt, 'die Instanz laeuft noch nicht').toEqual([]);
+
+    // Die Instanz laeuft: der Import geht durch, der Server bekommt vomHook.
+    g.laeuft = true;
+    const a = await warteAufAuftrag(20_000);
+    expect(a.vomHook).toEqual({ art: 'git', lektionen: 2 });
+  }, 40_000);
 
   it('Brain hat schon Lektionen (ein anderer war schneller): der Hook schickt nichts, der Server bekommt den gewoehnlichen Auftrag', async () => {
     g.lektionen = [LEKTION];
