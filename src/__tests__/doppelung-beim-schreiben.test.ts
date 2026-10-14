@@ -14,6 +14,8 @@ const WINKEL: Record<string, number> = {
   ALT: 0,
   DOPPEL: Math.acos(0.85),
   VERWANDT: -Math.acos(0.76),
+  // Wie DOPPEL, aber der Einbettungsdienst braucht 2,5 s (laenger als DOPPEL_WARTE_MS).
+  LANGSAM: Math.acos(0.85),
 };
 const vektorFuer = (text: string): number[] => {
   const marke = Object.keys(WINKEL).find((m) => text.includes(`[${m}]`)) ?? 'ALT';
@@ -45,6 +47,7 @@ vi.mock('../embeddings.js', async (original) => {
     EMBED_PROVIDER: 'cachly',
     computeEmbedding: vi.fn(async (t: string, opts?: { modell?: string }) => {
       if (opts?.modell) throw new Error('kein Zweitmodell in dieser Probe');
+      if (t.includes('[LANGSAM]')) await new Promise((r) => setTimeout(r, 2500));
       return vektorFuer(t);
     }),
   };
@@ -52,7 +55,7 @@ vi.mock('../embeddings.js', async (original) => {
 
 import { handleBrainTool } from '../handlers/brain.js';
 import { handleAdvancedTool } from '../handlers/advanced.js';
-import { DOPPEL_SCHLUESSEL } from '../doppel-kandidat.js';
+import { DOPPEL_SCHLUESSEL, DOPPEL_WARTE_MS } from '../doppel-kandidat.js';
 import type { Redis } from 'ioredis';
 import { MockRedis } from './redis-mock.js';
 
@@ -67,6 +70,7 @@ describe('Doppelung beim Schreiben: vermerken, im Briefing nennen, nie zusammenl
 
   beforeEach(async () => {
     redis = new MockRedis();
+    geprueft.length = 0;
     await lerne('node1:keycloak-hostname-fest', '[ALT] Keycloak nimmt den Hostnamen fest aus KC_HOSTNAME=auth.cachly.dev, je Produkt geht nicht.');
     await warteAufPruefung('node1:keycloak-hostname-fest');
   });
@@ -93,10 +97,30 @@ describe('Doppelung beim Schreiben: vermerken, im Briefing nennen, nie zusammenl
     expect(await redis.get('cachly:lesson:best:node1:kc-hostname-stillgelegt')).not.toBeNull();
   });
 
+  it('Weg a: die Antwort von learn_from_attempts nennt die Doppelung sofort, mit dem Weg ersetzt', async () => {
+    const antwort = String(await lerne('node1:kc-hostname-stillgelegt', '[DOPPEL] KC_HOSTNAME ist seit 03.09. stillgelegt, Keycloak 26 nimmt den Host aus der Anfrage.'));
+    expect(antwort).toMatch(/Sagt fast dasselbe wie `node1:keycloak-hostname-fest` \(Bedeutung 0\.8[45]\)/);
+    expect(antwort).toContain('ersetzt="node1:keycloak-hostname-fest"');
+  });
+
+  it('Weg a, langsamer Dienst: die Antwort wartet hoechstens DOPPEL_WARTE_MS, der Vermerk kommt trotzdem', async () => {
+    const start = Date.now();
+    const antwort = String(await lerne('node1:kc-langsam', '[LANGSAM] KC_HOSTNAME ist seit 03.09. stillgelegt, Keycloak 26 nimmt den Host aus der Anfrage.'));
+    const dauer = Date.now() - start;
+    expect(dauer).toBeGreaterThanOrEqual(DOPPEL_WARTE_MS - 50);
+    expect(dauer).toBeLessThan(DOPPEL_WARTE_MS + 800);
+    expect(antwort).toContain('Lesson stored');
+    expect(antwort).not.toContain('Sagt fast dasselbe');
+    await vi.waitFor(async () => {
+      expect(Object.keys(await redis.hgetall(DOPPEL_SCHLUESSEL))).toContain('node1:kc-langsam');
+    }, { timeout: 5000 });
+  }, 10_000);
+
   it('GEGENPROBE: bloss verwandt (0,76) -> kein Vermerk, kein Briefing-Abschnitt, 0 Paare', async () => {
-    await lerne('node1:keycloak-realm-export', '[VERWANDT] Der Keycloak-Realm wird als JSON exportiert und im Repo keycloak-deploy gepflegt.');
+    const antwort = String(await lerne('node1:keycloak-realm-export', '[VERWANDT] Der Keycloak-Realm wird als JSON exportiert und im Repo keycloak-deploy gepflegt.'));
     await warteAufPruefung('node1:keycloak-realm-export');
 
+    expect(antwort).not.toContain('Sagt fast dasselbe');
     expect(await redis.hgetall(DOPPEL_SCHLUESSEL)).toEqual({});
     const briefing = String(await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch));
     expect(briefing).not.toContain('Possible duplicates');

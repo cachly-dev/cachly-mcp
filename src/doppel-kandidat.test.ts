@@ -3,7 +3,7 @@ import type { Redis } from 'ioredis';
 import { MockRedis } from './__tests__/redis-mock.js';
 import { Vektorbestand, packe, VEKTOR_PRAEFIX } from './bedeutung.js';
 import {
-  DOPPEL_SCHLUESSEL, DOPPEL_MINDEST_TEXT, doppelPaare, leseDoppelKandidaten, pruefeDoppelung,
+  DOPPEL_SCHLUESSEL, DOPPEL_MINDEST_TEXT, doppelHinweis, doppelPaare, leseDoppelKandidaten, mitFrist, pruefeDoppelung,
   waehleDoppelKandidat, zaehltAlsDoppelung, type DoppelLektion,
 } from './doppel-kandidat.js';
 import { DOPPEL_SCHWELLE } from './rangfolge-stellschrauben.js';
@@ -129,6 +129,30 @@ describe('leseDoppelKandidaten: was das Briefing nennt', () => {
     const k = await leseDoppelKandidaten(redis as unknown as Redis,
       [lek('a'), lek('verknuepft', { ersetzt: 'b' }), lek('b'), lek('alt'), lek('c')], jetzt);
     expect(k).toEqual([]);
+  });
+});
+
+describe('Weg a: Satz in der Antwort und Frist', () => {
+  const k = { neu: 'neu', alt: 'node1:keycloak-hostname-fest', naehe: 0.852, am: '2026-10-14T00:00:00Z' };
+
+  it('nennt Thema, Naehe und den Weg ersetzt', () => {
+    const s = doppelHinweis(k);
+    expect(s).toContain('`node1:keycloak-hostname-fest` (Bedeutung 0.85)');
+    expect(s).toContain('ersetzt="node1:keycloak-hostname-fest"');
+  });
+
+  it('schweigt ohne Kandidat und wenn der Wort-Vorschlag dieselbe Lektion schon nennt', () => {
+    expect(doppelHinweis(null)).toBe('');
+    expect(doppelHinweis(k, '🔁 Das klingt wie eine Korrektur von `node1:keycloak-hostname-fest` …')).toBe('');
+    expect(doppelHinweis(k, '🔁 Das klingt wie eine Korrektur von `node1:anderes` …')).not.toBe('');
+  });
+
+  it('mitFrist: Ergebnis vor der Frist, null danach', async () => {
+    expect(await mitFrist(Promise.resolve(k), 50)).toBe(k);
+    const spaet = new Promise<typeof k>((r) => setTimeout(() => r(k), 200));
+    const start = Date.now();
+    expect(await mitFrist(spaet, 50)).toBeNull();
+    expect(Date.now() - start).toBeLessThan(180);
   });
 });
 

@@ -7,6 +7,19 @@
 
 ---
 
+## [0.10.199] – 2026-10-14 — *"Said at the moment it matters."*
+
+**`learn_from_attempts` now names a possible duplicate in its own answer.**
+Since 0.10.198 the check ran only in the background and showed up in the next
+`session_start`. Now the answer waits for it, at most 1.5 s
+(`DOPPEL_WARTE_MS`): the embedding takes about 280 ms, loading the vector
+stock once per process a little longer. The answer then says which older
+lesson says almost the same, with the cosine, and that `ersetzt` links them.
+If the embedding service is slow or down, the answer comes after 1.5 s (or at
+once, without a vector) and the note for the briefing is still written. The
+older word-based suggestion stays; when it already names the same lesson, the
+new sentence is left out.
+
 ## [0.10.198] – 2026-10-14 — *"Same meaning, different topic."*
 
 **The Brain now notices when a lesson says what an older one already says.**

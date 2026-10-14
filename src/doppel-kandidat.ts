@@ -51,6 +51,14 @@ export const DOPPEL_HALTEN_TAGE = 30;
  * Lektion nicht.
  */
 export const DOPPEL_TTL_S = 90 * 86_400;
+/**
+ * So lange wartet die Antwort von `learn_from_attempts` hoechstens auf die
+ * Pruefung (Weg a, Heinrich 14.10.2026: erst Hintergrund, dann sofort). Die
+ * Einbettung kostet rund 280 ms, das erste Laden des Vektorbestands einmal je
+ * Prozess mehr. Kommt die Pruefung spaeter, fehlt nur der Satz in der
+ * Antwort; der Vermerk fuers Briefing entsteht trotzdem.
+ */
+export const DOPPEL_WARTE_MS = 1500;
 /** So viele naechste Nachbarn werden geprueft. */
 const NACHBARN = 6;
 const TAG_MS = 86_400_000;
@@ -151,6 +159,32 @@ export async function pruefeDoppelung(
   } catch {
     return null;
   }
+}
+
+/**
+ * Wartet hoechstens `ms` auf die Pruefung, sonst null. Der Zeitgeber haelt den
+ * Prozess nicht am Leben (CLI und Hooks enden sonst erst nach der Frist).
+ */
+export async function mitFrist<T>(p: Promise<T | null>, ms: number = DOPPEL_WARTE_MS): Promise<T | null> {
+  let zeitgeber: ReturnType<typeof setTimeout> | undefined;
+  const frist = new Promise<null>((r) => { zeitgeber = setTimeout(() => r(null), ms); zeitgeber.unref?.(); });
+  try {
+    return await Promise.race([p, frist]);
+  } finally {
+    if (zeitgeber) clearTimeout(zeitgeber);
+  }
+}
+
+/**
+ * Der Satz fuer die Antwort von `learn_from_attempts`. Leer, wenn der
+ * Wort-Vorschlag (ersetzung-vorschlag.ts) dieselbe Lektion schon nennt — ein
+ * Paar, zwei Hinweise waere Laerm.
+ */
+export function doppelHinweis(k: DoppelKandidat | null, schonGenannt = ''): string {
+  if (!k || schonGenannt.includes(`\`${k.alt}\``)) return '';
+  return `♻️ Sagt fast dasselbe wie \`${k.alt}\` (Bedeutung ${k.naehe.toFixed(2)}). `
+    + `Ist das die neuere Fassung: dieselbe Lektion noch einmal mit \`ersetzt="${k.alt}"\` und \`grund\` schreiben. `
+    + 'Ist es eine eigene Sache: nichts zu tun.';
 }
 
 /**

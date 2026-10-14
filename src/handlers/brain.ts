@@ -106,7 +106,7 @@ import {
   LESER_TIEFE,
 } from '../rangfolge-stellschrauben.js';
 import { ermittleQuelle, quelleZeile, type LektionsQuelle } from '../herkunft.js';
-import { leseDoppelKandidaten, pruefeDoppelung } from '../doppel-kandidat.js';
+import { doppelHinweis, leseDoppelKandidaten, mitFrist, pruefeDoppelung, type DoppelKandidat } from '../doppel-kandidat.js';
 import { merkeRecall, sitzungsKosten, vergissSitzungsKosten, kostenZeilen } from '../sitzungs-kosten.js';
 
 /**
@@ -1428,6 +1428,14 @@ async function handleBrainToolInner(
       // Vektor — und der Bedeutungsabgleich uebergeht diese eine Lektion still.
       // Das ist der Preis dafuer, dass Lernen immer funktioniert, auch ohne
       // Netz. Wie viele Lektionen einen Vektor haben, meldet brain_doctor.
+      //
+      // Eine Ausnahme mit Frist (14.10.2026, Abhakliste 4.4 Weg a): die
+      // Antwort wartet hoechstens DOPPEL_WARTE_MS auf die Doppelungs-Pruefung,
+      // die direkt hinter dem Volltext-Vektor laeuft. Faellt der Dienst aus,
+      // kommt die Antwort sofort (doppelFertig(null) im Fehlerpfad).
+      let doppelFertig: (k: DoppelKandidat | null) => void = () => { /* ohne Pruefung */ };
+      const doppelPruefung = new Promise<DoppelKandidat | null>((fertig) => { doppelFertig = fertig; });
+      if (!(bestGeschrieben && hasEmbedProvider())) doppelFertig(null);
       if (bestGeschrieben && hasEmbedProvider()) {
         // Der Vermerk entsteht SYNCHRON, vor dem fire-and-forget-Block
         // (0.10.149, Standalone-Beweis 02.09.2026): Die Heilung von
@@ -1439,7 +1447,6 @@ async function handleBrainToolInner(
         await redis.sadd(VEK_NACHTRAG, topic).catch(() => { /* still */ });
         void (async () => {
           const gelesen = safeJsonParse(lesson, {} as Record<string, unknown>);
-          let volltextVektor: number[] | null = null;
           try {
             // geduld 'lang': dieser Block ist fire-and-forget — hier darf der
             // Client ein 429-Fenster absitzen und Netz-Blips wiederholen,
@@ -1452,7 +1459,12 @@ async function handleBrainToolInner(
             if (v?.length) {
               await redis.set(`${VEKTOR_PRAEFIX}${topic}`, packe(v));
               await redis.srem(VEK_NACHTRAG, topic).catch(() => { /* still */ });
-              volltextVektor = v;
+              // Moegliche Doppelung einer aelteren Lektion (doppel-kandidat.ts,
+              // Abhakliste 4.4): gleich hier, denn die Antwort wartet mit
+              // Frist darauf (DOPPEL_WARTE_MS). Vermerkt wird in jedem Fall.
+              doppelFertig(await pruefeDoppelung(redis, { ...gelesen, topic }, v, vektorbestand));
+            } else {
+              doppelFertig(null);
             }
             // Das Zweitmerkmal (rangfolge-stellschrauben.ts): derselbe Text
             // durch ZWEIT_MODELL, eigener Schluesselraum. Nur die Anbieter
@@ -1471,6 +1483,7 @@ async function handleBrainToolInner(
               }
             }
           } catch (e) {
+            doppelFertig(null);
             // Kein Vektor ist besser als keine Lektion — aber der GRUND darf
             // nicht verlorengehen. Vor dem 22.08.2026 stand hier ein leeres
             // catch, und drei Kundeninstanzen hatten Lektionen ohne Vektoren,
@@ -1526,11 +1539,8 @@ async function handleBrainToolInner(
           // ── Der Nachtrag (Karte hcg8neyut0kd Teil c, seit 02.09.2026 als
           // eigene Funktion, damit auch der LESEpfad heilt) ─────────────────
           await heileVektorNachtrag(redis, topic, 3);
-
-          // Moegliche Doppelung einer aelteren Lektion (doppel-kandidat.ts,
-          // Abhakliste 4.4): hier, weil der Vektor ohnehin hier entsteht —
-          // Lernen wartet nicht darauf. Nur ein Vermerk fuers Briefing.
-          if (volltextVektor) await pruefeDoppelung(redis, { ...gelesen, topic }, volltextVektor, vektorbestand);
+          // Ohne Vektor keine Pruefung — die Antwort soll dann nicht bis zur Frist warten.
+          doppelFertig(null);
         })();
       }
 
@@ -1749,6 +1759,8 @@ async function handleBrainToolInner(
       const emoji = outcome === 'success' ? '✅' : outcome === 'partial' ? '⚠️' : '❌';
       const sevEmoji = severity === 'critical' ? '🔴' : severity === 'major' ? '🟡' : '🟢';
       const action = isUpdate ? 'updated' : 'stored';
+      // Weg a (4.4): hoechstens DOPPEL_WARTE_MS auf die Pruefung im Hintergrund.
+      const doppelung = await mitFrist(doppelPruefung);
       return [
         `${emoji} **Lesson ${action}:** \`${topic}\` (${outcome}) ${sevEmoji} ${severity} · Beleg: \`${beleg}\``,
         geschwaerzt.funde.length
@@ -1775,6 +1787,7 @@ async function handleBrainToolInner(
           ? `🔗 Depends on: ${depends_on.map(d => `\`${d}\``).join(', ')} → trace with \`trace_dependency\``
           : '',
         ersetzungsVorschlag,
+        doppelHinweis(doppelung, ersetzungsVorschlag),
         giltFuer.angaben.length
           ? `📦 Gilt fuer ${giltFuer.angaben.map((a) => `\`${a}\``).join(', ')}${giltFuer.uebernommen ? ' (aus der Vorfassung uebernommen)' : ''} — passt das Projekt nicht, steht die Lektion im Abruf hinten und ist markiert.`
           : '',
