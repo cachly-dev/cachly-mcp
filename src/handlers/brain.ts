@@ -261,6 +261,7 @@ import { belegFuer } from '../schreibbeleg.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
 import { VERDACHT_TAG, mitVerdachtTag, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
 import { fuerEigenenSpeicher, hinweise, istMarkiert, markiert, markierungsWarnung, markierungsWarnungAusRohwert, zaehlHinweise } from '../schreibtor.js';
+import { istBlossesThema } from '../blosses-thema.js';
 import { zeitpunkt } from '../zeitmessung.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
@@ -3684,6 +3685,9 @@ async function handleBrainToolInner(
           const l = safeJsonParse<Lesson | null>(raw ?? null, null);
           if (!l) continue;
           if (istMarkiert(l)) { markierteAusgelassen++; continue; }
+          // Blosse Kategorie-Themen ("code:", "deploy:") sind ueberschriebene Reste, kein
+          // Wissen — dieselbe Regel wie die Prompt-Einblendung (blosses-thema.ts).
+          if (istBlossesThema(l.topic)) continue;
           lessons.push(l);
         }
       }
@@ -4440,8 +4444,9 @@ async function handleBrainToolInner(
         const raws = await redis.mget(...lessonKeys);
         for (const raw of raws) {
           const l = safeJsonParse<SummaryLesson | null>(raw ?? null, null);
-          // Markierte Lektionen (tuersteher:verdacht) kommen nicht von selbst in den Kontext.
-          if (l && !istMarkiert(l)) lessons.push(l);
+          // Markierte Lektionen (tuersteher:verdacht) und blosse Kategorie-Themen kommen nicht
+          // von selbst in den Kontext.
+          if (l && !istMarkiert(l) && !istBlossesThema(l.topic)) lessons.push(l);
         }
       }
 

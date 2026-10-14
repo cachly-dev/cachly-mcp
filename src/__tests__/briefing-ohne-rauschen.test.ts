@@ -116,6 +116,23 @@ describe('session_start ohne Rauschen', () => {
     }
   });
 
+  it('blosse Kategorie-Themen (code:, zahlung:) stehen nirgends, auch nicht als Gesetz oder Fokus-Treffer', async () => {
+    // Ueberschriebene Reste der VS-Code-Erweiterung: viele Abrufe, Inhalt ein Code-Stueck.
+    // Gegenprobe: den istBlossesThema-Filter beim Laden in brain.ts entfernen -> rot.
+    await lektion(redis, 'code:', { recall_count: 300, what_worked: '// Cold-start guard: const snapshot = ...' });
+    await lektion(redis, 'zahlung:', { recall_count: 50, what_worked: 'if (x) { return y; }' });
+    for (const werkzeug of ['session_start', 'session_start_summary']) {
+      const b = String(await handleBrainTool(werkzeug, { instance_id: 'i1', author: 'alice', focus: 'zahlung alembic' }, getConn, apiFetch));
+      expect(nennungen(b, 'code:'), `${werkzeug}: code:`).toBe(0);
+      expect(nennungen(b, 'zahlung:'), `${werkzeug}: zahlung:`).toBe(0);
+      expect(b, werkzeug).not.toContain('Cold-start guard');
+    }
+    // Die echten Lektionen bleiben.
+    const b = await briefing();
+    expect(b).toContain('`deploy:bewaehrt`');
+    expect(b).toContain('`zahlung:webhook-idempotenz`');
+  });
+
   it('die Zahlen von Fehlschlaegen und veralteten Lektionen stehen im brain_doctor-Hinweis', async () => {
     const b = await briefing();
     expect(b).toContain('Run `brain_doctor` to fix: 1 open failure, 1 stale lesson.');

@@ -47,6 +47,7 @@ import { spawn } from 'node:child_process';
 import { Einblendbestand, torWoerter, type EinblendLektion } from './einblendung-kern.js';
 import { rahmeEin } from './einblendung-rahmen.js';
 import { istMarkiert } from './verdacht-marke.js';
+import { istBlossesThema } from './blosses-thema.js';
 import { leserText as leserTextZuschnitt } from './seltenheitsbestand.js';
 import { mischeMitLeser } from './leser.js';
 import { LeserSicherung, dateiSpeicher, frageLeser, type LeserAntwort } from './leser-sicherung.js';
@@ -682,7 +683,7 @@ export function sitzungsKontext(alle: EinblendLektion[]): string {
   const sinnvoll = lessons.filter((l) => {
     const topic = String(l.topic ?? '');
     if (/^auto:/.test(topic)) return false;
-    if (/^[a-z]+:?$/.test(topic)) return false;
+    if (istBlossesThema(topic)) return false;
     return true;
   });
   const top = [...(sinnvoll.length ? sinnvoll : lessons)]

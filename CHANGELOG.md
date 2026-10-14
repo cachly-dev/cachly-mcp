@@ -7,6 +7,17 @@
 
 ---
 
+## [0.10.201] – 2026-10-15 — *"Leftovers stay out."*
+
+**`session_start` and `session_start_summary` skip bare category topics like
+`code:` or `deploy:`.** The VS Code extension used to save ambient lessons under
+the bare category, so each new one overwrote the last (one brain had 8 versions
+of `code:`) and collected recalls until it topped "Proven Laws" with a code
+fragment. The prompt injection already skipped them; the briefing now uses the
+same rule (`blosses-thema.ts`). Since the API names such topics on save (PR #800),
+no new ones appear; the old ones stay in the brain and can still be recalled
+explicitly.
+
 ## [0.10.200] – 2026-10-14 — *"A third shorter."*
 
 **`session_start` drops the sections that said nothing about the task.**
