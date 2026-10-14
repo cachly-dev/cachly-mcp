@@ -1815,9 +1815,9 @@ const TOOLS = [
     description:
       'Cognitive memory consolidation — the weekly garbage collector for your AI Brain. ' +
       'Scans all lessons, detects contradictions (same topic with conflicting outcomes), ' +
-      'merges duplicates, flags stale entries (not recalled in 90+ days), and computes a ' +
-      'health score. Returns a full consolidation report with conflicts resolved, ' +
-      'duplicates merged, and a before/after count. ' +
+      'names possible duplicates by meaning (same content under a different topic, cosine ≥ 0.80), ' +
+      'flags stale entries (not recalled in 90+ days), and computes a health score. ' +
+      'Never merges or deletes a lesson; link two with `ersetzt` on learn_from_attempts. ' +
       'Run weekly or when brain_doctor reports > 20 lessons. ' +
       'Like git gc for knowledge.',
     inputSchema: {

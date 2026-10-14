@@ -4,6 +4,9 @@ import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse, darfHeraus } from '../utils.js';
 import { ersparteMinuten, zaehltAlsErsparnis } from '../wertbeitrag.js';
 import { findePaare } from '../zulassung-und-urteil.js';
+import { Vektorbestand } from '../bedeutung.js';
+import { doppelPaare } from '../doppel-kandidat.js';
+import { DOPPEL_SCHWELLE } from '../rangfolge-stellschrauben.js';
 import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
 import { fuerWeitergabe } from '../schreibtor.js';
 
@@ -64,14 +67,20 @@ export async function handleAdvancedTool(
         if (lesson) lessons.set(k, lesson);
       }
 
-      // Detect duplicates: same topic prefix (e.g. deploy:api vs deploy:api-v2)
-      const topicGroups = new Map<string, string[]>();
-      for (const [k, l] of lessons) {
-        const prefix = l.topic.split(':')[0];
-        const group = topicGroups.get(prefix) ?? [];
-        group.push(k);
-        topicGroups.set(prefix, group);
-      }
+      // Moegliche Doppelungen nach Bedeutung (doppel-kandidat.ts, 14.10.2026).
+      //
+      // Bis dahin zaehlte hier "Duplicate clusters" die Gruppen nach dem Wort
+      // vor dem ersten Doppelpunkt — dieselbe Regel, die am 13.08.2026 529 von
+      // 626 Lektionen geloescht hatte, nur noch gezaehlt. Im eigenen Brain
+      // ergab das 81 "Gruppen"; Doppelungen waren es keine (`cachly:*` war
+      // EINE Gruppe). Jetzt: Paare ab DOPPEL_SCHWELLE ueber die
+      // Volltext-Vektoren. Gezaehlt und genannt, nie zusammengelegt.
+      const vektoren = new Vektorbestand(0);
+      await vektoren.aktualisiere(redis).catch(() => { /* ohne Vektoren keine Paare */ });
+      const doppelungen = doppelPaare([...lessons.values()].flatMap((l) => {
+        const vektor = vektoren.rohvektor(l.topic);
+        return vektor ? [{ lektion: l, vektor }] : [];
+      }));
 
       /*
        * ── Widersprueche: Zulassung VOR Urteil (29.08.2026) ─────────────────
@@ -159,7 +168,11 @@ export async function handleAdvancedTool(
         ...contradictions.slice(0, 5).map(c => `  → \`${c.topic}\`: ${c.keys.length} conflicting entries (kept: success)`),
         contradictions.length > 5 ? `  … and ${contradictions.length - 5} more` : '',
         ``,
-        `♻️ **Duplicate clusters (counted, never deleted):** ${Array.from(topicGroups.values()).filter(v => v.length > 1).length}`,
+        `♻️ **Possible duplicates — same meaning, different topic (cosine ≥ ${DOPPEL_SCHWELLE.toFixed(2)}, never merged):** ${doppelungen.length}` +
+          (vektoren.groesse === 0 ? ' (no vectors in this Brain, so nothing could be compared)' : ''),
+        ...doppelungen.slice(0, 5).map(d => `  → \`${d.neu}\` ≈ \`${d.alt}\` (${d.naehe.toFixed(2)})`),
+        doppelungen.length > 5 ? `  … and ${doppelungen.length - 5} more` : '',
+        doppelungen.length > 0 ? `  If the newer one replaces the older, pass \`ersetzt="<older topic>"\` on its next \`learn_from_attempts\`.` : '',
         ``,
         `🕰️ **Stale entries (${stale_days}d, 0 recalls):** ${stale.length}` +
           (stale.length > 0 && !dry_run ? ` → set to expire in 30 days` : ''),

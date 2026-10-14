@@ -7,6 +7,26 @@
 
 ---
 
+## [0.10.198] – 2026-10-14 — *"Same meaning, different topic."*
+
+**The Brain now notices when a lesson says what an older one already says.**
+Lessons often get written twice: a correction, a newer measurement, a later
+state of the same thing, under a new topic and in other words. Words never
+find these: in our own Brain (888 lessons) the highest word overlap between
+two lessons was 0.33. Meaning does: after a lesson is saved, its vector (it
+is computed in the background anyway) is compared with its nearest
+neighbours. From a cosine of 0.80 the pair is noted. Measured on our own
+Brain: 18 pairs from 0.80; after leaving out lessons without text and pairs
+that are already linked, 10 of 15 were real duplicates or corrections and
+the rest follow-up steps of the same series. Saving a lesson does not wait
+for this.
+
+`session_start` names up to three fresh pairs under *Possible duplicates*.
+`memory_consolidate` computes all pairs from the vectors. It replaces the
+old *Duplicate clusters* count, which grouped lessons by the word before the
+first colon: 81 "clusters" in our Brain and not one duplicate. Nothing is
+merged, deleted or chosen. To link two lessons, pass `ersetzt` as before.
+
 ## [0.10.197] – 2026-10-14 — *"Half an import is not the whole Brain."*
 
 **A prompt during the first import no longer loses lessons.** Measured live

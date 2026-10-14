@@ -106,6 +106,7 @@ import {
   LESER_TIEFE,
 } from '../rangfolge-stellschrauben.js';
 import { ermittleQuelle, quelleZeile, type LektionsQuelle } from '../herkunft.js';
+import { leseDoppelKandidaten, pruefeDoppelung } from '../doppel-kandidat.js';
 import { merkeRecall, sitzungsKosten, vergissSitzungsKosten, kostenZeilen } from '../sitzungs-kosten.js';
 
 /**
@@ -1438,6 +1439,7 @@ async function handleBrainToolInner(
         await redis.sadd(VEK_NACHTRAG, topic).catch(() => { /* still */ });
         void (async () => {
           const gelesen = safeJsonParse(lesson, {} as Record<string, unknown>);
+          let volltextVektor: number[] | null = null;
           try {
             // geduld 'lang': dieser Block ist fire-and-forget — hier darf der
             // Client ein 429-Fenster absitzen und Netz-Blips wiederholen,
@@ -1450,6 +1452,7 @@ async function handleBrainToolInner(
             if (v?.length) {
               await redis.set(`${VEKTOR_PRAEFIX}${topic}`, packe(v));
               await redis.srem(VEK_NACHTRAG, topic).catch(() => { /* still */ });
+              volltextVektor = v;
             }
             // Das Zweitmerkmal (rangfolge-stellschrauben.ts): derselbe Text
             // durch ZWEIT_MODELL, eigener Schluesselraum. Nur die Anbieter
@@ -1523,6 +1526,11 @@ async function handleBrainToolInner(
           // ── Der Nachtrag (Karte hcg8neyut0kd Teil c, seit 02.09.2026 als
           // eigene Funktion, damit auch der LESEpfad heilt) ─────────────────
           await heileVektorNachtrag(redis, topic, 3);
+
+          // Moegliche Doppelung einer aelteren Lektion (doppel-kandidat.ts,
+          // Abhakliste 4.4): hier, weil der Vektor ohnehin hier entsteht —
+          // Lernen wartet nicht darauf. Nur ein Vermerk fuers Briefing.
+          if (volltextVektor) await pruefeDoppelung(redis, { ...gelesen, topic }, volltextVektor, vektorbestand);
         })();
       }
 
@@ -4190,6 +4198,19 @@ async function handleBrainToolInner(
           lines.push(`  ${flag} \`${l.topic}\` — ${ageDays}d stale, ${(conf * 100).toFixed(0)}% confidence`);
         }
         lines.push(`  _Run \`recall_best_solution\` on these to reset their confidence clock._`);
+        lines.push('');
+      }
+
+      // ── Moegliche Doppelungen (doppel-kandidat.ts, Abhakliste 4.4) ────────
+      // Beim Schreiben vermerkt, hier hoechstens drei frische. Nichts wird
+      // zusammengelegt: der Hinweis nennt nur den Weg, `ersetzt`.
+      const doppelungen = await leseDoppelKandidaten(redis, lessons);
+      if (doppelungen.length > 0) {
+        lines.push(`♻️ **Possible duplicates** (same meaning, different topic — nothing is merged):`);
+        for (const d of doppelungen.slice(0, 3)) {
+          lines.push(`  \`${d.neu}\` ≈ \`${d.alt}\` (${d.naehe.toFixed(2)})`);
+        }
+        lines.push(`  _If the newer one replaces the older, pass \`ersetzt="<older topic>"\` on its next \`learn_from_attempts\`._`);
         lines.push('');
       }
 

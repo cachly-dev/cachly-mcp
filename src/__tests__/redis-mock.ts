@@ -149,6 +149,14 @@ export class MockRedis {
     return next;
   }
 
+  async hdel(key: string, ...felder: string[]): Promise<number> {
+    const h = this.hashes.get(key);
+    if (!h) return 0;
+    let weg = 0;
+    for (const f of felder) if (h.delete(f)) weg++;
+    return weg;
+  }
+
   async hgetall(key: string): Promise<Record<string, string>> {
     const h = this.hashes.get(key);
     if (!h) return {};

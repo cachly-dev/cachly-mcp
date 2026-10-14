@@ -112,8 +112,35 @@ export const ZWEIT_MINDESTDECKUNG = 0.8;
  * Zeitstempel-Falle: neuer heisst nicht gueltiger — ein anderer
  * Geltungsbereich kann beide wahr machen). 0,9 liegt bewusst hoch: nur
  * wirklich austauschbar klingende Paare, keine thematischen Nachbarn.
+ *
+ * Gemessen 14.10.2026 am eigenen Brain (888 Volltext-Vektoren): ab 0,9 liegt
+ * genau EIN Paar, zwei `ci:*`-Lektionen ohne Text. Echte Doppelungen liegen
+ * zwischen 0,80 und 0,87 (DOPPEL_SCHWELLE).
  */
 export const NAHDUPLIKAT_SCHWELLE = 0.9;
+
+/**
+ * Ab welcher Naehe eine eben geschriebene Lektion als moegliche Doppelung
+ * einer aelteren gilt (doppel-kandidat.ts). Nur ein Hinweis: nichts wird
+ * zusammengelegt, geloescht oder gewaehlt.
+ *
+ * Gemessen 14.10.2026, je Lektion der naechste AELTERE Nachbar mit anderem
+ * Thema (Volltext-Vektor, bge-m3):
+ *
+ *   Bestand                 p50    p99    ab 0,80   davon echt
+ *   Bench-Korpus (494)      0,66   0,79   4         4 von 4
+ *   eigenes Brain (888)     0,66   0,82   18        10 von 15 *
+ *
+ *   * ohne zwei Paare leerer `ci:*`-Lektionen (DOPPEL_MINDEST_TEXT) und ein
+ *     schon verknuepftes Paar; die uebrigen 5 sind Folgeschritte derselben
+ *     Messreihe, also ebenfalls einen Blick wert.
+ *
+ * Darunter kippt es: 0,77–0,80 im Bench 2 von 6 klar gleich, 0,74–0,77 meist
+ * nur dasselbe Gebiet. Woerter tragen gar nicht: die hoechste
+ * Wort-Ueberlappung zweier Lektionen im eigenen Brain war 0,33.
+ * Skripte: .agent/cachly/messungen/dubletten-*.mjs (Orchestrierungs-Repo).
+ */
+export const DOPPEL_SCHWELLE = 0.8;
 
 /**
  * Wie viele getippte Woerter im Treffer stehen muessen, damit er als Beleg gilt.
