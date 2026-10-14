@@ -2,7 +2,7 @@ import { gitLesen, istCommitHash, pruefeOrdner } from '../git-ohne-shell.js';
 import { createRequire } from 'node:module';
 import type { Redis } from 'ioredis';
 import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
-         CONFIDENCE_WARN_VALUE, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_DAYS } from '../confidence.js';
+         CONFIDENCE_WARN_VALUE } from '../confidence.js';
 import { kurzfassenHinweis } from '../antwort-hinweis.js';
 import { pruefeMeldung, wendeAn, type Pruefmeldung } from '../pruefung-melden.js';
 import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
@@ -45,7 +45,7 @@ export function recallVorschau(key: string, content: string, maxChars: number): 
   const roh = trimTo(content, maxChars);
   return roh ? [roh] : [];
 }
-import type { CKGEdge, CKGNode, PersonNode, ServiceNode } from '../ckg.js';
+import type { CKGEdge, PersonNode, ServiceNode } from '../ckg.js';
 import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
 import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
@@ -3849,6 +3849,15 @@ async function handleBrainToolInner(
         lines.push('');
       }
 
+      // Jede Lektion steht hoechstens EINMAL im Briefing. Gemessen 14.10.2026
+      // an 7 Briefings (je ~11.100 Zeichen): "Recent", "Team this week", die
+      // Liste neuer Lektionen und "Last session decisions" nannten bis zu drei
+      // gleiche Themen. Die Abschnitte tragen ihre Themen hier ein; spaetere
+      // ueberspringen, was schon dasteht. Die Fokus-Treffer zaehlen von Anfang
+      // an als gezeigt — sie stehen unter "Relevant for", nicht anderswo.
+      const relevanteAnzeige = focusLessons.slice(0, 4);
+      const gezeigt = new Set<string>(relevanteAnzeige.map(l => l.topic));
+
       // ── Team-virality: first-team-briefing wow moment ────────────────────
       // When a user joins a team brain (has team lessons from colleagues but
       // has never been briefed on them), show a dedicated "Welcome to your
@@ -3859,7 +3868,7 @@ async function handleBrainToolInner(
           const alreadyBriefed = await redis.get(briefingKey);
           if (!alreadyBriefed) {
             type LessonAny = typeof lessons[0] & { author?: string };
-            const teamLessons = (lessons as LessonAny[]).filter(l => l.author && l.author !== author);
+            const teamLessons = (lessons as LessonAny[]).filter(l => l.author && l.author !== author && !gezeigt.has(l.topic));
             if (teamLessons.length > 0) {
               // Mark briefed so this only fires once
               await redis.set(briefingKey, '1', 'EX', 365 * 86400);
@@ -3880,6 +3889,7 @@ async function handleBrainToolInner(
                 for (const l of tls.slice(0, 2)) {
                   const emoji = l.outcome === 'success' ? '✅' : '⚠️';
                   lines.push(`    ${emoji} \`${l.topic}\` — ${l.what_worked.slice(0, 90)}`);
+                  gezeigt.add(l.topic);
                 }
                 if (tls.length > 2) lines.push(`    … and ${tls.length - 2} more lessons`);
               }
@@ -4017,11 +4027,13 @@ async function handleBrainToolInner(
         const laws = (lessons as LessonPin[])
           .filter(l => !istStarterLektion(l))
           .filter(l => l.outcome === 'success' && (l.pinned === true || (l.recall_count ?? 0) >= CRYSTALLIZE_RECALLS))
+          .filter(l => !gezeigt.has(l.topic))
           .sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0))
           .slice(0, 5);
         if (laws.length > 0) {
           lines.push(`📌 **Proven Laws** (auto-crystallized — your most-trusted knowledge):`);
           for (const l of laws) {
+            gezeigt.add(l.topic);
             const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
             const rc  = l.recall_count ?? 0;
             const why = l.pinned === true ? 'pinned' : `recalled ${rc}×`;
@@ -4032,51 +4044,14 @@ async function handleBrainToolInner(
         }
       }
 
-      // ── Layer 7: MCM Domain Coverage Map ────────────────────────────────────
-      if (lessons.length >= 3) {
-        const domainMap = new Map<string, { total: number; success: number; critical: number }>();
-        for (const l of lessons) {
-          const dom = l.topic.split(':')[0] ?? 'other';
-          if (!domainMap.has(dom)) domainMap.set(dom, { total: 0, success: 0, critical: 0 });
-          const d = domainMap.get(dom)!;
-          d.total++;
-          if (l.outcome === 'success') d.success++;
-          if (l.severity === 'critical') d.critical++;
-        }
-        const sorted = [...domainMap.entries()].sort((a, b) => b[1].total - a[1].total).slice(0, 6);
-        const hasContestedDomains = sorted.some(([, d]) => d.success < d.total * 0.4 && d.total >= 2);
-        if (sorted.length > 0) {
-          lines.push(`🗺️ **Knowledge Coverage:**`);
-          for (const [dom, d] of sorted) {
-            const pct = Math.round((d.success / d.total) * 100);
-            const filled = Math.round(pct / 10);
-            const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
-            const flag = d.critical > 0 ? ' 🔴' : pct < 40 && d.total >= 2 ? ' ⚠️' : '';
-            lines.push(`  ${bar} ${dom.padEnd(18)} ${String(pct).padStart(3)}% (${d.success}/${d.total} confirmed)${flag}`);
-          }
-          if (hasContestedDomains) {
-            lines.push(`  ⚠️ _Some domains have contested beliefs — use \`ckg_inspect\` to review_`);
-          }
-          lines.push('');
-        }
-      }
-
-      // Alle CKG-Knotenschluessel, EINMAL je Aufruf gelesen. Lueckensuche und
-      // Risiko-Vorschau filtern danach im Speicher. Vorher scannte jede der
-      // beiden je Fokuswort den ganzen Bestand mit COUNT 10 bzw. 20: bei 22.147
-      // Schluesseln 5.269 SCAN-Aufrufe und 208 s fuer ein session_start
-      // (gemessen 07.10.2026). SCAN liest bei jedem MATCH den ganzen Bestand,
-      // COUNT bestimmt nur, wie viele Runden das dauert.
-      const CKG_KNOTEN = 'cachly:ckg:node:';
-      let ckgKnotenCache: string[] | null = null;
-      const ckgKnoten = async (): Promise<string[]> => {
-        if (ckgKnotenCache) return ckgKnotenCache;
-        const schluessel: string[] = [];
-        const stream = redis.scanStream({ match: `${CKG_KNOTEN}*`, count: 1000 });
-        await new Promise<void>((res, rej) => { stream.on('data', (b: string[]) => schluessel.push(...b)); stream.on('end', res); stream.on('error', rej); });
-        ckgKnotenCache = schluessel;
-        return schluessel;
-      };
+      // Nicht mehr im Briefing (Messung 14.10.2026, 7 Briefings mit
+      // verschiedenem Fokus): "Knowledge Coverage" war in allen 7 gleich und
+      // nannte keinen Schritt. "Blind spots" meldete fuer auth, alembic und
+      // login "no CKG knowledge", obwohl Lektionen dazu da waren — gefragt
+      // wurde der Begriffsgraph, nicht der Bestand. "Predicted risks" zeigte je
+      // Fokus vier Zeilen "<lektion> co-occurs tag:<ihr eigenes Schlagwort>".
+      // Die beiden letzten lasen dafuer alle CKG-Knoten (22.147 Schluessel).
+      // Fuer die Vorhersage bleibt brain_predict, fuer den Graphen ckg_inspect.
 
       // ── Layer 7 MCM: Active belief conflicts ─────────────────────────────────
       try {
@@ -4096,35 +4071,9 @@ async function handleBrainToolInner(
         }
       } catch { /* non-critical */ }
 
-      // ── Layer 7 MCM: Blind Spot Detection ────────────────────────────────────
-      // If the focus mentions a domain that has no CKG node → surface blind spot
-      if (focus && focus.length > 3) {
-        try {
-          const focusTokens = focus.toLowerCase().replace(/[^a-z0-9\s:_-]/g, ' ').split(/\s+/).filter(t => t.length > 3);
-          const blindSpots: string[] = [];
-          for (const token of focusTokens.slice(0, 6)) {
-            const nodeExists = await redis.exists(`cachly:ckg:node:${token}`);
-            if (!nodeExists) {
-              // Check if any node starts with this token (prefix match)
-              const hatPraefix = (await ckgKnoten()).some(k => k.startsWith(`${CKG_KNOTEN}${token}`));
-              if (!hatPraefix) blindSpots.push(token);
-            }
-          }
-          if (blindSpots.length > 0) {
-            lines.push(`🔭 **Blind spots detected for this focus:**`);
-            for (const bs of blindSpots.slice(0, 3)) {
-              lines.push(`  ⬜ \`${bs}\` — no CKG knowledge. Suggestions:`);
-              lines.push(`     • \`brain_from_git(instance_id="...", concept="${bs}")\` — bootstrap from commits`);
-              lines.push(`     • \`fedbrain_search(query="${bs}")\` — search global commons`);
-            }
-            lines.push('');
-          }
-        } catch { /* non-critical */ }
-      }
-
-      if (focusLessons.length > 0) {
+      if (relevanteAnzeige.length > 0) {
         lines.push(`🎯 **Relevant for "${focus}":**`);
-        for (const l of focusLessons.slice(0, 4)) {
+        for (const l of relevanteAnzeige) {
           const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
           const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
           const body = lessonPreviewLines(l as PreviewLesson);
@@ -4133,40 +4082,18 @@ async function handleBrainToolInner(
         lines.push('');
       }
 
-      // Top lessons — sorted by recall_count desc (most-used = most proven value).
-      // If focus is set, focus-matched lessons already shown above; show remaining here.
+      // Juengste Lektionen — ohne Fokus-Treffer und ohne Gesetze, die stehen schon oben.
+      // "Most valuable" ist entfallen (14.10.2026): Es nannte in allen 7
+      // gemessenen Briefings dieselben drei Lektionen wie "Proven Laws".
       if (lessons.length > 0) {
-        // Auch hier ohne Startvorrat: "Most valuable" soll zeigen, was DIESES
-        // Team gelernt hat, nicht was mitgeliefert wurde.
-        const byRecall = [...lessons].filter(l => !istStarterLektion(l))
-          .sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0));
-        const topRecalled = byRecall.filter(l => (l.recall_count ?? 0) > 0).slice(0, 3);
-        const remaining   = (focusLessons.length > 0 ? lessons.filter(l => !focusLessons.includes(l)) : lessons)
-          .filter(l => !topRecalled.includes(l))
+        const remaining = (focusLessons.length > 0 ? lessons.filter(l => !focusLessons.includes(l)) : lessons)
+          .filter(l => !gezeigt.has(l.topic))
           .slice(0, focusLessons.length > 0 ? 3 : 4);
 
-        if (topRecalled.length > 0) {
-          lines.push(`🏆 **Most valuable** (recalled ${topRecalled[0]!.recall_count}× before):`);
-          for (const l of topRecalled) {
-            const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
-            const sev   = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
-            const rc    = l.recall_count ?? 0;
-            const la     = (l as { authors?: string[]; author?: string }).authors
-              ?? ((l as { author?: string }).author ? [(l as { author?: string }).author!] : []);
-            const nAuthors = new Set(la.filter(Boolean)).size;
-            const trust  = (nAuthors >= 2 && rc >= 5) || rc >= 10 ? ' 🏆'
-              : nAuthors >= 2 || rc >= 5 ? ' ✅' : '';
-            const rct   = rc > 1 ? ` _(${rc}× recalled)_` : '';
-            const body = lessonPreviewLines(l as PreviewLesson);
-            lines.push(`  ${emoji}${sev}${trust} \`${l.topic}\`${rct} — ${body[0] ?? ''}`, ...body.slice(1));
-          }
-          lines.push('');
-        }
-
         if (remaining.length > 0) {
-          const header = topRecalled.length > 0 ? `🕐 **Recent:**` : `🕐 **Recent lessons:**`;
-          lines.push(header);
+          lines.push(`🕐 **Recent lessons:**`);
           for (const l of remaining) {
+            gezeigt.add(l.topic);
             const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
             const sev   = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
             const body = lessonPreviewLines(l as PreviewLesson);
@@ -4187,32 +4114,10 @@ async function handleBrainToolInner(
         }
       }
 
-      // Open failures (lessons whose best-key has outcome != success)
-      const openFailures = lessons.filter(l => l.outcome === 'failure' || l.outcome === 'partial');
-      if (openFailures.length > 0) {
-        lines.push(`⚠️ **Unresolved** (${openFailures.length} topic${openFailures.length > 1 ? 's' : ''} with no success yet):`);
-        for (const l of openFailures.slice(0, 3)) {
-          lines.push(`  ❌ \`${l.topic}\` — ${(l.what_failed ?? l.what_worked).slice(0, 80)}`);
-        }
-        lines.push('');
-      }
-
-      // ── Stale / low-confidence lessons (confidence decay) ─────────────────
-      const staleSuccessLessons = lessons.filter(l => {
-        if (l.outcome !== 'success' && l.outcome !== 'partial') return false;
-        return calculateConfidence(l) < CONFIDENCE_WARN_VALUE;
-      });
-      if (staleSuccessLessons.length > 0) {
-        lines.push(`🔴 **Stale lessons** (not recalled in >${CONFIDENCE_WARN_DAYS}d — verify before applying):`);
-        for (const l of staleSuccessLessons.slice(0, 4)) {
-          const conf = calculateConfidence(l);
-          const ageDays = Math.round((Date.now() - new Date(l.verified_at ?? l.ts).getTime()) / 86400000);
-          const flag = conf < CONFIDENCE_STALE_VALUE ? '🔴' : '⚠️';
-          lines.push(`  ${flag} \`${l.topic}\` — ${ageDays}d stale, ${(conf * 100).toFixed(0)}% confidence`);
-        }
-        lines.push(`  _Run \`recall_best_solution\` on these to reset their confidence clock._`);
-        lines.push('');
-      }
+      // "Unresolved" und "Stale lessons" stehen nicht mehr als Listen hier
+      // (14.10.2026): Sie zeigten in allen 7 gemessenen Briefings dieselben
+      // Themen, unabhaengig von der Aufgabe. Fehlschlaege zur Aufgabe nennt die
+      // PRE-WARNING; die Zahlen nennt der brain_doctor-Hinweis am Ende.
 
       // ── Moegliche Doppelungen (doppel-kandidat.ts, Abhakliste 4.4) ────────
       // Beim Schreiben vermerkt, hier hoechstens drei frische. Nichts wird
@@ -4231,12 +4136,17 @@ async function handleBrainToolInner(
       const lastSessionAny = lastSession as unknown as { decision_log?: Array<{ topic: string; outcome: string; what_worked: string }> } | null;
       if (lastSessionAny?.decision_log?.length) {
         const dl = lastSessionAny.decision_log;
-        const successes = dl.filter(d => d.outcome === 'success');
-        const failures  = dl.filter(d => d.outcome === 'failure');
-        lines.push(`🎬 **Last session decisions** (${dl.length} lessons stored):`);
-        if (successes.length > 0) lines.push(`  ✅ Worked: ${successes.slice(0, 3).map(d => `\`${d.topic}\``).join(', ')}`);
-        if (failures.length > 0)  lines.push(`  ❌ Failed: ${failures.slice(0, 3).map(d => `\`${d.topic}\``).join(', ')}`);
-        lines.push('');
+        // Dasselbe Thema mehrfach im Protokoll und schon gezeigte Themen fallen weg.
+        const neu = dl.filter((d, i) => !gezeigt.has(d.topic) && dl.findIndex(x => x.topic === d.topic) === i);
+        const successes = neu.filter(d => d.outcome === 'success');
+        const failures  = neu.filter(d => d.outcome === 'failure');
+        if (successes.length > 0 || failures.length > 0) {
+          lines.push(`🎬 **Last session decisions** (${dl.length} lessons stored):`);
+          if (successes.length > 0) lines.push(`  ✅ Worked: ${successes.slice(0, 3).map(d => `\`${d.topic}\``).join(', ')}`);
+          if (failures.length > 0)  lines.push(`  ❌ Failed: ${failures.slice(0, 3).map(d => `\`${d.topic}\``).join(', ')}`);
+          lines.push('');
+          for (const d of [...successes.slice(0, 3), ...failures.slice(0, 3)]) gezeigt.add(d.topic);
+        }
       }
 
       // ── 🔮 Predictive Pre-Warning — intent-based danger detection ────────────
@@ -4305,7 +4215,7 @@ async function handleBrainToolInner(
         type LessonAny = typeof lessons[0] & { author?: string };
         const oneWeekAgo = Date.now() - 7 * 86_400_000;
         const teamLessons = (lessons as LessonAny[]).filter(l =>
-          l.author && l.author !== author && new Date(l.ts).getTime() > oneWeekAgo,
+          l.author && l.author !== author && new Date(l.ts).getTime() > oneWeekAgo && !gezeigt.has(l.topic),
         );
         if (teamLessons.length > 0) {
           // Group by author
@@ -4321,6 +4231,7 @@ async function handleBrainToolInner(
             for (const l of tls.slice(0, 3)) {
               const emoji = l.outcome === 'success' ? '✅' : l.outcome === 'partial' ? '⚠️' : '❌';
               lines.push(`    ${emoji} \`${l.topic}\` — ${l.what_worked.slice(0, 80)}`);
+              gezeigt.add(l.topic);
             }
             if (tls.length > 3) lines.push(`    … and ${tls.length - 3} more`);
           }
@@ -4379,60 +4290,6 @@ async function handleBrainToolInner(
         }
       } catch { /* non-critical */ }
 
-      // ── 🔮 PPE: Predictive Pre-fetch — CKG-powered risk detection ────────────
-      // Layer 4: Before starting any work, scan the CKG for nodes matching focus
-      // tokens and traverse causal edges to surface predicted failure points inline.
-      // This is the PPE "pre-fetch" that was previously only available via brain_predict.
-      if (focus && focus.length > 3) {
-        try {
-          const ppeFocusTokens = focus.toLowerCase().replace(/[^a-z0-9\s\-_:]/g, ' ').split(/\s+/).filter(t => t.length > 2).slice(0, 5);
-          type PPEPrediction = { concept: string; edgeType: string; target: string; confidence: number; lesson?: { what_worked?: string; topic: string } };
-          const ppePredictions: PPEPrediction[] = [];
-
-          for (const token of ppeFocusTokens) {
-            const nodeKeys = (await ckgKnoten()).filter(k => k.slice(CKG_KNOTEN.length).includes(token));
-
-            for (const nk of nodeKeys.slice(0, 3)) {
-              const nodeRaw = await redis.get(nk);
-              if (!nodeRaw) continue;
-              const node = safeJsonParse<CKGNode | null>(nodeRaw, null);
-              if (!node) continue;
-              const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${node.id}`);
-              for (const ek of edgeKeys.slice(0, 15)) {
-                const edgeRaw = await redis.get(ek);
-                if (!edgeRaw) continue;
-                const edge = safeJsonParse<CKGEdge | null>(edgeRaw, null);
-                if (!edge) continue;
-                if (edge.edgeType !== 'causes' && edge.edgeType !== 'co-occurs' && edge.edgeType !== 'fixes') continue;
-                if (edge.confidence < 0.35) continue;
-                const lessonKey = edge.edgeType === 'fixes' ? `cachly:lesson:best:${edge.from}` : `cachly:lesson:best:${edge.to}`;
-                const lessonRaw = await redis.get(lessonKey);
-                const lesson = safeJsonParse<{ what_worked?: string; topic: string } | null>(lessonRaw, null);
-                ppePredictions.push({ concept: node.id, edgeType: edge.edgeType, target: edge.to, confidence: edge.confidence, lesson: lesson ?? undefined });
-              }
-            }
-          }
-
-          const ppeSeen = new Set<string>();
-          const ppeUniq = ppePredictions
-            .filter(p => { const k = `${p.concept}:${p.target}`; if (ppeSeen.has(k)) return false; ppeSeen.add(k); return true; })
-            .sort((a, b) => b.confidence - a.confidence)
-            .slice(0, 4);
-
-          if (ppeUniq.length > 0) {
-            lines.push(`🔮 **Predicted risks for "${focus}"** (PPE pre-fetch):`);
-            for (const p of ppeUniq) {
-              const confPct = Math.round(p.confidence * 100);
-              const icon = p.edgeType === 'causes' ? '⚡' : p.edgeType === 'fixes' ? '🔧' : '🔄';
-              lines.push(`  ${icon} **${confPct}%** \`${p.concept}\` ${p.edgeType} \`${p.target}\``);
-              if (p.lesson?.what_worked) lines.push(`     ✅ ${(p.lesson.what_worked as string).slice(0, 110)}`);
-            }
-            lines.push(`  _Full analysis: \`brain_predict(context="${focus}")\`_`);
-            lines.push('');
-          }
-        } catch { /* non-critical — never block session start */ }
-      }
-
       // ── 📐 MCM Confidence Calibration — 30-day accuracy pass ─────────────────
       // Layer 7: Periodically check if high-confidence lessons are actually reliable.
       // If last calibration was >30 days ago (or never), run a quick pass.
@@ -4482,31 +4339,20 @@ async function handleBrainToolInner(
         }
       } catch { /* non-critical */ }
 
-      // ── 🌍 Knowledge Commons — community stats banner ───────────────────────
-      try {
-        const commonsStats = await apiFetch<{
-          total_lessons: number;
-          total_confirms: number;
-          added_last_7_days: number;
-        }>('/api/v1/syndication/stats');
-        if (commonsStats.total_lessons > 0) {
-          lines.push(
-            `🌍 **Commons:** ${commonsStats.total_lessons.toLocaleString()} lessons · ` +
-            `${commonsStats.total_confirms.toLocaleString()} confirms · ` +
-            `+${commonsStats.added_last_7_days} this week`,
-          );
-          lines.push('');
-        }
-      } catch { /* non-critical — never block session start */ }
+      // Die Zahlen der Commons (syndication/stats) stehen nicht mehr im
+      // Briefing (14.10.2026): eine Zeile ohne Bezug zur Aufgabe und ein
+      // Netzaufruf weniger. fedbrain_search und syndicate_stats bleiben.
 
       // ── Brain Doctor hint (Punkt 6) — surface when brain needs attention ───
-      const hasOpenFailures = lessons.filter(l => l.outcome === 'failure' || l.outcome === 'partial').length > 0;
-      const hasStaleLessons = lessons.some(l => l.outcome === 'success' && calculateConfidence(l) < CONFIDENCE_WARN_VALUE);
-      if (lessons.length === 0 || hasOpenFailures || hasStaleLessons) {
+      // Traegt seit 14.10.2026 die Zahlen, die vorher als eigene Listen
+      // "Unresolved" und "Stale lessons" dastanden.
+      const openFailureCount = lessons.filter(l => l.outcome === 'failure' || l.outcome === 'partial').length;
+      const staleCount = lessons.filter(l => l.outcome === 'success' && calculateConfidence(l) < CONFIDENCE_WARN_VALUE).length;
+      if (lessons.length === 0 || openFailureCount > 0 || staleCount > 0) {
         const reasons: string[] = [];
         if (lessons.length === 0) reasons.push('brain is empty');
-        if (hasOpenFailures) reasons.push('open failures');
-        if (hasStaleLessons) reasons.push('stale lessons');
+        if (openFailureCount > 0) reasons.push(`${openFailureCount} open failure${openFailureCount > 1 ? 's' : ''}`);
+        if (staleCount > 0) reasons.push(`${staleCount} stale lesson${staleCount > 1 ? 's' : ''}`);
         lines.push(`🩺 _Run \`brain_doctor\` to fix: ${reasons.join(', ')}._`);
       }
 
@@ -4519,15 +4365,18 @@ async function handleBrainToolInner(
         if (autoChangelogEnabled && lastSession?.ts && !isFirstSession) {
           const lastTs = new Date(lastSession.ts).getTime();
           if (!Number.isNaN(lastTs)) {
-            const newLessons = lessons.filter(l => {
+            const alleNeuen = lessons.filter(l => {
               const t = new Date(l.ts).getTime();
               return !Number.isNaN(t) && t > lastTs;
             });
+            // Gelistet wird nur, was oben noch nicht steht; die Zahl im Kopf bleibt die ganze.
+            const newLessons = alleNeuen.filter(l => !gezeigt.has(l.topic));
             if (newLessons.length > 0) {
               const ago = Math.round((Date.now() - lastTs) / 60000);
               const agoStr = ago < 60 ? `${ago}m` : ago < 1440 ? `${Math.round(ago / 60)}h` : `${Math.round(ago / 1440)}d`;
+              const schonOben = alleNeuen.length - newLessons.length;
               lines.push('');
-              lines.push(`📋 **${newLessons.length} new lesson${newLessons.length !== 1 ? 's' : ''} since your last session** (${agoStr} ago):`);
+              lines.push(`📋 **${alleNeuen.length} new lesson${alleNeuen.length !== 1 ? 's' : ''} since your last session** (${agoStr} ago${schonOben > 0 ? `, ${schonOben} already listed above` : ''}):`);
               // Group by category
               const catMap = new Map<string, typeof newLessons>();
               for (const l of newLessons.slice(0, 20)) {

@@ -7,6 +7,25 @@
 
 ---
 
+## [0.10.200] – 2026-10-14 — *"A third shorter."*
+
+**`session_start` drops the sections that said nothing about the task.**
+Measured on 7 real briefings with different focus: on average 11,122
+characters (about 2,780 tokens). Now 7,742, about 30 % less, with the same
+handoff, last session, focus matches, pre-warning, proven laws and roadmap.
+
+- Gone: "Blind spots" (it reported "no CKG knowledge" for words the brain
+  had lessons on), "Predicted risks" (it listed a lesson co-occurring with its
+  own tags), "Knowledge Coverage", "Most valuable" (same lessons as "Proven
+  Laws"), the "Unresolved" and "Stale lessons" lists, and the Commons stats.
+  `brain_predict`, `ckg_inspect`, `brain_doctor` and `syndicate_stats` still
+  show all of that on request.
+- The `brain_doctor` hint now carries the numbers: "180 open failures, 604
+  stale lessons".
+- Every lesson appears at most once. "Recent", "Team this week", the list of
+  new lessons and "Last session decisions" no longer repeat each other.
+- Faster: the two removed sections read every concept-graph key on each call.
+
 ## [0.10.199] – 2026-10-14 — *"Said at the moment it matters."*
 
 **`learn_from_attempts` now names a possible duplicate in its own answer.**

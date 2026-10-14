@@ -747,7 +747,7 @@ const TOOLS = [
     description:
       'Single-call session briefing. Call this at the START of every session INSTEAD of multiple separate smart_recall/recall_best_solution calls. ' +
       'Returns: last session summary, recent lessons sorted by recency, relevant lessons for your focus area, ' +
-      'open failures (topics with only failure outcomes), brain health stats, team telepathy (what teammates learned this week), ' +
+      'brain health stats (counts of open failures and stale lessons), team telepathy (what teammates learned this week), ' +
       'predictive pre-warnings (if your focus area has known failure patterns), and memory crystals (compressed wisdom from old sessions). ' +
       'Also saves a session start marker so session_end can compute duration.',
     inputSchema: {
