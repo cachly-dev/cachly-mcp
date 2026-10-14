@@ -260,16 +260,46 @@ function sicherParsen(s: string): unknown {
 }
 
 /**
+ * Woher ein Bestand kommt, der auf die Platte geht:
+ *   server     Antwort von /export; ein laufender Vorab-Bestand ergaenzt sie
+ *   vorab      die Lektionen des Start-Imports, bevor der Server sie hat
+ *   abschluss  der Start-Import ist fertig: der Server-Stand gilt allein
+ */
+export type BestandArt = 'server' | 'vorab' | 'abschluss';
+
+/**
  * `seit` ist der Zeitpunkt des ERSTEN Bestands dieser Instanz und bleibt bei
  * jedem Neuschreiben stehen. Alte Dateien ohne das Feld gelten als `at`.
+ *
+ * `vorab` haelt die Lektionen des Start-Imports, solange er laeuft. Warum
+ * (14.10.2026, Live-Probe mit 0.10.196): Ein Prompt bei 12 s holte den Stand
+ * des Servers mitten im Import — 13 von 30 Lektionen — und ersetzte damit den
+ * vollen Vorab-Bestand. Bis der Nebenlauf fertig war, fehlten 17 Lektionen.
+ * Jetzt ergaenzt der Vorab-Bestand jeden Server-Stand um die Themen, die dort
+ * noch fehlen. Er endet mit dem Abschluss des Imports oder nach
+ * JUNG_FENSTER_MS, falls der Nebenlauf nie fertig wird.
+ *
+ * Rueckgabe: die Lektionen, die jetzt auf der Platte liegen.
  */
-function schreibeBestand(pfad: string, lektionen: EinblendLektion[]): void {
+function schreibeBestand(pfad: string, lektionen: EinblendLektion[], art: BestandArt = 'server'): EinblendLektion[] {
+  const jetzt = Date.now();
+  const alt = leseBestand(pfad);
+  const seit = alt?.seit ?? jetzt;
+  let vorab: EinblendLektion[] | undefined;
+  if (art === 'vorab') vorab = lektionen;
+  else if (art === 'server' && alt?.vorab && jetzt - seit < JUNG_FENSTER_MS) vorab = alt.vorab;
+  const lessons = art === 'server' && vorab ? ergaenzeUmVorab(lektionen, vorab) : lektionen;
   try {
-    const jetzt = Date.now();
-    const seit = leseBestand(pfad)?.seit ?? jetzt;
     mkdirSync(dirname(pfad), { recursive: true });
-    writeFileSync(pfad, JSON.stringify({ at: jetzt, seit, lessons: lektionen }), { mode: 0o600 });
+    writeFileSync(pfad, JSON.stringify({ at: jetzt, seit, lessons, ...(vorab ? { vorab } : {}) }), { mode: 0o600 });
   } catch { /* der Zwischenspeicher ist bestes Bemuehen, kein Muss */ }
+  return lessons;
+}
+
+/** Der Server-Stand plus jede Vorab-Lektion, deren Thema er noch nicht hat. Der Server geht vor. */
+export function ergaenzeUmVorab(vomServer: EinblendLektion[], vorab: EinblendLektion[]): EinblendLektion[] {
+  const da = new Set(vomServer.map((l) => l.topic));
+  return [...vomServer, ...vorab.filter((l) => !da.has(l.topic))];
 }
 
 /**
@@ -281,23 +311,23 @@ function schreibeBestand(pfad: string, lektionen: EinblendLektion[]): void {
  * Warum (14.10.2026): Live gemessen kam der erste Block ab 11 s. So lange
  * braucht die neue Instanz zum Starten, erst dann nimmt /learn die Lektionen
  * an. Der Nebenlauf kennt sie aber nach rund 0,3 s. Der naechste Prompt liest
- * sie von hier; sobald die Instanz laeuft, ersetzt der Bestand des Servers
- * diesen (BESTAND_TTL_JUNG_MS).
+ * sie von hier. Bis der Import fertig ist, ergaenzen sie jeden Stand vom
+ * Server (schreibeBestand).
  */
 export function schreibeVorabBestand(instanceId: string, lektionen: EinblendLektion[]): boolean {
   if (!instanceId || lektionen.length === 0) return false;
   const pfad = bestandPfad(instanceId);
   if ((leseBestand(pfad)?.lessons.length ?? 0) > 0) return false;
-  schreibeBestand(pfad, lektionen);
+  schreibeBestand(pfad, lektionen, 'vorab');
   return true;
 }
 
-function leseBestand(pfad: string): { at: number; seit: number; lessons: EinblendLektion[] } | null {
+function leseBestand(pfad: string): { at: number; seit: number; lessons: EinblendLektion[]; vorab?: EinblendLektion[] } | null {
   try {
     const c = JSON.parse(readFileSync(pfad, 'utf8'));
     if (Array.isArray(c?.lessons)) {
       const at = Number(c.at) || 0;
-      return { at, seit: Number(c.seit) || at, lessons: c.lessons };
+      return { at, seit: Number(c.seit) || at, lessons: c.lessons, ...(Array.isArray(c.vorab) ? { vorab: c.vorab } : {}) };
     }
   } catch { /* kaputte Datei = kein Bestand */ }
   return null;
@@ -363,6 +393,11 @@ export interface HoleBestandOptionen {
    * wartet der Mensch aufs Briefing.
    */
   lernen?: boolean;
+  /**
+   * Nur der Start-Import nach dem letzten /learn: der Server-Stand gilt allein,
+   * der Vorab-Bestand endet (schreibeBestand).
+   */
+  vorabSchliessen?: boolean;
   /** Nur fuer Tests. */
   fetchFn?: typeof fetch;
 }
@@ -379,7 +414,7 @@ export interface HoleBestandOptionen {
  */
 export async function holeBestand(
   cfg: EinblendConfig,
-  { force = false, nebenlauf, abrufMs = ABRUF_TIMEOUT_MS, lernen = false, fetchFn }: HoleBestandOptionen = {},
+  { force = false, nebenlauf, abrufMs = ABRUF_TIMEOUT_MS, lernen = false, vorabSchliessen = false, fetchFn }: HoleBestandOptionen = {},
 ): Promise<{ lessons: EinblendLektion[]; quelle: BestandQuelle }> {
   if (!cfg.jwt || !cfg.instanceId) return { lessons: [], quelle: 'nicht-eingerichtet' };
   const pfad = bestandPfad(cfg.instanceId);
@@ -391,7 +426,7 @@ export async function holeBestand(
       holeVomServer(cfg, { fetchFn, zeitlimitMs: abrufMs }),
       lernen ? lernenAuffrischen(cfg, { fetchFn }) : undefined,
     ]);
-    if (frisch) { schreibeBestand(pfad, frisch); return { lessons: frisch, quelle: 'server' }; }
+    if (frisch) return { lessons: schreibeBestand(pfad, frisch, vorabSchliessen ? 'abschluss' : 'server'), quelle: 'server' };
     const alt = leseBestand(pfad);
     return alt
       ? { lessons: alt.lessons, quelle: 'platte-alt' }
@@ -409,7 +444,7 @@ export async function holeBestand(
       // naechste Prompt wieder den alten Stand. Scheitert das Holen oder
       // dauert es zu lange, bleibt der alte Stand von der Platte.
       const frisch = await holeVomServer(cfg, { fetchFn, zeitlimitMs: Math.min(abrufMs, JUNG_ABRUF_MS) });
-      if (frisch) { schreibeBestand(pfad, frisch); return { lessons: frisch, quelle: 'server' }; }
+      if (frisch) return { lessons: schreibeBestand(pfad, frisch), quelle: 'server' };
       return { lessons: da.lessons, quelle: 'platte-alt' };
     }
     if (nebenlauf) starteNebenlauf(cfg, nebenlauf);
@@ -417,7 +452,7 @@ export async function holeBestand(
   }
 
   const frisch = await holeVomServer(cfg, { fetchFn, zeitlimitMs: abrufMs });
-  if (frisch) { schreibeBestand(pfad, frisch); return { lessons: frisch, quelle: 'server' }; }
+  if (frisch) return { lessons: schreibeBestand(pfad, frisch), quelle: 'server' };
   return { lessons: [], quelle: 'server-nicht-erreichbar' };
 }
 

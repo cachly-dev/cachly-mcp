@@ -154,6 +154,31 @@ describe('importiereStartwissen', () => {
     const g = gegenstelle([{ status: 200, body: { lessons: ['{"topic":"x"}'] } }]);
     expect((await importiereStartwissen(umfeld(g))).art).toBe('hat-lektionen');
     expect(g.aufrufe.some((a) => a.startsWith('POST'))).toBe(false);
+    // Auf der Platte liegt dann der Stand des Brains, nicht der vorab gebaute.
+    const datei = JSON.parse(readFileSync(bestandPfad(ID), 'utf8'));
+    expect(datei.lessons).toEqual([{ topic: 'x' }]);
+    expect(datei.vorab).toBeUndefined();
+  });
+
+  /*
+   * 14.10.2026: Bis der Import fertig ist, ergaenzt der Vorab-Bestand jeden
+   * halben Stand vom Server (einblendung.ts schreibeBestand). Danach muss er
+   * enden, sonst zeigt die Einblendung Lektionen, die die API abgelehnt hat.
+   */
+  it('nach dem Import gilt der Stand des Servers allein: der Vorab-Bestand endet', async () => {
+    const eine = { status: 200, body: { lessons: [JSON.stringify({ topic: 'fix:deploy-connection-refused', what_worked: 'x' })] } };
+    const g = gegenstelle([LEER, eine], { 'feat:invoice-export': [400] });
+    expect(await importiereStartwissen(umfeld(g))).toMatchObject({ gesendet: 1 });
+    const datei = JSON.parse(readFileSync(bestandPfad(ID), 'utf8'));
+    expect(datei.lessons.map((l: { topic: string }) => l.topic)).toEqual(['fix:deploy-connection-refused']);
+    expect(datei.vorab).toBeUndefined();
+  });
+
+  it('Instanz kommt nie: der Vorab-Bestand bleibt, der Server importiert dieselben Themen selbst', async () => {
+    let uhr = 0;
+    const g = gegenstelle([{ status: 200, body: { lessons: [], note: 'not running' } }]);
+    await importiereStartwissen(umfeld(g, { jetzt: () => uhr, schlafen: async (ms) => { uhr += ms; }, bereitFristMs: 5000 }));
+    expect(JSON.parse(readFileSync(bestandPfad(ID), 'utf8')).vorab.length).toBe(2);
   });
 
   it('409 (Instanz startet noch) wird wiederholt, 400 nicht', async () => {

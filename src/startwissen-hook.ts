@@ -20,8 +20,9 @@
 // 11 s, weil die neue Instanz so lange startet und /learn erst danach annimmt.
 // Die Lektionen kennt der Nebenlauf aber nach rund 0,3 s. Er legt sie deshalb
 // sofort als Bestand auf die Platte (einblendung.ts schreibeVorabBestand),
-// bevor er auf die Instanz wartet. Sobald sie laeuft, ersetzt der Bestand des
-// Servers den vorab geschriebenen.
+// bevor er auf die Instanz wartet. Bis der Import fertig ist, ergaenzt dieser
+// Vorab-Bestand jeden Stand, den ein Prompt vom Server holt; danach gilt der
+// Stand des Servers allein (Live-Probe 0.10.196: bei 12 s sonst 13 statt 30).
 //
 // Was der Server danach noch tut: Er nimmt den Auftrag mit `vomHook` entgegen,
 // setzt die Marke `cachly:startwissen:git`, haengt den Satz an die erste Antwort
@@ -234,11 +235,16 @@ export async function importiereStartwissen(u: HookImportUmfeld): Promise<HookIm
     schreibeVorabBestand(u.cfg.instanceId, alsBestand(anfragen));
 
     const stand = await bereitUndLeer(u);
+    // Hat das Brain schon Lektionen, gilt sein Stand, nicht der vorab gebaute.
+    // Kam die Instanz nie, bleibt der Vorab-Bestand: der Server importiert
+    // dieselben Themen selbst, und nach JUNG_FENSTER_MS endet er ohnehin.
+    if (stand === 'hat-lektionen') await holeBestand(u.cfg, { force: true, vorabSchliessen: true, fetchFn: u.fetchFn });
     if (stand !== 'leer') return { art: stand };
     const gesendet = await sende(u, anfragen);
-    // Der Bestand auf der Platte zeigt danach die neuen Lektionen; der naechste
-    // Prompt liest ihn ohne Abruf (einblendung.ts).
-    if (gesendet > 0) await holeBestand(u.cfg, { force: true, fetchFn: u.fetchFn });
+    // Der Bestand auf der Platte zeigt danach die neuen Lektionen, und der
+    // Vorab-Bestand endet: Bis hierher ergaenzte er jeden halben Stand, den ein
+    // Prompt mitten im Import holte (einblendung.ts schreibeBestand).
+    if (gesendet > 0) await holeBestand(u.cfg, { force: true, vorabSchliessen: true, fetchFn: u.fetchFn });
     return { art, lektionen: anfragen.length, gesendet };
   } catch (e) {
     return { art: 'fehler', grund: e instanceof Error ? e.message : String(e) };

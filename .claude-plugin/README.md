@@ -173,6 +173,8 @@ Was ein Lauf mit `--plugin` tut:
    Live mit 0.10.195 kam der erste Block ab 11 s, so lange startet die Instanz.
    Seit 0.10.196 legt der Nebenlauf die Lektionen sofort als Bestand auf die
    Platte, bevor er auf die Instanz wartet; der nächste Prompt liest sie dort.
+   Seit 0.10.197 ergänzen sie jeden Stand, den ein Prompt mitten im Import vom
+   Server holt (live mit 0.10.196: bei 12 s sonst 13 statt 30 Lektionen).
    `CACHLY_STARTWISSEN=false` schaltet den Import ab.
 4. **Ohne Instanz** (Schlüssel da) endet er mit Exit 0 und ohne Ausgabe.
 

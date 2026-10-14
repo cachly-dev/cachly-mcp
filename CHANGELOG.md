@@ -7,6 +7,18 @@
 
 ---
 
+## [0.10.197] – 2026-10-14 — *"Half an import is not the whole Brain."*
+
+**A prompt during the first import no longer loses lessons.** Measured live
+with 0.10.196: a prompt 12 s after the session start fetched the server's
+stock while the import was still running. It got 13 of 30 lessons and
+replaced the full stock on disk with them. Until the import finished, 17
+lessons were missing. The lessons the import built itself now stay on disk
+next to the server's stock. Every fetch during the import is completed with
+the topics the server does not have yet; the server's version of a topic
+wins. When the import is done, the server's stock alone counts. If the
+import never finishes, this ends after five minutes.
+
 ## [0.10.196] – 2026-10-14 — *"The first prompt does not wait for the Brain to boot."*
 
 **A fresh plugin install now shows its first lessons about one second after

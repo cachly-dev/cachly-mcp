@@ -175,3 +175,83 @@ describe('holeBestand: ein junges Brain sieht seine neuen Lektionen', () => {
     expect(schreibeVorabBestand(cfg.instanceId, lektionen(3))).toBe(true);
   });
 });
+
+/*
+ * Befund 14.10.2026 (Live-Probe mit 0.10.196): Ein Prompt bei 12 s holte den
+ * Stand des Servers mitten im Start-Import, 13 von 30 Lektionen, und ersetzte
+ * damit den vollen Vorab-Bestand. Bis der Nebenlauf fertig war, fehlten dem
+ * Nutzer 17 Lektionen.
+ */
+describe('holeBestand: ein halber Import verdraengt den Vorab-Bestand nicht', () => {
+  let cfg: EinblendConfig;
+  let serverLektionen: Array<{ topic: string; what_worked: string }>;
+  const lektionen = (n: number) => Array.from({ length: n }, (_, i) => ({ topic: `fix:thema-${i}`, what_worked: `Behebung ${i}` }));
+  const holen = (async () => ({ ok: true, json: async () => ({ lessons: serverLektionen.map((l) => JSON.stringify(l)) }) })) as unknown as typeof fetch;
+  const datei = () => JSON.parse(readFileSync(bestandPfad(cfg.instanceId), 'utf8'));
+  /** Laesst den Bestand auf der Platte altern, ohne ihn sonst zu aendern. */
+  const altere = ({ alterMs, seitMs }: { alterMs: number; seitMs: number }) => {
+    const jetzt = Date.now();
+    writeFileSync(bestandPfad(cfg.instanceId), JSON.stringify({ ...datei(), at: jetzt - alterMs, seit: jetzt - seitMs }));
+  };
+
+  beforeEach(() => {
+    cfg = { apiUrl: 'https://api.test', jwt: 'cky_test', instanceId: `inst-vorab-${Math.random().toString(36).slice(2, 10)}` };
+    expect(schreibeVorabBestand(cfg.instanceId, lektionen(30))).toBe(true);
+    serverLektionen = lektionen(13);
+  });
+  afterEach(() => rmSync(bestandPfad(cfg.instanceId), { force: true }));
+
+  it('Prompt bei 12 s, Server hat 13 von 30: der Nutzer sieht alle 30', async () => {
+    altere({ alterMs: 12_000, seitMs: 12_000 });
+    const r = await holeBestand(cfg, { fetchFn: holen });
+
+    expect(r.quelle).toBe('server');
+    expect(r.lessons.length).toBe(30);
+    expect(datei().lessons.length).toBe(30);
+    // Der Vorab-Bestand bleibt, bis der Import fertig ist.
+    expect(datei().vorab.length).toBe(30);
+  });
+
+  it('auch SessionStart (force) mitten im Import behaelt die fehlenden Themen', async () => {
+    altere({ alterMs: 3_000, seitMs: 3_000 });
+    const r = await holeBestand(cfg, { fetchFn: holen, force: true });
+    expect(r.lessons.length).toBe(30);
+  });
+
+  it('die Lektion vom Server geht vor die gleichnamige vorab gebaute', async () => {
+    serverLektionen = [{ topic: 'fix:thema-0', what_worked: 'vom Server' }];
+    altere({ alterMs: 12_000, seitMs: 12_000 });
+    const r = await holeBestand(cfg, { fetchFn: holen });
+    expect(r.lessons.length).toBe(30);
+    expect(r.lessons.filter((l) => l.topic === 'fix:thema-0')).toEqual([{ topic: 'fix:thema-0', what_worked: 'vom Server' }]);
+    expect(r.lessons[0]).toEqual({ topic: 'fix:thema-0', what_worked: 'vom Server' });
+  });
+
+  it('Abschluss des Imports: der Server-Stand gilt allein, der Vorab-Bestand ist weg', async () => {
+    serverLektionen = lektionen(29); // eine Lektion nahm die API nicht an
+    const r = await holeBestand(cfg, { fetchFn: holen, force: true, vorabSchliessen: true });
+    expect(r.lessons.length).toBe(29);
+    expect(datei().vorab).toBeUndefined();
+
+    // Danach ergaenzt nichts mehr: ein spaeterer Stand vom Server gilt, wie er ist.
+    serverLektionen = lektionen(5);
+    altere({ alterMs: 12_000, seitMs: 12_000 });
+    expect((await holeBestand(cfg, { fetchFn: holen })).lessons.length).toBe(5);
+  });
+
+  it('wird der Import nie fertig, endet der Vorab-Bestand nach dem jungen Fenster', async () => {
+    altere({ alterMs: 30_000, seitMs: JUNG_FENSTER_MS + 1000 });
+    const r = await holeBestand(cfg, { fetchFn: holen, force: true });
+    expect(r.lessons.length).toBe(13);
+    expect(datei().vorab).toBeUndefined();
+  });
+
+  it('Instanz laeuft noch nicht (leer + note): der Vorab-Bestand bleibt ganz', async () => {
+    const startet = (async () => ({ ok: true, json: async () => ({ lessons: [], note: 'instance is not running' }) })) as unknown as typeof fetch;
+    altere({ alterMs: 12_000, seitMs: 12_000 });
+    const r = await holeBestand(cfg, { fetchFn: startet });
+    expect(r.quelle).toBe('platte-alt');
+    expect(r.lessons.length).toBe(30);
+    expect(datei().vorab.length).toBe(30);
+  });
+});
