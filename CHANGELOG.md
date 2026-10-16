@@ -7,6 +7,22 @@
 
 ---
 
+## [0.10.207] – 2026-10-16 — *"Your numbers, per Brain."*
+
+**`ambient-stats` shows the net-token balance of the current Brain instance and
+says which one.** The ledger `~/.cachly/ambient-ledger.jsonl` is one file per
+computer. Until 0.10.206 its entries carried no instance, so two projects with
+two Brains were added up into one number.
+
+- Every new entry (hook injections and `ambient-credit`) now records its instance.
+- `ambient-stats` counts only the entries of the instance it finds (from
+  `CACHLY_BRAIN_INSTANCE_ID` or `~/.cachly/credentials.json`). Below that it lists
+  what it left out: older entries without an instance, and how many other
+  instances on this computer have entries.
+- With no instance set, it shows every entry, as before.
+
+---
+
 ## [0.10.206] – 2026-10-16 — *"One commit hook, no key in it."*
 
 **The `brain_watch` tool now installs the same git post-commit hook as `init`.**

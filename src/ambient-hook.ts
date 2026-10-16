@@ -305,7 +305,7 @@ export async function hookAntwort(aufruf: HookAufruf): Promise<string> {
       editor: a.editor,
       fetchFn: a.fetchFn,
       onInject: (tokens, event) => {
-        const entry = { ts: new Date().toISOString(), event, injected: tokens, prevented: 0 };
+        const entry = { ts: new Date().toISOString(), event, injected: tokens, prevented: 0, instanz: cfg.instanceId };
         void appendLedgerEntry(entry);
         gemeldet = reportLedgerEntry(cfg, entry, a.fetchFn); // Spiegel fuer das Team-Dashboard
       },

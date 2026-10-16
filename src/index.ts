@@ -1042,7 +1042,7 @@ import {
 import { hookHauptlauf, auffrischenHauptlauf, startwissenImportHauptlauf } from './ambient-hook.js';
 import { STARTWISSEN_IMPORT } from './startwissen-hook.js';
 import { rahmeAntwort } from './antwort-rahmen.js';
-import { appendLedgerEntry, readLedger, defaultLedgerPath, reportLedgerEntry } from './ambient-ledger.js';
+import { appendLedgerEntry, readLedger, defaultLedgerPath, reportLedgerEntry, teileNachInstanz } from './ambient-ledger.js';
 import {
   resolveApiKey, saveApiKey, saveInstanceId, readSavedApiKey, readInstanceId, type CredentialsHomeOptions,
 } from './credentials.js';
@@ -4937,7 +4937,7 @@ if (process.argv[2] === 'ambient-credit') {
       // enthusiastic claim mask weeks of negative balance.
       const capped = Math.min(tokens, 20_000);
       const note = process.argv.slice(4).join(' ').slice(0, 200) || undefined;
-      const entry = { ts: new Date().toISOString(), event: 'credit', injected: 0, prevented: capped, note };
+      const entry = { ts: new Date().toISOString(), event: 'credit', injected: 0, prevented: capped, note, instanz: cliInstanz() || undefined };
       await appendLedgerEntry(entry);
       await reportAmbientLedgerEvent(process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId, entry); // org dashboard mirror
       console.log(`✅ ambient credit recorded: ${capped} tokens${note ? ` (${note})` : ''}`);
@@ -4951,10 +4951,15 @@ if (process.argv[2] === 'ambient-credit') {
 // ── ambient-stats: the honest net-token readout (§6.2) ────────────────────────
 // Shows injected vs prevented and the NET — even when it is negative.
 if (process.argv[2] === 'ambient-stats') {
-  const entries = await readLedger();
+  // Eine Datei je Rechner, die Zahlen je Instanz (GROW-017). Ohne bekannte
+  // Instanz zaehlt alles, wie bis 0.10.206.
+  const instanz = cliInstanz();
+  const teile = teileNachInstanz(await readLedger(), instanz || undefined);
+  const entries = teile.eigene;
   const bal = netBalance(entries);
   const recent = entries.slice(-5);
   console.log('\n🧠 Ambient Recall — net-token ledger\n');
+  console.log(`   Instance:         ${instanz ? `${instanz.slice(0, 8)}…` : '(none set — showing every entry on this computer)'}`);
   console.log(`   Turns recorded:   ${entries.length}`);
   console.log(`   Injected tokens:  ${bal.injected}`);
   console.log(`   Prevented tokens: ${bal.prevented} (agent-reported via ambient-credit)`);
@@ -4965,6 +4970,11 @@ if (process.argv[2] === 'ambient-stats') {
       const what = e.prevented > 0 ? `+${e.prevented} prevented` : `-${e.injected} injected`;
       console.log(`   • ${e.ts.slice(0, 19)} ${e.event}: ${what}${e.note ? ` (${e.note})` : ''}`);
     }
+  }
+  if (teile.ohneInstanz > 0 || teile.andereInstanzen > 0) {
+    console.log('\n   Not counted above:');
+    if (teile.ohneInstanz > 0) console.log(`   • ${teile.ohneInstanz} older entries without an instance (before 0.10.207)`);
+    if (teile.andereInstanzen > 0) console.log(`   • entries of ${teile.andereInstanzen} other instance${teile.andereInstanzen === 1 ? '' : 's'} on this computer`);
   }
   console.log('');
   process.exit(0);

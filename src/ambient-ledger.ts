@@ -27,6 +27,34 @@ export interface LedgerEntry extends TurnRecord {
   event: string;
   /** Optional free-text note (e.g. what the credit was for). */
   note?: string;
+  /**
+   * Brain-Instanz, fuer die der Eintrag gilt (seit 0.10.207). Die Datei ist eine
+   * je Rechner; ohne dieses Feld mischte `ambient-stats` alle Projekte.
+   */
+  instanz?: string;
+}
+
+export interface LedgerTeile {
+  /** Eintraege dieser Instanz. */
+  eigene: LedgerEntry[];
+  /** Eintraege aus der Zeit vor 0.10.207 (ohne Instanz). */
+  ohneInstanz: number;
+  /** Wie viele ANDERE Instanzen auf diesem Rechner Eintraege haben. */
+  andereInstanzen: number;
+}
+
+/** Teilt das Ledger nach Instanz. Ohne `instanz` zaehlt alles als eigen. Pure. */
+export function teileNachInstanz(entries: LedgerEntry[], instanz: string | undefined): LedgerTeile {
+  if (!instanz) return { eigene: entries, ohneInstanz: 0, andereInstanzen: 0 };
+  const andere = new Set<string>();
+  let ohneInstanz = 0;
+  const eigene: LedgerEntry[] = [];
+  for (const e of entries) {
+    if (!e.instanz) ohneInstanz++;
+    else if (e.instanz === instanz) eigene.push(e);
+    else andere.add(e.instanz);
+  }
+  return { eigene, ohneInstanz, andereInstanzen: andere.size };
 }
 
 /** Default ledger location; overridable for tests via explicit path args. */
@@ -42,6 +70,7 @@ export function serializeEntry(e: LedgerEntry): string {
     injected: Math.max(0, Math.round(e.injected)),
     prevented: Math.max(0, Math.round(e.prevented)),
     ...(e.note ? { note: e.note.slice(0, 200) } : {}),
+    ...(e.instanz ? { instanz: e.instanz } : {}),
   });
 }
 
@@ -63,6 +92,7 @@ export function parseLedger(text: string): LedgerEntry[] {
         injected: Math.max(0, injected),
         prevented: Math.max(0, prevented),
         ...(typeof e.note === 'string' ? { note: e.note } : {}),
+        ...(typeof e.instanz === 'string' && e.instanz ? { instanz: e.instanz } : {}),
       });
     } catch {
       // corrupt line (partial write, manual edit) → skip, never throw
