@@ -1717,8 +1717,9 @@ const TOOLS = [
         project_dir: {
           type: 'string',
           description:
-            'Absolute path to the project root. If provided, writes copilot-instructions.md ' +
-            'to .github/copilot-instructions.md in that directory.',
+            'Absolute path to the project root. If provided, puts the cachly block into ' +
+            '.github/copilot-instructions.md (and CLAUDE.md, .cursor/rules/cachly.mdc, .windsurfrules ' +
+            'when that editor is in use). Text outside the cachly markers is kept.',
         },
         embed_provider: {
           type: 'string',

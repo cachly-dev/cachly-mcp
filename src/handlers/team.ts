@@ -10,6 +10,9 @@ import type { Instance } from './brain.js';
 import { safeJsonParse } from '../utils.js';
 import { ersparteMinuten, istStarterLektion, fmtStunden } from '../wertbeitrag.js';
 import { cachlyUrl } from '../cachly-url.js';
+import {
+  CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, CURSOR_MDC_FRONTMATTER, setzeAnweisungsblock,
+} from '../projektdateien.js';
 import { leseVermerke } from '../aussetzer.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
 import { VERDACHT_TAG, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
@@ -1997,100 +2000,43 @@ Result: Your AI **never solves the same problem twice** and always picks up exac
 
       // ── IDE auto-detection + file writing ────────────────────────────────
       if (project_dir) {
-        const { mkdir, writeFile, access } = await import('node:fs/promises');
+        const { access } = await import('node:fs/promises');
         const { constants } = await import('node:fs');
-
         const exists = async (p: string) => access(p, constants.F_OK).then(() => true).catch(() => false);
 
-        // Detect which IDEs are present based on marker files/dirs
-        interface IdeTarget { ide: string; path: string; content: string }
-        const targets: IdeTarget[] = [];
-        let stopHookWritten = false;
-
-        // GitHub Copilot — always write (universal fallback)
-        targets.push({
-          ide: 'GitHub Copilot',
-          path: join(project_dir, '.github', 'copilot-instructions.md'),
-          content: copilotInstructions,
-        });
-
-        // Claude Code — CLAUDE.md in project root
+        // Wohin geschrieben wird — mit DEMSELBEN Schreiber wie `init`
+        // (setzeAnweisungsblock): Block zwischen den cachly-Markern ersetzen oder
+        // anhaengen, fremder Text bleibt. Bis 0.10.203 schrieb dieses Werkzeug die
+        // Dateien neu (eine vorhandene CLAUDE.md war danach weg), ersetzte in
+        // .claude/settings.json den GANZEN hooks-Schluessel und trug einen Stop-Hook
+        // "npx … checkpoint" ein — einen Befehl, den es nicht gibt (16.10.2026).
+        // Hooks richtet jetzt nur `init`/`autopilot` ein; settings.json bleibt hier unberuehrt.
+        interface IdeTarget { ide: string; path: string; prefix?: string }
+        const targets: IdeTarget[] = [
+          // GitHub Copilot — always (universal fallback)
+          { ide: 'GitHub Copilot', path: join(project_dir, '.github', 'copilot-instructions.md') },
+        ];
         if (await exists(join(project_dir, 'CLAUDE.md')) || await exists(join(project_dir, '.claude'))) {
-          targets.push({
-            ide: 'Claude Code',
-            path: join(project_dir, 'CLAUDE.md'),
-            content: copilotInstructions,
-          });
-
-          // Claude Code Stop-Hook — auto-saves checkpoint when Claude stops responding
-          const claudeDir = join(project_dir, '.claude');
-          await mkdir(claudeDir, { recursive: true });
-          const stopHook = {
-            hooks: {
-              Stop: [
-                {
-                  matcher: '',
-                  hooks: [
-                    {
-                      type: 'command',
-                      command: `npx --yes @cachly-dev/mcp-server@latest checkpoint --instance-id ${instance_id}`,
-                    },
-                  ],
-                },
-              ],
-            },
-          };
-          const settingsPath = join(claudeDir, 'settings.json');
-          let existingSettings: Record<string, unknown> = {};
-          try {
-            const { readFile: rf } = await import('node:fs/promises');
-            existingSettings = JSON.parse(await rf(settingsPath, 'utf-8'));
-          } catch { /* new file */ }
-          const merged = { ...existingSettings, hooks: (stopHook as Record<string, unknown>).hooks };
-          await writeFile(settingsPath, JSON.stringify(merged, null, 2), 'utf-8');
-          stopHookWritten = true;
+          targets.push({ ide: 'Claude Code', path: join(project_dir, 'CLAUDE.md') });
+        }
+        // Cursor liest Regeln aus .cursor/rules/*.mdc (ein Ordner, keine Datei "rules").
+        if (await exists(join(project_dir, '.cursor')) || await exists(join(project_dir, '.cursorrules'))) {
+          targets.push({ ide: 'Cursor', path: join(project_dir, '.cursor', 'rules', 'cachly.mdc'), prefix: CURSOR_MDC_FRONTMATTER });
+        }
+        if (await exists(join(project_dir, '.windsurfrules')) || await exists(join(project_dir, '.windsurf'))) {
+          targets.push({ ide: 'Windsurf', path: join(project_dir, '.windsurfrules') });
         }
 
-        // Cursor — .cursor/rules (new format) or .cursorrules (legacy)
-        if (
-          await exists(join(project_dir, '.cursor')) ||
-          await exists(join(project_dir, '.cursorrules'))
-        ) {
-          const cursorDir = join(project_dir, '.cursor');
-          await mkdir(cursorDir, { recursive: true });
-          targets.push({
-            ide: 'Cursor',
-            path: join(cursorDir, 'rules'),
-            content: copilotInstructions,
-          });
-        }
-
-        // Windsurf — .windsurfrules
-        if (
-          await exists(join(project_dir, '.windsurfrules')) ||
-          await exists(join(project_dir, '.windsurf'))
-        ) {
-          targets.push({
-            ide: 'Windsurf',
-            path: join(project_dir, '.windsurfrules'),
-            content: copilotInstructions,
-          });
-        }
-
-        // VS Code (Copilot) — already covered by .github/copilot-instructions.md above
-        // Continue.dev — .continue/config.json is JSON, not markdown — skip, copilot-instructions handles it
-
+        const block = `${CLAUDE_MD_MARKER_START}\n${copilotInstructions.trim()}\n${CLAUDE_MD_MARKER_END}`;
         const written: string[] = [];
         for (const target of targets) {
-          const dir = target.path.substring(0, target.path.lastIndexOf('/'));
-          await mkdir(dir, { recursive: true });
-          await writeFile(target.path, target.content, 'utf-8');
-          written.push(`✅ [${target.ide}] → \`${target.path.replace(project_dir, '.')}\``);
+          const ergebnis = await setzeAnweisungsblock(target.path, block, target.prefix);
+          const wie = ergebnis === 'written' ? 'written'
+            : ergebnis === 'updated' ? 'cachly block updated, rest of the file unchanged'
+            : 'cachly block appended, your text kept';
+          written.push(`✅ [${target.ide}] → \`${target.path.replace(project_dir, '.')}\` (${wie})`);
         }
-
-        if (stopHookWritten) {
-          written.push(`✅ [Claude Code Stop-Hook] → \`.claude/settings.json\` (auto-checkpoint on stop)`);
-        }
+        written.push('ℹ️ Hooks (session briefing, per-prompt recall) are set up by `npx @cachly-dev/mcp-server@latest init` or `autopilot`.');
 
         lines.push(...written);
       }

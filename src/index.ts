@@ -1022,7 +1022,7 @@ import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain
 import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-proof.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import {
-  CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, EDITOR_FILES, ANWEISUNGS_DATEIEN, blockMuster,
+  CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, EDITOR_FILES, ANWEISUNGS_DATEIEN, setzeAnweisungsblock,
 } from './projektdateien.js';
 import { uninstallBefehl, type UninstallUmgebung } from './uninstall.js';
 import { gitLesen } from './git-ohne-shell.js';
@@ -2497,35 +2497,18 @@ ${CLAUDE_MD_MARKER_END}`;
  * einen weiteren Ordner bekommt.
  */
 export async function writeInstructions(projectDir: string, instanceId: string): Promise<Record<string, 'written'|'updated'|'appended'>> {
-  const { writeFile, appendFile, readFile, mkdir } = await import('node:fs/promises');
   const { existsSync } = await import('node:fs');
-  const { resolve, dirname } = await import('node:path');
+  const { resolve } = await import('node:path');
 
   // `prefix` is written only when the file is created fresh (Cursor .mdc needs it);
-  // on marker-update/append the prefix is left untouched.
+  // on marker-update/append the prefix is left untouched (setzeAnweisungsblock).
   const files: Array<{ path: string; prefix?: string }> = ANWEISUNGS_DATEIEN
     .filter((d) => !d.nurMitIdea || existsSync(resolve(projectDir, '.idea')))
     .map((d) => ({ path: resolve(projectDir, ...d.pfad), prefix: d.prefix }));
-  const block = '\n' + buildClaudeMdBlock(instanceId) + '\n';
+  const block = buildClaudeMdBlock(instanceId);
   const results: Record<string, 'written'|'updated'|'appended'> = {};
-
   for (const { path: file, prefix } of files) {
-    await mkdir(dirname(file), { recursive: true });
-    if (existsSync(file)) {
-      const existing = await readFile(file, 'utf-8');
-      if (existing.includes(CLAUDE_MD_MARKER_START)) {
-        // Idempotent update: replace the existing block (pattern: projektdateien.ts).
-        const updated = existing.replace(blockMuster(), buildClaudeMdBlock(instanceId));
-        await writeFile(file, updated, 'utf-8');
-        results[file] = 'updated';
-        continue;
-      }
-      await appendFile(file, block, 'utf-8');
-      results[file] = 'appended';
-      continue;
-    }
-    await writeFile(file, (prefix ?? '') + block.trimStart(), 'utf-8');
-    results[file] = 'written';
+    results[file] = await setzeAnweisungsblock(file, block, prefix);
   }
   return results;
 }

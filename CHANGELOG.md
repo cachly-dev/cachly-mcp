@@ -7,6 +7,30 @@
 
 ---
 
+## [0.10.204] – 2026-10-16 — *"Your text stays."*
+
+**The `setup_ai_memory` tool no longer overwrites files.** With a `project_dir`
+it now uses the same writer as `init`: it replaces the block between the cachly
+markers, or appends it, or creates the file. Your own text in `CLAUDE.md`,
+`.github/copilot-instructions.md` and `.windsurfrules` stays as it was.
+
+Until 0.10.203 the tool wrote those files from scratch, so an existing `CLAUDE.md`
+was gone afterwards. It also replaced the whole `hooks` key in
+`.claude/settings.json` (your own hooks were gone) and added a Stop hook
+`npx @cachly-dev/mcp-server checkpoint`, a command that does not exist.
+
+- `.claude/settings.json` is no longer touched by this tool. Hooks come from
+  `npx @cachly-dev/mcp-server@latest init` or `autopilot`, as before.
+- Cursor: the block goes to `.cursor/rules/cachly.mdc` (with frontmatter). The tool
+  used to write a file called `.cursor/rules`, which fails when Cursor already keeps
+  a folder there.
+- The output says per file what happened: written, block updated, or block
+  appended with your text kept.
+- Already hit by the old behaviour? `npx @cachly-dev/mcp-server uninstall --dry-run`
+  (0.10.203) lists the broken Stop hook and offers to remove it.
+
+---
+
 ## [0.10.203] – 2026-10-16 — *"A way out."*
 
 **`npx @cachly-dev/mcp-server uninstall` takes back what `init`, `setup` and
