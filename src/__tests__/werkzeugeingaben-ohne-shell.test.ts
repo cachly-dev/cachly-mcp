@@ -24,7 +24,7 @@ import type { Redis } from 'ioredis';
 import { handleBrainTool } from '../handlers/brain.js';
 import { handleFedbrainTool } from '../handlers/fedbrain.js';
 import { buildClsPostCommitHook } from '../cls-hook.js';
-import { buildBrainWatchHook } from '../brain-watch-hook.js';
+import { installBrainWatchHook } from '../brain-watch-hook.js';
 import { browserAdresse, fuerCmd } from '../browser-adresse.js';
 import {
   alsShellWort, beginntMitBindestrich, gitLesen, instanzIdFuerSkript, istCommitHash, pruefeOrdner,
@@ -277,14 +277,13 @@ describe('Hook-Skripte · instance_id und Schluessel bleiben frei von Shell-Zeic
     it(`cls-Hook lehnt instance_id ${JSON.stringify(wert)} ab`, () => {
       expect(() => buildClsPostCommitHook(wert)).toThrow(/instance_id/);
     });
-    it(`brain_watch-Hook lehnt instance_id ${JSON.stringify(wert)} ab`, () => {
-      expect(() => buildBrainWatchHook(wert)).toThrow(/instance_id/);
+    it(`brain_watch-Hook lehnt instance_id ${JSON.stringify(wert)} ab`, async () => {
+      await expect(installBrainWatchHook(tmpdir(), wert)).rejects.toThrow(/instance_id/);
     });
   }
 
-  it('cls-Hook schreibt keinen Schluessel, brain_watch lehnt Shell-Zeichen im Schluessel ab', () => {
+  it('cls-Hook schreibt keinen Schluessel', () => {
     expect(buildClsPostCommitHook('inst-1', 'k"; node x; "')).not.toContain('node x');
-    expect(() => buildBrainWatchHook('inst-1', 'k$(node x)')).toThrow(/Schluessel/);
   });
 
   it('echte Werte gehen durch: UUID als ID, cky_live_… und JWT als Schluessel', () => {
@@ -292,7 +291,6 @@ describe('Hook-Skripte · instance_id und Schluessel bleiben frei von Shell-Zeic
     const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXI';
     expect(buildClsPostCommitHook(uuid, 'cky_live_abc123')).toContain(`CACHLY_BRAIN_INSTANCE_ID="${uuid}"`);
     expect(buildClsPostCommitHook(uuid, jwt)).not.toContain(jwt);
-    expect(buildBrainWatchHook(uuid, jwt)).toContain(`instances/${uuid}/learn`);
   });
 
   it('cls_install_hooks lehnt eine boese instance_id ab und quotet repo_path als ein Wort', async () => {

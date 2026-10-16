@@ -7,6 +7,29 @@
 
 ---
 
+## [0.10.206] – 2026-10-16 — *"One commit hook, no key in it."*
+
+**The `brain_watch` tool now installs the same git post-commit hook as `init`.**
+The hook writes no key into the project. It reads your key when it runs, from
+`$CACHLY_JWT` or `~/.cachly/credentials.json`.
+
+Until 0.10.205 `brain_watch` wrote its own curl block into `.git/hooks/post-commit`:
+
+- With `api_key`, the key stood there in plain text.
+- Without `api_key`, the block only read `$CACHLY_JWT`. Since keys live in
+  `~/.cachly/credentials.json`, that variable is usually empty, so the hook sent
+  nothing.
+- Next to the `init` hook, every commit reached your Brain twice.
+
+Now:
+
+- `brain_watch` removes that old block (your own lines in the hook stay) and
+  installs the `init` hook once.
+- The `api_key` parameter is gone. If a client still sends it, it is not written
+  anywhere, and the answer says so.
+
+---
+
 ## [0.10.205] – 2026-10-16 — *"Your settings stay."*
 
 **`init`, `setup` and `autopilot` leave a `.claude/settings.json` alone when they

@@ -10,7 +10,7 @@ import {
   buildAmbientSettingsHooks,
 } from '../ambient-hooks.js';
 import { installClsPostCommitHook } from '../cls-hook.js';
-import { installBrainWatchHook } from '../brain-watch-hook.js';
+import { ALTER_BRAIN_WATCH_BLOCK } from './alter-brain-watch-block.js';
 import { credentialsPath } from '../credentials.js';
 import { defaultLedgerPath } from '../ambient-ledger.js';
 import { defaultMilestonePath } from '../funnel-milestones.js';
@@ -57,6 +57,13 @@ function schreibe(wurzel: string, rel: string, inhalt: string): string {
   mkdirSync(dirname(p), { recursive: true });
   writeFileSync(p, inhalt, 'utf8');
   return p;
+}
+
+/** Wie brain_watch bis 0.10.205: den alten Block an .git/hooks/post-commit haengen. */
+function altenBrainWatchBlockAnhaengen(d: string): void {
+  const pfad = join(d, '.git', 'hooks', 'post-commit');
+  const vorher = existsSync(pfad) ? readFileSync(pfad, 'utf8') : '';
+  schreibe(d, '.git/hooks/post-commit', (vorher ? vorher.trimEnd() + '\n\n' : '') + ALTER_BRAIN_WATCH_BLOCK + '\n');
 }
 
 function baum(wurzel: string): Record<string, string> {
@@ -298,7 +305,7 @@ describe('entferneGitHookBloecke: post-commit', () => {
     const original = '#!/bin/sh\nnotify-send commit\n';
     const pfad = schreibe(d, '.git/hooks/post-commit', original);
     await installClsPostCommitHook(d, IID);
-    await installBrainWatchHook(d, IID);
+    altenBrainWatchBlockAnhaengen(d);
     const r = entferneGitHookBloecke(readFileSync(pfad, 'utf8'));
     expect(r.entfernt).toEqual(['CLS hook', 'brain_watch hook']);
     expect(r.rest).toBe(original);
@@ -341,7 +348,7 @@ describe('plane und fuehreAus: ein Projekt mit allem, was cachly schreibt', () =
     writeFileSync(join(d, '.mcp.json'), JSON.stringify(mcp, null, 2));
     await writeInstructions(d, IID);
     await installClsPostCommitHook(d, IID);
-    await installBrainWatchHook(d, IID);
+    altenBrainWatchBlockAnhaengen(d);
     await installAmbientHooks(d, IID);
     await installCursorHooks(d, IID);
     await installCopilotHooks(d, IID);

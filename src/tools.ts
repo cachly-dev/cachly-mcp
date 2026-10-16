@@ -2492,10 +2492,11 @@ const TOOLS = [
     name: 'brain_watch',
     description:
       'Install an ambient git post-commit hook that automatically learns from every commit — ' +
-      'no manual brain_from_git needed. After installation every `git commit` silently POSTs ' +
-      'the commit message, SHA, and changed files to the cachly Brain API in the background. ' +
+      'no manual brain_from_git needed. After installation every `git commit` sends ' +
+      'the commit message, SHA, and changed files to the cachly Brain in the background. ' +
+      'It is the same hook `init` installs; no key is written into the project (the hook reads ' +
+      '$CACHLY_JWT or ~/.cachly/credentials.json when it runs). Removes an older brain_watch block. ' +
       'Idempotent: running brain_watch twice installs the hook only once. ' +
-      'Uses curl (not Node/npx) so it works in any environment. ' +
       'The hook always exits 0 and runs asynchronously — it never blocks a commit. ' +
       'Returns the hook path and installation status (written/upgraded/appended/unchanged/skipped-no-git).',
     inputSchema: {
@@ -2503,7 +2504,6 @@ const TOOLS = [
       properties: {
         instance_id: { type: 'string', description: 'Brain instance ID to learn into' },
         project_dir: { type: 'string', description: 'Path to the git repository (default: current directory ".")' },
-        api_key: { type: 'string', description: 'Optional cachly API key (cky_…) to embed in the hook for authentication' },
       },
       required: [],
     },

@@ -1576,11 +1576,7 @@ export async function handleFedbrainTool(
       const { resolve } = await import('node:path');
       const projectDir = resolve(project_dir);
 
-      const { result, hookPath } = await installBrainWatchHook(
-        projectDir,
-        instance_id,
-        api_key as string | undefined,
-      );
+      const { result, hookPath, alterBlockEntfernt } = await installBrainWatchHook(projectDir, instance_id);
 
       if (result === 'skipped-no-git') {
         return [
@@ -1603,9 +1599,11 @@ export async function handleFedbrainTool(
         '',
         `Hook path: \`${hookPath}\``,
         `Instance:  \`${instance_id || '(none — set CACHLY_BRAIN_INSTANCE_ID or pass instance_id)'}\``,
+        ...(alterBlockEntfernt ? [`🧹 Removed the old brain_watch block from this file (it could hold your key in plain text).`] : []),
+        ...(api_key ? [`ℹ️ The api_key you passed was not written into the hook.`] : []),
         '',
-        `Every future commit will automatically teach your Brain.`,
-        `No manual \`brain_from_git\` needed — the hook runs silently in the background.`,
+        `Every future commit will automatically teach your Brain — the same hook \`init\` installs.`,
+        `It reads your key when it runs: \`$CACHLY_JWT\` or \`~/.cachly/credentials.json\`. No key is stored in the project.`,
         '',
         `💡 Verify: \`git commit --allow-empty -m "test brain_watch"\` then \`smart_recall(query="test")\``,
       ].join('\n');
