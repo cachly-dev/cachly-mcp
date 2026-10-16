@@ -227,8 +227,8 @@ export function buildAmbientSettingsHooks(
 //     overwrite the arrays).
 // Never throws — returns a status the caller can log.
 
-const HOOK_DIR = '.claude/hooks';
-const SETTINGS_FILE = '.claude/settings.json';
+export const CLAUDE_HOOK_DIR = '.claude/hooks';
+export const CLAUDE_SETTINGS_DATEI = '.claude/settings.json';
 /** Script filename per event — shared marker `cachly-ambient-` drives upgrades. */
 const SCRIPT_NAMES: Record<AmbientHookEvent, string> = {
   SessionStart: 'cachly-ambient-session-start.mjs',
@@ -328,7 +328,7 @@ export async function installAmbientHooks(
   apiKey?: string,
   options: AmbientInstallOptions = {},
 ): Promise<AmbientInstallResult> {
-  const hookDir = resolve(projectDir, HOOK_DIR);
+  const hookDir = resolve(projectDir, CLAUDE_HOOK_DIR);
   await mkdir(hookDir, { recursive: true });
 
   const opts: AmbientHookOptions = { instanceId, apiKey };
@@ -371,7 +371,7 @@ export async function installAmbientHooks(
   }
 
   // Merge the settings fragment (upgrade-safe: prior ambient groups replaced).
-  const settingsPath = resolve(projectDir, SETTINGS_FILE);
+  const settingsPath = resolve(projectDir, CLAUDE_SETTINGS_DATEI);
   const settingsExisted = existsSync(settingsPath);
   let existingSettings: ClaudeSettings = {};
   if (settingsExisted) {
@@ -384,7 +384,7 @@ export async function installAmbientHooks(
   // `node "<path>"`, so the portable var sits inside the double quotes and is
   // expanded by the shell at hook time.
   const commandFor = (e: AmbientHookEvent) =>
-    options.portable ? `$CLAUDE_PROJECT_DIR/${HOOK_DIR}/${SCRIPT_NAMES[e]}` : pathFor(e);
+    options.portable ? `$CLAUDE_PROJECT_DIR/${CLAUDE_HOOK_DIR}/${SCRIPT_NAMES[e]}` : pathFor(e);
   const { settings, changed } = mergeAmbientSettings(existingSettings, {
     sessionStart: commandFor('SessionStart'),
     userPromptSubmit: commandFor('UserPromptSubmit'),
@@ -425,7 +425,7 @@ export async function installAmbientHooks(
 // `.cursor/hooks/...`, wie in den Beispielen der Doku.
 
 export const CURSOR_HOOK_DIR = '.cursor/hooks';
-const CURSOR_HOOKS_DATEI = '.cursor/hooks.json';
+export const CURSOR_HOOKS_DATEI = '.cursor/hooks.json';
 export const CURSOR_SKRIPT = 'cachly-ambient-cursor.mjs';
 
 /** Zeitlimit je Ereignis in Sekunden (Feld `timeout` in hooks.json). */

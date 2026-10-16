@@ -65,9 +65,9 @@ export const ABKUEHLUNG_HOOK_MS = 10 * 60 * 1000;
 /** Ein Auftrag, der aelter ist, wird verworfen: der Nutzer ist laengst woanders. */
 export const AUFTRAG_VERFAELLT_MS = 24 * 60 * 60 * 1000;
 
-const SPERRE = 'anlegen.lock';
-const FEHLSCHLAG = 'anlegen.fehler';
-const AUFTRAG = 'startwissen-auftrag.json';
+export const SPERRE = 'anlegen.lock';
+export const FEHLSCHLAG = 'anlegen.fehler';
+export const AUFTRAG = 'startwissen-auftrag.json';
 
 /**
  * Darf nach dem Anlegen eines Brains aus der Git-Geschichte gelernt werden?

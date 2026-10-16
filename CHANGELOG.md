@@ -7,6 +7,45 @@
 
 ---
 
+## [0.10.203] – 2026-10-16 — *"A way out."*
+
+**`npx @cachly-dev/mcp-server uninstall` takes back what `init`, `setup` and
+`autopilot` wrote into a project.** It shows your numbers first: the kind of key,
+the lessons in your Brain, the net token balance, and the `export` command to save
+your lessons. Then it lists every file it would touch and what it would do with it.
+`--dry-run` stops there. Otherwise it asks `[y/N]` (`--yes` skips the question; with
+no terminal and no `--yes` it stops and changes nothing).
+
+What it removes, and only that:
+
+- the `cachly` entry in `.mcp.json`, `.cursor/mcp.json`, `.windsurf/mcp.json`,
+  `.vscode/mcp.json`, `.zed/settings.json` and `.continue/config.json`; other servers
+  and settings stay. A file that holds nothing else is deleted.
+- the cachly block between the markers in `CLAUDE.md`, `AGENTS.md`,
+  `.github/copilot-instructions.md`, `.windsurfrules`, `.clinerules`,
+  `.aiassistant/rules/cachly.md` and `.cursor/rules/cachly.mdc`. Your own text stays
+  character for character.
+- the Ambient Recall hooks for Claude Code, Cursor, Copilot, Codex and Gemini: the
+  `cachly-ambient-*` scripts and their entries in `.claude/settings.json`,
+  `.cursor/hooks.json`, `.github/hooks/cachly-ambient.json`, `.codex/hooks.json` and
+  `.gemini/settings.json`, also with Windows paths. Other hooks stay. The broken
+  Stop hook that `setup_ai_memory` wrote (`... checkpoint`, a command that does not
+  exist) goes too.
+- the cachly blocks in `.git/hooks/post-commit`. Your own commands stay.
+- folders that are empty afterwards. Never a folder with other files in it.
+
+A file that is not plain JSON (comments, a byte order mark) is left alone and listed
+under "By hand". So are the Codex and Gemini entries, the JetBrains plugin and the VS
+Code extension. A `.bak` file from an old merge is only reported, never put back.
+
+Your home folder is left alone by default. `uninstall --global` adds `~/.cachly`
+(key, ledger, caches), the `cachly` entry in `~/.claude/mcp.json` and the known cache
+files in the temp folder, with its own question. The text says before you answer that
+other projects on this computer lose their access with the key file.
+
+**Your lessons stay in your cachly account.** `uninstall` never deletes cloud data.
+To erase the account and everything in it, write to privacy@cachly.dev.
+
 ## [0.10.202] – 2026-10-16 — *"The daily commands work in the terminal."*
 
 **`status`, `digest`, `health` and six more commands find your key in

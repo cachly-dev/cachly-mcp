@@ -23,7 +23,7 @@ export const BRAIN_WATCH_HOOK_VERSION = 'v1';
  * comment down to the trailing `exit 0`), optionally including a shebang.
  * Used to upgrade old hooks in place rather than duplicating them.
  */
-const BRAIN_WATCH_BLOCK_RE = /(?:#!\/bin\/sh\n)?# cachly brain_watch[\s\S]*?\nexit 0\n?/;
+export const BRAIN_WATCH_BLOCK_RE = /(?:#!\/bin\/sh\n)?# cachly brain_watch[\s\S]*?\nexit 0\n?/;
 
 export type BrainWatchHookResult = 'written' | 'upgraded' | 'appended' | 'unchanged' | 'skipped-no-git';
 

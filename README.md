@@ -254,6 +254,7 @@ instance come from the environment or from `~/.cachly/credentials.json`, the fil
 | `init --editor <id>` | Write the config for one editor, with flags |
 | `claim` | Move a test Brain into your account, lessons included |
 | `upgrade` | Check for updates |
+| `uninstall` | Take cachly out of this project again. Shows your numbers first, then the plan; `--dry-run` only lists, `--global` adds the home folder |
 
 | Your data | |
 |---|---|

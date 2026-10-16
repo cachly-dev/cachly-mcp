@@ -1021,6 +1021,10 @@ import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
 import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-proof.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
+import {
+  CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, EDITOR_FILES, ANWEISUNGS_DATEIEN, blockMuster,
+} from './projektdateien.js';
+import { uninstallBefehl, type UninstallUmgebung } from './uninstall.js';
 import { gitLesen } from './git-ohne-shell.js';
 import { browserAdresse, fuerCmd } from './browser-adresse.js';
 import {
@@ -2181,15 +2185,7 @@ process.stdin.on('error', () => {});
 
 // ── CLI helpers ───────────────────────────────────────────────────────────────
 
-export const EDITOR_FILES: Record<string, string> = {
-  claude:   '.mcp.json',
-  cursor:   '.cursor/mcp.json',
-  windsurf: '.windsurf/mcp.json',
-  copilot:  '.vscode/mcp.json',
-  continue: '.continue/config.json',
-  cline:    '.vscode/mcp.json',              // Cline respects VS Code project MCP config
-  zed:      '.zed/settings.json',            // Zed project-level context_servers
-};
+export { EDITOR_FILES, CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END };
 
 /**
  * Codex and Gemini CLI keep their MCP servers in their own config and never
@@ -2216,9 +2212,6 @@ export function mcpAddBefehl(editor: string, env: Record<string, string>): { bef
   }
   return null;
 }
-
-export const CLAUDE_MD_MARKER_START = '<!-- cachly-brain-start -->';
-export const CLAUDE_MD_MARKER_END   = '<!-- cachly-brain-end -->';
 
 const DEFAULT_API_URL = 'https://api.cachly.dev';
 
@@ -2485,16 +2478,6 @@ ${CLAUDE_MD_MARKER_END}`;
 }
 
 
-// Cursor loads rules from .cursor/rules/*.mdc with YAML frontmatter. alwaysApply
-// makes the block active in every request (the closest Cursor gets to a
-// SessionStart briefing). The frontmatter sits OUTSIDE the brain markers so
-// idempotent marker-replacement leaves it intact.
-const CURSOR_MDC_FRONTMATTER =
-  '---\n' +
-  'description: Cachly AI Brain — persistent memory protocol (recall before tasks, learn after fixes)\n' +
-  'alwaysApply: true\n' +
-  '---\n\n';
-
 /**
  * Schreibt das Brain-Protokoll in alle relevanten Instruction-/Rules-Dateien:
  * - CLAUDE.md                        (Claude Code)
@@ -2520,17 +2503,9 @@ export async function writeInstructions(projectDir: string, instanceId: string):
 
   // `prefix` is written only when the file is created fresh (Cursor .mdc needs it);
   // on marker-update/append the prefix is left untouched.
-  const files: Array<{ path: string; prefix?: string }> = [
-    { path: resolve(projectDir, 'CLAUDE.md') },
-    { path: resolve(projectDir, 'AGENTS.md') },
-    { path: resolve(projectDir, '.github', 'copilot-instructions.md') },
-    { path: resolve(projectDir, '.cursor', 'rules', 'cachly.mdc'), prefix: CURSOR_MDC_FRONTMATTER },
-    { path: resolve(projectDir, '.windsurfrules') },
-    { path: resolve(projectDir, '.clinerules') },
-    ...(existsSync(resolve(projectDir, '.idea'))
-      ? [{ path: resolve(projectDir, '.aiassistant', 'rules', 'cachly.md') }]
-      : []),
-  ];
+  const files: Array<{ path: string; prefix?: string }> = ANWEISUNGS_DATEIEN
+    .filter((d) => !d.nurMitIdea || existsSync(resolve(projectDir, '.idea')))
+    .map((d) => ({ path: resolve(projectDir, ...d.pfad), prefix: d.prefix }));
   const block = '\n' + buildClaudeMdBlock(instanceId) + '\n';
   const results: Record<string, 'written'|'updated'|'appended'> = {};
 
@@ -2539,13 +2514,8 @@ export async function writeInstructions(projectDir: string, instanceId: string):
     if (existsSync(file)) {
       const existing = await readFile(file, 'utf-8');
       if (existing.includes(CLAUDE_MD_MARKER_START)) {
-        // Idempotent update: replace existing block ([\s\S] must keep its
-        // backslashes so it matches any char — a bare [\s\S] in the template
-        // literal collapses to [sS] and the replace silently no-ops).
-        const updated = existing.replace(
-          new RegExp(`${CLAUDE_MD_MARKER_START}[\\s\\S]*?${CLAUDE_MD_MARKER_END}`),
-          buildClaudeMdBlock(instanceId)
-        );
+        // Idempotent update: replace the existing block (pattern: projektdateien.ts).
+        const updated = existing.replace(blockMuster(), buildClaudeMdBlock(instanceId));
         await writeFile(file, updated, 'utf-8');
         results[file] = 'updated';
         continue;
@@ -3551,6 +3521,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   zeile('init', 'Write the config for one editor (flags)');
   zeile('claim', 'Keep a test Brain in your own account');
   zeile('upgrade', 'Check for updates');
+  zeile('uninstall', 'Take cachly out of this project (--dry-run first)');
   console.log('  \x1b[1mYour data:\x1b[0m');
   zeile('export', 'Write your lessons to disk (md / jsonl)');
   zeile('index [dir]', 'Index a project into the Brain (CI)');
@@ -5008,6 +4979,34 @@ if (process.argv[2] === 'ambient-stats') {
   process.exit(0);
 }
 
+// ── uninstall: take back what init/setup/autopilot wrote ──────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest uninstall [--dry-run] [--yes] [--global] [--project-dir <path>]
+// Shows the numbers first, then the plan, then asks. Default: this project only.
+// The home folder (key, ledger, caches) only with --global, with its own question.
+// Cloud data is never deleted. Logic and tests: uninstall.ts.
+if (process.argv[2] === 'uninstall') {
+  const { homedir, tmpdir } = await import('node:os');
+  const { resolve } = await import('node:path');
+  const { createInterface } = await import('node:readline/promises');
+  const argv = process.argv.slice(3);
+  const flag = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
+  const umgebung: UninstallUmgebung = {
+    projekt: resolve(flag('project-dir') ?? '.'),
+    heim: process.env.HOME ?? process.env.USERPROFILE ?? process.env.APPDATA ?? homedir(),
+    tmp: tmpdir(),
+    schluessel: cliSchluessel(),
+    instanz: cliInstanz(),
+    apiUrl: API_URL,
+    istTty: process.stdin.isTTY === true && process.stdout.isTTY === true,
+    ausgabe: (zeile) => console.log(zeile),
+    frage: async (text) => {
+      const rl = createInterface({ input: process.stdin, output: process.stdout });
+      try { return /^(y|yes|j|ja)$/i.test((await rl.question(text)).trim()); } finally { rl.close(); }
+    },
+  };
+  process.exit(await uninstallBefehl(argv, umgebung));
+}
+
 // ── doctor: one-command setup diagnosis ───────────────────────────────────────
 // Walks the whole activation chain — runtime → credential → API → auth →
 // instance → hooks → ledger — and prints one ✅/⚠️/❌ report with a concrete
@@ -5112,7 +5111,7 @@ if (!JWT) {
 //   • Editor as an MCP stdio server (non-TTY)  → ONE stderr hint, then KEEP RUNNING
 //     so tools/list works and the first tool call starts the browser sign-in.
 // Skip entirely for CLI subcommands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'autosetup', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'bench', 'tool-specs', 'openapi', 'ambient-credit', 'ambient-stats', 'doctor'];
+const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'autosetup', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'bench', 'tool-specs', 'openapi', 'ambient-credit', 'ambient-stats', 'doctor', 'uninstall'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
   const runningInTerminal = !process.argv[2] && process.stdout.isTTY === true && _isMain;
   if (runningInTerminal) {

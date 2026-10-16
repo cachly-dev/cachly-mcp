@@ -31,7 +31,7 @@ export const CLS_HOOK_VERSION = 'v3';
  * standalone shebang. Used to upgrade old hooks in place rather than skipping
  * them (the v1 block was a silent no-op).
  */
-const CLS_BLOCK_RE = /(?:#!\/bin\/sh\n)?# cachly CLS[\s\S]*?\nexit 0\n?/;
+export const CLS_BLOCK_RE = /(?:#!\/bin\/sh\n)?# cachly CLS[\s\S]*?\nexit 0\n?/;
 
 export type ClsHookResult = 'written' | 'upgraded' | 'appended' | 'unchanged' | 'skipped-no-git';
 
