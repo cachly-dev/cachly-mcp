@@ -23,7 +23,6 @@ interface Vertrag {
   fluechtig: string[];
   mcp_eingabe: Record<string, unknown> & { topic: string; what_worked: string };
   mcp_datensatz: Record<string, unknown>;
-  bekannt: Record<string, string>;
 }
 
 const apiFetch = (async () => ({})) as unknown as Parameters<typeof handleBrainTool>[3];
@@ -87,17 +86,40 @@ describe('Lektions-Datensatz: MCP-Server und Adapter (docs/spec/lesson-record.js
     expect(antwort).toContain('restore keys mit Zweigname');
   });
 
-  it(`BEKANNT (${Object.keys(v.bekannt)[0]}): openclaw learn() auf einen MCP-Datensatz verliert die MCP-Felder`, async () => {
-    // Wird dieser Fall rot, ist der Adapter repariert: Eintrag in "bekannt" loeschen
-    // und den Fall umdrehen (alle Felder bleiben).
-    expect(v.bekannt.lernen_verliert_mcp_felder).toBeTruthy();
+  it('openclaw learn() auf einen MCP-Datensatz behaelt alle Felder und schreibt die Pruefspur weiter', async () => {
     const { datensatz } = await mcpLernt(v.mcp_eingabe);
     const brain = brainModule.createCachlyBrain({ url: 'redis://fake:6379' });
     speicherVon(brain).set(schluessel, JSON.stringify(datensatz));
     await brain.learn({ topic: v.mcp_eingabe.topic, outcome: 'success' });
     const nachher = JSON.parse(speicherVon(brain).get(schluessel)!) as Record<string, unknown>;
-    for (const feld of ['context', 'author', 'source', 'visibility', 'audit_trail', 'version']) {
-      expect(nachher[feld], `Feld "${feld}"`).toBeUndefined();
-    }
+    for (const feld of Object.keys(datensatz)) expect(nachher, `Feld "${feld}"`).toHaveProperty(feld);
+    expect(nachher.context).toBe(datensatz.context);
+    expect(nachher.visibility).toBe('team');
+    const spur = nachher.audit_trail as Array<Record<string, unknown>>;
+    expect(spur).toHaveLength((datensatz.audit_trail as unknown[]).length + 1);
+    expect(spur.at(-1)).toMatchObject({ action: 'updated', via: '@cachly-dev/openclaw' });
+  });
+
+  it('openclaw zeigt private und gruppengebundene Lektionen nicht (wie smart_recall)', async () => {
+    const { datensatz } = await mcpLernt(v.mcp_eingabe);
+    const brain = brainModule.createCachlyBrain({ url: 'redis://fake:6379' });
+    speicherVon(brain).set('cachly:lesson:best:deploy:privat', JSON.stringify({ ...datensatz, topic: 'deploy:privat', visibility: 'private' }));
+    speicherVon(brain).set('cachly:lesson:best:deploy:gruppe', JSON.stringify({ ...datensatz, topic: 'deploy:gruppe', group: 'backend' }));
+    const treffer = await brain.recall('docker compose deploy');
+    expect(treffer).toEqual([]);
+  });
+
+  it('openclaw: eine ersetzte Lektion weicht ihrer Nachfolgerin; ohne Nachfolgerin heisst sie veraltet', async () => {
+    const { datensatz } = await mcpLernt(v.mcp_eingabe);
+    const brain = brainModule.createCachlyBrain({ url: 'redis://fake:6379' });
+    const alt = { ...datensatz, topic: 'deploy:api-alt', ersetzt_durch: 'deploy:api', gilt_bis: '2026-01-02T00:00:00.000Z' };
+    speicherVon(brain).set('cachly:lesson:best:deploy:api-alt', JSON.stringify(alt));
+    speicherVon(brain).set(schluessel, JSON.stringify(datensatz));
+    expect((await brain.recall('docker compose deploy')).map((t) => t.lesson.topic)).toEqual([v.mcp_eingabe.topic]);
+
+    speicherVon(brain).delete(schluessel);
+    const nurAlt = await brain.recall('docker compose deploy');
+    expect(nurAlt.map((t) => t.lesson.topic)).toEqual(['deploy:api-alt']);
+    expect(brain.formatBriefing(nurAlt)).toContain('deploy:api-alt (outdated since 2026-01-02, replaced by deploy:api)');
   });
 });
