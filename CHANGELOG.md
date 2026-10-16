@@ -7,6 +7,24 @@
 
 ---
 
+## [0.10.205] – 2026-10-16 — *"Your settings stay."*
+
+**`init`, `setup` and `autopilot` leave a `.claude/settings.json` alone when they
+cannot read it as plain JSON.** They print why (not valid JSON, has comments, or
+a `hooks` field that is not an object) and wire no Claude Code hooks. Fix the
+file and run the command again.
+
+Until 0.10.204 such a file was replaced by our hooks alone: your `permissions`
+and your own hooks were gone, with no backup. A byte-order mark (BOM, written by
+Notepad and PowerShell 5) was enough to trigger it. A BOM is now simply skipped.
+
+- On Windows, a cachly hook entry from another checkout folder
+  (`C:\…\.claude\hooks\cachly-ambient-…`) was not recognised as ours, so each run
+  added one more. It is now replaced like on macOS and Linux.
+- Cursor, VS Code, Codex and Gemini hook files already behaved this way.
+
+---
+
 ## [0.10.204] – 2026-10-16 — *"Your text stays."*
 
 **The `setup_ai_memory` tool no longer overwrites files.** With a `project_dir`

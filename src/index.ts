@@ -3654,11 +3654,15 @@ if (process.argv[2] === 'init') {
   if (editor === 'claude') {
     try {
       const a = await installAmbientHooks(projectDir, instanceId);
-      const scriptVerb = a.scripts === 'written' ? '✅ Written' : a.scripts === 'upgraded' ? `✅ Upgraded (→ ${AMBIENT_HOOK_VERSION})` : '✓  Unchanged';
-      console.log(`${scriptVerb}: .claude/hooks/ (Ambient Recall — session briefing, per-prompt recall, file briefing, auto-learn)`);
-      if (a.settings === 'written')      console.log(`✅ Written: .claude/settings.json (Ambient Recall hooks wired)`);
-      else if (a.settings === 'merged')  console.log(`✅ Merged: .claude/settings.json (Ambient Recall hooks wired)`);
-      else                               console.log(`✓  Ambient Recall hooks already wired in .claude/settings.json`);
+      if (a.settings === 'skipped') {
+        console.log(`⚠️ .claude/settings.json ${a.grund ?? 'is not valid JSON'} — left untouched, Ambient Recall hooks not wired`);
+      } else {
+        const scriptVerb = a.scripts === 'written' ? '✅ Written' : a.scripts === 'upgraded' ? `✅ Upgraded (→ ${AMBIENT_HOOK_VERSION})` : '✓  Unchanged';
+        console.log(`${scriptVerb}: .claude/hooks/ (Ambient Recall — session briefing, per-prompt recall, file briefing, auto-learn)`);
+        if (a.settings === 'written')      console.log(`✅ Written: .claude/settings.json (Ambient Recall hooks wired)`);
+        else if (a.settings === 'merged')  console.log(`✅ Merged: .claude/settings.json (Ambient Recall hooks wired)`);
+        else                               console.log(`✓  Ambient Recall hooks already wired in .claude/settings.json`);
+      }
     } catch { /* non-critical — ambient hooks are a best-effort feature */ }
   }
   // Cursor, VS Code / Copilot, Codex, Gemini CLI: same injection through each
@@ -4720,11 +4724,15 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   if (editorsToSetup.includes('claude')) {
     try {
       const a = await installAmbientHooks(process.cwd(), instance.id);
-      const scriptVerb = a.scripts === 'written' ? '✅  Written' : a.scripts === 'upgraded' ? `✅  Upgraded (→ ${AMBIENT_HOOK_VERSION})` : '✓  Unchanged';
-      console.log(`${scriptVerb}: .claude/hooks/ (Ambient Recall — session briefing, per-prompt recall, file briefing, auto-learn)`);
-      if (a.settings === 'written')      console.log(`✅  Written: .claude/settings.json (Ambient Recall hooks wired)`);
-      else if (a.settings === 'merged')  console.log(`✅  Merged: .claude/settings.json (Ambient Recall hooks wired)`);
-      else                               console.log(`✓  Ambient Recall hooks already wired in .claude/settings.json`);
+      if (a.settings === 'skipped') {
+        console.log(`⚠️  .claude/settings.json ${a.grund ?? 'is not valid JSON'} — left untouched, Ambient Recall hooks not wired`);
+      } else {
+        const scriptVerb = a.scripts === 'written' ? '✅  Written' : a.scripts === 'upgraded' ? `✅  Upgraded (→ ${AMBIENT_HOOK_VERSION})` : '✓  Unchanged';
+        console.log(`${scriptVerb}: .claude/hooks/ (Ambient Recall — session briefing, per-prompt recall, file briefing, auto-learn)`);
+        if (a.settings === 'written')      console.log(`✅  Written: .claude/settings.json (Ambient Recall hooks wired)`);
+        else if (a.settings === 'merged')  console.log(`✅  Merged: .claude/settings.json (Ambient Recall hooks wired)`);
+        else                               console.log(`✓  Ambient Recall hooks already wired in .claude/settings.json`);
+      }
     } catch { /* non-critical — ambient hooks are a best-effort feature */ }
   }
   // Cursor (detected by a .cursor folder): same injection through .cursor/hooks.json.

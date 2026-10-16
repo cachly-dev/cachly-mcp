@@ -246,7 +246,10 @@ export interface AmbientInstallResult {
   /** The hook bundle the four scripts load (v5). */
   bundlePath: string;
   scripts: 'written' | 'upgraded' | 'unchanged';
-  settings: 'written' | 'merged' | 'unchanged';
+  /** 'skipped': settings.json was not readable as plain JSON and stayed as it was. */
+  settings: 'written' | 'merged' | 'unchanged' | 'skipped';
+  /** Why settings.json was skipped. */
+  grund?: string;
 }
 
 interface HookCommandEntry {
@@ -267,8 +270,10 @@ function isAmbientGroup(g: HookCommandEntry, currentPaths: Set<string>): boolean
       const cmd = h.command ?? '';
       // Matches v1/v2 entries (bare script path), v3 entries (`node "<path>"`),
       // and marker-less test/custom paths passed as the current fragment.
+      // Windows paths carry `\`: without the swap, an entry from another checkout
+      // location was not recognised and the next run added a second one.
       return (
-        cmd.includes(AMBIENT_SCRIPT_MARKER) ||
+        cmd.replace(/\\/g, '/').includes(AMBIENT_SCRIPT_MARKER) ||
         currentPaths.has(cmd) ||
         [...currentPaths].some((p) => cmd.includes(`"${p}"`))
       );
@@ -329,7 +334,6 @@ export async function installAmbientHooks(
   options: AmbientInstallOptions = {},
 ): Promise<AmbientInstallResult> {
   const hookDir = resolve(projectDir, CLAUDE_HOOK_DIR);
-  await mkdir(hookDir, { recursive: true });
 
   const opts: AmbientHookOptions = { instanceId, apiKey };
   const events: AmbientHookEvent[] = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Stop'];
@@ -352,6 +356,38 @@ export async function installAmbientHooks(
     try { return await readFile(p, 'utf-8'); } catch { return ''; }
   };
 
+  // settings.json first. A file we cannot read as plain JSON stays as it is, and
+  // no scripts are written that nothing would call. Until 0.10.204 a parse error
+  // made it `{}`: the user's permissions and own hooks were gone, no backup.
+  const settingsPath = resolve(projectDir, CLAUDE_SETTINGS_DATEI);
+  const settingsExisted = existsSync(settingsPath);
+  let existingSettings: ClaudeSettings = {};
+  if (settingsExisted) {
+    const roh = await readIf(settingsPath);
+    try {
+      // A BOM (Notepad, PowerShell 5) does not make the file broken.
+      const ohneBom = roh.charCodeAt(0) === 0xfeff ? roh.slice(1) : roh;
+      const p = ohneBom.trim() ? (JSON.parse(ohneBom) as unknown) : {};
+      if (!istObjekt(p)) throw new NichtZusammenfuehrbar('is not a JSON object');
+      if (p.hooks !== undefined && !istObjekt(p.hooks)) throw new NichtZusammenfuehrbar('has a "hooks" field that is not an object');
+      existingSettings = p as ClaudeSettings;
+    } catch (e) {
+      const grund = e instanceof NichtZusammenfuehrbar ? e.message
+        : /^\s*\/\/|\/\*/m.test(roh) ? 'has comments, and cachly only rewrites plain JSON'
+        : 'is not valid JSON';
+      return {
+        sessionStartPath: pathFor('SessionStart'),
+        promptSubmitPath: pathFor('UserPromptSubmit'),
+        preToolUsePath: pathFor('PreToolUse'),
+        stopPath: pathFor('Stop'),
+        bundlePath,
+        scripts: 'unchanged',
+        settings: 'skipped',
+        grund,
+      };
+    }
+  }
+
   let anyExisting = false;
   let allCurrent = (await readIf(bundlePath)) === bundle;
   for (const e of events) {
@@ -362,6 +398,7 @@ export async function installAmbientHooks(
   const scripts: AmbientInstallResult['scripts'] = allCurrent ? 'unchanged' : anyExisting ? 'upgraded' : 'written';
 
   if (scripts !== 'unchanged') {
+    await mkdir(hookDir, { recursive: true });
     // Bundle first: a script that already runs must never find a half-written one missing.
     await writeFile(bundlePath, bundle, 'utf-8');
     for (const e of events) {
@@ -371,13 +408,6 @@ export async function installAmbientHooks(
   }
 
   // Merge the settings fragment (upgrade-safe: prior ambient groups replaced).
-  const settingsPath = resolve(projectDir, CLAUDE_SETTINGS_DATEI);
-  const settingsExisted = existsSync(settingsPath);
-  let existingSettings: ClaudeSettings = {};
-  if (settingsExisted) {
-    try { existingSettings = JSON.parse(await readFile(settingsPath, 'utf-8')) as ClaudeSettings; }
-    catch { existingSettings = {}; } // corrupt/empty file → start fresh (still non-destructive to hooks we add)
-  }
   // Portable installs (committed hooks) reference $CLAUDE_PROJECT_DIR so the
   // settings work at any checkout location; local installs use absolute paths.
   // These are SCRIPT PATHS — buildAmbientSettingsHooks wraps them as
