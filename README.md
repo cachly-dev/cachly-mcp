@@ -341,8 +341,8 @@ Manual snippets are in [Manual Setup](#manual-setup).
 | **Cursor** | yes, detected via `.cursor/` | `.cursor/mcp.json`, hooks in `.cursor/hooks.json` | no | Project-level; restart Cursor after setup. Lessons arrive with the first tool call of a turn |
 | **Windsurf** | yes, detected via `.windsurf/` | `.windsurf/mcp.json` | no | Project-level; restart Windsurf after setup |
 | **VS Code + Copilot** | yes, detected via `.vscode/` | `.vscode/mcp.json`, hooks in `.github/hooks/cachly-ambient.json` | no | Needs the VS Code MCP support or Copilot chat. Briefing at session start, lessons before each prompt |
-| **Codex CLI** | hooks yes, detected via `~/.codex` | hooks in `.codex/hooks.json` | no | Trust `.codex/` and confirm the hook once in `/hooks`. For the tools, `init --editor codex` prints the `codex mcp add` line |
-| **Gemini CLI** | hooks yes, detected via `~/.gemini` | `hooks` in `.gemini/settings.json` | no | Lessons are appended to the prompt (`BeforeAgent`). For the tools, `init --editor gemini` prints the `gemini mcp add` line |
+| **Codex CLI** | yes, detected via `~/.codex` | `.codex/config.toml` (`[mcp_servers.cachly]`), hooks in `.codex/hooks.json` | no | Codex loads both once you trust the folder; confirm the hook once in `/hooks` |
+| **Gemini CLI** | yes, detected via `~/.gemini` | `mcpServers.cachly` and `hooks` in `.gemini/settings.json` | no | Gemini loads both once you trust the folder. Lessons are appended to the prompt (`BeforeAgent`) |
 | **Cline** | yes, detected via VS Code | `.vscode/mcp.json` | no | Shares the config with Copilot; restart VS Code |
 | **Continue.dev** | yes, detected via `.continue/` | `.continue/config.json` | no | Uses the `modelContextProtocolServers` key |
 | **Zed** | yes, detected via `.zed/` | `.zed/settings.json` | no | Uses the `context_servers` key |

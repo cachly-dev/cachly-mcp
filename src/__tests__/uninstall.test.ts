@@ -11,6 +11,7 @@ import {
 } from '../ambient-hooks.js';
 import { installClsPostCommitHook } from '../cls-hook.js';
 import { ALTER_BRAIN_WATCH_BLOCK } from './alter-brain-watch-block.js';
+import { installCodexMcp, installGeminiMcp } from '../editor-mcp-eintrag.js';
 import { credentialsPath } from '../credentials.js';
 import { defaultLedgerPath } from '../ambient-ledger.js';
 import { defaultMilestonePath } from '../funnel-milestones.js';
@@ -334,7 +335,8 @@ describe('plane und fuehreAus: ein Projekt mit allem, was cachly schreibt', () =
     schreibe(d, '.claude/settings.json', JSON.stringify({ permissions: { allow: ['Bash(ls)'] }, hooks: { Stop: [{ hooks: [{ type: 'command', command: 'node mein-stop.js' }] }] } }, null, 2) + '\n');
     schreibe(d, '.cursor/hooks.json', JSON.stringify({ version: 1, hooks: { sessionStart: [{ command: 'echo fremd' }] } }, null, 2) + '\n');
     schreibe(d, '.codex/hooks.json', JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: 'command', command: 'echo codex-fremd' }] }] } }, null, 2) + '\n');
-    schreibe(d, '.gemini/settings.json', JSON.stringify({ theme: 'dark', mcpServers: {} }, null, 2) + '\n');
+    schreibe(d, '.gemini/settings.json', JSON.stringify({ theme: 'dark', mcpServers: { fremd: { command: 'node', args: ['g.js'] } } }, null, 2) + '\n');
+    schreibe(d, '.codex/config.toml', 'model = "o3"\n\n[mcp_servers.fremd]\ncommand = "node"\nargs = ["c.js"]\n');
     schreibe(d, '.github/hooks/meine.json', '{"version":1,"hooks":{}}');
     const vorher = baum(d);
 
@@ -354,6 +356,8 @@ describe('plane und fuehreAus: ein Projekt mit allem, was cachly schreibt', () =
     await installCopilotHooks(d, IID);
     await installCodexHooks(d, IID);
     await installGeminiHooks(d, IID);
+    expect((await installCodexMcp(d, { CACHLY_BRAIN_INSTANCE_ID: IID })).status).toBe('updated');
+    expect((await installGeminiMcp(d, { CACHLY_BRAIN_INSTANCE_ID: IID })).status).toBe('updated');
     return { vorher };
   }
 
@@ -399,7 +403,9 @@ describe('plane und fuehreAus: ein Projekt mit allem, was cachly schreibt', () =
     expect(nach['.github/hooks/cachly-ambient.json']).toBe('datei-loeschen');
     expect(nach['.github/hooks/cachly-ambient-copilot.mjs']).toBe('datei-loeschen');
     expect(nach['.codex/hooks.json']).toBe('eintrag-entfernen');
+    expect(nach['.codex/config.toml']).toBe('eintrag-entfernen');
     expect(nach['.gemini/settings.json']).toBe('eintrag-entfernen');
+    expect(plan.funde.find((f) => f.pfad.endsWith('settings.json') && f.pfad.includes('.gemini'))?.was).toContain('MCP server entry "cachly"');
     expect(nach['.git/hooks/post-commit']).toBe('block-entfernen');
     expect(nach['.github/hooks']).toBeUndefined();
     expect(nach['.git']).toBeUndefined();

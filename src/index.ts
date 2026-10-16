@@ -1043,6 +1043,7 @@ import { hookHauptlauf, auffrischenHauptlauf, startwissenImportHauptlauf } from 
 import { STARTWISSEN_IMPORT } from './startwissen-hook.js';
 import { rahmeAntwort } from './antwort-rahmen.js';
 import { appendLedgerEntry, readLedger, defaultLedgerPath, reportLedgerEntry, teileNachInstanz } from './ambient-ledger.js';
+import { installCodexMcp, installGeminiMcp } from './editor-mcp-eintrag.js';
 import {
   resolveApiKey, saveApiKey, saveInstanceId, readSavedApiKey, readInstanceId, type CredentialsHomeOptions,
 } from './credentials.js';
@@ -2189,8 +2190,9 @@ export { EDITOR_FILES, CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END };
 
 /**
  * Codex and Gemini CLI keep their MCP servers in their own config and never
- * read .mcp.json, so `init --editor codex|gemini` prints their own `mcp add`
- * line instead of writing a file nobody reads. Checked 11.10.2026 against
+ * read .mcp.json. Since 0.10.208 init/setup/autopilot write that config in the
+ * project (editor-mcp-eintrag.ts); this line is the fallback when the file
+ * cannot be rewritten safely (comments, another form). Checked 11.10.2026 against
  * codex-rs/cli/src/mcp_cmd.rs (`codex mcp add <NAME> --env K=V -- <COMMAND>…`,
  * writes ~/.codex/config.toml) and gemini-cli commands/mcp/add.ts (`-s project`
  * writes .gemini/settings.json; args after `--` go to the server, so npx keeps
@@ -3551,6 +3553,25 @@ function reportEditorHooks(editor: keyof typeof EDITOR_HOOK_ZEILEN, r: EditorIns
   console.log(`${verb}${pad}${was}: ${datei} (Ambient Recall for ${name} — ${wie})`);
 }
 
+/**
+ * Writes the MCP entry for Codex or Gemini CLI into the project and prints one
+ * line (editor-mcp-eintrag.ts). If the file cannot be rewritten safely, it stays
+ * as it is and the editor's own `mcp add` line is printed instead. Never throws.
+ */
+async function installEditorMcp(editor: 'codex' | 'gemini', projectDir: string, env: Record<string, string>, pad: string): Promise<void> {
+  const name = editor === 'codex' ? 'Codex' : 'Gemini CLI';
+  const r = await (editor === 'codex' ? installCodexMcp : installGeminiMcp)(projectDir, env).catch(() => null);
+  if (!r || r.status === 'skipped') {
+    const ausweg = mcpAddBefehl(editor, env);
+    console.log(`⚠️ ${pad}${r ? `${r.datei} ${r.grund ?? 'could not be read'} — left untouched.` : `${name} MCP entry could not be written.`} Register cachly yourself:`);
+    if (ausweg) console.log(`   ${pad}${ausweg.befehl}`);
+    return;
+  }
+  const verb = r.status === 'unchanged' ? '✓  ' : '✅ ';
+  const was = r.status === 'written' ? 'Written' : r.status === 'updated' ? 'Updated' : 'Already configured';
+  console.log(`${verb}${pad}${was}: ${r.datei} (MCP server cachly for ${name} — it asks once to trust this folder; until then the server stays off)`);
+}
+
 /** Installs the hooks of one editor with its own hook format and prints one line. Never throws. */
 async function installEditorHooks(editor: keyof typeof EDITOR_HOOK_ZEILEN, projectDir: string, instanceId: string, pad: string): Promise<void> {
   const installer = {
@@ -3607,11 +3628,10 @@ if (process.argv[2] === 'init') {
     process.exit(1);
   }
 
-  const mcpAdd = mcpAddBefehl(editor, buildServerEnv(apiKey, instanceId));
-  if (mcpAdd) {
+  if (editor === 'codex' || editor === 'gemini') {
     saveApiKey(apiKey);
-    console.log(`\n👉 Register the MCP server once (writes ${mcpAdd.wo}):`);
-    console.log(`   ${mcpAdd.befehl}`);
+    console.log('');
+    await installEditorMcp(editor, projectDir, buildServerEnv(apiKey, instanceId), '');
   } else {
     const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
     const configPath = resolve(projectDir, configFile);
@@ -3673,8 +3693,8 @@ if (process.argv[2] === 'init') {
 
   const initSecs = ((Date.now() - initStart) / 1000).toFixed(1);
   console.log(`\n🧠 Cachly AI Brain configured for ${editor === 'claude' ? 'Claude Code' : editor}! (${initSecs}s)`);
-  console.log(mcpAdd
-    ? `   Run the \`mcp add\` line above, then restart ${editor} — the \`cachly\` MCP tools will appear.`
+  console.log(editor === 'codex' || editor === 'gemini'
+    ? `   Start ${editor} in this folder and trust it when asked — the \`cachly\` MCP tools will appear.`
     : `   Restart your editor — the \`cachly\` MCP tools will appear.`);
   console.log(`   Re-run \`init\` anytime — it's idempotent (only writes what changed).`);
   console.log(`\n   📛 Add a live badge to your README:`);
@@ -4744,9 +4764,11 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   // here — not part of the MCP config loop above (no .mcp.json of their own).
   if (existsSync(resolve(home, '.codex')) || existsSync(resolve(cwd, '.codex'))) {
     await installEditorHooks('codex', process.cwd(), instance.id, ' ');
+    await installEditorMcp('codex', process.cwd(), buildServerEnv('', instance.id), ' ');
   }
   if (existsSync(resolve(home, '.gemini')) || existsSync(resolve(cwd, '.gemini'))) {
     await installEditorHooks('gemini', process.cwd(), instance.id, ' ');
+    await installEditorMcp('gemini', process.cwd(), buildServerEnv('', instance.id), ' ');
   }
 
   // Setup reached the end — close the funnel. Report config-write outcome so the

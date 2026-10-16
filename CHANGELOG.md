@@ -7,6 +7,28 @@
 
 ---
 
+## [0.10.208] – 2026-10-16 — *"Codex and Gemini get the tools."*
+
+**`init --editor codex|gemini`, `setup` and `autopilot` now write the cachly MCP
+server for Codex and Gemini CLI into the project.** Until 0.10.207 these two got
+only the hooks. For the tools you had to run `codex mcp add` or `gemini mcp add`
+yourself, and `setup` did not even print that line.
+
+- Codex: `[mcp_servers.cachly]` in `.codex/config.toml`. Other settings in the
+  file stay line for line; an entry from `codex mcp add` (with an `env`
+  subtable) is replaced.
+- Gemini CLI: `mcpServers.cachly` in `.gemini/settings.json`, next to the hooks
+  and your other servers. A file with comments stays as it is, and the
+  `gemini mcp add -s project` line is printed instead.
+- No key in either file. The server reads it when it starts.
+- Both programs load project settings only once you trust the folder; they ask
+  on the first start. Checked with codex-cli 0.163.0 (`codex mcp list` shows
+  `cachly` enabled) and gemini 0.64.0 (`gemini mcp list`: `cachly` connected).
+- `uninstall` removes both entries: the Codex table, and the Gemini entry in
+  the same step as the Gemini hooks.
+
+---
+
 ## [0.10.207] – 2026-10-16 — *"Your numbers, per Brain."*
 
 **`ambient-stats` shows the net-token balance of the current Brain instance and

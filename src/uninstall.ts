@@ -11,6 +11,7 @@ import {
   CURSOR_HOOKS_DATEI, CURSOR_HOOK_DIR, GEMINI_HOOK_DIR, GEMINI_SETTINGS_DATEI,
 } from './ambient-hooks.js';
 import { CURSOR_ABLAGE_ORDNER } from './cursor-hook.js';
+import { CODEX_CONFIG_DATEI, ohneCodexMcpEintrag } from './editor-mcp-eintrag.js';
 import { COPILOT_ABLAGE_ORDNER } from './copilot-hook.js';
 import { credentialsPath } from './credentials.js';
 import { defaultLedgerPath, readLedger } from './ambient-ledger.js';
@@ -468,11 +469,55 @@ function planeHooks(o: PlanEingabe, plan: Plan): void {
   planeHookDatei(o, plan, CURSOR_HOOKS_DATEI, klassifiziereAmbientHook, ['version']);
   planeHookDatei(o, plan, COPILOT_HOOKS_DATEI, klassifiziereAmbientHook, ['version']);
   planeHookDatei(o, plan, CODEX_HOOKS_DATEI, klassifiziereAmbientHook, []);
-  planeHookDatei(o, plan, GEMINI_SETTINGS_DATEI, klassifiziereAmbientHook, []);
+  planeGeminiDatei(o, plan);
   for (const ordner of [CLAUDE_HOOK_DIR, CURSOR_HOOK_DIR, COPILOT_HOOK_DIR, CODEX_HOOK_DIR, GEMINI_HOOK_DIR]) planeHookSkripte(o, plan, ordner);
-  const gemini = parseObjekt(liesDatei(resolve(o.projekt, GEMINI_SETTINGS_DATEI)) ?? '');
-  if (gemini && istObjekt(gemini.mcpServers) && 'cachly' in gemini.mcpServers) {
-    plan.vonHand.push({ stufe: 'projekt', text: `${GEMINI_SETTINGS_DATEI}: the MCP server "cachly" (added by "gemini mcp add") stays. Remove that entry by hand.` });
+  planeCodexConfig(o, plan);
+}
+
+/**
+ * .gemini/settings.json traegt seit 0.10.208 Hooks UND den MCP-Eintrag cachly.
+ * Beides in EINEM Fund, sonst stiessen zwei Aenderungen an derselben Datei
+ * zusammen (der zweite Fund faende einen anderen `vorher`).
+ */
+function planeGeminiDatei(o: PlanEingabe, plan: Plan): void {
+  const pfad = resolve(o.projekt, GEMINI_SETTINGS_DATEI);
+  const text = liesDatei(pfad);
+  if (text === null) return;
+  const hooks = entferneHookEintraege(text, klassifiziereAmbientHook, []);
+  if (hooks.art === 'unlesbar') {
+    if (text.includes(PROJEKT_HOOK_MARKE) || text.includes('@cachly-dev/mcp-server')) {
+      plan.vonHand.push({ stufe: 'projekt', text: `${GEMINI_SETTINGS_DATEI}: cannot be read as plain JSON (comments or another format). Remove the cachly hooks and the MCP server "cachly" by hand.` });
+    }
+    return;
+  }
+  const nachHooks = hooks.art === 'geaendert' ? hooks.nachher : text;
+  const mcp = nachHooks === null ? ({ art: 'nichts' } as const) : entferneMcpEintrag(nachHooks, 'mcpServers');
+  const nachher = mcp.art === 'geaendert' ? mcp.nachher : nachHooks;
+  if (hooks.art !== 'geaendert' && mcp.art !== 'geaendert') return;
+  if (mcp.art === 'geaendert') plan.instanz ||= mcp.instanz;
+  const ambient = hooks.art === 'geaendert' ? hooks.entfernt.length : 0;
+  const teile = [
+    ...(ambient ? [`${ambient} Ambient Recall hook${ambient === 1 ? '' : 's'}`] : []),
+    ...(mcp.art === 'geaendert' ? ['MCP server entry "cachly"'] : []),
+  ];
+  if (nachher === null) {
+    plan.funde.push({ stufe: 'projekt', aktion: 'datei-loeschen', pfad, was: `${teile.join(' and ')}, the only thing in the file`, vorher: text });
+  } else {
+    plan.funde.push({ stufe: 'projekt', aktion: 'eintrag-entfernen', pfad, was: `${teile.join(' and ')}; other servers, hooks and settings stay`, vorher: text, nachher });
+  }
+}
+
+/** .codex/config.toml im Projekt: die Tabelle [mcp_servers.cachly] (editor-mcp-eintrag.ts). */
+function planeCodexConfig(o: PlanEingabe, plan: Plan): void {
+  const pfad = resolve(o.projekt, CODEX_CONFIG_DATEI);
+  const text = liesDatei(pfad);
+  if (text === null) return;
+  const r = ohneCodexMcpEintrag(text);
+  if (!r.entfernt) return;
+  if (r.rest === '') {
+    plan.funde.push({ stufe: 'projekt', aktion: 'datei-loeschen', pfad, was: 'MCP server table [mcp_servers.cachly], the only thing in the file', vorher: text });
+  } else {
+    plan.funde.push({ stufe: 'projekt', aktion: 'eintrag-entfernen', pfad, was: 'MCP server table [mcp_servers.cachly]; other settings stay', vorher: text, nachher: r.rest });
   }
 }
 
@@ -703,7 +748,7 @@ function zeigeFunde(titel: string, funde: Fund[], u: UninstallUmgebung): void {
 function zeigeVonHand(plan: Plan, global: boolean, u: UninstallUmgebung): void {
   u.ausgabe('');
   u.ausgabe('By hand (uninstall cannot do these):');
-  u.ausgabe('  - Codex and Gemini CLI keep the cachly MCP server in their own settings (~/.codex/config.toml, .gemini/settings.json). If you registered it there, remove the entry named cachly.');
+  u.ausgabe('  - If you registered cachly with "codex mcp add" or "gemini mcp add -s user", it is in ~/.codex/config.toml or ~/.gemini/settings.json. Remove the entry named cachly there (the project files above are handled).');
   u.ausgabe('  - Uninstall the JetBrains plugin "Cachly Brain" (Settings, Plugins) and the VS Code extension "cachly Brain" (cachly-dev.cachly-brain), if you installed them.');
   for (const h of plan.vonHand) if (h.stufe === 'projekt' || global) u.ausgabe(`  - ${h.text}`);
 }
