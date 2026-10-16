@@ -24,11 +24,10 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import ts from 'typescript';
 import { IM_MONOREPO } from './im-monorepo.js';
+import { REPO_ROOT, loadBrainModule, speicherVon } from './openclaw-brain.js';
 
 // ── Vector schema (mirrors docs/spec/confidence-vectors.json) ─────────────────
 
@@ -50,10 +49,7 @@ interface VectorFile {
   vectors: Vector[];
 }
 
-const HERE = path.dirname(fileURLToPath(import.meta.url));
-const REPO_ROOT = path.resolve(HERE, '../../../..');
 const VECTORS_PATH = path.join(REPO_ROOT, 'docs/spec/confidence-vectors.json');
-const BRAIN_TS_PATH = path.join(REPO_ROOT, 'sdk/openclaw/src/brain.ts');
 
 // This is a MONOREPO-only cross-package parity suite: it reads the shared vector
 // spec and the canonical brain.ts, both of which live outside this package. When
@@ -69,60 +65,7 @@ const vectorFile = IS_MONOREPO
   ? (JSON.parse(readFileSync(VECTORS_PATH, 'utf8')) as VectorFile)
   : null;
 
-// ── Load the real brain.ts with an in-memory ioredis ──────────────────────────
-
-class FakeRedis {
-  data = new Map<string, string>();
-  constructor(_url?: string) {}
-  async get(key: string): Promise<string | null> {
-    return this.data.has(key) ? this.data.get(key)! : null;
-  }
-  async set(key: string, value: string): Promise<'OK'> {
-    this.data.set(key, value);
-    return 'OK';
-  }
-  async mget(keys: string[]): Promise<(string | null)[]> {
-    return keys.map((k) => (this.data.has(k) ? this.data.get(k)! : null));
-  }
-  async scan(_cursor: string, _m: string, pattern: string): Promise<[string, string[]]> {
-    const re = new RegExp(
-      '^' + pattern.split('*').map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*') + '$',
-    );
-    return ['0', [...this.data.keys()].filter((k) => re.test(k))];
-  }
-  async quit(): Promise<'OK'> {
-    return 'OK';
-  }
-}
-
-interface BrainModule {
-  createCachlyBrain(opts: { url: string; prefix?: string }): {
-    learn(input: Record<string, unknown>): Promise<Record<string, unknown>>;
-  };
-}
-
-function loadBrainModule(): BrainModule {
-  const source = readFileSync(BRAIN_TS_PATH, 'utf8');
-  const { outputText } = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.CommonJS,
-      target: ts.ScriptTarget.ES2022,
-      esModuleInterop: true,
-    },
-    fileName: 'brain.ts',
-  });
-  const moduleShim = { exports: {} as Record<string, unknown> };
-  const requireShim = (id: string) => {
-    if (id === 'ioredis') return { Redis: FakeRedis };
-    throw new Error(`confidence-vectors: unexpected require("${id}") in brain.ts`);
-  };
-  new Function('require', 'module', 'exports', outputText)(
-    requireShim,
-    moduleShim,
-    moduleShim.exports,
-  );
-  return moduleShim.exports as unknown as BrainModule;
-}
+// ── Load the real brain.ts (openclaw-brain.ts) ─────────────────────────────────
 
 const brainModule = IS_MONOREPO ? loadBrainModule() : null;
 
@@ -164,7 +107,7 @@ describe('confidence calibration golden vectors (docs/spec/confidence-vectors.js
   for (const vector of vectors) {
     it(vector.description, async () => {
       const brain = brainModule!.createCachlyBrain({ url: 'redis://fake:6379' });
-      const store = (brain as unknown as { redis: FakeRedis }).redis.data;
+      const store = speicherVon(brain);
       const key = `cachly:lesson:best:${vector.topic}`;
 
       if (vector.initial) {
