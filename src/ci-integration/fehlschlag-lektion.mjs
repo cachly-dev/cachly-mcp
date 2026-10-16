@@ -116,8 +116,9 @@ export function lektionAusLauf({ jobs, workflowName, branch, runUrl }) {
 /**
  * ══ GitLab ════════════════════════════════════════════════════════════════
  *
- * Dieselbe Krankheit, eine Stufe schlimmer. Die ausgelieferte Vorlage
- * brain-from-ci-gitlab.yml setzte:
+ * Dieselbe Krankheit, eine Stufe schlimmer. Die Vorlage
+ * brain-from-ci-gitlab.yml (geloescht 16.10.2026, GROW-021: sie rief Skripte
+ * unter sdk/mcp/src auf, die es nur in diesem Repo gibt) setzte:
  *
  *     JOB_NAME: "$CI_PROJECT_NAME-pipeline"
  *

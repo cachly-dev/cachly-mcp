@@ -288,11 +288,10 @@ known cause. Ready-to-paste templates live in [`src/ci-integration/`](./src/ci-i
 
 - **GitHub Actions:** use [cachly-dev/cachly-action](https://github.com/cachly-dev/cachly-action).
   It needs the secrets `CACHLY_API_KEY` and `CACHLY_BRAIN_INSTANCE_ID`.
-- **GitLab CI:** copy [`brain-from-ci-gitlab.yml`](./src/ci-integration/brain-from-ci-gitlab.yml)
-  into your pipeline. It adds two `.post` jobs (`on_success` and `on_failure`) with
-  `allow_failure: true`. The
-  [full GitLab template](https://github.com/cachly-dev/cachly-action/blob/main/templates/cachly.gitlab-ci.yml)
-  adds hidden jobs for `learn`, `scan` and `confirm`. Pull it in with `include: remote:`.
+- **GitLab CI:** pull in the
+  [GitLab template](https://github.com/cachly-dev/cachly-action/blob/main/templates/cachly.gitlab-ci.yml)
+  with `include: remote:`. It adds hidden jobs for `learn`, `scan`, `confirm` and `hygiene`;
+  extend the ones you want.
 - **Anything else:** [`push-ci-outcome.mjs`](./src/ci-integration/push-ci-outcome.mjs) is a
   standalone Node.js helper with no dependencies. It always exits 0, so your CI never
   fails because of a Brain push.
