@@ -7,6 +7,22 @@
 
 ---
 
+## [0.10.202] – 2026-10-16 — *"The daily commands work in the terminal."*
+
+**`status`, `digest`, `health` and six more commands find your key in
+`~/.cachly/credentials.json`.** Until 0.10.201 they read only `CACHLY_JWT` and
+`CACHLY_BRAIN_INSTANCE_ID` from the environment. Since the key no longer lives in
+project files, `autopilot` stores it in your home folder, and only your editor sets
+the environment for the server. In a terminal, `status` therefore told every user
+set up that way "CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set". Now the
+commands read the same places as the server: environment first, then the file.
+Affected: `status`, `digest`, `health`, `export`, `invite`, `share`, `publish`,
+`badge`, `index`, `learn-git`, and the instance check in `doctor`.
+
+**The help screen and the README list every command**, grouped into every day,
+set up, your data, team and more. `status` and `ambient-stats` were missing from
+both.
+
 ## [0.10.201] – 2026-10-15 — *"Leftovers stay out."*
 
 **`session_start` and `session_start_summary` skip bare category topics like

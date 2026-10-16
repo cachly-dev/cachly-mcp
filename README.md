@@ -234,20 +234,45 @@ Run `health` to see what is wired up in your editor. The full catalog is generat
 
 ```bash
 npx @cachly-dev/mcp-server@latest autopilot # One command: signs in, configures every editor, fills the Brain from git
-npx @cachly-dev/mcp-server@latest claim     # Move a test Brain into your account, lessons included
-npx @cachly-dev/mcp-server@latest demo      # Preview your Brain from git history (no account needed)
-npx @cachly-dev/mcp-server@latest bench     # Run the recall benchmark (no sign-in needed)
-npx @cachly-dev/mcp-server@latest autosetup # Interactive variant: pick editors yourself
-npx @cachly-dev/mcp-server@latest health    # Check token, API, editors and git hook
-npx @cachly-dev/mcp-server@latest export    # Write every lesson to lessons.md and lessons.jsonl
-npx @cachly-dev/mcp-server@latest digest    # Weekly Brain summary, shareable
-npx @cachly-dev/mcp-server@latest share     # Generate a shareable stats card
-npx @cachly-dev/mcp-server@latest publish   # Publish your Brain as an importable link (--public)
-npx @cachly-dev/mcp-server@latest badge     # Get a live README badge for your Brain
-npx @cachly-dev/mcp-server@latest invite    # Invite a teammate to share your Brain
-npx @cachly-dev/mcp-server@latest index .   # Index a project's code into the Brain (CI-friendly)
-npx @cachly-dev/mcp-server@latest learn-git # Learn lessons from recent git commits
 ```
+
+Every command below runs as `npx @cachly-dev/mcp-server@latest <command>`. Key and Brain
+instance come from the environment or from `~/.cachly/credentials.json`, the file `autopilot` writes.
+
+| Every day | |
+|---|---|
+| `status` | Lessons, recalls and team at a glance |
+| `ambient-stats` | Tokens injected vs saved — the honest net, even when negative |
+| `doctor` | Diagnose a broken or missing install, with the fix for each step |
+| `health` | Check key, API, editor configs and git hook |
+| `digest` | What your Brain learned this week, shareable |
+
+| Set up | |
+|---|---|
+| `demo` | Preview your Brain from git history (no account needed) |
+| `setup` (alias `autosetup`) | Interactive variant: pick editors yourself |
+| `init --editor <id>` | Write the config for one editor, with flags |
+| `claim` | Move a test Brain into your account, lessons included |
+| `upgrade` | Check for updates |
+
+| Your data | |
+|---|---|
+| `export` | Write every lesson to `lessons.md` and `lessons.jsonl` |
+| `index [dir]` | Index a project's code into the Brain (CI-friendly) |
+| `learn-git [repo]` | Learn lessons from recent git commits |
+
+| Team & sharing | |
+|---|---|
+| `invite [email]` | Invite a teammate to share your Brain |
+| `join <token>` | Accept a Brain invite |
+| `share` | Generate a shareable stats card |
+| `publish` | Publish your Brain as an importable link (`--public`) |
+| `badge` | Get a live README badge for your Brain |
+
+| More | |
+|---|---|
+| `bench` | Run the recall benchmark (no sign-in needed) |
+| `tool-specs` / `openapi` | Tool definitions for other agent frameworks (OpenAI, Anthropic, LangChain, OpenAPI) |
 
 The method behind `bench` is described in [BENCH.md](./BENCH.md).
 

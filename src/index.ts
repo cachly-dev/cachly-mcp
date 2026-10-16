@@ -109,6 +109,23 @@ const PROVISION_TIMEOUT_MS = Number(process.env.CACHLY_PROVISION_TIMEOUT_MS ?? 9
 // echterWert: das Claude-Code-Plugin setzt "${user_config.instance_id}". Bleibt
 // das Feld leer, kann der Platzhalter selbst ankommen — er ist keine Kennung.
 let _defaultInstanceId: string = echterWert(process.env.CACHLY_BRAIN_INSTANCE_ID);
+
+/**
+ * Schluessel und Instanz fuer die Befehle im Terminal (status, digest, health …).
+ *
+ * Bis 0.10.201 lasen sie nur CACHLY_JWT / CACHLY_BRAIN_INSTANCE_ID aus der
+ * Umgebung. Die gibt es im Terminal aber nicht: seit "Schluessel nie ins Projekt"
+ * (#784) liegt beides in ~/.cachly/credentials.json, die Umgebung setzt nur der
+ * Editor fuer den Server. `status` meldete deshalb jedem so eingerichteten Nutzer
+ * "CACHLY_JWT must be set" (GROW-025, 16.10.2026). Dieselbe Reihenfolge wie der
+ * Server: erst die Umgebung, dann die Datei im Heimordner.
+ */
+function cliSchluessel(): string {
+  return JWT || resolveApiKey() || '';
+}
+function cliInstanz(): string {
+  return echterWert(process.env.CACHLY_BRAIN_INSTANCE_ID) || readInstanceId() || '';
+}
 // Timestamp of last failed fetch — retries after 30 s (not permanently blocked).
 let _defaultInstanceLastAttempt = 0;
 // In-flight resolution guard: a burst of parallel tool calls on startup must not
@@ -2545,16 +2562,16 @@ export async function writeInstructions(projectDir: string, instanceId: string):
 
 
 
-// ── CLI: cachly digest ────────────────────────────────────────────────────────
+// ── CLI: cachly-mcp digest ────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest digest
 // Weekly brain summary — what your AI learned this week. Shareable output.
 
 if (process.argv[2] === 'digest') {
-  const apiKey = process.env.CACHLY_JWT ?? '';
-  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  const apiKey = cliSchluessel();
+  const instanceId = cliInstanz();
 
   if (!apiKey || !instanceId) {
-    console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('\n⚠️  No cachly key or Brain instance found (environment or ~/.cachly/credentials.json).');
     console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
     process.exit(1);
   }
@@ -2650,7 +2667,7 @@ if (process.argv[2] === 'digest') {
   process.exit(0);
 }
 
-// ── CLI: cachly export ────────────────────────────────────────────────────────
+// ── CLI: cachly-mcp export ────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest export [--out DIR] [--format md|jsonl|both]
 // Writes your own Brain's lessons to disk: lessons.md to read, lessons.jsonl to
 // reuse. "No model lock-in — leave anytime and take your data," made real.
@@ -2669,10 +2686,10 @@ if (process.argv[2] === 'export') {
   const outDir = resolve(flag('out') ?? '.');
 
   const apiKey = JWT || resolveApiKey() || '';
-  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  const instanceId = cliInstanz();
 
   if (!apiKey || !instanceId) {
-    console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('\n⚠️  No cachly key or Brain instance found (environment or ~/.cachly/credentials.json).');
     console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
     process.exit(1);
   }
@@ -2774,16 +2791,16 @@ if (process.argv[2] === 'export') {
   process.exit(0);
 }
 
-// ── CLI: cachly invite ────────────────────────────────────────────────────────
+// ── CLI: cachly-mcp invite ────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest invite [email]
 // Invites a teammate to share your Brain. Fastest referral loop.
 
 if (process.argv[2] === 'invite') {
   // ── invite: fetch the user's unique referral link and show shareable messages ──
-  const apiKey = process.env.CACHLY_JWT ?? '';
+  const apiKey = cliSchluessel();
 
   if (!apiKey) {
-    console.log('\n⚠️  CACHLY_JWT must be set.');
+    console.log('\n⚠️  No cachly key found (environment or ~/.cachly/credentials.json).');
     console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
     process.exit(1);
   }
@@ -2831,7 +2848,7 @@ if (process.argv[2] === 'invite') {
   process.exit(0);
 }
 
-// ── CLI: cachly join <token> ──────────────────────────────────────────────────
+// ── CLI: cachly-mcp join <token> ──────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest join <token>
 // Accepts a Brain invite link — writes the shared instance ID into all
 // detected editor MCP configs and the global ~/.claude/mcp.json.
@@ -2998,7 +3015,7 @@ if (process.argv[2] === 'join') {
   process.exit(0);
 }
 
-// ── CLI: cachly upgrade ───────────────────────────────────────────────────────
+// ── CLI: cachly-mcp upgrade ───────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest upgrade
 // Checks npm for the latest version and prints upgrade instructions if outdated.
 
@@ -3038,7 +3055,7 @@ if (process.argv[2] === 'upgrade') {
   process.exit(0);
 }
 
-// ── CLI: cachly bench ─────────────────────────────────────────────────────────
+// ── CLI: cachly-mcp bench ─────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest bench [--json] [corpus.json]
 // Runs the three-ranker recall quality benchmark (cachly vs BM25 vs flat-file)
 // on the bundled external corpus. No auth required. One shareable headline.
@@ -3125,7 +3142,7 @@ if (process.argv[2] === 'bench') {
   process.exit(0);
 }
 
-// ── CLI: cachly demo ──────────────────────────────────────────────────────────
+// ── CLI: cachly-mcp demo ──────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest demo
 // Zero-signup. Reads local git history and shows what the AI Brain would know.
 // The fastest path from "what is this?" to "I need this".
@@ -3281,16 +3298,16 @@ if (process.argv[2] === 'demo') {
   process.exit(0);
 }
 
-// ── CLI: cachly share ─────────────────────────────────────────────────────────
+// ── CLI: cachly-mcp share ─────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest share
 // Generates a shareable ASCII card + tweet text with your Brain stats.
 
 if (process.argv[2] === 'share') {
-  const apiKey = process.env.CACHLY_JWT ?? '';
-  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  const apiKey = cliSchluessel();
+  const instanceId = cliInstanz();
 
   if (!apiKey || !instanceId) {
-    console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('\n⚠️  No cachly key or Brain instance found (environment or ~/.cachly/credentials.json).');
     console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot  (takes 1–5 minutes)\n');
     process.exit(1);
   }
@@ -3355,16 +3372,16 @@ if (process.argv[2] === 'share') {
   process.exit(0);
 }
 
-// ── CLI: cachly publish ───────────────────────────────────────────────────────
+// ── CLI: cachly-mcp publish ───────────────────────────────────────────────────────
 // Creates a publicly importable Brain snapshot and prints the share URL + card.
 // Usage: npx @cachly-dev/mcp-server@latest publish [--public] [--title "My Patterns"]
 
 if (process.argv[2] === 'publish') {
-  const apiKey    = process.env.CACHLY_JWT ?? '';
-  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  const apiKey    = cliSchluessel();
+  const instanceId = cliInstanz();
 
   if (!apiKey || !instanceId) {
-    console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('\n⚠️  No cachly key or Brain instance found (environment or ~/.cachly/credentials.json).');
     console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
     process.exit(1);
   }
@@ -3429,7 +3446,7 @@ if (process.argv[2] === 'publish') {
   process.exit(0);
 }
 
-// ── CLI: cachly tool-specs / openapi ───────────────────────────────────────────
+// ── CLI: cachly-mcp tool-specs / openapi ───────────────────────────────────────────
 // Emit the 124-tool surface in any agent framework's dialect, derived from the
 // single TOOLS source of truth. Lets OpenAI Assistants, the Anthropic Messages
 // API, LangChain, CrewAI and AutoGen wrap cachly without hand-written glue.
@@ -3461,15 +3478,15 @@ if (process.argv[2] === 'tool-specs' || process.argv[2] === 'openapi') {
   );
 }
 
-// ── CLI: cachly badge ─────────────────────────────────────────────────────────
+// ── CLI: cachly-mcp badge ─────────────────────────────────────────────────────────
 // Outputs the Markdown + HTML snippet for embedding a live Brain lesson-count
 // badge in any README or website. Badge SVG served by cachly API (public, no auth).
 
 if (process.argv[2] === 'badge') {
-  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  const instanceId = cliInstanz();
 
   if (!instanceId) {
-    console.log('\n⚠️  CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('\n⚠️  No Brain instance found (environment or ~/.cachly/credentials.json).');
     console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot  (takes 1–5 minutes)\n');
     process.exit(1);
   }
@@ -3515,20 +3532,38 @@ if (!process.argv[2] && process.stdout.isTTY) {
   console.log('  Stop re-teaching your AI every morning.');
   console.log('  cachly gives it a permanent brain — pre-briefed every session.');
   console.log('');
-  console.log('  \x1b[1mCommands:\x1b[0m');
-  console.log('  \x1b[1m\x1b[32m  npx @cachly-dev/mcp-server@latest autopilot\x1b[0m ← \x1b[1mOne command, fully ready\x1b[0m');
-  console.log('  \x1b[32m  npx @cachly-dev/mcp-server@latest demo\x1b[0m     ← Try it first (no account)');
-  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest setup\x1b[0m    ← Interactive setup (pick editors)');
-  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest claim\x1b[0m    ← Keep a test Brain in your own account');
-  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest health\x1b[0m   ← Check everything works');
-  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest doctor\x1b[0m   ← Diagnose a broken or missing install');
-  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest digest\x1b[0m   ← Weekly Brain summary');
-  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest share\x1b[0m    ← Share your Brain stats');
-  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest badge\x1b[0m    ← README badge for your Brain');
-  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest invite\x1b[0m   ← Invite a teammate');
-  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest join <token>\x1b[0m ← Accept a Brain invite');
-  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest bench\x1b[0m     ← Recall quality vs flat-file memory');
-  console.log('  \x1b[36m  npx @cachly-dev/mcp-server@latest upgrade\x1b[0m  ← Check for updates');
+  // Jeder Befehl fuer Nutzer steht hier, voran die taeglichen (GROW-025). Nicht hier:
+  // die Hook-Eingaenge ambient-recall, ambient-auffrischen, ambient-credit, cls-ingest.
+  const zeile = (befehl: string, was: string) =>
+    console.log(`  \x1b[36m  ${befehl.padEnd(22)}\x1b[0m ${was}`);
+  console.log('  \x1b[1mStart:\x1b[0m  \x1b[1m\x1b[32mnpx @cachly-dev/mcp-server@latest autopilot\x1b[0m ← \x1b[1mOne command, fully ready\x1b[0m');
+  console.log('          Every command below runs as: npx @cachly-dev/mcp-server@latest <command>');
+  console.log('');
+  console.log('  \x1b[1mEvery day:\x1b[0m');
+  zeile('status', 'Lessons, recalls and team at a glance');
+  zeile('ambient-stats', 'Tokens injected vs saved — the honest net, even when negative');
+  zeile('doctor', 'Diagnose a broken or missing install');
+  zeile('health', 'Check key, API, editor configs and git hook');
+  zeile('digest', 'What your Brain learned this week');
+  console.log('  \x1b[1mSet up:\x1b[0m');
+  zeile('demo', 'Try it first (no account)');
+  zeile('setup', 'Interactive setup (pick editors)');
+  zeile('init', 'Write the config for one editor (flags)');
+  zeile('claim', 'Keep a test Brain in your own account');
+  zeile('upgrade', 'Check for updates');
+  console.log('  \x1b[1mYour data:\x1b[0m');
+  zeile('export', 'Write your lessons to disk (md / jsonl)');
+  zeile('index [dir]', 'Index a project into the Brain (CI)');
+  zeile('learn-git [repo]', 'Learn lessons from recent commits (CI)');
+  console.log('  \x1b[1mTeam & sharing:\x1b[0m');
+  zeile('invite', 'Invite a teammate');
+  zeile('join <token>', 'Accept a Brain invite');
+  zeile('share', 'Share your Brain stats');
+  zeile('publish', 'Publish an importable Brain snapshot');
+  zeile('badge', 'README badge for your Brain');
+  console.log('  \x1b[1mMore:\x1b[0m');
+  zeile('bench', 'Recall quality vs flat-file memory');
+  zeile('tool-specs | openapi', 'Tool definitions for other agent frameworks');
   console.log('');
   console.log('  \x1b[90mWorks with: Claude Code · Cursor · Windsurf · GitHub Copilot · Cline · Zed\x1b[0m');
   // Aus TOOLS statt getippt — dieselbe Zahl stand auf der Landingpage
@@ -3538,7 +3573,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   process.exit(0);
 }
 
-// ── CLI: cachly init ──────────────────────────────────────────────────────────
+// ── CLI: cachly-mcp init ──────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server init --instance-id <id> --api-key <key> [--editor claude|cursor|windsurf|copilot|continue|codex|gemini] [--project-dir /path]
 
 /** What each editor's hook install prints (init/setup/autopilot). */
@@ -3689,20 +3724,20 @@ if (process.argv[2] === 'init') {
   process.exit(0);
 }
 
-// ── CLI: cachly health ────────────────────────────────────────────────────────
+// ── CLI: cachly-mcp health ────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest health
 // Checks: JWT valid, Brain API reachable, editor configs found, git hook present.
 
-// ── CLI: cachly status ────────────────────────────────────────────────────────
+// ── CLI: cachly-mcp status ────────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest status
 // Shows Brain health, team size, and quick stats at a glance.
 
 if (process.argv[2] === 'status') {
-  const apiKey = process.env.CACHLY_JWT ?? '';
-  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  const apiKey = cliSchluessel();
+  const instanceId = cliInstanz();
 
   if (!apiKey || !instanceId) {
-    console.log('\n⚠️  CACHLY_JWT and CACHLY_BRAIN_INSTANCE_ID must be set.');
+    console.log('\n⚠️  No cachly key or Brain instance found (environment or ~/.cachly/credentials.json).');
     console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
     process.exit(1);
   }
@@ -3794,9 +3829,9 @@ if (process.argv[2] === 'health') {
 
   // ── 1. JWT token ────────────────────────────────────────────────────────────
   console.log('🔑 Auth token');
-  const jwt = process.env.CACHLY_JWT ?? '';
+  const jwt = cliSchluessel();
   if (!jwt) {
-    fail('CACHLY_JWT not set — run: npx @cachly-dev/mcp-server@latest autopilot');
+    fail('No cachly key found (environment or ~/.cachly/credentials.json) — run: npx @cachly-dev/mcp-server@latest autopilot');
   } else if (jwt.startsWith('cky_')) {
     // Long-lived API key (the credential `setup` provisions). It is not a JWT and
     // never expires client-side — treat a well-formed key as healthy.
@@ -3841,9 +3876,9 @@ if (process.argv[2] === 'health') {
 
   // ── 3. Brain instance ───────────────────────────────────────────────────────
   console.log('\n🧠 Brain instance');
-  const instanceId = process.env.CACHLY_BRAIN_INSTANCE_ID ?? '';
+  const instanceId = cliInstanz();
   if (!instanceId) {
-    warn('CACHLY_BRAIN_INSTANCE_ID not set — will auto-resolve on first tool call');
+    warn('No Brain instance found (environment or ~/.cachly/credentials.json) — will auto-resolve on first tool call');
   } else if (jwt) {
     try {
       const instRes = await fetch(`${apiUrl}/api/v1/instances/${instanceId}`, {
@@ -3995,7 +4030,7 @@ if (process.argv[2] === 'health') {
   process.exit(0);
 }
 
-// ── CLI: cachly setup (interactive — no flags required) ───────────────────────
+// ── CLI: cachly-mcp setup (interactive — no flags required) ───────────────────────
 // Usage: npx @cachly-dev/mcp-server setup
 
 // `autopilot` is the one-command entrypoint: it runs the exact same wizard as
@@ -4804,7 +4839,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   process.exit(0);
 }
 
-// ── CLI: cachly index <dir> ───────────────────────────────────────────────────
+// ── CLI: cachly-mcp index <dir> ───────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest index [./path/to/project]
 // Indexes the project directory into the Brain — perfect for CI/CD cron jobs.
 
@@ -4814,12 +4849,12 @@ if (process.argv[2] === 'index') {
   const flag = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
 
   const dir        = resolve(flag('dir') ?? argv.find(a => !a.startsWith('--')) ?? '.');
-  const instanceId = flag('instance-id') ?? process.env.CACHLY_BRAIN_INSTANCE_ID;
+  const instanceId = flag('instance-id') || cliInstanz();
   const maxFiles   = parseInt(flag('max-files') ?? '500', 10);
   const namespace  = flag('namespace') ?? 'cachly:sem:code';
 
   if (!instanceId || !JWT) {
-    console.error('\n❌  CACHLY_BRAIN_INSTANCE_ID and CACHLY_JWT must be set\n');
+    console.error('\n❌  No Brain instance or key found (flag, environment or ~/.cachly/credentials.json)\n');
     console.error('   export CACHLY_BRAIN_INSTANCE_ID=<uuid>');
     console.error('   export CACHLY_JWT=<cky_live_...>');
     console.error('   npx @cachly-dev/mcp-server@latest index ./my-project\n');
@@ -4846,7 +4881,7 @@ if (process.argv[2] === 'index') {
   process.exit(0);
 }
 
-// ── CLI: cachly learn-git ─────────────────────────────────────────────────────
+// ── CLI: cachly-mcp learn-git ─────────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest learn-git [./repo] [--max-commits 50]
 // Auto-learns brain lessons from recent git commits — ideal for CI on PR merge.
 // Each meaningful commit becomes a lesson, so the Brain grows with zero manual work.
@@ -4857,11 +4892,11 @@ if (process.argv[2] === 'learn-git') {
   const flag = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
 
   const repoDir    = resolve(flag('dir') ?? argv.find(a => !a.startsWith('--')) ?? '.');
-  const instanceId = flag('instance-id') ?? process.env.CACHLY_BRAIN_INSTANCE_ID;
+  const instanceId = flag('instance-id') || cliInstanz();
   const maxCommits = parseInt(flag('max-commits') ?? '50', 10);
 
   if (!instanceId || !JWT) {
-    console.error('\n❌  CACHLY_BRAIN_INSTANCE_ID and CACHLY_JWT must be set\n');
+    console.error('\n❌  No Brain instance or key found (flag, environment or ~/.cachly/credentials.json)\n');
     console.error('   export CACHLY_BRAIN_INSTANCE_ID=<uuid>');
     console.error('   export CACHLY_JWT=<cky_live_...>');
     console.error('   npx @cachly-dev/mcp-server@latest learn-git .\n');
@@ -4996,10 +5031,10 @@ if (process.argv[2] === 'doctor') {
     checkCredential(JWT),
     await checkApiReachable(API_URL),
     await checkAuthAccepted(API_URL, JWT),
-    checkInstance(process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId),
+    checkInstance(cliInstanz() || _defaultInstanceId),
     // Karte hcg8neyut0kd: der stumme Bedeutungspfad (0 Vektoren bei 506
     // Lektionen, monatelang unbemerkt) bekommt seinen doctor-Check.
-    await checkVectorCoverage(API_URL, JWT, process.env.CACHLY_BRAIN_INSTANCE_ID ?? _defaultInstanceId),
+    await checkVectorCoverage(API_URL, JWT, cliInstanz() || _defaultInstanceId),
     checkHooks(inspectAmbientHooks(process.cwd())),
     checkLedger(await readLedger(), defaultLedgerPath()),
   ];
