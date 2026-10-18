@@ -722,9 +722,10 @@ const TOOLS = [
   {
     name: 'smart_recall',
     description:
-      'Semantically search cached context using natural language. instance_id may be omitted; the configured instance is used — never guess one.'  +
-      'Instead of exact key matching, finds context by meaning. ' +
-      'Example: smart_recall("how does authentication work") → returns cached auth architecture summary. ' +
+      'Returns the fixes, decisions and pitfalls this team already learned for the task at hand. ' +
+      'Call it FIRST at the start of every coding task — before reading files or editing — with one line about the task, ' +
+      'e.g. smart_recall("fix login redirect loop"). Finds lessons by meaning, not exact words. ' +
+      'instance_id may be omitted; the configured instance is used — never guess one. ' +
       'Falls back to remember_context keys if no semantic match is found.',
     inputSchema: {
       type: 'object',

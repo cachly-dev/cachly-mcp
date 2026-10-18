@@ -13,6 +13,12 @@
 // ── Funnel event names ──────────────────────────────────────────────────────
 
 export type FunnelEventName =
+  /**
+   * Der MCP-Server wurde von einem Client verbunden (einmal je Prozess, mit
+   * Client-Name). Trennt "nie verbunden" von "verbunden, aber nie gefragt"
+   * (19.10.2026: kein fremdes Konto hatte je smart_recall gerufen).
+   */
+  | 'mcp_verbunden'
   // Auth lifecycle
   | 'device_flow_started'
   | 'device_flow_completed'

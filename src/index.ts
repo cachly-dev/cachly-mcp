@@ -1090,6 +1090,7 @@ import { TOOLS } from './tools.js';
 
 // Fires once per process when no JWT is set (anonymous, opt-out via CACHLY_NO_TELEMETRY=1)
 let _telemetryPingSent = false;
+let _verbundenGemeldet = false;
 // Fires once per process on the first successful Brain tool call — key activation metric
 let _firstCallSuccessSent = false;
 
@@ -1849,9 +1850,16 @@ class UnknownToolError extends Error {}
 // "SessionStart-equivalent" for harnesses without a per-prompt hook — Cursor,
 // Windsurf, Cline, Copilot agent-mode all surface `instructions`. It's a one-time
 // nudge (not per-prompt recall), so it stays short and behavior-focused.
+//
+// 19.10.2026: „BEFORE a non-trivial task“ war zu weich. In der Produktion hat
+// kein einziges fremdes Konto je smart_recall gerufen (49 neue Konten in 30
+// Tagen, Lektion ankommen:kein-fremdes-konto-hat-je-abgerufen) — Clients ohne
+// Prompt-Hook (JetBrains, Copilot) hatten nur diesen Satz als Anstoss, und das
+// Modell entschied jedes Mal, die Aufgabe sei trivial. Jetzt: JEDE Aufgabe,
+// und zwar zuerst.
 const CACHLY_MCP_INSTRUCTIONS = `This project has a Cachly AI Brain — persistent, cross-session memory of past fixes, decisions, and gotchas for THIS codebase. Use it proactively; it makes you faster and stops you repeating known mistakes.
 
-- BEFORE a non-trivial task: call smart_recall with a short description of what you're about to do. If it returns lessons, apply them before researching from scratch.
+- At the START of every task, before reading files or editing: call smart_recall with one line about the task. If it returns lessons, apply them before researching from scratch.
 - WHEN debugging an error: call causal_trace with the exact error first — a known fix may already exist.
 - AFTER a fix, deploy, or discovery: call learn_from_attempts so the knowledge persists.
 - BEFORE a risky op (deploy, migration, dependency bump): call brain_predict.
@@ -1974,7 +1982,16 @@ function makeServer(): Server {
 function merkeClientNachHandshake(s: Server): void {
   const vorher = s.oninitialized;
   s.oninitialized = () => {
-    try { const c = s.getClientVersion(); setzeClientKennung(c?.name, c?.version); } catch { /* ohne Kennung bleibt 'unbekannt' */ }
+    let client: { name?: string; version?: string } | undefined;
+    try { client = s.getClientVersion(); setzeClientKennung(client?.name, client?.version); } catch { /* ohne Kennung bleibt 'unbekannt' */ }
+    // Einmal je Prozess: „der Server wurde verbunden“. Bis heute sah man nur,
+    // dass Plugins sich selbst melden — nicht, ob eine KI den Server ueberhaupt
+    // startet. Erst diese Zahl trennt „nie verbunden“ von „verbunden, aber nie
+    // gefragt“ (19.10.2026: null fremde Abrufe, Ursache sonst nicht messbar).
+    if (!_verbundenGemeldet) {
+      _verbundenGemeldet = true;
+      sendFunnelEvent('mcp_verbunden', { client: String(client?.name ?? 'unbekannt').slice(0, 60), client_version: String(client?.version ?? '').slice(0, 30) });
+    }
     vorher?.();
   };
 }
