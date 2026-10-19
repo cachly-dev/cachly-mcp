@@ -901,13 +901,13 @@ async function baueVerbindung(instance_id: string): Promise<Redis> {
 
   // Fetch connection details (includes password) from the dedicated endpoint.
   let password: string | undefined;
-  let tlsEnabled = inst.tls_enabled !== false; // default true
+  let auskunft: VerbindungsAuskunft | undefined;
   try {
-    const conn = await apiFetch<{ password?: string; tls_enabled?: boolean }>(
+    const conn = await apiFetch<VerbindungsAuskunft>(
       `/api/v1/instances/${instance_id}/connection`
     );
     password = conn.password ?? undefined;
-    tlsEnabled = conn.tls_enabled !== false;
+    auskunft = conn;
     zeitpunkt('verbindung: Zugangsdaten da');
   } catch (connErr) {
     // If the connection endpoint fails and the instance has a password, we cannot connect.
@@ -920,12 +920,14 @@ async function baueVerbindung(instance_id: string): Promise<Redis> {
     // Other failures (timeout, 500): proceed without password, Redis will surface NOAUTH if needed
   }
 
+  // TLS, sobald die API einen TLS-Port nennt (Brains-TLS, brains-tls.ts).
+  const weg = verbindungsWeg({ host: inst.host, port: inst.port, tls_enabled: inst.tls_enabled }, auskunft);
   const client = new Redis({
-    host: inst.host,
-    port: inst.port,
+    host: weg.host,
+    port: weg.port,
     password: password || undefined,
     commandTimeout: 8000,
-    ...(tlsEnabled ? { tls: {} } : {}),
+    ...(weg.tls ? { tls: weg.tls } : {}),
     lazyConnect: true,
     enableReadyCheck: true,
     connectTimeout: 8000,
@@ -1084,6 +1086,7 @@ import type { Instance } from './handlers/brain.js';
 
 // ── Tools (imported from tools.ts) ─────────────────────────────────────────
 import { TOOLS } from './tools.js';
+import { verbindungsWeg, type VerbindungsAuskunft } from './brains-tls.js';
 
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -3889,29 +3892,30 @@ if (process.argv[2] === 'health') {
           if (inst.host && inst.port) {
             try {
               let pingPassword: string | undefined;
-              let pingTls = inst.tls_enabled !== false;
+              let pingAuskunft: VerbindungsAuskunft | undefined;
               try {
                 const connRes = await fetch(`${apiUrl}/api/v1/instances/${instanceId}/connection`, {
                   headers: { Authorization: `Bearer ${jwt}`, Accept: 'application/json' },
                   signal: AbortSignal.timeout(5000),
                 });
                 if (connRes.ok) {
-                  const conn = await connRes.json() as { password?: string; tls_enabled?: boolean };
+                  const conn = await connRes.json() as VerbindungsAuskunft;
                   pingPassword = conn.password;
-                  pingTls = conn.tls_enabled !== false;
+                  pingAuskunft = conn;
                 }
               } catch { /* proceed without password */ }
+              const pingWeg = verbindungsWeg({ host: inst.host, port: inst.port, tls_enabled: inst.tls_enabled }, pingAuskunft);
               const pingClient = new Redis({
-                host: inst.host, port: inst.port,
+                host: pingWeg.host, port: pingWeg.port,
                 password: pingPassword,
-                ...(pingTls ? { tls: {} } : {}),
+                ...(pingWeg.tls ? { tls: pingWeg.tls } : {}),
                 lazyConnect: true, connectTimeout: 5000, retryStrategy: () => null,
               });
               await pingClient.connect();
               const pong = await pingClient.ping();
               pingClient.disconnect();
               if (pong === 'PONG') {
-                ok(`Redis PING → PONG (${inst.host}:${inst.port})`);
+                ok(`Redis PING → PONG (${pingWeg.host}:${pingWeg.port}, ${pingWeg.art === 'klartext' ? 'unencrypted' : 'TLS'})`);
               } else {
                 warn(`Redis responded but not PONG: ${pong}`);
               }
