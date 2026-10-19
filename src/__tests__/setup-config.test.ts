@@ -9,9 +9,9 @@ import {
   CLAUDE_MD_MARKER_END,
   mcpAddBefehl,
 } from '../index.js';
-import { writeInstructions } from '../index';
+import { writeInstructions, anweisungsZeile } from '../index';
 import { credentialsPath } from '../credentials.js';
-import { existsSync, mkdirSync, readFileSync, rmSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -305,6 +305,71 @@ describe('writeInstructions', () => {
     // Zweiter Lauf: Marker ersetzt, nicht doppelt angehaengt.
     expect((await writeInstructions(mit, instanceId))[regel]).toBe('updated');
     expect(readFileSync(regel, 'utf-8').split(CLAUDE_MD_MARKER_START).length).toBe(2);
+  });
+});
+
+// Befund 19.10.2026: kein fremdes Konto rief je smart_recall. Die Regel muss dort
+// liegen, wo der Client sie liest: Gemini CLI liest GEMINI.md, Junie .junie/guidelines.md.
+describe('writeInstructions — Gemini CLI und Junie', () => {
+  const wurzel = resolve(__dirname, '../../../tmp-test-instructions-gj');
+  const id = 'test-instance-456';
+  const leer = resolve(wurzel, 'leer-heim');
+  beforeAll(() => { rmSync(wurzel, { recursive: true, force: true }); mkdirSync(leer, { recursive: true }); });
+  afterAll(() => { rmSync(wurzel, { recursive: true, force: true }); });
+
+  it('schreibt weder GEMINI.md noch .junie, wo beides nicht benutzt wird', async () => {
+    const p = resolve(wurzel, 'nichts');
+    await writeInstructions(p, id, leer);
+    expect(existsSync(resolve(p, 'GEMINI.md'))).toBe(false);
+    expect(existsSync(resolve(p, '.junie'))).toBe(false);
+  });
+
+  it('schreibt GEMINI.md mit smart_recall, wenn das Projekt .gemini/ hat', async () => {
+    const p = resolve(wurzel, 'mit-gemini');
+    mkdirSync(resolve(p, '.gemini'), { recursive: true });
+    const r = await writeInstructions(p, id, leer);
+    const datei = resolve(p, 'GEMINI.md');
+    expect(r[datei]).toBe('written');
+    expect(readFileSync(datei, 'utf-8')).toContain('smart_recall(instance_id="' + id + '"');
+  });
+
+  it('schreibt GEMINI.md auch, wenn nur der Heimordner .gemini/ hat', async () => {
+    const heim = resolve(wurzel, 'heim-mit-gemini');
+    mkdirSync(resolve(heim, '.gemini'), { recursive: true });
+    const p = resolve(wurzel, 'heim-projekt');
+    await writeInstructions(p, id, heim);
+    expect(existsSync(resolve(p, 'GEMINI.md'))).toBe(true);
+  });
+
+  it('schreibt .junie/guidelines.md, wenn das Projekt .junie/ hat', async () => {
+    const p = resolve(wurzel, 'mit-junie');
+    mkdirSync(resolve(p, '.junie'), { recursive: true });
+    const r = await writeInstructions(p, id, leer);
+    const datei = resolve(p, '.junie', 'guidelines.md');
+    expect(r[datei]).toBe('written');
+    expect(readFileSync(datei, 'utf-8')).toContain('smart_recall');
+  });
+
+  it('fremder Text in GEMINI.md bleibt, unser Block wird nur angehaengt und dann ersetzt', async () => {
+    const p = resolve(wurzel, 'fremd');
+    mkdirSync(resolve(p, '.gemini'), { recursive: true });
+    writeFileSync(resolve(p, "GEMINI.md"), '# Meine Regeln\nNiemals Tabs.\n');
+    const datei = resolve(p, 'GEMINI.md');
+    expect((await writeInstructions(p, id, leer))[datei]).toBe('appended');
+    expect((await writeInstructions(p, id, leer))[datei]).toBe('updated');
+    const text = readFileSync(datei, 'utf-8');
+    expect(text.startsWith('# Meine Regeln\nNiemals Tabs.')).toBe(true);
+    expect(text.split(CLAUDE_MD_MARKER_START).length).toBe(2);
+  });
+
+  it('ein Schreibfehler bricht nicht ab: er wird gemeldet, die uebrigen Dateien entstehen', async () => {
+    const p = resolve(wurzel, 'kaputt');
+    // CLAUDE.md ist ein Ordner: Schreiben scheitert.
+    mkdirSync(resolve(p, 'CLAUDE.md'), { recursive: true });
+    const r = await writeInstructions(p, id, leer);
+    expect(r[resolve(p, 'CLAUDE.md')]).toMatch(/^failed:/);
+    expect(r[resolve(p, 'AGENTS.md')]).toBe('written');
+    expect(anweisungsZeile('CLAUDE.md', r[resolve(p, 'CLAUDE.md')])).toContain('Could not write CLAUDE.md');
   });
 });
 

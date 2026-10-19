@@ -46,9 +46,29 @@ export interface AnweisungsDatei {
   prefix?: string;
   /** Nur in Projekten mit `.idea/`. */
   nurMitIdea?: boolean;
+  /**
+   * Nur schreiben, wenn einer dieser Ordner da ist: im Projekt (`projekt`)
+   * oder im Heimordner (`heim`). So bekommt nicht jedes Projekt eine
+   * GEMINI.md, nur eines, in dem Gemini CLI benutzt wird.
+   */
+  nurMit?: { projekt?: readonly string[]; heim?: readonly string[] };
 }
 
 export type BlockErgebnis = 'written' | 'updated' | 'appended';
+
+/** Ergebnis je Datei: geschrieben oder ein gemeldeter Fehler samt Grund. */
+export type SchreibErgebnis = BlockErgebnis | `failed:${string}`;
+
+/** Soll diese Anweisungsdatei in diesem Projekt entstehen? */
+export function sollSchreiben(d: AnweisungsDatei, projekt: string, heim: string, gibtEs: (pfad: string) => boolean, verbinde: (...teile: string[]) => string): boolean {
+  if (d.nurMitIdea && !gibtEs(verbinde(projekt, '.idea'))) return false;
+  if (d.nurMit) {
+    const imProjekt = (d.nurMit.projekt ?? []).some((o) => gibtEs(verbinde(projekt, o)));
+    const imHeim = (d.nurMit.heim ?? []).some((o) => gibtEs(verbinde(heim, o)));
+    if (!imProjekt && !imHeim) return false;
+  }
+  return true;
+}
 
 /**
  * Setzt einen Anweisungsblock (mit Markern) in eine Datei, ohne fremden Text
@@ -87,4 +107,8 @@ export const ANWEISUNGS_DATEIEN: readonly AnweisungsDatei[] = [
   { pfad: ['.windsurfrules'] },
   { pfad: ['.clinerules'] },
   { pfad: ['.aiassistant', 'rules', 'cachly.md'], nurMitIdea: true },
+  // Gemini CLI liest GEMINI.md (nicht AGENTS.md); nur dort, wo Gemini benutzt wird.
+  { pfad: ['GEMINI.md'], nurMit: { projekt: ['.gemini'], heim: ['.gemini'] } },
+  // JetBrains Junie liest .junie/guidelines.md; nur wo das Plugin .junie/ angelegt hat.
+  { pfad: ['.junie', 'guidelines.md'], nurMit: { projekt: ['.junie'] } },
 ];

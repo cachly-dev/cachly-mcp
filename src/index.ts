@@ -1024,7 +1024,7 @@ import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain
 import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-proof.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import {
-  CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, EDITOR_FILES, ANWEISUNGS_DATEIEN, setzeAnweisungsblock,
+  CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, EDITOR_FILES, ANWEISUNGS_DATEIEN, setzeAnweisungsblock, sollSchreiben, type SchreibErgebnis,
 } from './projektdateien.js';
 import { uninstallBefehl, type UninstallUmgebung } from './uninstall.js';
 import { gitLesen } from './git-ohne-shell.js';
@@ -2518,21 +2518,36 @@ ${CLAUDE_MD_MARKER_END}`;
  * also ohne Klick. Nur in Projekten mit .idea/, damit nicht jedes Projekt
  * einen weiteren Ordner bekommt.
  */
-export async function writeInstructions(projectDir: string, instanceId: string): Promise<Record<string, 'written'|'updated'|'appended'>> {
+export async function writeInstructions(projectDir: string, instanceId: string, heimDir?: string): Promise<Record<string, SchreibErgebnis>> {
   const { existsSync } = await import('node:fs');
   const { resolve } = await import('node:path');
+  const { homedir } = await import('node:os');
+  const heim = heimDir ?? homedir();
 
   // `prefix` is written only when the file is created fresh (Cursor .mdc needs it);
   // on marker-update/append the prefix is left untouched (setzeAnweisungsblock).
   const files: Array<{ path: string; prefix?: string }> = ANWEISUNGS_DATEIEN
-    .filter((d) => !d.nurMitIdea || existsSync(resolve(projectDir, '.idea')))
+    .filter((d) => sollSchreiben(d, projectDir, heim, existsSync, resolve))
     .map((d) => ({ path: resolve(projectDir, ...d.pfad), prefix: d.prefix }));
   const block = buildClaudeMdBlock(instanceId);
-  const results: Record<string, 'written'|'updated'|'appended'> = {};
+  const results: Record<string, SchreibErgebnis> = {};
   for (const { path: file, prefix } of files) {
-    results[file] = await setzeAnweisungsblock(file, block, prefix);
+    // Ein Schreibfehler (Rechte, schreibgeschuetzter Ordner) stoppt die
+    // Einrichtung nicht: er wird gemeldet, die uebrigen Dateien entstehen.
+    try {
+      results[file] = await setzeAnweisungsblock(file, block, prefix);
+    } catch (e) {
+      results[file] = `failed:${(e as Error).message}`;
+    }
   }
   return results;
+}
+
+/** Eine Zeile je Datei fuer die Konsole. */
+export function anweisungsZeile(datei: string, res: SchreibErgebnis): string {
+  if (res.startsWith('failed:')) return `⚠️  Could not write ${datei}: ${res.slice(7)} (the rest of the setup continues)`;
+  const verb = res === 'updated' ? '✅ Updated' : res === 'appended' ? '✅ Appended to' : '✅ Written';
+  return `${verb}: ${datei}`;
 }
 
 
@@ -3675,9 +3690,7 @@ if (process.argv[2] === 'init') {
   // agent the user runs arrives pre-briefed.
   const results = await writeInstructions(projectDir, instanceId);
   for (const [path, action] of Object.entries(results)) {
-    const verb = action === 'updated' ? '✅ Updated' : action === 'appended' ? '✅ Appended to' : '✅ Written';
-    const name = path.split(/[\\/]/).pop() ?? path;
-    console.log(`${verb}: ${name}`);
+    console.log(anweisungsZeile(path.split(/[\\/]/).pop() ?? path, action));
   }
 
   // ── CLS Phase 4: Auto-install git post-commit hook ─────────────────────────
@@ -4575,8 +4588,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   // ── Step 5: Instructions für alle Vendors (immer, idempotent) ─────────────
   const instrResults = await writeInstructions(cwd, instance.id);
   for (const [file, res] of Object.entries(instrResults)) {
-    const label = res === 'updated' ? '✅ Updated' : res === 'appended' ? '✅ Appended to' : '✅ Written';
-    console.log(`${label}: ${file}`);
+    console.log(anweisungsZeile(file, res));
   }
 
   // ── Step 5b: Bootstrap Brain from git history ─────────────────────────────
