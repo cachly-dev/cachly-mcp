@@ -34,17 +34,46 @@ import { versuchStart, neueKennung, wendeZuteilungAn, schliesseVersuchAb,
  * lesson is critical, and its commands/paths. Anything that is not a lesson
  * (context entries, indexes) keeps a raw preview — but trimmed at a word
  * boundary and with an honest cut marker.
+ *
+ * `maxChars` is the prose budget of a lesson; `rohZeichen` the budget of a
+ * raw entry (defaults to `maxChars`). They are separate because only the
+ * lesson budget is measured — see RECALL_VOLLTEXT_ZEICHEN.
  */
-export function recallVorschau(key: string, content: string, maxChars: number): string[] {
+export function recallVorschau(key: string, content: string, maxChars: number, rohZeichen = maxChars): string[] {
   if (key.includes('lesson:best:')) {
     const l = safeJsonParse<PreviewLesson & { what_worked?: string }>(content, {} as PreviewLesson);
     if (l && typeof l === 'object' && (l.what_worked || l.what_failed || l.commands?.length)) {
       return lessonPreviewLines(l, { maxChars, indent: '  ' });
     }
   }
-  const roh = trimTo(content, maxChars);
+  const roh = trimTo(content, rohZeichen);
   return roh ? [roh] : [];
 }
+
+/**
+ * Wie viel von `what_worked` ein smart_recall-Treffer zeigt.
+ *
+ * Bis zum 21.10.2026 waren es 400 Zeichen (Mehrthemen-Anfrage: 300). LoCoMo
+ * Lauf 5 (1.540 Fragen, bench/locomo/BEFUND-lauf-5.md) hat gemessen, was das
+ * kostet: 10.051 von 12.160 gezeigten Treffern (83 %) waren gekuerzt. Derselbe
+ * Abruf mit vollem Text beantwortete 84,1 statt 75,4 % der Fragen — fuer 23 %
+ * mehr Kontext. Die vorab festgelegte Regel (volltext mindestens 5 Punkte vor
+ * produkt) hat gegriffen.
+ *
+ * Echte Brains sind laenger als LoCoMo. Im eingefrorenen Hausbestand (498
+ * Lektionen) liegt der Median bei 929 Zeichen; 78 % sind laenger als 400. Bei
+ * 2.000 Zeichen kommen dort 89 % ganz an, im fremden Satz (16.266 Lektionen
+ * aus 60 Projekten) 99,9 %. Der Deckel bleibt, damit acht Treffer nicht mehr
+ * als 16.000 Zeichen tragen; was laenger ist, endet mit sichtbarem "…", und
+ * recall_best_solution liefert den Rest.
+ *
+ * Nur Lektionen. Kontext- und Index-Eintraege behalten RECALL_ROH_ZEICHEN —
+ * fuer sie gibt es keine Messung. Der Kompakt-Modus bleibt ebenfalls kurz
+ * (Begruendung an `kompakt` im smart_recall-Zweig).
+ */
+export const RECALL_VOLLTEXT_ZEICHEN = 2000;
+/** Vorschau fuer alles, was keine Lektion ist, und fuer den Kompakt-Modus. */
+export const RECALL_ROH_ZEICHEN = 400;
 import type { CKGEdge, PersonNode, ServiceNode } from '../ckg.js';
 import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
@@ -3266,6 +3295,8 @@ async function handleBrainToolInner(
       // Prozent. Die Vorschaulaenge bleibt bei 400 und wird ausdruecklich NICHT
       // angetastet: kuerzere Vorschau ist gemessen und verworfen (bei 3 von 11
       // unloesbaren Zellen stand die Tatsache bei Zeichen 288 bis 370).
+      // Ausserhalb des Kompakt-Modus gilt seit 21.10.2026 der volle Text
+      // (RECALL_VOLLTEXT_ZEICHEN); der Kompakt-Modus bleibt bei 400.
       const kompaktTreffer = (() => {
         const roh = Number.parseInt(process.env.CACHLY_RECALL_COMPACT_HITS ?? '', 10);
         return Number.isFinite(roh) ? Math.min(20, Math.max(1, roh)) : 5;
@@ -3357,9 +3388,15 @@ async function handleBrainToolInner(
 
       if (hybridResults.length > 0) {
         const hasCKG = hybridResults.some(r => r.ckgScore !== undefined);
-        const modeLabel = semHits.length > 0 && hasCKG
+        // Bedeutungssuche hat stattgefunden, wenn der Sinnpfad die Rangfolge
+        // gebaut hat (sinnAngewandt) ODER die alte Kontext-Suche Treffer
+        // brachte. Bis zum 21.10.2026 zaehlte hier nur semHits: in LoCoMo
+        // Lauf 5 hiessen alle 1.529 Abrufe "keyword", obwohl 1.002 davon
+        // einen Treffer mit Wortwert 0 zeigten — erreichbar nur ueber Vektoren.
+        const bedeutung = sinnAngewandt || semHits.length > 0;
+        const modeLabel = bedeutung && hasCKG
           ? `keyword + semantic + CKG hybrid`
-          : semHits.length > 0
+          : bedeutung
           ? `keyword + semantic hybrid`
           : hasCKG
           ? `keyword + CKG hybrid`
@@ -3427,7 +3464,9 @@ async function handleBrainToolInner(
                 : r.matchType === 'semantic'
                 ? `sem: ${((r.semScore ?? 0) * 100).toFixed(0)}%, 🎯 semantic`
                 : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
-              const vorschau = recallVorschau(r.key, r.content, 300);
+              const vorschau = kompakt
+                ? recallVorschau(r.key, r.content, 300)
+                : recallVorschau(r.key, r.content, RECALL_VOLLTEXT_ZEICHEN, 300);
               lines.push(kompakt ? `  **${label}**` : `  **${label}** _(${scorePart})_`);
               // Lesbares Brain (docs/produkt/team-puls.md P1): plain-language layer
               // stored at lesson:human:<topic> — display-only, ranking untouched.
@@ -3466,7 +3505,10 @@ async function handleBrainToolInner(
               : `BM25: ${(r.bm25Score ?? 0).toFixed(2)}, matched: ${r.matchedWords?.join(', ')}`;
             // Kuerzer NUR bei Lektionen (Feld-Vorschau); ctx/idx-Eintraege
             // wuerden sonst mitten im rohen JSON gekappt (Einwand 5).
-            const vorschau = recallVorschau(r.key, r.content, 400);
+            // Lektionen voll bis RECALL_VOLLTEXT_ZEICHEN (LoCoMo Lauf 5).
+            const vorschau = recallVorschau(
+              r.key, r.content, kompakt ? RECALL_ROH_ZEICHEN : RECALL_VOLLTEXT_ZEICHEN, RECALL_ROH_ZEICHEN,
+            );
             lines.push(kompakt ? `**${label}**` : `**${label}**${authorBadge}${contextBadge} _(${scorePart})_`);
             // Entscheidungs-Gedaechtnis (WOW #2): eine gemerkte Entscheidung
             // steht VOR dem Auszug — sie ist der Grund, warum diese Lektion

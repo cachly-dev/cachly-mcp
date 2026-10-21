@@ -7,6 +7,23 @@
 
 ---
 
+## [0.10.213] – 2026-10-21 — *"The whole lesson, not the first 400 characters."*
+
+**`smart_recall` now shows the full text of each lesson it returns.**
+Before, every hit was cut after 400 characters (300 for multi-topic queries).
+Most lessons are longer than that, so the fact your AI needed often sat past
+the cut, behind a "…".
+
+- Lessons are shown up to 2,000 characters. Longer ones still end with a
+  visible "…"; `recall_best_solution` returns the rest.
+- Context and index entries keep the short preview.
+- Compact mode (`CACHLY_RECALL_COMPACT=1`) keeps the short preview too.
+- The results header now says `keyword + semantic hybrid` whenever the meaning
+  search ran. Before, it said `keyword` even when hits came from embeddings.
+- Ranking is unchanged.
+
+---
+
 ## [0.10.212] – 2026-10-20 — *"One rule block, everywhere."*
 
 **`setup_ai_memory` now writes the same rule block as `init` and `autopilot`.**
