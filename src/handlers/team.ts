@@ -9,9 +9,8 @@ import { calculateConfidence, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_VALUE,
 import type { Instance } from './brain.js';
 import { safeJsonParse } from '../utils.js';
 import { ersparteMinuten, istStarterLektion, fmtStunden } from '../wertbeitrag.js';
-import { cachlyUrl } from '../cachly-url.js';
 import {
-  CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, CURSOR_MDC_FRONTMATTER, setzeAnweisungsblock,
+  CURSOR_MDC_FRONTMATTER, buildClaudeMdBlock, setzeAnweisungsblock,
 } from '../projektdateien.js';
 import { leseVermerke } from '../aussetzer.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
@@ -1814,154 +1813,14 @@ export async function handleTeamTool(
         },
       }, null, 2);
 
-      // Generate copilot-instructions.md content
+      // Der Regelblock kommt aus derselben Quelle wie bei `init`/`autopilot`.
       const tier = inst.tier.toUpperCase();
-      const smartRecallNote = hasVector
-        ? '- `smart_recall("natural language query")` — semantic search (finds by meaning)'
-        : '- `recall_context("arch:*")` — exact/glob key lookup (upgrade to Speed/Business for smart_recall)';
-      const layerNote = hasVector
-        ? `Layer 3 (Semantic): smart_recall uses pgvector HNSW on your ${tier} instance`
-        : `Layer 3 (Autopilot): this file — upgrade to Speed/Business tier to unlock smart_recall`;
-
-      const copilotInstructions = `# cachly AI Brain — ${project_description}
-
-> AI memory system powered by [cachly.dev](${cachlyUrl('/', 'team-readme')}). Works with GitHub Copilot, Claude Code, Cursor, Windsurf, Continue.dev, and any MCP-compatible editor.
-
----
-
-## 🔴 MANDATORY RULES — Always enforced, no exceptions
-
-### Rule 1 — Session Start (FIRST thing in every window)
-Call \`session_start\` **before reading any source files or making any changes**:
-
-\`\`\`
-session_start(
-  instance_id = "${instance_id}",
-  focus       = "<what you plan to work on today>",
-)
-\`\`\`
-
-Returns: last session summary, handoff from previous window, recent lessons, open failures, brain health.
-
-**If \`session_start\` is unavailable**, fall back:
-1. \`smart_recall("recent lessons <topic>")\`
-2. \`recall_best_solution("<topic>")\`
-
-### Rule 2 — Learn After Every Fix/Deploy/Discovery (AUTOMATIC — no prompting needed)
-After **every** bug fix, deployment, failed attempt, or discovery — call \`learn_from_attempts\` immediately:
-
-\`\`\`
-learn_from_attempts(
-  instance_id = "${instance_id}",
-  topic       = "category:keyword",   # deploy:web | fix:auth | debug:db | infra:docker
-  outcome     = "success" | "failure" | "partial",
-  what_worked = "exact approach or command that worked",
-  what_failed = "what did NOT work (prevents future wasted time)",
-  severity    = "critical" | "major" | "minor",
-  commands    = ["exact command that worked"],
-  file_paths  = ["path/to/changed/file"],
-)
-\`\`\`
-
-**These events MUST automatically trigger \`learn_from_attempts\`:**
-- ✅ Successfully deployed → \`topic="deploy:<component>", outcome="success"\`
-- ✅ Fixed a bug → \`topic="fix:<description>", outcome="success"\`
-- ✅ Discovered root cause → \`topic="debug:<area>", outcome="partial"\`
-- ✅ Tried something that failed → \`topic="<area>", outcome="failure", what_failed="..."\`
-- ✅ Found a config quirk → \`topic="infra:<topic>", outcome="success"\`
-- ✅ Ran a working command → store it in \`commands=[...]\`
-
-### Rule 3 — Session Handoff (when closing window or task list > 3 items)
-\`\`\`
-session_handoff(
-  instance_id     = "${instance_id}",
-  completed_tasks = ["what was done"],
-  remaining_tasks = ["what is still to do"],
-  files_changed   = [{"path": "src/...", "status": "modified", "description": "what changed"}],
-  instructions    = "IMPORTANT: what the next window MUST know to not break things",
-  context_summary = "current state of the system",
-)
-\`\`\`
-
-The next \`session_start\` automatically includes this handoff. The new window sees exactly what's done, what remains, and what NOT to break.
-
-### Rule 4 — Session End (LAST thing before closing)
-\`\`\`
-session_end(
-  instance_id     = "${instance_id}",
-  summary         = "What was accomplished (2-3 sentences with specifics)",
-  files_changed   = ["list", "of", "changed", "files"],
-  lessons_learned = <number of learn_from_attempts calls made>,
-)
-\`\`\`
-
-> \`session_end\` **automatically extracts and stores lessons** from the summary text — no manual calls needed.
-
-### Rule 5 — Code Index Invalidation (AUTOMATIC)
-- \`index_project\` tracks MD5 hashes per file — **skips unchanged files automatically**
-- After code changes: next \`index_project\` run re-indexes only modified files
-- After delete/rename: run \`index_project\` again to sync
-- No manual invalidation needed
-
----
-
-## Task-type trigger table
-
-| You're about to... | Call BEFORE | Call AFTER |
-|---|---|---|
-| Deploy anything | \`recall_best_solution("deploy:<component>")\` | \`learn_from_attempts(topic="deploy:...")\` |
-| Fix a bug | \`recall_best_solution("fix:<area>")\` | \`learn_from_attempts(topic="fix:...")\` |
-| Add a feature | \`session_start(focus="feat:<area>")\` | \`learn_from_attempts(topic="feat:...")\` |
-| Infra/server work | \`recall_best_solution("infra:<topic>")\` | \`learn_from_attempts(topic="infra:...")\` |
-| Debug an issue | \`smart_recall("<error message or symptom>")\` | \`learn_from_attempts(topic="debug:...")\` |
-
----
-
-## Available Brain Tools
-
-| Tool | When to use |
-|------|-------------|
-| \`session_start\` | **FIRST** — mandatory at start of every session |
-| \`session_end\` | **LAST** — mandatory at end, auto-learns from summary |
-| \`session_handoff\` | When closing window with remaining tasks |
-| \`learn_from_attempts\` | **AUTOMATIC** after every fix/deploy/discovery |
-| \`recall_best_solution\` | Before any non-trivial task |
-| \`remember_context\` | After analyzing code — save findings for future sessions |
-${smartRecallNote ? `| \`smart_recall\` | Search brain by meaning/keywords |\n` : ''}\
-| \`recall_context\` | Get exact key (supports glob: \`arch:*\`, \`file:*\`) |
-| \`brain_search\` | BM25+ full-text search over all brain data |
-| \`auto_learn_session\` | Batch-learn from a list of observations (optional) |
-| \`index_project\` | Index source files (smart hash, skips unchanged files) |
-| \`list_remembered\` | See what's cached in the brain |
-| \`forget_context\` | Remove stale context |
-
----
-
-## Instance Details
-
-- **Instance ID:** \`${instance_id}\`
-- **Instance name:** ${inst.name}
-- **Tier:** ${tier}
-- **${layerNote}**
-- **Embedding provider:** ${providerArg}
-
----
-
-## How the 3-layer system works
-
-\`\`\`
-Layer 1 — Storage:  Your cachly Valkey instance (${inst.name}) — persists forever
-Layer 2 — Tools:    learn_from_attempts · recall_best_solution · brain_search · session_start/end
-Layer 3 — Autopilot: This file — AI reads it and runs tools automatically every session
-\`\`\`
-
-Result: Your AI **never solves the same problem twice** and always picks up exactly where it left off. 🚀
-`;
-
+      const block = buildClaudeMdBlock(instance_id);
 
       const lines: string[] = [
         `🧠 **cachly AI Memory Setup Complete**`,
         ``,
+        `**Project:** ${project_description}`,
         `**Instance:** ${inst.name} (${tier}) · ID: \`${instance_id}\``,
         `**Embedding Provider:** ${providerArg}`,
         `**Semantic Search:** ${hasVector ? '✅ pgvector HNSW available' : '⚠️  Not available on ' + tier + ' — upgrade to Speed/Business'}`,
@@ -1979,14 +1838,14 @@ Result: Your AI **never solves the same problem twice** and always picks up exac
         `_(${provInfo.hint})_`,
         ``,
         `─────────────────────────────────────────────`,
-        `**Step 3 — copilot-instructions.md (Layer 3 Autopilot):**`,
+        `**Step 3 — Brain rules (Layer 3 Autopilot):**`,
         ``,
         ...(project_dir
           ? [`🔍 Detecting IDEs in \`${project_dir}\`…`]
           : [`Copy this to \`.github/copilot-instructions.md\` (Copilot), \`CLAUDE.md\` (Claude Code), or \`.cursor/rules\` (Cursor) in your project:`]),
         ``,
         `\`\`\`markdown`,
-        copilotInstructions,
+        block,
         `\`\`\``,
         ``,
         `─────────────────────────────────────────────`,
@@ -2027,7 +1886,6 @@ Result: Your AI **never solves the same problem twice** and always picks up exac
           targets.push({ ide: 'Windsurf', path: join(project_dir, '.windsurfrules') });
         }
 
-        const block = `${CLAUDE_MD_MARKER_START}\n${copilotInstructions.trim()}\n${CLAUDE_MD_MARKER_END}`;
         const written: string[] = [];
         for (const target of targets) {
           const ergebnis = await setzeAnweisungsblock(target.path, block, target.prefix);

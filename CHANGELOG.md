@@ -7,6 +7,23 @@
 
 ---
 
+## [0.10.212] – 2026-10-20 — *"One rule block, everywhere."*
+
+**`setup_ai_memory` now writes the same rule block as `init` and `autopilot`.**
+Before, it wrote its own long text in which `smart_recall` was only a hint line.
+Your AI could read the file and still never recall before a task. Now the file
+carries the block with "BEFORE every task (mandatory)" and the `smart_recall` call.
+
+- One source: `buildClaudeMdBlock` (now in `projektdateien.ts`, still exported
+  from `index.ts`). `setup_ai_memory` no longer keeps a copy.
+- Existing files stay as they are: the block is replaced between the cachly
+  markers or appended, your own text is kept (as since 0.10.204).
+- The reply of the tool shows the same block, plus project and tier.
+- Test: the written block equals `buildClaudeMdBlock` word for word, and a
+  foreign file is not overwritten.
+
+---
+
 ## [0.10.208] – 2026-10-16 — *"Codex and Gemini get the tools."*
 
 **`init --editor codex|gemini`, `setup` and `autopilot` now write the cachly MCP

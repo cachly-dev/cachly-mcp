@@ -1024,8 +1024,11 @@ import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain
 import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-proof.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import {
-  CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, EDITOR_FILES, ANWEISUNGS_DATEIEN, setzeAnweisungsblock, sollSchreiben, type SchreibErgebnis,
+  CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, EDITOR_FILES, ANWEISUNGS_DATEIEN, buildClaudeMdBlock, setzeAnweisungsblock, sollSchreiben, type SchreibErgebnis,
 } from './projektdateien.js';
+// buildClaudeMdBlock liegt seit 0.10.212 in projektdateien.ts (eine Quelle fuer init, autopilot und setup_ai_memory).
+// Die Gleichheitstests in web, sdk/vscode und sdk/intellij lesen die Funktion dort.
+export { buildClaudeMdBlock };
 import { uninstallBefehl, type UninstallUmgebung } from './uninstall.js';
 import { gitLesen } from './git-ohne-shell.js';
 import { browserAdresse, fuerCmd } from './browser-adresse.js';
@@ -2440,64 +2443,6 @@ export async function mergeMcpConfig(
   return JSON.stringify(existing, null, 2);
 }
 
-export function buildClaudeMdBlock(instanceId: string): string {
-  return `${CLAUDE_MD_MARKER_START}
-## Cachly AI Brain — Always Active
-
-The Brain MCP server runs automatically. Instance: \`${instanceId}\`
-
----
-
-### AT THE START of every new conversation (mandatory — first thing, before anything else):
-\`\`\`
-session_start(instance_id="${instanceId}", workspace_path="<absolute path to this project>", focus="<first topic the user mentioned>")
-\`\`\`
-Show the full briefing output to the user. If the response says the brain is empty or has 0 lessons, immediately seed it:
-\`\`\`
-brain_from_git(instance_id="${instanceId}", repo_path="<workspace_path>", limit=100)
-\`\`\`
-Then tell the user: "Your brain just learned from your git history. You're now pre-briefed."
-
-### BEFORE every task (mandatory — no exceptions):
-\`\`\`
-smart_recall(instance_id="${instanceId}", query="<what you are about to do>")
-\`\`\`
-If relevant lessons are found, say: "Your brain knows this pattern — [lesson]." Then proceed.
-
-### BEFORE editing any file (mandatory):
-\`\`\`
-remember_context(instance_id="${instanceId}", key="wip:<filename>", content="EDITING: <file:line> — <goal>", ttl=86400)
-\`\`\`
-When done: update content to \`"DONE: <file> — <summary>"\`.
-
-### AFTER every fix, deploy, or discovery (mandatory):
-\`\`\`
-learn_from_attempts(instance_id="${instanceId}", topic="<category:keyword>", outcome="success"|"failure",
-  what_worked="...", what_failed="...", severity="critical"|"major"|"minor",
-  file_paths=["..."], commands=["..."], tags=["..."])
-\`\`\`
-
-### AT THE END of every conversation (mandatory):
-\`\`\`
-session_end(instance_id="${instanceId}", summary="<one sentence: what was done>", files_changed=["..."])
-\`\`\`
-
-### WHEN debugging any error (mandatory before grepping/reading files):
-\`\`\`
-causal_trace(instance_id="${instanceId}", problem="<exact error or symptom>")
-\`\`\`
-If a known fix exists in the Brain, use it directly. Skip research if Brain has the answer.
-
-### BEFORE any risky operation (deploy, migration, dependency upgrade):
-\`\`\`
-brain_predict(instance_id="${instanceId}", context="<what you are about to do>")
-\`\`\`
-Report predicted failure risks to the user before proceeding.
-
-### Half-finished code rule:
-Never commit code that does not compile. Run \`tsc --noEmit\` / \`go build ./...\` before every commit.
-${CLAUDE_MD_MARKER_END}`;
-}
 
 
 /**

@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Redis } from 'ioredis';
 import { handleTeamTool } from '../handlers/team.js';
-import { CLAUDE_MD_MARKER_START } from '../projektdateien.js';
+import { CLAUDE_MD_MARKER_START, buildClaudeMdBlock } from '../projektdateien.js';
+import { buildClaudeMdBlock as ausIndex } from '../index.js';
 
 /**
  * setup_ai_memory laesst fremde Inhalte stehen (16.10.2026).
@@ -83,5 +84,32 @@ describe('setup_ai_memory schreibt schonend', () => {
     writeFileSync(join(p, 'CLAUDE.md'), EIGENE_CLAUDE_MD);
     await aufruf(p);
     expect(existsSync(join(p, '.claude', 'settings.json'))).toBe(false);
+  });
+
+  it('schreibt wortgleich den Pflichtblock aus buildClaudeMdBlock (inkl. smart_recall vor jeder Aufgabe)', async () => {
+    const p = projekt();
+    mkdirSync(join(p, '.claude'));
+    mkdirSync(join(p, '.cursor'));
+    await aufruf(p);
+    const erwartet = buildClaudeMdBlock('i1');
+    expect(ausIndex('i1')).toBe(erwartet);
+    expect(erwartet).toContain('BEFORE every task (mandatory');
+    for (const d of [['CLAUDE.md'], ['.github', 'copilot-instructions.md'], ['.cursor', 'rules', 'cachly.mdc']]) {
+      const inhalt = readFileSync(join(p, ...d), 'utf8');
+      expect(inhalt, d.join('/')).toContain(erwartet);
+      // genau eine smart_recall-Anweisung, keine abweichende zweite
+      expect(inhalt.match(/smart_recall\(/g)?.length, d.join('/')).toBe(1);
+    }
+  });
+
+  it('eine vorhandene fremde Datei bleibt davor und danach unveraendert erhalten', async () => {
+    const p = projekt();
+    mkdirSync(join(p, '.github'));
+    const fremd = '# Eigene Copilot-Regeln\n\nBleibt.\n';
+    writeFileSync(join(p, '.github', 'copilot-instructions.md'), fremd);
+    await aufruf(p);
+    const inhalt = readFileSync(join(p, '.github', 'copilot-instructions.md'), 'utf8');
+    expect(inhalt.startsWith(fremd)).toBe(true);
+    expect(inhalt).toContain(buildClaudeMdBlock('i1'));
   });
 });
