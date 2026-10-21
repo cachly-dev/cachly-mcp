@@ -87,7 +87,7 @@ import { leserAktiv, leserPunkte, mischeMitLeser } from '../leser.js';
 import { repariereFelder } from '../feldreparatur.js';
 import {
   VEKTOR_PRAEFIX, NAME_VEKTOR_PRAEFIX, ZWEIT_VEKTOR_PRAEFIX, packe, textFuerVektor, textFuerNamensVektor,
-  Vektorbestand, VEKTOR_NACHTRAG,
+  Vektorbestand, VEKTOR_NACHTRAG, NAME_VEKTOR_NACHTRAG, ZWEIT_VEKTOR_NACHTRAG,
 } from '../bedeutung.js';
 import { schreibeEingaenge, Eingangsbestand } from '../eingaenge.js';
 import { ordneNachHausordnung, rangWerte } from '../ausgabe-ordnung.js';
@@ -1475,6 +1475,12 @@ async function handleBrainToolInner(
         // Ab hier gilt: gespeicherte Lektion => Vermerk steht, bis der
         // Vektor nachweislich geschrieben ist (srem im Erfolgspfad).
         await redis.sadd(VEK_NACHTRAG, topic).catch(() => { /* still */ });
+        // Dasselbe fuer Namens- und Zweit-Vektor (21.10.2026, LongMemEval-Probe):
+        // ohne Vermerk fehlten sie nach einem Aussetzer fuer immer.
+        await redis.sadd(NAME_VEKTOR_NACHTRAG, topic).catch(() => { /* still */ });
+        if (EMBED_PROVIDER === 'cachly' || EMBED_PROVIDER === 'ollama') {
+          await redis.sadd(ZWEIT_VEKTOR_NACHTRAG, topic).catch(() => { /* still */ });
+        }
         void (async () => {
           const gelesen = safeJsonParse(lesson, {} as Record<string, unknown>);
           try {
@@ -1505,11 +1511,14 @@ async function handleBrainToolInner(
             if (EMBED_PROVIDER === 'cachly' || EMBED_PROVIDER === 'ollama') {
               try {
                 const v2 = await computeEmbedding(textFuerVektor(gelesen), { geduld: 'lang', modell: ZWEIT_MODELL });
-                if (v2?.length) await redis.set(`${ZWEIT_VEKTOR_PRAEFIX}${topic}`, packe(v2));
+                if (v2?.length) {
+                  await redis.set(`${ZWEIT_VEKTOR_PRAEFIX}${topic}`, packe(v2));
+                  await redis.srem(ZWEIT_VEKTOR_NACHTRAG, topic).catch(() => { /* still */ });
+                }
               } catch {
-                // Selbstheilend: der naechste Schreib- oder Nachrechenlauf
-                // fuellt die Luecke; der Lesepfad bleibt bis dahin beim
-                // Fuenf-Merkmal-Stand dieser Instanz.
+                // Selbstheilend: der Vermerk in ZWEIT_VEKTOR_NACHTRAG bleibt
+                // stehen, heileVektorNachtrag holt den Vektor beim naechsten
+                // Schreiben oder Lesen nach.
               }
             }
           } catch (e) {
@@ -1541,7 +1550,10 @@ async function handleBrainToolInner(
           // Messstand — deshalb war rangfolge.ts auch nie verdrahtet.
           try {
             const nv = await computeEmbedding(textFuerNamensVektor(topic), { geduld: 'lang' });
-            if (nv?.length) await redis.set(`${NAME_VEKTOR_PRAEFIX}${topic}`, packe(nv));
+            if (nv?.length) {
+              await redis.set(`${NAME_VEKTOR_PRAEFIX}${topic}`, packe(nv));
+              await redis.srem(NAME_VEKTOR_NACHTRAG, topic).catch(() => { /* still */ });
+            }
           } catch (e) {
             await meldeUndVermerke(redis, OHNE_SCHREIBVEKTOR,
               `Namens-Vektor nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
@@ -6563,12 +6575,49 @@ async function heileVektorNachtrag(redis: Redis, ausnahmeTopic: string | undefin
         if (EMBED_PROVIDER === 'cachly' || EMBED_PROVIDER === 'ollama') {
           try {
             const v2 = await computeEmbedding(textFuerVektor(gel), { geduld: 'lang', modell: ZWEIT_MODELL });
-            if (v2?.length) await redis.set(`${ZWEIT_VEKTOR_PRAEFIX}${t}`, packe(v2));
-          } catch { /* vec2-Luecke heilt ein spaeterer Lauf */ }
+            if (v2?.length) {
+              await redis.set(`${ZWEIT_VEKTOR_PRAEFIX}${t}`, packe(v2));
+              await redis.srem(ZWEIT_VEKTOR_NACHTRAG, t);
+            }
+          } catch { /* der Vermerk in ZWEIT_VEKTOR_NACHTRAG bleibt */ }
         }
       } catch {
         // Fehlgeschlagen — der Vermerk steht noch im Set, nichts zu tun.
       }
     }
+    // Namens- und Zweit-Vektoren (21.10.2026): eigene Vermerke, dieselbe
+    // Regel — erst schreiben, dann austragen; geloeschte Lektion verfaellt.
+    await heileNachtragsart(redis, NAME_VEKTOR_NACHTRAG, NAME_VEKTOR_PRAEFIX, ausnahmeTopic, max,
+      (t) => computeEmbedding(textFuerNamensVektor(t), { geduld: 'lang' }));
+    if (EMBED_PROVIDER === 'cachly' || EMBED_PROVIDER === 'ollama') {
+      await heileNachtragsart(redis, ZWEIT_VEKTOR_NACHTRAG, ZWEIT_VEKTOR_PRAEFIX, ausnahmeTopic, max,
+        (_t, gel) => computeEmbedding(textFuerVektor(gel), { geduld: 'lang', modell: ZWEIT_MODELL }));
+    }
   } catch { /* der Nachtrag stoert nie */ }
+}
+
+/** Ein Nachtrags-Set abarbeiten: hoechstens `max` Themen, write-ahead wie oben. */
+async function heileNachtragsart(
+  redis: Redis,
+  set: string,
+  praefix: string,
+  ausnahmeTopic: string | undefined,
+  max: number,
+  bette: (topic: string, gelesen: Record<string, unknown>) => Promise<number[] | null | undefined>,
+): Promise<void> {
+  const roh = await redis.srandmember(set, max);
+  const liste = Array.isArray(roh) ? roh : (roh ? [roh] : []);
+  for (const t of liste) {
+    if (t === ausnahmeTopic) continue;
+    const inhalt = await redis.get(`cachly:lesson:best:${t}`);
+    if (!inhalt) { await redis.srem(set, t); continue; }
+    if (await redis.exists(`${praefix}${t}`)) { await redis.srem(set, t); continue; }
+    try {
+      const v = await bette(t, safeJsonParse(inhalt, {} as Record<string, unknown>));
+      if (v?.length) {
+        await redis.set(`${praefix}${t}`, packe(v));
+        await redis.srem(set, t);
+      }
+    } catch { /* der Vermerk bleibt, der naechste Lauf versucht es wieder */ }
+  }
 }

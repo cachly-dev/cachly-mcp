@@ -7,6 +7,22 @@
 
 ---
 
+## [0.10.214] – 2026-10-21 — *"Every vector comes back."*
+
+**Topic-name and second-model vectors now heal like the full-text vector.**
+When the embedding service timed out while a lesson was written, the full-text
+vector was queued and written later. The topic-name vector was not: it stayed
+missing. The second-model vector only healed while fewer than 80 % of lessons
+had one.
+
+- Both vectors are queued before they are computed and leave the queue once
+  written — the same write-ahead rule as the full-text vector.
+- The next write or recall works the queue off, three lessons at a time.
+- `brain_doctor` shows pending backfills per vector type.
+- Ranking is unchanged.
+
+---
+
 ## [0.10.213] – 2026-10-21 — *"The whole lesson, not the first 400 characters."*
 
 **`smart_recall` now shows the full text of each lesson it returns.**

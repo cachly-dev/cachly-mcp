@@ -80,6 +80,16 @@ export const ZWEIT_VEKTOR_PRAEFIX = 'cachly:lesson:vec2:';
  */
 export const VEKTOR_NACHTRAG = 'cachly:vek:nachtrag';
 
+/**
+ * Dasselbe fuer Namens- und Zweit-Vektoren (21.10.2026). Bis dahin hatte nur
+ * der Volltext-Vektor einen Nachtrag: ein gescheiterter Namens-Vektor fehlte
+ * fuer immer, ein Zweit-Vektor heilte nur, solange die Deckung unter
+ * ZWEIT_MINDESTDECKUNG lag. Gemessen in der LongMemEval-Probe 21.10.: eine
+ * Frage mit 85/89 Namens- und 83/89 Zweit-Vektoren, ohne spaetere Heilung.
+ */
+export const NAME_VEKTOR_NACHTRAG = 'cachly:vek:nachtrag:name';
+export const ZWEIT_VEKTOR_NACHTRAG = 'cachly:vek:nachtrag:zweit';
+
 /** Der Text, aus dem der Namensvektor gebildet wird: Trennzeichen zu Wörtern. */
 export function textFuerNamensVektor(topic: string): string {
   return topic.replace(/[:_-]+/g, ' ').replace(/\s+/g, ' ').trim();

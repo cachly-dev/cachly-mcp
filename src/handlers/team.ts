@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { bauabdruck, formatiereBauabdruck } from '../bauabdruck.js';
 import { beurteileSpeicher, zahlAusInfo } from '../speicherlage.js';
 import { beurteileDeckung } from '../eingaenge.js';
+import { VEKTOR_NACHTRAG, NAME_VEKTOR_NACHTRAG, ZWEIT_VEKTOR_NACHTRAG } from '../bedeutung.js';
 import { join } from 'node:path';
 import type { Redis } from 'ioredis';
 import { calculateConfidence, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_VALUE,
@@ -910,6 +911,16 @@ export async function handleTeamTool(
         checks.push(zweitDeckungPct >= 80
           ? `✅ **Second-model coverage: ${zweitDeckungPct}%** — ${zweitZahl} of ${vektorZahl} embedded lessons also carry the second-model vector; the second ranking feature is ON`
           : `🟡 **Second-model coverage: ${zweitDeckungPct}%** — ${vektorZahl - zweitZahl} lessons still lack the second-model vector; the second ranking feature stays OFF below 80% and backfills three lessons per recall`);
+      }
+      // Ausstehende Nachtraege (21.10.2026): Vektoren, deren Schreiben scheiterte
+      // und die beim naechsten Schreiben oder Lesen nachgeholt werden. Faellt die
+      // Zahl nicht, heilt nichts — dann fehlt Schreib- oder Leseverkehr.
+      // smembers statt scard: die Sets sind klein, und der Test-Ersatz kennt scard nicht.
+      const offen = await Promise.all([VEKTOR_NACHTRAG, NAME_VEKTOR_NACHTRAG, ZWEIT_VEKTOR_NACHTRAG]
+        .map((s) => redis.smembers(s).then((m) => m.length).catch(() => 0)));
+      if (offen.some((n) => n > 0)) {
+        checks.push(`🟡 **Vector backfill pending:** ${offen[0]} full-text, ${offen[1]} topic-name, `
+          + `${offen[2]} second-model — retried on the next write or recall`);
       }
       const deckung = lessonKeys.length > 0
         ? Math.round((vektorZahl / lessonKeys.length) * 100)
