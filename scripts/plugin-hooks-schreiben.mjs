@@ -108,6 +108,14 @@ async function main() {
     `${PLUGIN_HOOK_DIR}/: ${abweichend.length} geschrieben, ${Object.keys(soll).length - abweichend.length} unveraendert.`
     + ` Buendel: ${(Buffer.byteLength(buendel) / 1024).toFixed(0)} KB.\n`,
   );
+  // Die VS-Code-Erweiterung traegt eine Kopie (sdk/vscode/hooks, siehe buendel-kopieren.mjs).
+  // Am 21.10.2026 vergessen (#867): nur sdk/mcp/hooks wurde neu geschrieben, und main war im
+  // VS-Code-Job rot. Darum hier gleich mit — der oeffentliche Spiegel hat sdk/vscode nicht.
+  const vscodeHooks = join(WURZEL, '..', 'vscode', 'hooks');
+  if (existsSync(vscodeHooks)) {
+    writeFileSync(join(vscodeHooks, HOOK_BUENDEL), buendel, 'utf8');
+    process.stdout.write(`sdk/vscode/hooks/${HOOK_BUENDEL}: mitgeschrieben.\n`);
+  }
   // Nicht loeschen, nur melden: eine fremde Datei dort ist eine Frage, keine Muellabfuhr.
   if (ueberzaehlig.length) {
     process.stderr.write(`Nicht aus der Quelle erzeugt (der Waechter schlaegt an): ${ueberzaehlig.join(', ')}\n`);
