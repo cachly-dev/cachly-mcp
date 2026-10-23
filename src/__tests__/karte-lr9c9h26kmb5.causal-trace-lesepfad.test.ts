@@ -57,6 +57,16 @@ describe('Karte lr9c9h26kmb5 — causal_trace zieht die Zugriffsgrenze', () => {
     expect(out, 'privat wird in der Fuzzy-Spur nie eingeblendet').not.toContain('zzyzx');
   });
 
+  it('bricht nicht an Hash-Schluesseln unter cachly:lesson:* ab (WRONGTYPE, 23.10.2026)', async () => {
+    // Seit 20.08. liegen die Eingaenge einer Lektion als Hash daneben. Der
+    // Fallback las ALLES unter cachly:lesson:* mit GET — Valkey wirft dann
+    // WRONGTYPE, und causal_trace endete fuer den Fragenden mit einem Fehler.
+    await lerne('deploy:spur-hash', 'Die quux Grenze liegt bei 110 Pods je Knoten');
+    await redis.hset('cachly:lesson:eing:deploy:spur-hash', 'e0', 'quux grenze');
+    const out = await spur('quux grenze');
+    expect(out, 'die Lektion muss trotz Hash daneben gefunden werden').toContain('110 Pods');
+  });
+
   it('GEGENPROBE: eine team-weite Lektion bleibt sichtbar (Normalfall lebt weiter)', async () => {
     // Ohne diese Probe koennte der Filter alles verschlucken und die zwei
     // Proben darueber waeren trotzdem gruen (Unterscheidbarkeit).

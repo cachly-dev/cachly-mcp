@@ -385,10 +385,14 @@ export async function handleAdvancedTool(
       }).sort((a, b) => b.edge.confidence - a.edge.confidence).slice(0, max_depth);
 
       // ── Layer 2 (fallback): text similarity over all lessons ─────────────────
+      // Nur cachly:lesson:best:* — dort liegt der Text einer Lektion. Unter
+      // cachly:lesson:* liegen seit 20.08.2026 auch Hashes (eing:, pfad:) und
+      // Vektoren; GET auf einen Hash wirft WRONGTYPE, und das brach bis zum
+      // 23.10.2026 jeden causal_trace in einem Brain mit Eingaengen ab.
       let cursor = 0;
       const lessonKeys: string[] = [];
       do {
-        const [next, keys] = await redis.scan(cursor, 'MATCH', 'cachly:lesson:*', 'COUNT', 200);
+        const [next, keys] = await redis.scan(cursor, 'MATCH', 'cachly:lesson:best:*', 'COUNT', 200);
         cursor = parseInt(next);
         lessonKeys.push(...keys);
       } while (cursor !== 0);

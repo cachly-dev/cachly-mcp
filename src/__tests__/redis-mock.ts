@@ -13,8 +13,25 @@ export class MockRedis {
   private lists = new Map<string, string[]>();
   private sets  = new Map<string, Set<string>>();
 
+  /*
+   * GET auf einen Hash, eine Liste oder eine Menge wirft — wie Valkey.
+   *
+   * Bis zum 23.10.2026 gab der Doppelgaenger hier still null zurueck, und
+   * scan/scanStream sahen nur Zeichenketten. Damit konnte keine Probe sehen,
+   * dass causal_trace seit dem 20.08. jeden Schluessel unter cachly:lesson:*
+   * mit GET las — auch die Hashes cachly:lesson:eing:* — und in jedem Brain
+   * mit Eingaengen an WRONGTYPE scheiterte.
+   */
   async get(key: string): Promise<string | null> {
+    if (this.lists.has(key) || this.sets.has(key) || this.hashes.has(key)) {
+      throw new Error('WRONGTYPE Operation against a key holding the wrong kind of value');
+    }
     return this.store.get(key) ?? null;
+  }
+
+  /** Alle Schluessel jeder Art — scan sieht in Valkey auch Hashes, Listen, Mengen. */
+  private alleSchluessel(): string[] {
+    return [...this.store.keys(), ...this.lists.keys(), ...this.sets.keys(), ...this.hashes.keys()];
   }
 
   async set(key: string, value: string, ...opts: unknown[]): Promise<'OK' | null> {
@@ -191,7 +208,7 @@ export class MockRedis {
     const emitter = new EventEmitter();
     const pattern = opts.match.replace(/\*/g, '.*').replace(/\?/g, '.');
     const regex = new RegExp(`^${pattern}$`);
-    const matches = [...this.store.keys()].filter(k => regex.test(k));
+    const matches = this.alleSchluessel().filter(k => regex.test(k));
     setImmediate(() => {
       emitter.emit('data', matches);
       emitter.emit('end');
@@ -211,7 +228,7 @@ export class MockRedis {
     }
     const pattern = match.replace(/\*/g, '.*').replace(/\?/g, '.');
     const regex = new RegExp(`^${pattern}$`);
-    const matches = [...this.store.keys()].filter((k) => regex.test(k));
+    const matches = this.alleSchluessel().filter((k) => regex.test(k));
     return ['0', matches];
   }
 
