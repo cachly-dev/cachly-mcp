@@ -74,6 +74,18 @@ export function recallVorschau(key: string, content: string, maxChars: number, r
 export const RECALL_VOLLTEXT_ZEICHEN = 2000;
 /** Vorschau fuer alles, was keine Lektion ist, und fuer den Kompakt-Modus. */
 export const RECALL_ROH_ZEICHEN = 400;
+
+/**
+ * Messmodus: `CACHLY_RECALL_NUR_LESEN=1` laesst smart_recall nichts schreiben,
+ * was die naechste Reihenfolge veraendert — weder `recall_count` /
+ * `last_recalled_at` (fliesst ueber rerankByQuality als Bewaehrung ein) noch
+ * Spuren (spurLegen). Gemessen 26.10.2026: zweimal dieselbe OmniMemEval-Suche
+ * auf demselben LoCoMo-Bestand, Gespraech 0 nur 1 von 152 Kontexten gleich.
+ * Statistik-Zaehler bleiben. Standard aus: im Produkt lernt Lesen weiter.
+ */
+export function recallNurLesen(): boolean {
+  return process.env.CACHLY_RECALL_NUR_LESEN === '1';
+}
 import type { CKGEdge, PersonNode, ServiceNode } from '../ckg.js';
 import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
@@ -2754,7 +2766,7 @@ async function handleBrainToolInner(
       //
       // Nicht abgewartet: wer sucht, soll nicht warten, bis das Gedaechtnis
       // nachgefuehrt ist.
-      if (hasEmbedProvider()) {
+      if (hasEmbedProvider() && !recallNurLesen()) {
         const gefundeneThemen = kwGemischt
           .filter((m) => m.key.startsWith('cachly:lesson:best:'))
           .slice(0, 3)
@@ -2782,7 +2794,7 @@ async function handleBrainToolInner(
             // Begruendung und Zahlen stehen an der gleichen Stelle in
             // recall_best_solution.
             const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, last_recalled_at: recalledAt };
-            redis.set(m.key, JSON.stringify(updated)).catch(() => {});
+            if (!recallNurLesen()) redis.set(m.key, JSON.stringify(updated)).catch(() => {});
             // Nur der ERSTE Abruf zaehlt — siehe wertbeitrag.ts. Diese
             // Schleife lief ueber bis zu FUENF Lektionen je Aufruf und schrieb
             // jeder die volle Recherchezeit gut, bei jedem Aufruf erneut.

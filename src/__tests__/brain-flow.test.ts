@@ -1086,6 +1086,25 @@ describe('last_recalled_at stamping', () => {
     expect(new Date(stored.last_recalled_at!).toISOString()).toBe(stored.last_recalled_at);
   });
 
+  it('CACHLY_RECALL_NUR_LESEN=1: smart_recall laesst recall_count und last_recalled_at unberuehrt, Ausgabe bleibt gleich', async () => {
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: 'i1', topic: 'valkey:timeout', outcome: 'success',
+      what_worked: 'raise plugh timeout to 30s',
+    }, getConn, noopApiFetch);
+    const vorher = await redis.get('cachly:lesson:best:valkey:timeout');
+    const alt = process.env.CACHLY_RECALL_NUR_LESEN;
+    process.env.CACHLY_RECALL_NUR_LESEN = '1';
+    try {
+      const a = await handleBrainTool('smart_recall', { instance_id: 'i1', query: 'plugh timeout' }, getConn, noopApiFetch);
+      const b = await handleBrainTool('smart_recall', { instance_id: 'i1', query: 'plugh timeout' }, getConn, noopApiFetch);
+      expect(a).toContain('valkey:timeout');
+      expect(b).toBe(a);
+      expect(await redis.get('cachly:lesson:best:valkey:timeout')).toBe(vorher);
+    } finally {
+      if (alt === undefined) delete process.env.CACHLY_RECALL_NUR_LESEN; else process.env.CACHLY_RECALL_NUR_LESEN = alt;
+    }
+  });
+
   it('learn_from_attempts never stamps last_recalled_at, but preserves an existing stamp', async () => {
     await handleBrainTool('learn_from_attempts', {
       instance_id: 'i1', topic: 'ci:cache', outcome: 'success', what_worked: 'restore keys',
