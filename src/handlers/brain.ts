@@ -151,21 +151,51 @@ import { doppelHinweis, leseDoppelKandidaten, mitFrist, pruefeDoppelung, type Do
 import { merkeRecall, sitzungsKosten, vergissSitzungsKosten, kostenZeilen } from '../sitzungs-kosten.js';
 
 /**
- * Ein Vektorbestand fuer den ganzen Prozess.
+ * Die Bestaende im Arbeitsspeicher — einer je Verbindung, nicht je Prozess.
  *
- * Er haelt rund 2 MB je 500 Lektionen im Arbeitsspeicher. Die bei jeder Frage
- * neu zu holen waere langsamer als der Wortabgleich, den wir gerade ergaenzen —
- * der Gewinn waere weg, bevor er anfaengt.
+ * Sie halten rund 2 MB je 500 Lektionen. Die bei jeder Frage neu zu holen
+ * waere langsamer als der Wortabgleich, den wir gerade ergaenzen — der Gewinn
+ * waere weg, bevor er anfaengt.
+ *
+ * Bis zum 28.10.2026 gab es jeden Bestand nur EINMAL im Prozess. Ein Bestand
+ * gilt 60 s als frisch; wer in dieser Zeit eine ANDERE Instanz fragte, suchte
+ * mit den Vektoren, Texten und Themen der ersten. Deren Themen fehlen in der
+ * zweiten Instanz — Bedeutungsteil und Vorauswahl fielen still aus. Getroffen
+ * hat das jeden Prozess mit mehr als einer Instanz, am staerksten den
+ * AML-Dienst (bench/aml: eine Datenbank je Nutzer, OmniMemEval fragt je Frage
+ * Sprecher A und B nacheinander) — dort die Restschwankung F8 der Messlaeufe.
+ *
+ * Schluessel ist die Verbindung: index.ts haelt je Instanz genau eine, der
+ * AML-Dienst je Datenbank genau eine. WeakMap, damit eine geschlossene
+ * Verbindung ihre Bestaende mitnimmt.
  */
-const vektorbestand = new Vektorbestand();
-/** Dieselbe Mechanik, andere Sicht: die Vektoren der Themennamen. */
-const namensbestand = new Vektorbestand(60_000, NAME_VEKTOR_PRAEFIX);
-/** Das Zweitmodell (ZWEIT_MODELL) — sortiert mit, sobald die Deckung reicht. */
-const zweitbestand = new Vektorbestand(60_000, ZWEIT_VEKTOR_PRAEFIX);
-/** Die Fehlertext-Eingaenge, je Lektion ihr bester. Sortiert mit, nominiert nicht. */
-const eingangsbestand = new Eingangsbestand();
-/** Die Wortstatistik des Bestands — stehend, nicht je Frage neu. */
-const seltenheitsbestand = new Seltenheitsbestand();
+interface Bestaende {
+  vektor: Vektorbestand;
+  /** Dieselbe Mechanik, andere Sicht: die Vektoren der Themennamen. */
+  namen: Vektorbestand;
+  /** Das Zweitmodell (ZWEIT_MODELL) — sortiert mit, sobald die Deckung reicht. */
+  zweit: Vektorbestand;
+  /** Die Fehlertext-Eingaenge, je Lektion ihr bester. Sortiert mit, nominiert nicht. */
+  eingang: Eingangsbestand;
+  /** Die Wortstatistik des Bestands — stehend, nicht je Frage neu. */
+  seltenheit: Seltenheitsbestand;
+}
+const bestaendeJeVerbindung = new WeakMap<Redis, Bestaende>();
+
+export function bestaendeFuer(redis: Redis): Bestaende {
+  let b = bestaendeJeVerbindung.get(redis);
+  if (!b) {
+    b = {
+      vektor: new Vektorbestand(),
+      namen: new Vektorbestand(60_000, NAME_VEKTOR_PRAEFIX),
+      zweit: new Vektorbestand(60_000, ZWEIT_VEKTOR_PRAEFIX),
+      eingang: new Eingangsbestand(),
+      seltenheit: new Seltenheitsbestand(),
+    };
+    bestaendeJeVerbindung.set(redis, b);
+  }
+  return b;
+}
 
 /**
  * Wie viele Lektionen die Bedeutungs-Tuer in den Topf nominiert.
@@ -1510,7 +1540,7 @@ async function handleBrainToolInner(
               // Moegliche Doppelung einer aelteren Lektion (doppel-kandidat.ts,
               // Abhakliste 4.4): gleich hier, denn die Antwort wartet mit
               // Frist darauf (DOPPEL_WARTE_MS). Vermerkt wird in jedem Fall.
-              doppelFertig(await pruefeDoppelung(redis, { ...gelesen, topic }, v, vektorbestand));
+              doppelFertig(await pruefeDoppelung(redis, { ...gelesen, topic }, v, bestaendeFuer(redis).vektor));
             } else {
               doppelFertig(null);
             }
@@ -2354,6 +2384,10 @@ async function handleBrainToolInner(
 
       const redis = await getConnection(instance_id);
       zeitpunkt('smart_recall: Verbindung steht');
+      const {
+        vektor: vektorbestand, namen: namensbestand, zweit: zweitbestand,
+        eingang: eingangsbestand, seltenheit: seltenheitsbestand,
+      } = bestaendeFuer(redis);
 
       // Lesend heilen (Karte 8jnckd2stesi): eine Instanz, in die niemand mehr
       // schreibt, blieb bis zum 02.09.2026 dauerhaft blind — der Nachtrag
@@ -6513,6 +6547,7 @@ async function heileZweitVektoren(redis: Redis, max: number): Promise<number> {
   try {
     if (!hasEmbedProvider()) return 0;
     if (EMBED_PROVIDER !== 'cachly' && EMBED_PROVIDER !== 'ollama') return 0;
+    const { vektor: vektorbestand, zweit: zweitbestand } = bestaendeFuer(redis);
     let geheilt = 0;
     for (const t of vektorbestand.themen()) {
       if (geheilt >= max) break;
