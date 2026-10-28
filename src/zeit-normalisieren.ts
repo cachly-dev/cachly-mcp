@@ -20,6 +20,13 @@
  * 2. NUR EINDEUTIGES. "am Montag" kann vergangen oder kuenftig sein und
  *    wird NICHT angefasst. Lieber eine Angabe unaufgeloest lassen als eine
  *    falsch aufloesen — eine falsche Zahl ist schlimmer als keine.
+ *    "letzten Freitag" / "last Friday" IST eindeutig: der letzte Freitag VOR
+ *    dem Bezugstag, 1 bis 7 Tage zurueck (so rechnen auch die LoCoMo-Loesungen:
+ *    "The Friday before 22 October 2023"). Bis 28.10.2026 blieb er offen; das
+ *    Antwortmodell rechnete dann oft eine Woche zu frueh, und die Zeitfragen
+ *    im neutralen OmniMemEval-Aufbau lagen bei 75,1 %, mit Datum bei 81,9 %.
+ *    Wiederkehrendes ("letzten Freitag im Monat", "last Friday of the month")
+ *    bleibt stehen.
  * 3. NUR ZEIT. Die v2-Lehre aus demselben Lauf: ein Faktentyp je Iteration.
  *    v2 bestellte zusaetzlich implizite Zustaende und Gespraechsmomente und
  *    FIEL von 45,2 auf 39,5 Prozent — mehr Buendel konkurrieren um denselben
@@ -49,6 +56,23 @@ function monateVor(jetzt: Date, n: number): Date {
   return d;
 }
 
+/** Der letzte Wochentag `wd` (0 = Sonntag) VOR `jetzt`: 1 bis 7 Tage zurueck. */
+function letzterWochentag(jetzt: Date, wd: number): Date {
+  return tageVor(jetzt, (jetzt.getDay() - wd + 7) % 7 || 7);
+}
+
+const WOCHENTAG: Record<string, number> = {
+  sonntag: 0, montag: 1, dienstag: 2, mittwoch: 3, donnerstag: 4, freitag: 5, samstag: 6,
+  sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
+  sun: 0, mon: 1, tue: 2, tues: 2, wed: 3, thu: 4, thur: 4, thurs: 4, fri: 5, sat: 6,
+};
+const wochentagVor = (j: Date, m: RegExpMatchArray): Date | null => {
+  const wd = WOCHENTAG[m[2].toLowerCase()];
+  return wd === undefined ? null : letzterWochentag(j, wd);
+};
+/** "letzten Freitag im Monat" / "last Friday of the month" wiederholt sich — kein Datum. */
+const NICHT_WIEDERKEHREND = String.raw`(?!\s+(?:im|des|eines|jedes|of|in)\b)`;
+
 /**
  * Die Muster. Reihenfolge zaehlt: laengere Ausdruecke zuerst, sonst frisst
  * "Woche" das "letzte Woche" auf.
@@ -72,6 +96,10 @@ const MUSTER: { re: RegExp; versatz: (jetzt: Date, m: RegExpMatchArray) => Date 
   { re: /\bvor\s+einem\s+Monat\b/gi, versatz: (j) => monateVor(j, 1) },
   { re: /\b(letzte|letzten|letzter|vorige|vorigen)\s+Woche\b/gi, versatz: (j) => tageVor(j, 7) },
   { re: /\b(letzten|letzter|vorigen)\s+Monat\b/gi, versatz: (j) => monateVor(j, 1) },
+  {
+    re: new RegExp(String.raw`\b(letzten|vergangenen|vorigen)\s+(Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag)\b${NICHT_WIEDERKEHREND}`, 'gi'),
+    versatz: wochentagVor,
+  },
   // Englisch
   { re: /\bthe\s+day\s+before\s+yesterday\b/gi, versatz: (j) => tageVor(j, 2) },
   { re: /\byesterday\b/gi, versatz: (j) => tageVor(j, 1) },
@@ -82,6 +110,16 @@ const MUSTER: { re: RegExp; versatz: (jetzt: Date, m: RegExpMatchArray) => Date 
   { re: /\b(\d{1,3})\s+months?\s+ago\b/gi, versatz: (j, m) => monateVor(j, Number(m[1])) },
   { re: /\blast\s+week\b/gi, versatz: (j) => tageVor(j, 7) },
   { re: /\blast\s+month\b/gi, versatz: (j) => monateVor(j, 1) },
+  {
+    re: new RegExp(String.raw`\b(last)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b${NICHT_WIEDERKEHREND}`, 'gi'),
+    versatz: wochentagVor,
+  },
+  // Kurzformen nur grossgeschrieben ("last Tues", "last Fri"): klein waeren
+  // "I last sat down" oder "the last sun" Treffer.
+  {
+    re: new RegExp(String.raw`\b([Ll]ast)\s+(Mon|Tues?|Wed|Thu(?:rs?)?|Fri|Sat|Sun)\b${NICHT_WIEDERKEHREND}`, 'g'),
+    versatz: wochentagVor,
+  },
 ];
 
 /**

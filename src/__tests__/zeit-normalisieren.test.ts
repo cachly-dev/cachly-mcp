@@ -96,6 +96,67 @@ describe('GEGENPROBEN — was NICHT angefasst werden darf', () => {
   });
 });
 
+/*
+── Wochentage (28.10.2026) ──────────────────────────────────────────────────
+
+"last Friday" blieb bis heute offen. Im neutralen OmniMemEval-Aufbau rechnete
+gpt-4.1-mini daraus oft den Freitag der Vorwoche; die Zeitfragen lagen bei
+75,1 %, mit aufgeloestem Wochentag (und Sitzungsdatum vorn) bei 81,9 %.
+Gerechnet wird wie in den LoCoMo-Loesungen: "The Friday before 22 October 2023".
+*/
+describe('Wochentage: der letzte VOR dem Bezugstag', () => {
+  // JETZT = Do 27.08.2026
+  it('letzten Freitag, last Tuesday — 1 bis 6 Tage zurueck', () => {
+    expect(normalisiereZeit('letzten Freitag gemessen', JETZT)).toBe('letzten Freitag (2026-08-21) gemessen');
+    expect(normalisiereZeit('vergangenen Montag', JETZT)).toBe('vergangenen Montag (2026-08-24)');
+    expect(normalisiereZeit('shipped last Tuesday', JETZT)).toBe('shipped last Tuesday (2026-08-25)');
+  });
+
+  it('derselbe Wochentag wie heute heisst: vor einer Woche', () => {
+    expect(normalisiereZeit('last Thursday', JETZT)).toBe('last Thursday (2026-08-20)');
+  });
+
+  it('die LoCoMo-Faelle: Sonntag 22.10.2023, "last Friday" ist der 20.10.', () => {
+    const sitzung = new Date(2023, 9, 22, 14, 0);
+    expect(normalisiereZeit('I passed the interviews last Friday!', sitzung)).toBe(
+      'I passed the interviews last Friday (2023-10-20)!',
+    );
+    // Do 20.07.2023: "last Tues." ist Dienstag, der 18.07. — die Klammer vor den Punkt.
+    expect(normalisiereZeit('joined a group last Tues. Great', new Date(2023, 6, 20, 14, 0))).toBe(
+      'joined a group last Tues (2023-07-18). Great',
+    );
+  });
+
+  it('Gross- und Kleinschreibung der vollen Namen egal, Kurzformen gross', () => {
+    expect(normalisiereZeit('Last Sunday we met', JETZT)).toBe('Last Sunday (2026-08-23) we met');
+    expect(normalisiereZeit('last Fri and last Thurs', JETZT)).toBe('last Fri (2026-08-21) and last Thurs (2026-08-20)');
+  });
+
+  it('GEGENPROBE: klein geschriebene Kurzformen sind keine Wochentage', () => {
+    for (const roh of ['I last sat down with her.', 'the last sun of summer', 'we last wed in May']) {
+      expect(normalisiereZeit(roh, JETZT)).toBe(roh);
+    }
+  });
+
+  it('GEGENPROBE: Wiederkehrendes bleibt stehen', () => {
+    for (const roh of ['am letzten Freitag im Monat ist Abnahme', 'the review is on the last Friday of the month', 'last Monday in March']) {
+      expect(normalisiereZeit(roh, JETZT)).toBe(roh);
+    }
+  });
+
+  it('GEGENPROBE: ohne "letzten"/"last" bleibt der Wochentag offen', () => {
+    for (const roh of ['am Freitag gemessen', 'on Friday we ship', 'naechsten Montag']) {
+      expect(normalisiereZeit(roh, JETZT)).toBe(roh);
+    }
+  });
+
+  it('idempotent auch fuer Wochentage', () => {
+    const einmal = normalisiereZeit('last Tues. and letzten Sonntag', JETZT);
+    expect(normalisiereZeit(einmal, JETZT)).toBe(einmal);
+    expect(einmal.match(/\(\d{4}-\d{2}-\d{2}\)/g)).toHaveLength(2);
+  });
+});
+
 describe('zaehleZeitangaben — was die Rueckmeldung nennen darf', () => {
   it('zaehlt nur die NEU aufgeloesten', () => {
     expect(zaehleZeitangaben('gestern und heute', JETZT)).toBe(2);
