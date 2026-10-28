@@ -45,6 +45,18 @@ export function leserAktiv(instanceId?: string): boolean {
   return !sicherungFuer(instanceId).offen();
 }
 
+/**
+ * Zeitlimit des Anrufs. Vorgabe LESER_ZEITLIMIT_MS (2500 ms). Messlaeufe setzen
+ * CACHLY_LESER_ZEITLIMIT_MS (1..120000) hoch: auf der CPU braucht der Hausleser
+ * fuer 25 lange Texte 1,2-3 s, faellt bei 2,5 s still weg, und nach drei
+ * Ausfaellen fragt die Sicherung zehn Minuten nicht mehr — dann misst ein Lauf
+ * ueber weite Strecken die Ordnung OHNE Leser (OmniMemEval aml02, 28.10.2026).
+ */
+export function leserZeitlimit(): number {
+  const n = Number(process.env.CACHLY_LESER_ZEITLIMIT_MS);
+  return Number.isInteger(n) && n >= 1 && n <= 120_000 ? n : LESER_ZEITLIMIT_MS;
+}
+
 /** Nur fuer Tests: alle Sicherungen zuruecksetzen. */
 export function leserSperreLoeschen(): void { sicherungen.clear(); }
 
@@ -71,7 +83,7 @@ export async function leserPunkte(
     frage,
     texte,
     instanceId: opts?.instanceId,
-    zeitlimitMs: opts?.zeitlimitMs ?? LESER_ZEITLIMIT_MS,
+    zeitlimitMs: opts?.zeitlimitMs ?? leserZeitlimit(),
     fetchFn: opts?.fetchFn,
     zusatzKopf: opts?.zusatzKopf,
   }, sicherungFuer(opts?.instanceId));

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { leserAktiv, leserPunkte, leserSperreLoeschen, mischeMitLeser } from '../leser.js';
+import { leserAktiv, leserPunkte, leserSperreLoeschen, leserZeitlimit, mischeMitLeser } from '../leser.js';
 import { embedConfig } from '../embeddings.js';
 
 const antwort = (status: number, body: unknown): typeof fetch =>
@@ -52,6 +52,28 @@ describe('leserPunkte — der Anruf beim Dienst', () => {
     expect(leserAktiv()).toBe(false);
     leserSperreLoeschen();
     expect(leserAktiv()).toBe(true);
+  });
+  it('CACHLY_LESER_ZEITLIMIT_MS ersetzt die Vorgabe, Unsinn faellt auf 2500 ms zurueck', async () => {
+    const langsam: typeof fetch = ((_u: unknown, init?: RequestInit) => new Promise((resolve, reject) => {
+      const t = setTimeout(() => resolve(new Response(JSON.stringify({ scores: [0.7] }), { status: 200 })), 80);
+      init?.signal?.addEventListener('abort', () => { clearTimeout(t); reject(new Error('abgebrochen')); });
+    })) as unknown as typeof fetch;
+    try {
+      // Vorgabe 2500 ms: 80 ms Antwortzeit kommt an.
+      expect(leserZeitlimit()).toBe(2500);
+      expect(await leserPunkte('f', ['a'], { fetchFn: langsam })).toEqual([0.7]);
+      // Grenze 20 ms aus der Umgebung: dieselbe Antwort kommt zu spaet.
+      leserSperreLoeschen();
+      process.env.CACHLY_LESER_ZEITLIMIT_MS = '20';
+      expect(leserZeitlimit()).toBe(20);
+      expect(await leserPunkte('f', ['a'], { fetchFn: langsam })).toBeNull();
+      for (const unsinn of ['abc', '0', '-5', '1.5', '999999']) {
+        process.env.CACHLY_LESER_ZEITLIMIT_MS = unsinn;
+        expect(leserZeitlimit()).toBe(2500);
+      }
+    } finally {
+      delete process.env.CACHLY_LESER_ZEITLIMIT_MS;
+    }
   });
   it('CACHLY_LESER=0 schaltet ab, ohne Schluessel ebenso', async () => {
     process.env.CACHLY_LESER = '0';
