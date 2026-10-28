@@ -7,6 +7,30 @@
 
 ---
 
+## [0.10.215] – 2026-10-28 — *"Each brain searches with its own vectors."*
+
+**Recall keeps its in-memory search data per brain connection.**
+The vectors, topic names and word statistics that `smart_recall` keeps in
+memory are now held once per Redis connection. Before, one process held a
+single set for 60 seconds. A process that asked two brains in quick
+succession searched the second one with the first one's data, and its
+meaning-based results were missing.
+
+- Applies to every process that talks to more than one brain instance.
+- No content moved between brains: lesson texts were always read from the
+  brain that was asked.
+- A process with a single brain behaves as before.
+
+**Also in this release**
+- `causal_trace` reads only lesson entries in its fallback path and no longer
+  stops at hash keys (`WRONGTYPE`).
+- `CACHLY_RECALL_NUR_LESEN=1`: measuring mode. `smart_recall` leaves recall
+  counters and traces unchanged, so repeated benchmark runs see the same data.
+- `CACHLY_LESER_ZEITLIMIT_MS` (1–120000): time limit for the reranker in
+  benchmark runs. The default stays at 2,500 ms.
+
+---
+
 ## [0.10.214] – 2026-10-21 — *"Every vector comes back."*
 
 **Topic-name and second-model vectors now heal like the full-text vector.**
