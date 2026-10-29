@@ -7,6 +7,29 @@
 
 ---
 
+## [0.10.218] – 2026-10-29 — *"A week is not a day."*
+
+**Relative spans keep their span when a lesson is saved.**
+"last week" used to become "last week (2026-08-20)", exactly seven days back.
+A reader then took that date for the day of the event. Now weeks and weekends
+name their reference day, months name the month:
+
+| Written | Before | Now |
+| --- | --- | --- |
+| last week | (2026-08-20) | (the week before 2026-08-27) |
+| last weekend | – | (the weekend before 2026-08-27) |
+| 2 weeks ago | (2026-08-13) | (2 weeks before 2026-08-27) |
+| last month | (2026-07-27) | (2026-07) |
+| yesterday, last Friday | (2026-08-26), (2026-08-21) | unchanged |
+
+German works the same way ("letzte Woche (die Woche vor dem 2026-08-27)").
+Lessons saved earlier keep their old date and are not annotated twice.
+
+Why: in LoCoMo, 28 of 30 reference answers for "last week" read "The week
+before 9 June 2023"; only 2 name a single day.
+
+---
+
 ## [0.10.217] – 2026-10-29 — *"Ask for as many as you need."*
 
 **`smart_recall` takes an optional `limit` (1-20).**

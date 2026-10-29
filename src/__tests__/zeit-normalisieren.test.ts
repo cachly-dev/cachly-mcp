@@ -20,17 +20,37 @@ describe('normalisiereZeit — die eindeutigen Angaben', () => {
     expect(normalisiereZeit('vorgestern gebaut', JETZT)).toBe('vorgestern (2026-08-25) gebaut');
   });
 
-  it('Spannen: vor N Tagen, Wochen, Monaten', () => {
+  it('Spannen: Tage bekommen den Tag, Wochen den Bezugstag, Monate den Monat', () => {
     expect(normalisiereZeit('vor 3 Tagen', JETZT)).toBe('vor 3 Tagen (2026-08-24)');
-    expect(normalisiereZeit('vor 2 Wochen', JETZT)).toBe('vor 2 Wochen (2026-08-13)');
-    expect(normalisiereZeit('vor 1 Monaten', JETZT)).toBe('vor 1 Monaten (2026-07-27)');
-    expect(normalisiereZeit('letzte Woche', JETZT)).toBe('letzte Woche (2026-08-20)');
+    expect(normalisiereZeit('vor 2 Wochen', JETZT)).toBe('vor 2 Wochen (2 Wochen vor dem 2026-08-27)');
+    expect(normalisiereZeit('vor einer Woche', JETZT)).toBe('vor einer Woche (eine Woche vor dem 2026-08-27)');
+    expect(normalisiereZeit('vor 1 Monaten', JETZT)).toBe('vor 1 Monaten (2026-07)');
+    expect(normalisiereZeit('letzte Woche', JETZT)).toBe('letzte Woche (die Woche vor dem 2026-08-27)');
+    expect(normalisiereZeit('letzten Monat', JETZT)).toBe('letzten Monat (2026-07)');
+    expect(normalisiereZeit('letztes Wochenende', JETZT)).toBe('letztes Wochenende (das Wochenende vor dem 2026-08-27)');
   });
 
   it('Englisch ebenso — der Bestand ist zweisprachig', () => {
     expect(normalisiereZeit('shipped yesterday', JETZT)).toBe('shipped yesterday (2026-08-26)');
     expect(normalisiereZeit('3 days ago', JETZT)).toBe('3 days ago (2026-08-24)');
-    expect(normalisiereZeit('last week', JETZT)).toBe('last week (2026-08-20)');
+    expect(normalisiereZeit('last week', JETZT)).toBe('last week (the week before 2026-08-27)');
+    expect(normalisiereZeit('last weekend', JETZT)).toBe('last weekend (the weekend before 2026-08-27)');
+    expect(normalisiereZeit('2 weeks ago', JETZT)).toBe('2 weeks ago (2 weeks before 2026-08-27)');
+    expect(normalisiereZeit('1 week ago', JETZT)).toBe('1 week ago (1 week before 2026-08-27)');
+    expect(normalisiereZeit('last month', JETZT)).toBe('last month (2026-07)');
+    expect(normalisiereZeit('3 months ago', JETZT)).toBe('3 months ago (2026-05)');
+  });
+
+  it('die LoCoMo-Faelle: "last week" in der Sitzung vom 9. Juni 2023', () => {
+    // Musterantwort in LoCoMo: "The week before 9 June 2023". Bis 29.10.2026
+    // stand hier "(2023-06-02)", die Antwort nannte den 2. Juni als Tag.
+    const sitzung = new Date(2023, 5, 9, 13, 0);
+    expect(normalisiereZeit('I met my mentors last week', sitzung)).toBe(
+      'I met my mentors last week (the week before 2023-06-09)',
+    );
+    expect(normalisiereZeit('We went camping last weekend.', new Date(2023, 6, 17, 10, 0))).toBe(
+      'We went camping last weekend (the weekend before 2023-07-17).',
+    );
   });
 
   it('mehrere Angaben in einem Satz, alle richtig gesetzt', () => {
@@ -42,7 +62,8 @@ describe('normalisiereZeit — die eindeutigen Angaben', () => {
   it('Monatswechsel und Jahreswechsel rechnen korrekt', () => {
     const neujahr = new Date(2027, 0, 1, 9, 0); // 01.01.2027
     expect(normalisiereZeit('gestern', neujahr)).toBe('gestern (2026-12-31)');
-    expect(normalisiereZeit('vor 1 Monaten', neujahr)).toBe('vor 1 Monaten (2026-12-01)');
+    expect(normalisiereZeit('vor 1 Monaten', neujahr)).toBe('vor 1 Monaten (2026-12)');
+    expect(normalisiereZeit('last week', neujahr)).toBe('last week (the week before 2027-01-01)');
   });
 });
 
@@ -92,7 +113,18 @@ describe('GEGENPROBEN — was NICHT angefasst werden darf', () => {
 
   it('das laengere Muster gewinnt: "letzte Woche" wird nicht zweimal aufgeloest', () => {
     const neu = normalisiereZeit('letzte Woche gemessen', JETZT);
-    expect(neu.match(/\(\d{4}-\d{2}-\d{2}\)/g)).toHaveLength(1);
+    expect(neu.match(/\(/g)).toHaveLength(1);
+    expect(normalisiereZeit('last weekend', JETZT).match(/\(/g)).toHaveLength(1);
+  });
+
+  it('idempotent auch fuer Spannen', () => {
+    const einmal = normalisiereZeit('last week, 2 weeks ago, last month und letztes Wochenende', JETZT);
+    expect(normalisiereZeit(einmal, JETZT)).toBe(einmal);
+  });
+
+  it('alte Lektionen mit Tagesdatum hinter "last week" werden nicht ein zweites Mal ergaenzt', () => {
+    const alt = 'deployed last week (2026-08-20) and last month (2026-07-27)';
+    expect(normalisiereZeit(alt, JETZT)).toBe(alt);
   });
 });
 
@@ -163,6 +195,11 @@ describe('zaehleZeitangaben — was die Rueckmeldung nennen darf', () => {
     expect(zaehleZeitangaben('nichts hier', JETZT)).toBe(0);
     // Schon aufgeloest: keine neue Angabe mehr.
     expect(zaehleZeitangaben('gestern (2026-08-26)', JETZT)).toBe(0);
+  });
+
+  it('zaehlt Spannen und Monate mit', () => {
+    expect(zaehleZeitangaben('last week and last month', JETZT)).toBe(2);
+    expect(zaehleZeitangaben('last week (the week before 2026-08-27)', JETZT)).toBe(0);
   });
 });
 

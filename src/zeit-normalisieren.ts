@@ -56,6 +56,32 @@ function monateVor(jetzt: Date, n: number): Date {
   return d;
 }
 
+/** Ein Monat als Ganzes: "2026-07". */
+function alsIsoMonat(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/*
+ * ── Spannen bekommen eine Spanne, keinen Tag (29.10.2026) ───────────────────
+ *
+ * Bis heute wurde "last week" zu "last week (2026-08-20)": genau sieben Tage
+ * zurueck. Eine Woche ist aber kein Tag. Wer das Datum liest, haelt es fuer den
+ * Tag des Ereignisses — und rechnet falsch weiter.
+ *
+ * Gemessen auf LoCoMo (OmniMemEval, Laeufe aml05 und aml05c): Die Antwort
+ * nannte "28 January 2023", die Frage fragte nach dem Ereignis "on 4 February
+ * 2023", der Richter wertete falsch. In den LoCoMo-Musterantworten lauten 28
+ * von 30 "last week"-Faellen "The week before 9 June 2023", nur 2 nennen einen
+ * Tag; "last month" wird als Monat beantwortet.
+ *
+ * Darum: Tage und Wochentage behalten ihr Tagesdatum. Wochen und Wochenenden
+ * nennen den Bezugstag ("the week before 2026-08-27"), Monate den Monat
+ * ("2026-07").
+ */
+const tag = (d: Date): string => alsIsoTag(d);
+const wochenVorEn = (j: Date, n: number): string => `${n} week${n === 1 ? '' : 's'} before ${alsIsoTag(j)}`;
+const wochenVorDe = (j: Date, n: number): string => `${n} Wochen vor dem ${alsIsoTag(j)}`;
+
 /** Der letzte Wochentag `wd` (0 = Sonntag) VOR `jetzt`: 1 bis 7 Tage zurueck. */
 function letzterWochentag(jetzt: Date, wd: number): Date {
   return tageVor(jetzt, (jetzt.getDay() - wd + 7) % 7 || 7);
@@ -66,9 +92,9 @@ const WOCHENTAG: Record<string, number> = {
   sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6,
   sun: 0, mon: 1, tue: 2, tues: 2, wed: 3, thu: 4, thur: 4, thurs: 4, fri: 5, sat: 6,
 };
-const wochentagVor = (j: Date, m: RegExpMatchArray): Date | null => {
+const wochentagVor = (j: Date, m: RegExpMatchArray): string | null => {
   const wd = WOCHENTAG[m[2].toLowerCase()];
-  return wd === undefined ? null : letzterWochentag(j, wd);
+  return wd === undefined ? null : tag(letzterWochentag(j, wd));
 };
 /** "letzten Freitag im Monat" / "last Friday of the month" wiederholt sich — kein Datum. */
 const NICHT_WIEDERKEHREND = String.raw`(?!\s+(?:im|des|eines|jedes|of|in)\b)`;
@@ -77,50 +103,65 @@ const NICHT_WIEDERKEHREND = String.raw`(?!\s+(?:im|des|eines|jedes|of|in)\b)`;
  * Die Muster. Reihenfolge zaehlt: laengere Ausdruecke zuerst, sonst frisst
  * "Woche" das "letzte Woche" auf.
  *
- * `versatz` liefert das gemeinte Datum aus dem Schreibzeitpunkt und den
- * gefangenen Gruppen. Gibt es keine sinnvolle Zahl, liefert es null und der
+ * `angabe` liefert den Klammerinhalt aus dem Schreibzeitpunkt und den
+ * gefangenen Gruppen. Gibt es keine sinnvolle Angabe, liefert es null und der
  * Treffer bleibt unangetastet.
  */
-const MUSTER: { re: RegExp; versatz: (jetzt: Date, m: RegExpMatchArray) => Date | null }[] = [
+const MUSTER: { re: RegExp; angabe: (jetzt: Date, m: RegExpMatchArray) => string | null }[] = [
   // Deutsch — Tage
-  { re: /\bvorgestern\b/gi, versatz: (j) => tageVor(j, 2) },
-  { re: /\buebermorgen\b|\bübermorgen\b/gi, versatz: (j) => tageVor(j, -2) },
-  { re: /\bgestern\b/gi, versatz: (j) => tageVor(j, 1) },
-  { re: /\bmorgen\b/gi, versatz: (j) => tageVor(j, -1) },
-  { re: /\bheute\b/gi, versatz: (j) => j },
+  { re: /\bvorgestern\b/gi, angabe: (j) => tag(tageVor(j, 2)) },
+  { re: /\buebermorgen\b|\bübermorgen\b/gi, angabe: (j) => tag(tageVor(j, -2)) },
+  { re: /\bgestern\b/gi, angabe: (j) => tag(tageVor(j, 1)) },
+  { re: /\bmorgen\b/gi, angabe: (j) => tag(tageVor(j, -1)) },
+  { re: /\bheute\b/gi, angabe: (j) => tag(j) },
   // Deutsch — Spannen
-  { re: /\bvor\s+(\d{1,3})\s+Tagen\b/gi, versatz: (j, m) => tageVor(j, Number(m[1])) },
-  { re: /\bvor\s+(\d{1,3})\s+Wochen\b/gi, versatz: (j, m) => tageVor(j, 7 * Number(m[1])) },
-  { re: /\bvor\s+(\d{1,3})\s+Monaten\b/gi, versatz: (j, m) => monateVor(j, Number(m[1])) },
-  { re: /\bvor\s+einer\s+Woche\b/gi, versatz: (j) => tageVor(j, 7) },
-  { re: /\bvor\s+einem\s+Monat\b/gi, versatz: (j) => monateVor(j, 1) },
-  { re: /\b(letzte|letzten|letzter|vorige|vorigen)\s+Woche\b/gi, versatz: (j) => tageVor(j, 7) },
-  { re: /\b(letzten|letzter|vorigen)\s+Monat\b/gi, versatz: (j) => monateVor(j, 1) },
+  { re: /\bvor\s+(\d{1,3})\s+Tagen\b/gi, angabe: (j, m) => tag(tageVor(j, Number(m[1]))) },
+  { re: /\bvor\s+(\d{1,3})\s+Wochen\b/gi, angabe: (j, m) => wochenVorDe(j, Number(m[1])) },
+  { re: /\bvor\s+(\d{1,3})\s+Monaten\b/gi, angabe: (j, m) => alsIsoMonat(monateVor(j, Number(m[1]))) },
+  { re: /\bvor\s+einer\s+Woche\b/gi, angabe: (j) => `eine Woche vor dem ${alsIsoTag(j)}` },
+  { re: /\bvor\s+einem\s+Monat\b/gi, angabe: (j) => alsIsoMonat(monateVor(j, 1)) },
+  {
+    re: /\b(letztes|vergangenes|voriges|letzten|vergangenen|vorigen)\s+Wochenende\b/gi,
+    angabe: (j) => `das Wochenende vor dem ${alsIsoTag(j)}`,
+  },
+  { re: /\b(letzte|letzten|letzter|vorige|vorigen)\s+Woche\b/gi, angabe: (j) => `die Woche vor dem ${alsIsoTag(j)}` },
+  { re: /\b(letzten|letzter|vorigen)\s+Monat\b/gi, angabe: (j) => alsIsoMonat(monateVor(j, 1)) },
   {
     re: new RegExp(String.raw`\b(letzten|vergangenen|vorigen)\s+(Montag|Dienstag|Mittwoch|Donnerstag|Freitag|Samstag|Sonntag)\b${NICHT_WIEDERKEHREND}`, 'gi'),
-    versatz: wochentagVor,
+    angabe: wochentagVor,
   },
   // Englisch
-  { re: /\bthe\s+day\s+before\s+yesterday\b/gi, versatz: (j) => tageVor(j, 2) },
-  { re: /\byesterday\b/gi, versatz: (j) => tageVor(j, 1) },
-  { re: /\btomorrow\b/gi, versatz: (j) => tageVor(j, -1) },
-  { re: /\btoday\b/gi, versatz: (j) => j },
-  { re: /\b(\d{1,3})\s+days?\s+ago\b/gi, versatz: (j, m) => tageVor(j, Number(m[1])) },
-  { re: /\b(\d{1,3})\s+weeks?\s+ago\b/gi, versatz: (j, m) => tageVor(j, 7 * Number(m[1])) },
-  { re: /\b(\d{1,3})\s+months?\s+ago\b/gi, versatz: (j, m) => monateVor(j, Number(m[1])) },
-  { re: /\blast\s+week\b/gi, versatz: (j) => tageVor(j, 7) },
-  { re: /\blast\s+month\b/gi, versatz: (j) => monateVor(j, 1) },
+  { re: /\bthe\s+day\s+before\s+yesterday\b/gi, angabe: (j) => tag(tageVor(j, 2)) },
+  { re: /\byesterday\b/gi, angabe: (j) => tag(tageVor(j, 1)) },
+  { re: /\btomorrow\b/gi, angabe: (j) => tag(tageVor(j, -1)) },
+  { re: /\btoday\b/gi, angabe: (j) => tag(j) },
+  { re: /\b(\d{1,3})\s+days?\s+ago\b/gi, angabe: (j, m) => tag(tageVor(j, Number(m[1]))) },
+  { re: /\b(\d{1,3})\s+weeks?\s+ago\b/gi, angabe: (j, m) => wochenVorEn(j, Number(m[1])) },
+  { re: /\b(\d{1,3})\s+months?\s+ago\b/gi, angabe: (j, m) => alsIsoMonat(monateVor(j, Number(m[1]))) },
+  { re: /\blast\s+weekend\b/gi, angabe: (j) => `the weekend before ${alsIsoTag(j)}` },
+  { re: /\blast\s+week\b/gi, angabe: (j) => `the week before ${alsIsoTag(j)}` },
+  { re: /\blast\s+month\b/gi, angabe: (j) => alsIsoMonat(monateVor(j, 1)) },
   {
     re: new RegExp(String.raw`\b(last)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b${NICHT_WIEDERKEHREND}`, 'gi'),
-    versatz: wochentagVor,
+    angabe: wochentagVor,
   },
   // Kurzformen nur grossgeschrieben ("last Tues", "last Fri"): klein waeren
   // "I last sat down" oder "the last sun" Treffer.
   {
     re: new RegExp(String.raw`\b([Ll]ast)\s+(Mon|Tues?|Wed|Thu(?:rs?)?|Fri|Sat|Sun)\b${NICHT_WIEDERKEHREND}`, 'g'),
-    versatz: wochentagVor,
+    angabe: wochentagVor,
   },
 ];
+
+/**
+ * Was diese Datei in eine Klammer schreibt: ein Tag, ein Monat oder eine
+ * Spanne mit Bezugstag. Dient der Idempotenz und dem Zaehlen. Alte Lektionen
+ * tragen noch "(2026-08-20)" hinter "last week" — das gilt als aufgeloest und
+ * wird nicht ein zweites Mal ergaenzt.
+ */
+const ANGABE = String.raw`\((?:\d{4}-\d{2}(?:-\d{2})?|(?:the week(?:end)? before|\d{1,3} weeks? before|die Woche vor dem|das Wochenende vor dem|eine Woche vor dem|\d{1,3} Wochen vor dem) \d{4}-\d{2}-\d{2})\)`;
+const SCHON_AUFGELOEST = new RegExp(String.raw`^\s*${ANGABE}`);
+const ANGABEN = new RegExp(ANGABE, 'g');
 
 /**
  * Bereiche, die unangetastet bleiben: Code UND wörtliche Zitate.
@@ -171,9 +212,9 @@ export function normalisiereZeit(text: string, jetzt: Date): string {
   const tabu = tabuBereiche(text);
   // Alle Treffer sammeln, dann VON HINTEN einsetzen — sonst verschieben die
   // ersten Einfuegungen die Fundstellen aller spaeteren.
-  const funde: { ende: number; datum: string }[] = [];
+  const funde: { ende: number; angabe: string }[] = [];
   const belegt: [number, number][] = [];
-  for (const { re, versatz } of MUSTER) {
+  for (const { re, angabe } of MUSTER) {
     re.lastIndex = 0;
     for (const m of text.matchAll(re)) {
       const von = m.index;
@@ -184,24 +225,25 @@ export function normalisiereZeit(text: string, jetzt: Date): string {
       // gegen ein spaeteres, kuerzeres Muster an derselben Stelle.
       if (istImTabu(belegt, von, bis)) continue;
       // Schon aufgeloest? Dann nichts tun (Idempotenz).
-      if (/^\s*\(\d{4}-\d{2}-\d{2}\)/.test(text.slice(bis))) continue;
-      const d = versatz(jetzt, m);
-      if (!d || Number.isNaN(d.getTime())) continue;
+      if (SCHON_AUFGELOEST.test(text.slice(bis))) continue;
+      if (Number.isNaN(jetzt.getTime())) continue;
+      const a = angabe(jetzt, m);
+      if (!a || a.includes('NaN')) continue;
       belegt.push([von, bis]);
-      funde.push({ ende: bis, datum: alsIsoTag(d) });
+      funde.push({ ende: bis, angabe: a });
     }
   }
   if (funde.length === 0) return text;
   funde.sort((a, b) => b.ende - a.ende);
   let out = text;
-  for (const f of funde) out = `${out.slice(0, f.ende)} (${f.datum})${out.slice(f.ende)}`;
+  for (const f of funde) out = `${out.slice(0, f.ende)} (${f.angabe})${out.slice(f.ende)}`;
   return out;
 }
 
 /** Wie viele Angaben wuerde `normalisiereZeit` anfassen? Fuer Rueckmeldungen. */
 export function zaehleZeitangaben(text: string, jetzt: Date): number {
   if (!text) return 0;
-  const vorher = (text.match(/\(\d{4}-\d{2}-\d{2}\)/g) ?? []).length;
-  const nachher = (normalisiereZeit(text, jetzt).match(/\(\d{4}-\d{2}-\d{2}\)/g) ?? []).length;
+  const vorher = (text.match(ANGABEN) ?? []).length;
+  const nachher = (normalisiereZeit(text, jetzt).match(ANGABEN) ?? []).length;
   return nachher - vorher;
 }
