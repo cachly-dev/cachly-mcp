@@ -320,7 +320,7 @@ const EINGANG_SORTIER_GEWICHT = STELLSCHRAUBE_EINGANG_SORTIER_GEWICHT;
  * Speicher. Dann neu abtasten — nicht die 0,3 von damals uebernehmen.
  */
 import { upgradeNudge } from '../upgrade-nudge.js';
-import { recallTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
+import { recallTiefe, verlangteTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
 import { nutzungInWorten, nutzungsSchluessel, verdichte } from '../werkzeug-nutzung.js';
 import { inWorten as lieferungInWorten, lieferBild, lieferSchluessel, trefferSchluessel } from '../geliefert.js';
 import { COAUTHOR_PREF_KEY, autorHinweis, coautorAus, echterGitLeser, ermittleAutor, mitCoautor, nurMensch } from '../autor.js';
@@ -2357,7 +2357,10 @@ async function handleBrainToolInner(
         threshold = 0.78,
         author: requester = '',
         context_files: rawContextFiles = [],
-      } = args as { instance_id: string; query: string; threshold?: number; author?: string; context_files?: unknown[] };
+        limit: rawLimit,
+      } = args as { instance_id: string; query: string; threshold?: number; author?: string; context_files?: unknown[]; limit?: unknown };
+      // Ausdruecklich verlangte Trefferzahl (1-20); ohne sie gelten 8 bzw. 12 (recall-tiefe.ts).
+      const verlangt = verlangteTiefe(rawLimit);
       const contextFiles: string[] = Array.isArray(rawContextFiles)
         ? rawContextFiles.filter((f): f is string => typeof f === 'string')
         : [];
@@ -3325,7 +3328,7 @@ async function handleBrainToolInner(
       // lives in recall-tiefe.ts with tests (GROW-043), because it used to live
       // only in a comment while the branch said `? 0 :` and returned nothing.
       const gateActive = recallGate.reached;
-      const tiefe = recallTiefe({ ueberLimit: gateActive, gesamt: hybridResults.length, volleTiefe: TIEFE_VOLL });
+      const tiefe = recallTiefe({ ueberLimit: gateActive, gesamt: hybridResults.length, volleTiefe: verlangt ?? TIEFE_VOLL });
       // Kompakt-Modus (CACHLY_RECALL_COMPACT=1, 02.09.2026): Bench-Sitzungen
       // trugen ~24.000 Zeichen Werkzeugtext je Sitzung, in JEDER Folgerunde
       // neu gesendet — 210.000 Input-Token gegen 40.000 ohne Gedaechtnis. Der
@@ -3501,7 +3504,7 @@ async function handleBrainToolInner(
         // Group by sub-query for multi-topic queries
         if (subQueries.length > 1) {
           const grouped = new Map<string, HybridResult[]>();
-          const tiefeMehrthemig = recallTiefe({ ueberLimit: gateActive, gesamt: hybridResults.length, volleTiefe: TIEFE_VOLL_MEHRTHEMIG });
+          const tiefeMehrthemig = recallTiefe({ ueberLimit: gateActive, gesamt: hybridResults.length, volleTiefe: verlangt ?? TIEFE_VOLL_MEHRTHEMIG });
           for (const r of hybridResults.slice(0, tiefeMehrthemig.sichtbar)) {
             const sq = r.subQuery ?? query;
             if (!grouped.has(sq)) grouped.set(sq, []);
@@ -3510,8 +3513,9 @@ async function handleBrainToolInner(
           for (const [sq, results] of grouped) {
             lines.push(`**Topic: "${sq}"** (${results.length} results)\n`);
             // Mehrthemen-Zweig kompakt wie der einthemige (Einwand 4): sonst
-            // bliebe jede Mehrthemen-Anfrage bei voller Zeichenlast.
-            for (const r of results.slice(0, kompakt ? 2 : 4)) {
+            // bliebe jede Mehrthemen-Anfrage bei voller Zeichenlast. Eine verlangte
+            // Trefferzahl gilt auch hier; die Summe deckelt tiefeMehrthemig.
+            for (const r of results.slice(0, kompakt ? 2 : (verlangt ?? 4))) {
               const label = r.key.replace('cachly:ctx:', '📝 ').replace('cachly:lesson:best:', '💡 ').replace('cachly:idx:', '📂 ');
               const scorePart = r.matchType === 'ckg'
                 ? `CKG: ${(r.ckgScore ?? 0).toFixed(2)}, 🕸️ causal graph`

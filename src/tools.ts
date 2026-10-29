@@ -739,6 +739,7 @@ const TOOLS = [
           items: { type: 'string' },
           description: 'Files you are working on, e.g. ["src/auth/service.ts"]. Lessons learned around these files rank higher.',
         },
+        limit: { type: 'number', description: 'Max results, 1-20 (default 8).' },
       },
       required: ['query'],
     },

@@ -24,6 +24,26 @@ export const TIEFE_UEBER_LIMIT = 1;
 export const TIEFE_VOLL = 8;
 /** Volle Tiefe, wenn die Frage in Unterfragen zerfaellt (mehr Themen, mehr Platz). */
 export const TIEFE_VOLL_MEHRTHEMIG = 12;
+/** Hoechstens so viele Treffer darf ein Aufrufer mit `limit` verlangen. */
+export const TIEFE_HOECHSTENS = 20;
+
+/**
+ * Die Trefferzahl, die ein Aufrufer ausdruecklich verlangt (`limit` von smart_recall).
+ *
+ * Wer eine eigene Trefferzahl mitbringt — ein Messrahmen mit top_k, ein
+ * API-Adapter —, bekommt sie, begrenzt auf 1 bis TIEFE_HOECHSTENS. Ohne Wert
+ * oder mit Unsinn gilt die Voreinstellung des Aufrufs (undefined). Das
+ * Frei-Limit bleibt davon unberuehrt: recallTiefe kappt danach weiter auf 1.
+ *
+ * Gemessen 29.10.2026, LoCoMo (1.540 Fragen), ein Speicher je Gespraech: alle
+ * Belege im Kontext bei 8 Treffern 80,8 %, bei 20 Treffern 90,0 %
+ * (Mehrschritt 39,4 → 66,7 %), 2.321 → 5.777 Token je Frage.
+ */
+export function verlangteTiefe(roh: unknown): number | undefined {
+  const n = typeof roh === 'number' ? roh : typeof roh === 'string' && roh.trim() !== '' ? Number(roh) : Number.NaN;
+  if (!Number.isFinite(n)) return undefined;
+  return Math.min(TIEFE_HOECHSTENS, Math.max(1, Math.floor(n)));
+}
 
 export interface RecallTiefeEingabe {
   /** Frei-Konto ueber seinem Monatskontingent? */
