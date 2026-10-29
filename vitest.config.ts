@@ -38,6 +38,8 @@ export default defineConfig({
       '**/node_modules/**',
       // Compiled dist/ files are identical to src/ — run tests only from source
       '**/dist/**',
+      // Contract suite of the AML add/search service: node --test, needs Valkey (see aml-service/README.md)
+      '**/aml-service/**',
     ],
     // Flake-Klasse E fix: Increase testTimeout to prevent flakes under parallel load.
     // Empirical evidence: timeouts in brain-flow.test.ts, onboarding-bench.test.ts,

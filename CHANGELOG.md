@@ -7,6 +7,26 @@
 
 ---
 
+## [0.10.217] – 2026-10-29 — *"Ask for as many as you need."*
+
+**`smart_recall` takes an optional `limit` (1-20).**
+Callers that bring their own number of results, such as a benchmark with
+`top_k` or an API adapter, now get that many. Without `limit` nothing changes:
+8 results, 12 for multi-topic queries. Over the free-tier limit it stays at the
+single best result.
+
+**The add/search service used for benchmarks is now public.**
+`aml-service/` holds the HTTP service that speaks the Agent Memory Leaderboard
+contract `memory-api-v1.1` in front of a cachly Brain. It is the service the
+OmniMemEval `cachly` adapter talks to. Its README lists the routes, the start
+command and the contract tests.
+
+Why the limit: LoCoMo keeps each conversation in one shared store. With 8
+results, 80.8 % of the 1,540 questions had all their evidence in the context;
+with 14 results, 86.2 %; with 20, 90.0 %.
+
+---
+
 ## [0.10.216] – 2026-10-28 — *"Last Friday keeps its date."*
 
 **Weekday references get their date when a lesson is stored.**
