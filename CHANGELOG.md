@@ -7,6 +7,28 @@
 
 ---
 
+## [0.10.216] – 2026-10-28 — *"Last Friday keeps its date."*
+
+**Weekday references get their date when a lesson is stored.**
+"last Friday", "last Tues" and "letzten Freitag" are now completed with the
+date they refer to, the same way "yesterday" and "last week" already were:
+"I passed the interview last Friday (2023-10-20)". The date is the most recent
+such weekday before the day the fact refers to (1 to 7 days back). The
+original words stay as they were; the date is added next to them.
+
+- Recurring phrases stay untouched: "the last Friday of the month",
+  "letzten Freitag im Monat".
+- Short forms count only when capitalised ("last Fri"), so "I last sat down"
+  is left alone.
+- Plain weekdays without "last" ("on Friday", "am Montag") are still not
+  resolved, because they can point forward or back.
+
+In the neutral OmniMemEval LoCoMo setup (gpt-4.1-mini answers, gpt-4o-mini
+judges), temporal questions went from 75.1 % to 81.9 % with this change and
+the session date placed at the start of each benchmark chunk.
+
+---
+
 ## [0.10.215] – 2026-10-28 — *"Each brain searches with its own vectors."*
 
 **Recall keeps its in-memory search data per brain connection.**
