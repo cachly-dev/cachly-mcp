@@ -24,6 +24,11 @@ All `POST` routes need `Authorization: Bearer <AML_MEMORY_KEY>`.
 - `search` calls `smart_recall` with `limit = top_k`. cachly caps one search at
   20 records, so `top_k` above 20 returns at most 20. Each record comes back as
   full text, in ranking order.
+- When `CACHLY_JWT` is set, `smart_recall` also asks the API's cross-encoder
+  reranker (`POST /api/v1/rerank`) to reorder the top 25 candidates. If it does
+  not answer within `CACHLY_LESER_ZEITLIMIT_MS`, the order without it stands.
+  `CACHLY_LESER=off` switches it off, for example for runs that should use
+  public models only.
 - `delete` empties the user's database and frees it for reuse.
 
 ## Run it
@@ -52,6 +57,8 @@ node_modules/.bin/tsx aml-service/dienst.mjs
 | `AML_ADD_ZEIT_MS` | `1500000` | Time limit of one add. |
 | `AML_MAX_DB` | `16384` | Highest database number handed out. |
 | `CACHLY_EMBED_TIMEOUT_MS` | `30000` | Time limit of one embedding call; raise it on a slow CPU host. |
+| `CACHLY_LESER` | on | `off` (or `0`, `false`) switches the reranker off. |
+| `CACHLY_LESER_ZEITLIMIT_MS` | `2500` | Time limit of one reranker call (1 to 120000). |
 
 `node aml-service/loeschen.mjs --ja` empties every database of the local
 test Valkey on port 6391.
