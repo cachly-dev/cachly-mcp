@@ -7,6 +7,19 @@
 
 ---
 
+## [0.10.220] – 2026-11-01 — *"Organizations are free."*
+
+**Business is one price as well: €199/mo for up to 20 people, SSO included.**
+Teams pick a Brain tier — Team (€49/mo, up to 5 people) or Business (€199/mo,
+up to 20 people with SSO). Organizations themselves are free; there is no
+separate org plan to buy anymore. Enterprise stays on request.
+
+| Where | Before | Now |
+| --- | --- | --- |
+| `list_orgs`, `create_org` | "Org plans: Business €199 (SSO, 20 seats)" | Team and Business are Brain tiers; organizations are free |
+| Org plan shown | raw id, e.g. "team (legacy)" for every new org | "Free" for the default org, "Business"/"Enterprise" for older paid orgs |
+| `create_instance` | business = 7 GB, €199/mo | business = 7 GB, €199/mo, up to 20 people, SSO included |
+
 ## [0.10.219] – 2026-11-01 — *"One price per team size."*
 
 **Tier names follow the new price ladder: Free · Solo €19 · Team €49 · Business €199.**

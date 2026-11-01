@@ -21,7 +21,8 @@ const TOOLS = [
       'Create a new managed Valkey/Redis cache instance on cachly.dev. ' +
       'Free tier provisions in ~30 seconds. Paid tiers return a Stripe checkout URL. ' +
       'Available tiers (id = name): free = Free (25 MB), dev = Solo (200 MB, €19/mo, one person), ' +
-      'pro = Team (900 MB, €49/mo, up to 5 people, everything included), business = Business (7 GB, €199/mo).',
+      'pro = Team (900 MB, €49/mo, up to 5 people, everything included), ' +
+      'business = Business (7 GB, €199/mo, up to 20 people, SSO included).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1642,8 +1643,8 @@ const TOOLS = [
     description:
       'List your Cachly organizations. ' +
       'Returns each org with plan, seat count, and member info. ' +
-      'Organizations are free. A team of up to 5 people buys the Brain tier Team (Team €49/mo, everything included). ' +
-      'Org plans: Business €199 (SSO, 20 seats), Enterprise (custom).',
+      'Organizations are free. Teams pick a Brain tier: Team €49/mo for up to 5 people, ' +
+      'Business €199/mo for up to 20 people with SSO. Enterprise on request.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -1655,8 +1656,8 @@ const TOOLS = [
     description:
       'Create a new Cachly organization for team collaboration; organizations are free. ' +
       'After creation, invite team members with invite_member. ' +
-      'Up to 5 people share the Brain tier Team (€49/mo, everything included). ' +
-      'Org plans: Business (€199/mo, 20 seats, SSO), Enterprise (custom).',
+      'Up to 5 people share the Brain tier Team (€49/mo); up to 20 people with SSO use Business (€199/mo). ' +
+      'Enterprise on request.',
     inputSchema: {
       type: 'object',
       properties: {

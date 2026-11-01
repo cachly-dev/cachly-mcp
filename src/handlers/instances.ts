@@ -15,6 +15,16 @@ export const INSTANCE_TOOL_NAMES = new Set([
   'list_orgs', 'create_org', 'invite_member', 'get_org_plan',
 ]);
 
+// Seit 31.10./01.11.2026: Organisationen sind kostenlos, ein Team kauft eine Brain-Stufe.
+// Team (id `pro`) und Business (id `business`, mit SSO) sind die Stufen fuer Teams.
+const TEAM_STUFEN = 'Team €49/mo for up to 5 people · Business €199/mo for up to 20 people with SSO · Enterprise on request.';
+
+/** Anzeigename eines Org-Plans. Neue Organisationen tragen die Id `team`: das ist der kostenlose Grundstand. */
+export function orgPlanName(plan: string): string {
+  const namen: Record<string, string> = { team: 'Free', free: 'Free', business: 'Business', enterprise: 'Enterprise' };
+  return namen[plan] ?? (plan ? plan.charAt(0).toUpperCase() + plan.slice(1) : 'Free');
+}
+
 function formatInstance(inst: Instance): string {
   const badge = inst.status === 'running' ? '🟢' : inst.status === 'provisioning' ? '🟡' : '🔴';
   const mb = inst.memory_mb >= 1024 ? `${inst.memory_mb / 1024}GB` : `${inst.memory_mb}MB`;
@@ -162,10 +172,10 @@ export async function handleInstanceTool(
     case 'list_orgs': {
       const res = await apiFetch<{ orgs: Array<{ id: string; name: string; slug: string; plan: string; max_members: number; member_count?: number }> }>('/api/v1/orgs');
       const orgs = res.orgs ?? [];
-      if (orgs.length === 0) return `📭 No organizations yet.\n\nCreate one with \`create_org(name="My Team")\`.\nOrganizations are free. Up to 5 people share the Brain tier Team (€49/mo, everything included).\nOrg plans: Business €199/mo (20 seats, SSO), Enterprise custom.`;
+      if (orgs.length === 0) return `📭 No organizations yet.\n\nCreate one with \`create_org(name="My Team")\` — organizations are free.\n${TEAM_STUFEN}`;
       return [
         `🏢 **Your organizations (${orgs.length})**\n`,
-        ...orgs.map(o => `• **${o.name}** (\`${o.slug}\`) — plan: ${o.plan} · seats: ${o.member_count ?? '?'}/${o.max_members}\n  ID: \`${o.id}\``),
+        ...orgs.map(o => `• **${o.name}** (\`${o.slug}\`) — plan: ${orgPlanName(o.plan)} · seats: ${o.member_count ?? '?'}/${o.max_members}\n  ID: \`${o.id}\``),
         `\n_Manage: \`get_org_plan\`, \`invite_member\`, dashboard → /team_`,
       ].join('\n');
     }
@@ -180,12 +190,12 @@ export async function handleInstanceTool(
       });
       return [
         `✅ **Organization created:** ${res.name}`,
-        `   ID: \`${res.id}\` · Slug: \`${res.slug}\` · Plan: ${res.plan}`,
+        `   ID: \`${res.id}\` · Slug: \`${res.slug}\` · Plan: ${orgPlanName(res.plan)}`,
         ``,
         `**Next steps:**`,
         `1. Invite team members: \`invite_member(org_id="${res.id}", email="dev@example.com")\``,
-        `2. Up to 5 people: Brain tier Team, €49/mo, everything included (dashboard → /billing)`,
-        `   Org plan Business: €199/mo (20 seats, SSO)`,
+        `2. Pick the Brain tier for your team (dashboard → /billing):`,
+        `   ${TEAM_STUFEN}`,
       ].join('\n');
     }
 
@@ -207,10 +217,8 @@ export async function handleInstanceTool(
       }>(`/api/v1/orgs/${org_id}`);
       const accepted = (org.members ?? []).filter(m => m.accepted_at).length;
       const pending = (org.members ?? []).filter(m => !m.accepted_at).length;
-      // 31.10.2026: Org-Tarif "team" wird nicht mehr verkauft (Team ist die Brain-Stufe `pro`); alte Orgs zeigen ihn als Altstand.
-      const planPrice: Record<string, string> = { free: '€0', team: 'legacy', business: '€199/mo', enterprise: 'custom' };
       return [
-        `🏢 **${org.name}** — Plan: **${org.plan}** (${planPrice[org.plan] ?? org.plan})`,
+        `🏢 **${org.name}** — Plan: **${orgPlanName(org.plan)}**`,
         `   Seats: ${accepted} active + ${pending} pending / ${org.max_members} max`,
         ``,
         `**Members:**`,
@@ -218,7 +226,7 @@ export async function handleInstanceTool(
         ``,
         org.stripe_customer_id
           ? `💳 Billing: managed via Stripe. Upgrade/cancel: dashboard → /billing`
-          : `💳 Add a payment method for Business: dashboard → /billing → Teams`,
+          : `💳 Organizations are free. SSO comes with the Business tier: dashboard → /billing`,
       ].join('\n');
     }
 
