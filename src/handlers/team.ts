@@ -1834,7 +1834,7 @@ export async function handleTeamTool(
         `**Project:** ${project_description}`,
         `**Instance:** ${inst.name} (${tier}) · ID: \`${instance_id}\``,
         `**Embedding Provider:** ${providerArg}`,
-        `**Semantic Search:** ${hasVector ? '✅ pgvector HNSW available' : '⚠️  Not available on ' + tier + ' — upgrade to Speed/Business'}`,
+        `**Semantic Search:** ${hasVector ? '✅ pgvector HNSW available' : '⚠️  needs a vector token — rotate it in the dashboard (every tier includes one)'}`,
         ``,
         `─────────────────────────────────────────────`,
         `**Step 1 — Add to .mcp.json:**`,

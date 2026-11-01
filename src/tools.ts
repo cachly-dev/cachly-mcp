@@ -20,8 +20,8 @@ const TOOLS = [
     description:
       'Create a new managed Valkey/Redis cache instance on cachly.dev. ' +
       'Free tier provisions in ~30 seconds. Paid tiers return a Stripe checkout URL. ' +
-      'Available tiers: free (25 MB), dev (200 MB, €19/mo), pro (900 MB, €49/mo), ' +
-      'speed (900 MB Dragonfly + Semantic Cache, €79/mo), business (7 GB, €199/mo).',
+      'Available tiers (id = name): free = Free (25 MB), dev = Solo (200 MB, €19/mo, one person), ' +
+      'pro = Team (900 MB, €49/mo, up to 5 people, everything included), business = Business (7 GB, €199/mo).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -215,7 +215,7 @@ const TOOLS = [
       'Read-only — no side effects. ' +
       'Returns an array of objects, each with: key, value, similarity_score (0–1), and namespace. ' +
       'Returns an empty array if no entries meet the similarity threshold. ' +
-      'Requires OPENAI_API_KEY (or compatible provider) and the Speed/Business tier with CACHLY_VECTOR_URL. ' +
+      'Requires OPENAI_API_KEY (or compatible provider) and CACHLY_VECTOR_URL; every tier includes a vector token. ' +
       'Embeddings are computed server-side and never leave Germany (pgvector HNSW index). ' +
       'Example: "find all cached responses about password reset" or "what did we answer about pricing?". ' +
       'Use cache_get for exact key lookup; use smart_recall for brain lessons.',
@@ -1640,9 +1640,10 @@ const TOOLS = [
   {
     name: 'list_orgs',
     description:
-      'List your Cachly organizations (team/org plans). ' +
+      'List your Cachly organizations. ' +
       'Returns each org with plan, seat count, and member info. ' +
-      'Org plans (Team €49, Business €199, Enterprise custom) are billed separately from cache tiers.',
+      'Organizations are free. A team of up to 5 people buys the Brain tier Team (Team €49/mo, everything included). ' +
+      'Org plans: Business €199 (SSO, 20 seats), Enterprise (custom).',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -1652,9 +1653,10 @@ const TOOLS = [
   {
     name: 'create_org',
     description:
-      'Create a new Cachly organization for team collaboration. ' +
-      'After creation, invite team members with invite_member and upgrade the plan via the billing portal. ' +
-      'Org plans: Team (€49/mo, 5 seats), Business (€199/mo, 20 seats), Enterprise (custom).',
+      'Create a new Cachly organization for team collaboration; organizations are free. ' +
+      'After creation, invite team members with invite_member. ' +
+      'Up to 5 people share the Brain tier Team (€49/mo, everything included). ' +
+      'Org plans: Business (€199/mo, 20 seats, SSO), Enterprise (custom).',
     inputSchema: {
       type: 'object',
       properties: {

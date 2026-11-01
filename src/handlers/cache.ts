@@ -295,9 +295,8 @@ export async function handleCacheTool(
       const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
       if (!inst.vector_token) {
         return (
-          `❌ Semantic search is only available on Speed and Business tiers.\n\n` +
-          `Your instance "${inst.name}" is on the **${inst.tier.toUpperCase()}** tier.\n` +
-          `Upgrade at ${cachlyUrl(`/instances/${instance_id}`, 'upgrade')}`
+          `❌ Instance "${inst.name}" needs a vector token for semantic search.\n\n` +
+          `Every tier includes one. Open ${cachlyUrl(`/instances/${instance_id}`, 'health')} and rotate the vector token.`
         );
       }
 
@@ -486,8 +485,8 @@ export async function handleCacheTool(
           ? `  🏷️  Namespacing: auto-detected per prompt`
           : `  🏷️  Namespace: \`${nsArg}\``,
         vectorUrl
-          ? `  🔍 Mode: pgvector HNSW (Speed/Business tier)`
-          : `  🔍 Mode: Valkey SCAN (upgrade to Speed tier for scalable search)`,
+          ? `  🔍 Mode: pgvector HNSW`
+          : `  🔍 Mode: Valkey SCAN (set CACHLY_VECTOR_URL for pgvector search)`,
         ``,
         ...details,
       ].join('\n');

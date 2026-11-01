@@ -195,11 +195,11 @@ describe('sichereZugang: ohne Schluessel erst der Sofort-Test, dann die Anmeldun
 
 describe('sofortTestHinweis', () => {
   it('nennt das Datum, an dem der Dev-Tarif endet, wenn es bekannt ist', () => {
-    expect(sofortTestHinweis(TEST)).toContain('Dev tier until 2026-10-25');
+    expect(sofortTestHinweis(TEST)).toContain('Solo tier until 2026-10-25');
   });
 
   it('ohne Datum: 14 Tage, wie die Gegenstelle sie vergibt', () => {
-    expect(sofortTestHinweis({ apiKey: 'k', instanzId: 'i' })).toContain('14 days of Dev tier');
+    expect(sofortTestHinweis({ apiKey: 'k', instanzId: 'i' })).toContain('14 days of Solo tier');
   });
 
   // Seit dem 11.10.2026 gibt es die Uebernahme (uebernahme.ts). Der Hinweis

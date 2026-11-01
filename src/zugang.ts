@@ -113,8 +113,8 @@ export const CLAIM_BEFEHL = 'npx @cachly-dev/mcp-server@latest claim';
  */
 export function sofortTestHinweis(test: SofortTest): string {
   const bis = test.tarifEndetAm && /^\d{4}-\d{2}-\d{2}/.test(test.tarifEndetAm)
-    ? `Dev tier until ${test.tarifEndetAm.slice(0, 10)}`
-    : '14 days of Dev tier';
+    ? `Solo tier until ${test.tarifEndetAm.slice(0, 10)}`
+    : '14 days of Solo tier';
   return [
     '',
     '',

@@ -7,6 +7,20 @@
 
 ---
 
+## [0.10.219] – 2026-11-01 — *"One price per team size."*
+
+**Tier names follow the new price ladder: Free · Solo €19 · Team €49 · Business €199.**
+Tool descriptions and messages now say Solo (id `dev`, one person) and Team
+(id `pro`, up to 5 people, everything included). The ids stay the same, so
+`create_instance(tier="pro")` works as before.
+
+| Where | Before | Now |
+| --- | --- | --- |
+| `create_instance` tiers | dev, pro, speed (€79), business | Solo (`dev`), Team (`pro`), Business; Speed is gone |
+| Org plans (`list_orgs`, `create_org`, `get_org_plan`) | Team €49 billed on top of the tier | Organizations are free; Team is the Brain tier; org plans Business and Enterprise |
+| Instant trial notice | "14 days of Dev tier" | "14 days of Solo tier" |
+| Semantic search hints | "only on Speed and Business tiers" | every tier includes a vector token; the hint says how to rotate it |
+
 ## [0.10.218] – 2026-10-29 — *"A week is not a day."*
 
 **Relative spans keep their span when a lesson is saved.**

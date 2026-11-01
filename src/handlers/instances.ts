@@ -162,7 +162,7 @@ export async function handleInstanceTool(
     case 'list_orgs': {
       const res = await apiFetch<{ orgs: Array<{ id: string; name: string; slug: string; plan: string; max_members: number; member_count?: number }> }>('/api/v1/orgs');
       const orgs = res.orgs ?? [];
-      if (orgs.length === 0) return `📭 No organizations yet.\n\nCreate one with \`create_org(name="My Team")\`.\nOrg plans: Team €49/mo (5 seats), Business €199/mo (20 seats), Enterprise custom.`;
+      if (orgs.length === 0) return `📭 No organizations yet.\n\nCreate one with \`create_org(name="My Team")\`.\nOrganizations are free. Up to 5 people share the Brain tier Team (€49/mo, everything included).\nOrg plans: Business €199/mo (20 seats, SSO), Enterprise custom.`;
       return [
         `🏢 **Your organizations (${orgs.length})**\n`,
         ...orgs.map(o => `• **${o.name}** (\`${o.slug}\`) — plan: ${o.plan} · seats: ${o.member_count ?? '?'}/${o.max_members}\n  ID: \`${o.id}\``),
@@ -184,8 +184,8 @@ export async function handleInstanceTool(
         ``,
         `**Next steps:**`,
         `1. Invite team members: \`invite_member(org_id="${res.id}", email="dev@example.com")\``,
-        `2. Upgrade plan: open billing portal via dashboard → /team`,
-        `   Team: €49/mo (5 seats) · Business: €199/mo (20 seats)`,
+        `2. Up to 5 people: Brain tier Team, €49/mo, everything included (dashboard → /billing)`,
+        `   Org plan Business: €199/mo (20 seats, SSO)`,
       ].join('\n');
     }
 
@@ -207,7 +207,8 @@ export async function handleInstanceTool(
       }>(`/api/v1/orgs/${org_id}`);
       const accepted = (org.members ?? []).filter(m => m.accepted_at).length;
       const pending = (org.members ?? []).filter(m => !m.accepted_at).length;
-      const planPrice: Record<string, string> = { free: '€0', team: '€49/mo', business: '€199/mo', enterprise: 'custom' };
+      // 31.10.2026: Org-Tarif "team" wird nicht mehr verkauft (Team ist die Brain-Stufe `pro`); alte Orgs zeigen ihn als Altstand.
+      const planPrice: Record<string, string> = { free: '€0', team: 'legacy', business: '€199/mo', enterprise: 'custom' };
       return [
         `🏢 **${org.name}** — Plan: **${org.plan}** (${planPrice[org.plan] ?? org.plan})`,
         `   Seats: ${accepted} active + ${pending} pending / ${org.max_members} max`,
@@ -217,7 +218,7 @@ export async function handleInstanceTool(
         ``,
         org.stripe_customer_id
           ? `💳 Billing: managed via Stripe. Upgrade/cancel: dashboard → /billing`
-          : `💳 No payment method yet. Upgrade: dashboard → /billing → Team Plans`,
+          : `💳 Add a payment method for Business: dashboard → /billing → Teams`,
       ].join('\n');
     }
 
