@@ -7,6 +7,19 @@
 
 ---
 
+## [0.10.221] – 2026-11-02 — *"No money amounts."*
+
+**The MCP server no longer shows money amounts for saved cost.** The digest
+boxes of the CLI (`digest`, `share`) print tokens saved as an estimate
+("~NK (est.)") and no dollar figure. `cache_stats` and `cache_org_stats` show
+hits and trends, not dollars saved.
+
+| Where | Before | Now |
+| --- | --- | --- |
+| CLI digest boxes | "Cost saved: $..." next to tokens saved | tokens saved, labelled as an estimate |
+| `cache_stats` | "Total saved", "Projected/month", "Avg per hit" in $ | hits, 24h/7d counts and trend only |
+| `cache_org_stats` | org-wide $ savings, top instances by $ | org-wide hits, top instances by hits |
+
 ## [0.10.220] – 2026-11-01 — *"Organizations are free."*
 
 **Business is one price as well: €199/mo for up to 20 people, SSO included.**

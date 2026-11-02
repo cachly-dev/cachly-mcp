@@ -222,12 +222,11 @@ describe('cache_org_stats', () => {
     expect(result).toContain('Instances:        3');
     expect(result).toContain('1,234');
     expect(result).toContain('42');
-    expect(result).toContain('$2.47');
-    expect(result).toContain('$2.52');
-    // Per-instance breakdown, sorted by savings
-    expect(result).toContain('prod-brain: $2.00');
-    expect(result).toContain('staging: $0.40');
-    expect(result).toContain('dev: $0.07');
+    expect(result).not.toContain('$');
+    // Per-instance breakdown, sorted by hits
+    expect(result).toContain('prod-brain: 1,000 hits');
+    expect(result).toContain('staging: 200 hits');
+    expect(result).toContain('dev: 34 hits');
   });
 
   it('falls back to Redis-only output when the savings API throws', async () => {

@@ -2532,7 +2532,6 @@ if (process.argv[2] === 'digest') {
     const topLessons   = (stats.top_lessons ?? []).slice(0, 5);
     const teamAuthors  = stats.team_authors ?? [];
     const tokensSaved  = recalls * 1200;
-    const costSaved    = (tokensSaved * 0.000003).toFixed(2);
 
     const level = lessons < 10 ? 'Junior Dev 🔧' : lessons < 30 ? 'Mid Dev ⚡' :
       lessons < 60 ? 'Senior Dev 🧠' : lessons < 100 ? 'Staff Eng 🚀' : 'Principal Eng 🏆';
@@ -2546,7 +2545,7 @@ if (process.argv[2] === 'digest') {
     console.log('├─────────────────────────────────────────────────────────────┤');
     console.log(`│  Total lessons  : \x1b[33m${String(lessons).padEnd(8)}\x1b[0m  Brain level : \x1b[32m${level.padEnd(18)}\x1b[0m│`);
     console.log(`│  Total recalls  : \x1b[36m${String(recalls).padEnd(8)}\x1b[0m  Quality score: \x1b[32m${String(score).padEnd(3)}%\x1b[0m              │`);
-    console.log(`│  Tokens saved   : \x1b[32m${String(Math.round(tokensSaved / 1000) + 'K').padEnd(8)}\x1b[0m  Cost saved   : \x1b[32m$${costSaved.padEnd(20)}\x1b[0m│`);
+    console.log(`│  Tokens saved   : \x1b[32m${String('~' + Math.round(tokensSaved / 1000) + 'K (est.)').padEnd(42)}\x1b[0m│`);
 
     if (teamAuthors.length > 0) {
       console.log('├─────────────────────────────────────────────────────────────┤');
@@ -3265,7 +3264,6 @@ if (process.argv[2] === 'share') {
     const recalls  = stats.total_recall_count ?? 0;
     const score    = Math.round(stats.iq_boost_pct ?? 0);
     const tokensSaved = recalls * 1200;
-    const costSaved = (tokensSaved * 0.000003).toFixed(2);
 
     const level = lessons === 0 ? 'Intern 🌱' :
       lessons < 10  ? 'Junior Dev 🔧' :
@@ -3279,7 +3277,7 @@ if (process.argv[2] === 'share') {
     console.log('├─────────────────────────────────────────────────────────────┤');
     console.log(`│  Lessons stored : \x1b[33m${String(lessons).padEnd(8)}\x1b[0m  Brain level: \x1b[32m${level.padEnd(18)}\x1b[0m│`);
     console.log(`│  Total recalls  : \x1b[36m${String(recalls).padEnd(8)}\x1b[0m  Quality score: \x1b[32m${String(score).padEnd(3)}%\x1b[0m              │`);
-    console.log(`│  Tokens saved   : \x1b[32m${String((tokensSaved / 1000).toFixed(0) + 'K').padEnd(8)}\x1b[0m  Cost saved: \x1b[32m$${costSaved.padEnd(20)}\x1b[0m│`);
+    console.log(`│  Tokens saved   : \x1b[32m${String('~' + (tokensSaved / 1000).toFixed(0) + 'K (est.)').padEnd(42)}\x1b[0m│`);
     console.log('├─────────────────────────────────────────────────────────────┤');
     console.log('│  Works with: Claude Code · Cursor · Windsurf · Copilot      │');
     console.log('│  Free · GDPR · German servers                                │');

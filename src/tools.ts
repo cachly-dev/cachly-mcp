@@ -1779,8 +1779,8 @@ const TOOLS = [
       'Show shared cache statistics for an org namespace. ' +
       'Scans all keys under org:{org_id}:sem:* and reports how many entries are shared. ' +
       'Use this to verify org-sharing is working and to monitor cross-instance cache utilization. ' +
-      'Also aggregates org-wide ROI via the Cachly API: total cache hits, hits in the last 24h, ' +
-      'estimated total and projected monthly USD savings across all org instances, plus a per-instance breakdown. ' +
+      'Also aggregates org-wide usage via the Cachly API: total cache hits, hits in the last 24h, ' +
+      'across all org instances, plus a per-instance breakdown. ' +
       'Zero-config: no API changes required — any cache_set call with org_id writes to this namespace.',
     inputSchema: {
       type: 'object',

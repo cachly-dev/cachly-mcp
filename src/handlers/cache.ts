@@ -199,8 +199,6 @@ export async function handleCacheTool(
               top_hits?: Array<{ prompt: string; hit_count: number }>;
             };
 
-            const fmt = (n: number | undefined, decimals = 2): string =>
-              n !== undefined ? n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }) : 'n/a';
             const fmtInt = (n: number | undefined): string =>
               n !== undefined ? n.toLocaleString('en-US') : 'n/a';
 
@@ -208,17 +206,10 @@ export async function handleCacheTool(
             const totalEntries = data.total_entries ?? 0;
 
             if (totalHits === 0 && totalEntries === 0) {
-              const proj = (devs: number) => (devs * 50 * 0.25 * 0.002 * 30).toFixed(2);
               lines.push(
                 ``,
-                `💰 **Tokenmaxxing ROI — Projection:**`,
+                `**Cache usage:**`,
                 `  📭 No cache hits yet — you're just getting started.`,
-                ``,
-                `  📊 Typical savings for your team size:`,
-                `     5  devs × 50 LLM calls/day × 25% hit-rate → ~$${proj(5)}/month`,
-                `     10 devs × 50 LLM calls/day × 25% hit-rate → ~$${proj(10)}/month`,
-                `     20 devs × 50 LLM calls/day × 25% hit-rate → ~$${proj(20)}/month`,
-                `     (Assumes avg $0.002/call saved per cache hit)`,
                 ``,
                 `  🚀 Next: route LLM calls through cachly to start accumulating hits.`,
                 `     Docs: ${cachlyUrl('/docs/semantic', 'cache-stats')}`,
@@ -230,15 +221,12 @@ export async function handleCacheTool(
                 : '';
               lines.push(
                 ``,
-                `💰 **Tokenmaxxing ROI:**`,
+                `**Cache usage:**`,
                 `  📦 Semantic entries:  ${fmtInt(data.total_entries)}`,
                 `  🎯 Total cache hits:  ${fmtInt(data.total_hits)}`,
                 `  ⏱️ Hits last 24h:     ${fmtInt(data.savings?.hits_last_24h)}`,
                 `  📅 Hits last 7d:      ${fmtInt(data.savings?.hits_last_7d)}`,
                 ...(wowLine ? [wowLine] : []),
-                `  💵 Total saved:       $${fmt(data.savings?.estimated_total_saved_usd)}`,
-                `  📈 Projected/month:   $${fmt(data.savings?.estimated_monthly_saved_usd)}`,
-                `  📊 Avg per hit:       $${fmt(data.savings?.avg_cost_per_call_usd, 4)}`,
               );
             }
 
@@ -770,23 +758,20 @@ export async function handleCacheTool(
           }>;
         }>(`/api/v1/orgs/${org_id}/savings`);
 
-        const usd = (n: number) => `$${(n ?? 0).toFixed(2)}`;
         lines.push(
           ``,
-          `💰 Org-wide Tokenmaxxing ROI:`,
+          `Org-wide cache usage:`,
           `  🖥️ Instances:        ${savings.instance_count}`,
           `  🎯 Total cache hits:  ${savings.total_hits.toLocaleString('en-US')}`,
           `  ⏱️ Hits last 24h:     ${savings.hits_last_24h.toLocaleString('en-US')}`,
-          `  💵 Total saved:       ${usd(savings.estimated_total_saved_usd)}`,
-          `  📈 Projected/month:   ${usd(savings.estimated_monthly_saved_usd)}`,
         );
         const top = [...(savings.per_instance ?? [])]
-          .sort((a, b) => b.estimated_total_saved_usd - a.estimated_total_saved_usd)
+          .sort((a, b) => b.total_hits - a.total_hits)
           .slice(0, 5);
         if (top.length > 0) {
-          lines.push(``, `  Top instances by savings:`);
+          lines.push(``, `  Top instances by hits:`);
           for (const inst of top) {
-            lines.push(`    • ${inst.name || inst.instance_id}: ${usd(inst.estimated_total_saved_usd)} (${inst.total_hits.toLocaleString('en-US')} hits)`);
+            lines.push(`    • ${inst.name || inst.instance_id}: ${inst.total_hits.toLocaleString('en-US')} hits`);
           }
         }
       } catch {
