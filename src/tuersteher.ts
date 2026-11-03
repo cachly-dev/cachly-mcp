@@ -276,7 +276,7 @@ export function mitVerdachtTag(tags: unknown): string[] {
 export function verdachtsWarnung(funde: string[]): string {
   if (funde.length === 0) return '';
   const arten = [...new Set(funde.map((f) => f.split(': ')[1]?.split('/')[0] ?? ''))].filter(Boolean).join(', ');
-  return `⚠ Tuersteher: ${arten} im Text erkannt — Lektion gespeichert, aber mit dem Tag ${VERDACHT_TAG} markiert. Pruefen, ob sie wirklich so stehen soll.`;
+  return `⚠ Tuersteher (security gate): ${arten} detected in the text — lesson saved, but flagged with the tag ${VERDACHT_TAG}. Check that it should really read this way.`;
 }
 
 /** Alle Regelnamen — fuer Tests, die jede Regel mit mindestens einem Fall belegen. */

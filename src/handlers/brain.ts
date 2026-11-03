@@ -133,9 +133,10 @@ import {
   bewerteTopf, spreizeImTopf, reichereAn, inhaltsWoerter, grobStamm, GEWICHTE,
   knapperSiegSatz,
 } from '../rangfolge.js';
+import { fehlendeLernfelder, hatFrage } from '../pflichtfelder.js';
 import {
-  pruefeWirkung, werteAus, lehrwert, leiteAb, belegeJeThema,
-  type Wirkungseintrag, type WirkungsEingabe, type LetzterRecall,
+  pruefeWirkung, wirkungsEingabeAus, werteAus, lehrwert, leiteAb, belegeJeThema,
+  type Wirkungseintrag, type LetzterRecall,
 } from '../wirkungsspur.js';
 import { merkeSuchlauf } from "../suchstatistik.js";
 import { schreibeTopfNotiz, topfProtokollAktiv } from "../topf-protokoll.js";
@@ -982,6 +983,11 @@ async function handleBrainToolInner(
 ): Promise<string | null> {
   switch (name) {
     case 'learn_from_attempts': {
+      // Pflichtfelder vor allem anderen (pflichtfelder.ts).
+      {
+        const fehlt = fehlendeLernfelder(args as Record<string, unknown>);
+        if (fehlt.length) return `⚠️ learn_from_attempts needs ${fehlt.join(' and ')}. Nothing was stored.`;
+      }
       // Geheimnis-Filter VOR allem anderen: kein Schluessel erreicht Bestand,
       // Kausalgraph, Team-Kopie oder Antworttext (geheimnis-filter.ts).
       const geschwaerzt = schwaerzeFelder(args as Record<string, unknown>);
@@ -1175,13 +1181,16 @@ async function handleBrainToolInner(
        * aktualisiert, der Halbsatz kostet nichts. Beim ERSTEN Anlegen ist
        * das Warum die Lektion selbst. Abgewiesen wird VOR jeder Schreibung.
        */
-      const warumZeile = String(grund ?? '').trim();
+      // `reason` gilt wie `grund`: eine KI, die englisch arbeitet, schreibt es
+      // so (Schwarm 03.11.2026, ki-09). Das Beispiel nannte bis 0.10.225 eine
+      // Adresse aus unserem eigenen Netz.
+      const warumZeile = String(grund || (geprueft as { reason?: unknown }).reason || '').trim();
       if (existingRaw && !warumZeile) {
         return [
-          `✋ **Update rejected:** \`${topic}\` already exists — an update needs the field \`grund\` (the reason).`,
+          `✋ **Update rejected:** \`${topic}\` already exists — an update needs the field \`grund\` (the reason; \`reason\` works too).`,
           ``,
           `One line is enough: WHY was the previous version wrong or incomplete?`,
-          `Example: grund="The IP changed — the worker moved to 10.8.0.7"`,
+          `Example: grund="The deploy target moved from port 3000 to 8080"`,
           ``,
           `The diff says WHAT changes. The grund line says why the old version was wrong —`,
           `and that is the line someone reads two months from now (audit_trail, recall_best_solution).`,
@@ -1848,7 +1857,7 @@ async function handleBrainToolInner(
       return [
         `${emoji} **Lesson ${action}:** \`${topic}\` (${outcome}) ${sevEmoji} ${severity} · receipt: \`${beleg}\``,
         geschwaerzt.funde.length
-          ? `🔒 **${geschwaerzt.funde.length} Geheimnis(se) geschwaerzt** vor dem Speichern (${geschwaerzt.funde.join('; ')}). Der Wert ist nicht im Brain — verweise kuenftig auf den Ort (z. B. Infisical-Pfad oder Variablenname).`
+          ? `🔒 **${geschwaerzt.funde.length} secret(s) redacted** before saving (${geschwaerzt.funde.join('; ')}). The value is not in the Brain — refer to where it lives instead (e.g. an Infisical path or a variable name).`
           : '',
         verdachtsWarnung(verdacht),
         beliefConflict ?? '',
@@ -1987,18 +1996,18 @@ async function handleBrainToolInner(
       const { instance_id } = args as { instance_id: string };
       const redis = await getConnection(instance_id);
 
-      const geprueft = pruefeWirkung(args as WirkungsEingabe, new Date().toISOString());
+      const geprueft = pruefeWirkung(wirkungsEingabeAus(args), new Date().toISOString());
       if (!geprueft.ok) {
         return [
           `⚠️ ${geprueft.grund}`,
           '',
-          'Beispiel:',
+          'Example:',
           '```',
-          'recall_feedback(instance_id="…", query="warum bricht der Deploy ab",',
-          '  topic="ci:zeitgrenze-meldet-cancelled", helped=true, rank=0)',
+          'recall_feedback(instance_id="…", query="why does the deploy abort",',
+          '  topic="ci:timeout-reports-cancelled", helped=true, rank=0)',
           '```',
-          'rank=0 heisst: die Lektion stand GAR NICHT in der Antwort.',
-          'Das ist die wertvollste Rueckmeldung von allen.',
+          'rank=0 means: the lesson was NOT in the answer at all.',
+          'That is the most valuable feedback there is.',
         ].join('\n');
       }
 
@@ -2015,29 +2024,29 @@ async function handleBrainToolInner(
 
       const deutung: Record<string, string> = {
         'fehlender-treffer':
-          'Sie half, stand aber gar nicht in der Antwort — der Topf hat sie nicht aufgenommen. Das ist der wertvollste Fall.',
+          'It helped but was not in the answer at all — the search never picked it up. That is the most valuable case.',
         'zu-weit-hinten':
-          `Sie half, stand aber auf Platz ${eintrag.platz} — die Sortierung war zu schwach.`,
+          `It helped but was only at rank ${eintrag.platz} — the ranking was too weak.`,
         'falsch-und-sicher':
-          `Sie stand auf Platz ${eintrag.platz} und half nicht — die Sortierung war sich sicher und lag falsch.`,
-        bestaetigung: 'Sie stand vorn und half. Bestaetigung.',
-        unauffaellig: 'Half nicht und stand hinten. Sagt wenig.',
+          `It was at rank ${eintrag.platz} and did not help — the ranking was confident and wrong.`,
+        bestaetigung: 'It was near the top and helped. Confirmed.',
+        unauffaellig: 'It did not help and was far down. Says little.',
       };
 
       const quote = zahlen.trefferquote === null
-        ? 'noch keine hilfreiche Rueckmeldung'
-        : `${(zahlen.trefferquote * 100).toFixed(0)} % der hilfreichen Lektionen standen unter den ersten dreien`;
+        ? 'no helpful feedback yet'
+        : `${(zahlen.trefferquote * 100).toFixed(0)} % of the helpful lessons were in the top three`;
 
       return [
-        `✅ Notiert: **${eintrag.thema}** — ${eintrag.geholfen ? 'hat geholfen' : 'hat nicht geholfen'}`
-        + `, Platz ${eintrag.platz === 0 ? '— (stand nicht drin)' : eintrag.platz}`,
+        `✅ Noted: **${eintrag.thema}** — ${eintrag.geholfen ? 'helped' : 'did not help'}`
+        + `, rank ${eintrag.platz === 0 ? '— (not in the answer)' : eintrag.platz}`,
         '',
         deutung[wert],
         '',
-        `Spur: ${zahlen.gesamt} Rueckmeldungen, ${quote}.`,
-        `Davon: ${zahlen.nachLehrwert['fehlender-treffer']} nicht gefunden · `
-        + `${zahlen.nachLehrwert['zu-weit-hinten']} zu weit hinten · `
-        + `${zahlen.nachLehrwert['falsch-und-sicher']} falsch und sicher.`,
+        `Feedback so far: ${zahlen.gesamt}, ${quote}.`,
+        `Of these: ${zahlen.nachLehrwert['fehlender-treffer']} not found · `
+        + `${zahlen.nachLehrwert['zu-weit-hinten']} too far down · `
+        + `${zahlen.nachLehrwert['falsch-und-sicher']} confident and wrong.`,
       ].join('\n');
     }
 
@@ -2362,6 +2371,14 @@ async function handleBrainToolInner(
         : [];
 
       zeitpunkt('smart_recall: Anfang');
+
+      // Ohne Frage gibt es nichts zu suchen. Bis 0.10.225 brach ein Aufruf ohne
+      // `query` mit "Cannot read properties of undefined (reading 'split')" ab,
+      // ein leerer mit "there is no lesson for this question yet" — die KI las
+      // daraus ein leeres Brain (Schwarm 03.11.2026, ki-03/ki-07).
+      if (!hatFrage(query)) {
+        return '⚠️ smart_recall needs `query`: one line about the task or the error, e.g. query="login redirect loop after OAuth callback".';
+      }
 
       // ── Ein Brain, das dieser Prozess eben angelegt hat und das noch startet ──
       //
@@ -4055,8 +4072,8 @@ async function handleBrainToolInner(
       lines.push(`📊 **Brain:** ${lessons.length} lessons · ${ctxCount} context entries`, '');
       if (markierteAusgelassen > 0) {
         lines.push(
-          `⚠ ${markierteAusgelassen} Lektion(en) wurden beim Speichern als verdächtig markiert und stehen nicht in diesem Briefing. ` +
-          'Ausdrücklich abrufbar mit recall_best_solution (mit Warnzeile); prüfen oder neu speichern.',
+          `⚠ ${markierteAusgelassen} lesson(s) were flagged as suspicious when saved and are not in this briefing. ` +
+          'You can still fetch them explicitly with recall_best_solution (with a warning line); check them or save them again.',
           '',
         );
       }
@@ -4845,30 +4862,11 @@ async function handleBrainToolInner(
       const durationStr = durationMin !== undefined ? ` · ${durationMin} min` : '';
       const totalAutoLearned = autoLearned.length + ambientLearned.length;
 
-      // ── Shareable Session Summary Card ────────────────────────────────────────
-      // Generated after each session so the user can share their progress.
-      const tweetLines: string[] = [];
-      if (durationMin !== undefined && durationMin > 0) tweetLines.push(`⏱ ${durationMin} min session`);
-      if (totalAutoLearned > 0) tweetLines.push(`🧠 ${totalAutoLearned} lessons saved to Brain`);
-      if (files_changed.length > 0) tweetLines.push(`📁 ${files_changed.length} file${files_changed.length > 1 ? 's' : ''} changed`);
-      const tweetBody = tweetLines.length > 0
-        ? `${tweetLines.join(' · ')}\n\nMy AI Brain remembers this so I never repeat it. @cachlydev\ncachly.dev`
-        : `Session saved to my AI Brain. No more re-explaining this tomorrow. @cachlydev\ncachly.dev`;
-      const tweetURL = `https://twitter.com/intent/tweet?text=${encodeURIComponent(tweetBody)}`;
-
-      const sessionCard = [
-        ``,
-        `┌─────────────────────────────────────────────┐`,
-        `│  🧠 Session Summary Card                    │`,
-        `│  Share your progress — cached forever       │`,
-        `├─────────────────────────────────────────────┤`,
-        durationMin !== undefined ? `│  ⏱  Duration   : ${String(durationMin + ' min').padEnd(26)}│` : '',
-        totalAutoLearned > 0     ? `│  📚 Learned    : ${String(totalAutoLearned + ' lessons').padEnd(26)}│` : '',
-        files_changed.length > 0 ? `│  📁 Changed    : ${String(files_changed.length + ' file' + (files_changed.length > 1 ? 's' : '')).padEnd(26)}│` : '',
-        `├─────────────────────────────────────────────┤`,
-        `│  📣 Share: ${tweetURL.slice(0, 34).padEnd(34)}│`,
-        `└─────────────────────────────────────────────┘`,
-      ].filter(l => l !== '').join('\n');
+      // Bis 0.10.225 stand hier eine "Session Summary Card" mit "Share your
+      // progress — cached forever" und einem Tweet-Link, der nach 34 Zeichen
+      // abgeschnitten war ("…intent/tweet?t"). Rund 700 Zeichen je Sitzung in
+      // der Antwort an die KI, die die KI dem Nutzer weiterreichen konnte
+      // (Schwarm 03.11.2026, ki-11). Die Zahlen stehen schon in den Zeilen unten.
 
       return [
         `✅ **Session saved**${durationStr}`,
@@ -4880,8 +4878,8 @@ async function handleBrainToolInner(
         autoLearned.length > 0 ? `🤖 **Auto-learned:** ${autoLearned.length} lessons extracted from summary (${autoLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${autoLearned.length > 3 ? '…' : ''})` : '',
         ambientLearned.length > 0 ? `🌿 **Ambient git learning:** ${ambientLearned.length} commit${ambientLearned.length > 1 ? 's' : ''} auto-learned (${ambientLearned.slice(0, 3).map(t => `\`${t}\``).join(', ')}${ambientLearned.length > 3 ? '…' : ''})` : '',
         ...hinweise(tor, 'notiz'),
-        ...zaehlHinweise(ambientGeschwaerzt, ambientMarkiert, `${ambientLearned.length} Git-Lektionen`),
-        sessionCard,
+        ...zaehlHinweise(ambientGeschwaerzt, ambientMarkiert, `${ambientLearned.length} git lessons`),
+        totalAutoLearned > 0 ? `📚 **Learned this session:** ${totalAutoLearned} lesson${totalAutoLearned > 1 ? 's' : ''}` : '',
         ``,
         `💡 Next session: \`session_start(focus="...")\` to see this summary.`,
       ].filter(l => l !== '').join('\n');
@@ -5101,7 +5099,7 @@ async function handleBrainToolInner(
       ];
       if (stored.length > 0) lines.push('**Stored:**', ...stored.map(s => '  ' + s), '');
       if (skipped.length > 0) lines.push(`**Skipped** (better lesson already exists): ${skipped.map(t => `\`${t}\``).join(', ')}`);
-      lines.push(...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${stored.length} Beobachtungen`));
+      lines.push(...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${stored.length} observations`));
       return lines.join('\n');
     }
 

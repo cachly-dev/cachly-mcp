@@ -396,7 +396,41 @@ export function wiederholungMs(fehler: unknown, versuch: number, geduld: EmbedGe
  * statt still einen Vektor des FALSCHEN Modells zu liefern (der landete sonst
  * unter dem Zweit-Schluessel und macht jeden Vergleich dort wertlos).
  */
-export async function computeEmbedding(text: string, opts?: { geduld?: EmbedGeduld; modell?: string }): Promise<number[]> {
+export function computeEmbedding(text: string, opts?: { geduld?: EmbedGeduld; modell?: string }): Promise<number[]> {
+  // ── Derselbe Text wird nur einmal eingebettet (03.11.2026) ──────────────
+  //
+  // Gemessen mit CACHLY_ZEITMESSUNG=1: ein smart_recall bettete dieselbe
+  // Frage drei- bis viermal ein (Bedeutungspfad, Rangfolge, Sinn-Dienst), je
+  // 200 bis 850 ms. Ein Vektor haengt nur an Modell und Text — derselbe
+  // Aufruf liefert denselben Vektor, die Rangfolge aendert sich nicht. Darum
+  // teilen sich gleichzeitige und kurz aufeinanderfolgende Aufrufe EIN
+  // Ergebnis. `geduld` gehoert in den Schluessel: ein schneller Fehlschlag
+  // mit Geduld 'kurz' darf keinen Aufruf mit Geduld 'lang' mitreissen.
+  // Ein Fehlschlag wird nicht gemerkt.
+  const schluessel = `${opts?.modell ?? ''}\u0000${opts?.geduld ?? 'kurz'}\u0000${text}`;
+  const jetzt = Date.now();
+  const gemerkt = einbettungsMerker.get(schluessel);
+  if (gemerkt && gemerkt.bis > jetzt) return gemerkt.vektor;
+  const vektor = einbettungMitWiederholung(text, opts);
+  einbettungsMerker.set(schluessel, { bis: jetzt + EINBETTUNG_MERKEN_MS, vektor });
+  if (einbettungsMerker.size > EINBETTUNG_MERKEN_MAX) {
+    const aeltester = einbettungsMerker.keys().next().value;
+    if (aeltester !== undefined) einbettungsMerker.delete(aeltester);
+  }
+  vektor.catch(() => { if (einbettungsMerker.get(schluessel)?.vektor === vektor) einbettungsMerker.delete(schluessel); });
+  return vektor;
+}
+
+const EINBETTUNG_MERKEN_MS = 60_000;
+const EINBETTUNG_MERKEN_MAX = 200;
+const einbettungsMerker = new Map<string, { bis: number; vektor: Promise<number[]> }>();
+
+/** Nur fuer Tests: der Merker darf keinen Fall in den naechsten tragen. */
+export function vergissEinbettungen(): void {
+  einbettungsMerker.clear();
+}
+
+async function einbettungMitWiederholung(text: string, opts?: { geduld?: EmbedGeduld; modell?: string }): Promise<number[]> {
   const geduld = opts?.geduld ?? 'kurz';
   if (opts?.modell && EMBED_PROVIDER !== 'cachly' && EMBED_PROVIDER !== 'ollama') {
     throw new Error(`Anbieter "${EMBED_PROVIDER}" kann kein abweichendes Modell anfragen (verlangt: ${opts.modell}).`);

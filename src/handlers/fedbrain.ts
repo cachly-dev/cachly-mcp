@@ -10,6 +10,7 @@ import { installBrainWatchHook } from '../brain-watch-hook.js';
 import { keywordSearch, wortindexEntwerten } from '../search.js';
 import { buildFirstContactReport, suggestRecallQueries, type FirstContactProof } from '../first-contact.js';
 import { commitAlsLektion, gitLogArgumente, leseCommits } from '../git-lektionen.js';
+import { alterStartpunktSchluessel, startpunktSchluessel } from '../git-startpunkt.js';
 import { VEKTOR_NACHTRAG } from '../bedeutung.js';
 import { VERDACHT_TAG, fuerEigenenSpeicher, fuerWeitergabe, hinweise, istMarkiert, markiert, weitergabeHinweis, zaehlHinweise } from '../schreibtor.js';
 
@@ -422,11 +423,11 @@ export async function handleFedbrainTool(
       // Speichern markierte Lektion geht nie weiter. Verdacht = nichts wird gesendet, auch kein Zertifikat.
       const ziel = fuerWeitergabe(
         { topic: gespeichert.topic, what_worked: gespeichert.what_worked, what_failed: gespeichert.what_failed ?? '', tags: gespeichert.tags ?? [] },
-        'die Commons',
+        'the Commons',
       );
       if (!ziel.ok) return ziel.meldung;
       if (istMarkiert(gespeichert)) {
-        return `⛔ Tuersteher: Die Lektion \`${lesson_key}\` ist beim Speichern als verdaechtig markiert worden — NICHT an die Commons weitergegeben. Nichts wurde gesendet. Inhalt pruefen, dann mit \`learn_from_attempts\` ohne die Anweisung neu speichern.`;
+        return `⛔ Tuersteher (security gate): the lesson \`${lesson_key}\` was flagged as suspicious when it was saved — NOT passed on to the Commons. Nothing was sent. Check the content, then save it again with \`learn_from_attempts\` without the instruction.`;
       }
       const lesson = { ...gespeichert, ...ziel.felder };
 
@@ -783,7 +784,7 @@ export async function handleFedbrainTool(
         `  🕸️ CKG nodes:  ${nodesTransferred}`,
         `  🔗 CKG edges:  ${edgesTransferred}  (${skippedLowConf} skipped, confidence < ${min_confidence})`,
         `  📚 Lessons:    ${lessonsTransferred}`,
-        ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${lessonsTransferred} kopierten Lektionen`),
+        ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${lessonsTransferred} copied lessons`),
         '',
       ];
       if (transferLog.length > 0) {
@@ -1004,13 +1005,19 @@ export async function handleFedbrainTool(
       }
 
       // Incremental mode: resume from last processed commit SHA
-      const lastShaKey = `cachly:brain_from_git:last_sha:${Buffer.from(repoDir).toString('base64').slice(0, 32)}`;
+      const lastShaKey = startpunktSchluessel(repoDir);
       let lastSha = '';
       let isIncremental = false;
       if (incremental !== false && !since) {
-        lastSha = (await redis.get(lastShaKey)) ?? '';
+        lastSha = (await redis.get(lastShaKey)) ?? (await redis.get(alterStartpunktSchluessel(repoDir))) ?? '';
         // Nur ein echter Commit-Hash darf als Start dienen; alles andere: voller Lauf.
         if (!istCommitHash(lastSha)) lastSha = '';
+        // Ein gemerkter Commit, den es in DIESEM Ordner nicht gibt (anderer
+        // Ordner unter dem alten Schluessel, frischer Klon, Rebase): voller
+        // Lauf statt "Invalid revision range" (git-startpunkt.ts).
+        if (lastSha) {
+          try { gitLesen(repoDir, ['cat-file', '-e', `${lastSha}^{commit}`]); } catch { lastSha = ''; }
+        }
         isIncremental = Boolean(lastSha);
       }
 
@@ -1192,7 +1199,7 @@ export async function handleFedbrainTool(
         proof,
         suggestedQueries: suggestRecallQueries(seededTopics, instance_id),
       });
-      const torZeilen = zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${commits.length} Commits`);
+      const torZeilen = zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${commits.length} commits`);
       return torZeilen.length ? [bericht, '', ...torZeilen].join('\n') : bericht;
       } finally {
         _gitSemRelease();
@@ -1273,7 +1280,7 @@ export async function handleFedbrainTool(
         stable > 0 ? `📊 ${stable} stable outcome${stable !== 1 ? 's' : ''} recorded` : '',
         '',
         `💡 Explore: \`brain_search(query="ci")\`  |  \`brain_predict(context="<job-name>")\``,
-        ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${total} CI-Ergebnissen`),
+        ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${total} CI results`),
       ].filter(Boolean).join('\n');
     }
 
@@ -1428,7 +1435,7 @@ export async function handleFedbrainTool(
 
       // Auch die Kategorie verlaesst die Instanz und wird von Fremden gelesen: Geheimnisse
       // schwaerzen, Verdacht = nichts senden (schreibtor.ts).
-      const tor = fuerWeitergabe({ topic_category: topic_category.trim() }, 'die Commons');
+      const tor = fuerWeitergabe({ topic_category: topic_category.trim() }, 'the Commons');
       if (!tor.ok) return tor.meldung;
       const kategorie = tor.felder.topic_category;
 
@@ -1564,7 +1571,7 @@ export async function handleFedbrainTool(
       if (imported < metas.length) {
         lines.push(`_(${metas.length - imported} already present — not overwritten)_`);
       }
-      lines.push(...zaehlHinweise(geschwaerztAnzahl, verdaechtig.size, `${metas.length} Kategorienamen`));
+      lines.push(...zaehlHinweise(geschwaerztAnzahl, verdaechtig.size, `${metas.length} category names`));
       return lines.join('\n');
     }
 

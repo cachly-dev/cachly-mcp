@@ -612,7 +612,7 @@ export async function handleAdvancedTool(
       // Eingaben: Geheimnisse werden geschwaerzt, ein Verdacht stoppt die Ausgabe, und beide bleiben
       // einzeilig und kurz, damit sie weder die Heredoc-Klammer noch die Ueberschrift verlassen
       // koennen (schreibtor.ts).
-      const tor = fuerWeitergabe({ editor: String(rohEditor), project_name: String(rohProjekt) }, 'die Anweisungsdatei (CLAUDE.md)');
+      const tor = fuerWeitergabe({ editor: String(rohEditor), project_name: String(rohProjekt) }, 'the instruction file (CLAUDE.md)');
       if (!tor.ok) return tor.meldung;
       const einzeilig = (t: string, max: number) => t.replace(/[\p{C}\s]+/gu, ' ').trim().slice(0, max);
       const editor = einzeilig(tor.felder.editor, 30) || 'claude';

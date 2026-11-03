@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   pruefeWirkung,
+  wirkungsEingabeAus,
   lehrwert,
   werteAus,
   leiteAb,
@@ -59,7 +60,7 @@ describe('Was als Rueckmeldung durchgeht', () => {
     const e = pruefeWirkung({ ...gueltig, geholfen: 'vielleicht' }, JETZT);
     expect(e.ok).toBe(false);
     if (e.ok) return;
-    expect(e.grund).toContain('true oder false');
+    expect(e.grund).toContain('true or false');
   });
 
   it('lehnt einen geschaetzten Platz ab', () => {
@@ -266,6 +267,31 @@ describe('Das Werkzeug ist wirklich angemeldet', () => {
     const block = tools.slice(ab, ab + 2500);
     expect(block).toContain('rank=0');
     expect(block).toMatch(/NOT in the answer/i);
+  });
+
+  it('nimmt genau die Feldnamen an, die das Schema nennt (Schwarm 03.11.2026, ki-01)', () => {
+    // Bis 0.10.225 bekam jeder Aufruf nach Schema "frage fehlt": der Handler
+    // las nur frage/thema/geholfen/platz, das Schema nennt query/topic/helped/rank.
+    const tools = lies('tools.ts');
+    const ab = tools.indexOf("name: 'recall_feedback'");
+    const block = tools.slice(ab, tools.indexOf("name: '", ab + 10));
+    for (const feld of ['query', 'topic', 'helped', 'rank', 'note', 'author']) {
+      expect(block, `Schema-Feld ${feld}`).toMatch(new RegExp(`\\b${feld}: \\{`));
+    }
+    const nachSchema = wirkungsEingabeAus({
+      instance_id: 'x', query: 'oauth loop', topic: 'auth:oauth-redirect-loop', helped: true, rank: 1, note: 'n', author: 'a',
+    });
+    const e = pruefeWirkung(nachSchema, '2026-11-03T12:00:00Z');
+    expect(e.ok).toBe(true);
+    if (e.ok) {
+      expect(e.eintrag).toMatchObject({ frage: 'oauth loop', thema: 'auth:oauth-redirect-loop', geholfen: true, platz: 1, notiz: 'n', autor: 'a' });
+    }
+    // Die alten deutschen Namen gelten weiter.
+    expect(pruefeWirkung(wirkungsEingabeAus({ frage: 'f', thema: 't', geholfen: false, platz: 0 }), 'x').ok).toBe(true);
+    // Und der Handler nutzt die Uebersetzung, nicht die rohen Argumente.
+    const brain = lies('handlers/brain.ts');
+    const fall = brain.slice(brain.indexOf("case 'recall_feedback':"), brain.indexOf("case 'recall_best_solution':"));
+    expect(fall).toContain('pruefeWirkung(wirkungsEingabeAus(args)');
   });
 
   it('die Spur wird ANGEHAENGT, nicht ueberschrieben', () => {

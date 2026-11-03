@@ -46,7 +46,7 @@ describe('Geheimnis im Schreibweg', () => {
     expect(gespeichert).not.toContain(SCHLUESSEL);
     expect(gespeichert).toContain('[GESCHWAERZT]');
     expect(aus).not.toContain(SCHLUESSEL);
-    expect(aus).toContain('Geheimnis(se) geschwaerzt');
+    expect(aus).toContain('secret(s) redacted');
     expect(aus).toMatch(/receipt: `[0-9a-f]{8}`/);
   });
 
@@ -59,7 +59,7 @@ describe('Geheimnis im Schreibweg', () => {
         noopApiFetch,
       ),
     );
-    expect(aus).not.toContain('geschwaerzt');
+    expect(aus).not.toContain('redacted');
     expect(aus).toMatch(/receipt: `[0-9a-f]{8}`/);
   });
 });

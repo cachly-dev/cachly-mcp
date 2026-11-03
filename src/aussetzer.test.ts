@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { meldeEinmal, schonGemeldet, gemeldeteGruende, setzeAussetzerZurueck, OHNE_VEKTOREN, OHNE_DIENST, meldeUndVermerke, leseVermerke, SINNPFAD_ABBRUCH, VERSUCH_LEER, AUSSETZER_VORSATZ, AUSSETZER_TTL_SEKUNDEN, fehlerText, OHNE_SCHREIBVEKTOR } from './aussetzer.js';
+import { aussetzerLeise, meldeEinmal, schonGemeldet, gemeldeteGruende, setzeAussetzerZurueck, OHNE_VEKTOREN, OHNE_DIENST, meldeUndVermerke, leseVermerke, SINNPFAD_ABBRUCH, VERSUCH_LEER, AUSSETZER_VORSATZ, AUSSETZER_TTL_SEKUNDEN, fehlerText, OHNE_SCHREIBVEKTOR } from './aussetzer.js';
 
 /**
  * ABNAHME zur Karte g7bqqy8r7z0t — "Der Bedeutungsabgleich lief in Produktion
@@ -76,6 +76,21 @@ describe('schonGemeldet', () => {
     expect(schonGemeldet(OHNE_DIENST)).toBe(true);
     expect(schonGemeldet(OHNE_VEKTOREN), 'ein fremder Grund wurde mitgesetzt').toBe(false);
     stille.mockRestore();
+  });
+});
+
+describe('aussetzerLeise (Terminal-Assistent)', () => {
+  it('vermerkt den Grund, druckt aber keine Protokollzeile', () => {
+    const stille = vi.spyOn(console, 'error').mockImplementation(() => {});
+    aussetzerLeise();
+    expect(meldeEinmal('probe-leise', 'x')).toBe(true);
+    expect(schonGemeldet('probe-leise')).toBe(true);
+    expect(stille).not.toHaveBeenCalled();
+    setzeAussetzerZurueck();
+    meldeEinmal('probe-laut', 'y');
+    expect(stille, 'nach dem Zuruecksetzen ist die Meldestelle wieder laut').toHaveBeenCalledTimes(1);
+    stille.mockRestore();
+    setzeAussetzerZurueck();
   });
 });
 

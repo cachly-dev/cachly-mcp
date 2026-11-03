@@ -152,7 +152,7 @@ export async function handleSyndicateTool(
 
       // Tor zu den Fremden (schreibtor.ts): die Lektion geht in die Commons bzw. an die ganze Org.
       // Geheimnisse werden geschwaerzt, ein Verdacht auf Anweisung oder Befehl stoppt die Weitergabe.
-      const ziel = fuerWeitergabe({ topic, what_worked, what_failed, tags }, scope === 'org' ? 'die Org' : 'die Commons');
+      const ziel = fuerWeitergabe({ topic, what_worked, what_failed, tags }, scope === 'org' ? 'the org' : 'the Commons');
       if (!ziel.ok) return ziel.meldung;
 
       const body = { ...ziel.felder, outcome, severity, scope };
@@ -875,7 +875,7 @@ export async function handleSyndicateTool(
         `  • \`smart_recall(query="${pack.lessons[0]?.topic.split(':').pop() ?? 'your problem'}")\``,
         ``,
         `_Installed lessons are tagged \`source: "${source}"\` and never override your own. Re-run anytime to pull updates._`,
-        ...(geschwaerztAnzahl + markiertAnzahl > 0 ? [``, ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${pack.lessons.length} Lektionen`)] : []),
+        ...(geschwaerztAnzahl + markiertAnzahl > 0 ? [``, ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${pack.lessons.length} lessons`)] : []),
       ].join('\n');
     }
 

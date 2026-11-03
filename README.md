@@ -343,7 +343,7 @@ Manual snippets are in [Manual Setup](#manual-setup).
 
 | Editor / client | Auto-setup | Config file written | Global config | Notes |
 |---|---|---|---|---|
-| **Claude Code** | yes | `~/.claude/mcp.json` + `.mcp.json` | yes, always | Without a key: test Brain at session start (plugin) or on the first tool call; browser sign-in only as fallback |
+| **Claude Code** | yes | `.mcp.json` | with the plugin | Without a key: test Brain at session start (plugin) or on the first tool call; browser sign-in only as fallback |
 | **Cursor** | yes, detected via `.cursor/` | `.cursor/mcp.json`, hooks in `.cursor/hooks.json` | no | Project-level; restart Cursor after setup. Lessons arrive with the first tool call of a turn |
 | **Windsurf** | yes, detected via `.windsurf/` | `.windsurf/mcp.json` | no | Project-level; restart Windsurf after setup |
 | **VS Code + Copilot** | yes, detected via `.vscode/` | `.vscode/mcp.json`, hooks in `.github/hooks/cachly-ambient.json` | no | Needs the VS Code MCP support or Copilot chat. Briefing at session start, lessons before each prompt |
@@ -361,14 +361,14 @@ Manual snippets are in [Manual Setup](#manual-setup).
 |---|---|
 | `autosetup` or `autopilot` from a terminal (TTY) | OAuth device flow: one click in the browser, the API key is saved automatically |
 | `autosetup` from a VS Code task or CI (no TTY) | Detects the non-interactive run, opens the browser with a step-by-step guide, prints the `CACHLY_JWT=... autosetup` command |
-| First tool call without any key | Test Brain: an anonymous Brain on EU servers. The key is saved to `~/.cachly/credentials.json` and `~/.claude/mcp.json`, and the call goes through. If that fails (offline, rate limit), the inline device flow starts with a URL and a code |
+| First tool call without any key | Test Brain: an anonymous Brain on EU servers. The key is saved to `~/.cachly/credentials.json`, and the call goes through. If that fails (offline, rate limit), the inline device flow starts with a URL and a code |
 | First tool call with `CACHLY_BRAIN_INSTANCE_ID` set but no key | Inline device flow. You already have a Brain, so no second account is created |
 | `CACHLY_JWT=cky_live_xxx npx ... autosetup` | Skips the sign-in step and uses the key you pass |
 
 ## Manual Setup
 
 <details>
-<summary><b>Claude Code</b> (<code>~/.claude/mcp.json</code> or <code>.mcp.json</code>)</summary>
+<summary><b>Claude Code</b> (<code>.mcp.json</code> in the project)</summary>
 
 ```json
 {
@@ -380,6 +380,10 @@ Manual snippets are in [Manual Setup](#manual-setup).
   }
 }
 ```
+
+For all your projects at once, use the plugin above, or
+`claude mcp add -s user cachly -- npx -y @cachly-dev/mcp-server@latest`
+(Claude Code stores that in `~/.claude.json`).
 
 Without a key, the first tool call creates a test Brain on EU servers. No sign-up.
 Run `npx @cachly-dev/mcp-server@latest autopilot` to use your own account instead.

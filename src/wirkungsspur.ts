@@ -101,6 +101,25 @@ export type WirkungsEingabe = {
   autor?: unknown;
 };
 
+/**
+ * Die Werkzeugbeschreibung (tools.ts) nennt die Felder englisch: query, topic,
+ * helped, rank, note, author — und der Hinweis unter jeder smart_recall-Antwort
+ * auch. pruefeWirkung las bis 0.10.225 nur die deutschen Namen. Jeder Aufruf,
+ * der sich an die Beschreibung hielt, bekam "frage fehlt" (Schwarm 03.11.2026,
+ * Befund ki-01): Die einzige Rueckmeldung, aus der die Sortierung lernt, kam
+ * nie an. Beide Namen gelten; der englische zuerst, weil ihn das Schema nennt.
+ */
+export function wirkungsEingabeAus(args: Record<string, unknown>): WirkungsEingabe {
+  return {
+    frage: args.query ?? args.frage,
+    thema: args.topic ?? args.thema,
+    geholfen: args.helped ?? args.geholfen,
+    platz: args.rank ?? args.platz,
+    notiz: args.note ?? args.notiz,
+    autor: args.author ?? args.autor,
+  };
+}
+
 export type Pruefergebnis =
   | { ok: true; eintrag: Wirkungseintrag }
   | { ok: false; grund: string };
@@ -124,22 +143,22 @@ function text(x: unknown, max: number): string {
  */
 export function pruefeWirkung(eingabe: WirkungsEingabe, jetzt: string): Pruefergebnis {
   const frage = text(eingabe.frage, MAX_FRAGE);
-  if (!frage) return { ok: false, grund: 'frage fehlt — ohne die Frage ist der Eintrag wertlos' };
+  if (!frage) return { ok: false, grund: 'query is missing — without the question the entry is worthless' };
 
   const thema = text(eingabe.thema, 200);
-  if (!thema) return { ok: false, grund: 'thema fehlt — welche Lektion ist gemeint?' };
+  if (!thema) return { ok: false, grund: 'topic is missing — which lesson is this about?' };
 
   if (typeof eingabe.geholfen !== 'boolean') {
     return {
       ok: false,
-      grund: 'geholfen muss true oder false sein — "weiss nicht" ist keine Rueckmeldung',
+      grund: 'helped must be true or false — "not sure" is not feedback',
     };
   }
 
   if (typeof eingabe.platz !== 'number' || !Number.isInteger(eingabe.platz) || eingabe.platz < 0) {
     return {
       ok: false,
-      grund: 'platz muss eine ganze Zahl ab 0 sein (0 = die Lektion stand gar nicht in der Antwort)',
+      grund: 'rank must be a whole number from 0 (0 = the lesson was not in the answer at all)',
     };
   }
 

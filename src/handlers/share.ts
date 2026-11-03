@@ -106,7 +106,7 @@ export async function handleShareTool(
 
       // Tor zu den Fremden (schreibtor.ts): Titel und Beschreibung stehen auf der oeffentlichen
       // Seite. Ein Verdacht darin stoppt die ganze Share; Geheimnisse werden geschwaerzt.
-      const kopf = fuerWeitergabe({ title: rohTitel, description: rohBeschreibung }, 'die Share');
+      const kopf = fuerWeitergabe({ title: rohTitel, description: rohBeschreibung }, 'the share');
       if (!kopf.ok) return kopf.meldung;
       const geschwaerzt: string[] = [...kopf.geschwaerzt];
       const title = kopf.felder.title;
@@ -125,7 +125,7 @@ export async function handleShareTool(
         if (freigegeben.length >= (max_lessons as number)) break;
         const name = schwaerze(l.topic).text;
         if (istMarkiert(l)) { zurueckgehalten.push(`${name} (beim Speichern markiert)`); continue; }
-        const tor = fuerWeitergabe(l, 'die Share');
+        const tor = fuerWeitergabe(l, 'the share');
         if (!tor.ok) { zurueckgehalten.push(`${name} (${tor.verdacht.join('; ')})`); continue; }
         geschwaerzt.push(...tor.geschwaerzt);
         freigegeben.push(tor.felder);
@@ -134,7 +134,7 @@ export async function handleShareTool(
       const torZeilen = [
         weitergabeHinweis(geschwaerzt),
         zurueckgehalten.length
-          ? `⛔ Tuersteher: ${zurueckgehalten.length} Lektion(en) NICHT in die Share aufgenommen (Anweisung oder gefaehrlicher Befehl erkannt): ${zurueckgehalten.slice(0, 10).join(', ')}${zurueckgehalten.length > 10 ? ', …' : ''}. Pruefen und einzeln neu speichern; die Lektionen im Brain bleiben unveraendert.`
+          ? `⛔ Tuersteher (security gate): ${zurueckgehalten.length} lesson(s) NOT included in the share (instruction or dangerous command detected): ${zurueckgehalten.slice(0, 10).join(', ')}${zurueckgehalten.length > 10 ? ', …' : ''}. Check them and save them again one by one; the lessons in the Brain stay unchanged.`
           : '',
       ].filter(Boolean);
 
@@ -354,7 +354,7 @@ export async function handleShareTool(
         `**Lessons imported:** ${imported}`,
         ...(skipped > 0 ? [`**Skipped (low confidence):** ${skipped}`] : []),
         ...(conflicts > 0 ? [`**Skipped (already exist):** ${conflicts}  _(pass \`overwrite=true\` to replace)_`] : []),
-        ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${lessons.length} Eintraegen`),
+        ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${lessons.length} entries`),
         ...hinweise(titelTor, 'notiz'),
         ``,
       ];

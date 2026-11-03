@@ -179,12 +179,12 @@ describe('Start ohne Schluessel: Sofort-Test vor der Browser-Anmeldung (echter P
     // Ablage 1: ~/.cachly/credentials.json — dort lesen die Hooks.
     const cred = JSON.parse(readFileSync(join(heim, '.cachly', 'credentials.json'), 'utf8'));
     expect(cred.apiKey).toBe(SCHLUESSEL);
-    // Ablage 2: ~/.claude/mcp.json — damit der Schluessel den Neustart ueberlebt.
-    const mcpPfad = join(heim, '.claude', 'mcp.json');
-    expect(existsSync(mcpPfad)).toBe(true);
-    const mcp = JSON.parse(readFileSync(mcpPfad, 'utf8'));
-    expect(mcp.mcpServers.cachly.env.CACHLY_JWT).toBe(SCHLUESSEL);
-    expect(mcp.mcpServers.cachly.env.CACHLY_BRAIN_INSTANCE_ID).toBe(INSTANZ);
+    // Den Neustart ueberlebt der Schluessel ueber dieselbe Datei: resolveApiKey
+    // liest ~/.cachly/credentials.json, die Instanz liegt daneben.
+    expect(cred.instanceId).toBe(INSTANZ);
+    // Ablage 2 bis 0.10.225 war ~/.claude/mcp.json mit dem Schluessel im Klartext.
+    // Claude Code liest diese Datei nicht; seit 0.10.226 entsteht sie nicht mehr.
+    expect(existsSync(join(heim, '.claude', 'mcp.json'))).toBe(false);
     // Ablage 3 (der Prozess selbst) ist oben belegt: das Werkzeug lief mit Schluessel.
 
     const ev = ereignisse(g.anfragen);

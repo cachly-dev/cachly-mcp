@@ -7,6 +7,81 @@
 
 ---
 
+## [0.10.226] – 2026-11-03 — *"The second project learns too."*
+
+Found by running `setup` in two fresh test projects, the way a new user does.
+
+**Your second project now learns from its git history.** `brain_from_git`
+remembered the last commit it read under a key made from only the first 24
+characters of the project path. All projects under the same parent folder
+(`C:\Users\<name>\Documents\…`, `/Users/<name>/projects/…`) shared one key.
+From the second project on, `git log <other project's commit>..HEAD` failed
+with "Invalid revision range", and `setup` still printed "✓ 0 lessons
+extracted from git history". The key now covers the whole path. A remembered
+commit is checked with `git cat-file` before use; if it is not in this
+repository, the import reads the history from the start. A failed import is
+reported as `(skipped: …)`, not as a check mark.
+
+**No copy of your key in `~/.claude/mcp.json`.** `setup` wrote that file
+with your key in plain text and said "global — works in every project".
+Claude Code does not read it: its docs list `.mcp.json` in the project,
+`~/.claude.json` and `managed-mcp.json`. Your key stays in
+`~/.cachly/credentials.json`, where the server finds it. An existing
+`~/.claude/mcp.json` is still kept up to date; a new one is not created.
+`init` with no arguments now reads `~/.cachly/credentials.json` first.
+
+**Shorter, truthful terminal output in `setup`/`autopilot`.**
+- "Top hit" shows the lesson. It used to print the evidence line
+  (`📊 3 of 6 backed by evidence …`) instead, with raw `**` around it.
+- Gone: the "Level: Mid Dev ⚡ / Quality score" box (made up from the
+  lesson count) and the `brain_predict` box (raw markdown cut off after 51
+  characters, "✅ 100% tls:cert-expiry" for a project without TLS). One line
+  says how many lessons the Brain holds.
+- Project files are listed relative to the project, not as full paths.
+- Internal log lines (`[aussetzer] …`) no longer appear in the terminal
+  wizard. The MCP server itself still logs them to the editor's log.
+- The last lines are the next step: restart the editor, start a new chat,
+  ask "What does my cachly Brain know about this project?", plus links to
+  the dashboard and the new step-by-step guide at
+  https://cachly.dev/docs/setup.
+
+**`recall_feedback` accepts the names its own schema lists.** The schema
+says `query`, `topic`, `helped`, `rank`, `note`, `author`; the handler read
+only the older German names. Every call written the way the schema and the
+hint under each `smart_recall` answer describe got "frage fehlt". So the one
+signal that improves the ranking, and that "Confirmed lessons" counts, never
+arrived. Both name sets work now, and the answers are English.
+
+**Clear rejections instead of raw errors or junk lessons.**
+- `smart_recall` without `query` crashed with "Cannot read properties of
+  undefined (reading 'split')"; with an empty `query` it said "there is no
+  lesson for this question yet", which reads like an empty Brain. Both now
+  say that `query` is missing.
+- `learn_from_attempts` without `what_worked` stored "What worked:
+  undefined", and an empty `topic` stored a lesson under ``. Both are
+  rejected now with "Nothing was stored". A failure with `what_failed` and an
+  empty `what_worked` is still accepted.
+- An update without a reason also accepts `reason` (besides `grund`), and the
+  example no longer shows an internal IP address.
+
+**`smart_recall` about 2 seconds faster.** It embedded the same question
+three to four times per call (meaning search, ranking, meaning service), each
+taking 200 to 850 ms. The same text and model now share one result for 60
+seconds; a failed call is not kept. Measured against the same test Brain:
+6.97 s → 4.89 s and 6.89 s → 4.63 s per search. The ranking does not change,
+because the vectors are identical.
+
+**`session_end` without the share card.** About 700 characters per session:
+"Share your progress — cached forever" and a tweet link cut off after
+`intent/tweet?t`. The counted lines stay, plus one line with the lessons
+learned this session.
+
+**Security warnings in English.** The write gate, the security gate, the
+"secret redacted" notices and the briefing line about lessons flagged as
+suspicious were still German. They are English now, behaviour unchanged.
+
+---
+
 ## [0.10.225] – 2026-11-03 — *"Shown is not helped."*
 
 **"Proven" now needs proof.** A lesson's `recall_count` goes up every time it

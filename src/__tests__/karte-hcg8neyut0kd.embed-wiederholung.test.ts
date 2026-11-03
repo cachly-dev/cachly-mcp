@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 process.env.CACHLY_EMBED_PROVIDER = 'cachly';
 process.env.CACHLY_JWT ||= 'test-jwt';
-const { computeEmbedding, wiederholungMs, istVoruebergehend } = await import('../embeddings.js');
+const { computeEmbedding, wiederholungMs, istVoruebergehend, vergissEinbettungen } = await import('../embeddings.js');
 
 const netzfehler = () => Object.assign(new TypeError('fetch failed'), { cause: { code: 'ECONNRESET' } });
 const statusfehler = (status: number, retryAfterSek: number | null = null) =>
@@ -89,7 +89,8 @@ describe('wiederholungMs — die Politik als Tabelle', () => {
 
 describe('computeEmbedding — der Wrapper am gestubbten fetch', () => {
   const echteFetch = globalThis.fetch;
-  beforeEach(() => { vi.restoreAllMocks(); });
+  // Jeder Fall zaehlt seine eigenen Rufe: der Einbettungs-Merker (03.11.2026) darf keinen Vektor aus dem vorigen Fall liefern.
+  beforeEach(() => { vi.restoreAllMocks(); vergissEinbettungen(); });
   afterEach(() => { globalThis.fetch = echteFetch; });
 
   const ok = () => ({
@@ -97,6 +98,26 @@ describe('computeEmbedding — der Wrapper am gestubbten fetch', () => {
     headers: { get: () => null },
     text: async () => '', json: async () => ({ embedding: [0.1, 0.2], dimensions: 2 }),
   }) as unknown as Response;
+
+  it('derselbe Text wird nur einmal eingebettet, ein Fehlschlag nicht gemerkt (03.11.2026)', async () => {
+    // smart_recall bettete dieselbe Frage drei- bis viermal ein, je 200-850 ms.
+    let rufe = 0;
+    globalThis.fetch = (async () => { rufe++; return ok(); }) as typeof fetch;
+    const [a, b] = await Promise.all([computeEmbedding('gleiche frage'), computeEmbedding('gleiche frage')]);
+    await computeEmbedding('gleiche frage');
+    expect(a).toEqual([0.1, 0.2]);
+    expect(b).toEqual(a);
+    expect(rufe, 'gleichzeitig und kurz danach: EIN Netzaufruf').toBe(1);
+    await computeEmbedding('gleiche frage', { geduld: 'lang' });
+    expect(rufe, 'andere Geduld, eigener Aufruf').toBe(2);
+
+    globalThis.fetch = (async () => { rufe++; return { ok: false, status: 401, headers: { get: () => null }, text: async () => 'nein' } as unknown as Response; }) as typeof fetch;
+    await expect(computeEmbedding('scheitert')).rejects.toThrow();
+    globalThis.fetch = (async () => { rufe++; return ok(); }) as typeof fetch;
+    const vorher = rufe;
+    expect(await computeEmbedding('scheitert')).toEqual([0.1, 0.2]);
+    expect(rufe, 'nach dem Fehlschlag wird neu gefragt').toBe(vorher + 1);
+  });
 
   it('ein einzelner Netz-Blip kostet keinen Vektor mehr', async () => {
     let rufe = 0;

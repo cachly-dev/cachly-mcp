@@ -650,10 +650,10 @@ export async function handleTeamTool(
         `💡 This crystal will appear in every future \`session_start\` briefing.`,
         `💡 Re-run \`memory_crystalize\` monthly to keep it fresh.`,
         ...(ausgelassen > 0
-          ? [``, `⚠ ${ausgelassen} Lektion(en) nicht zusammengefasst: beim Speichern als verdächtig markiert oder heute vom Tuersteher als Anweisung/gefährlicher Befehl erkannt. Prüfen oder neu speichern.`]
+          ? [``, `⚠ ${ausgelassen} lesson(s) not summarized: flagged as suspicious when saved, or detected today by the Tuersteher (security gate) as an instruction/dangerous command. Check them or save them again.`]
           : []),
         ...(geschwaerztInLektionen > 0
-          ? [`🔒 In ${geschwaerztInLektionen} Lektion(en) standen Geheimnisse — vor dem Zusammenfassen geschwärzt (die Lektionen selbst bleiben unverändert).`]
+          ? [`🔒 ${geschwaerztInLektionen} lesson(s) contained secrets — redacted before summarizing (the lessons themselves stay unchanged).`]
           : []),
       ];
       return lines.join('\n');
@@ -705,10 +705,10 @@ export async function handleTeamTool(
       }
       const zusammenfassungsHinweise = [
         ...(ausgelassen > 0
-          ? [`⚠ ${ausgelassen} Lektion(en) nicht zusammengefasst: beim Speichern als verdächtig markiert oder heute vom Tuersteher als Anweisung/gefährlicher Befehl erkannt. Prüfen oder neu speichern.`]
+          ? [`⚠ ${ausgelassen} lesson(s) not summarized: flagged as suspicious when saved, or detected today by the Tuersteher (security gate) as an instruction/dangerous command. Check them or save them again.`]
           : []),
         ...(geschwaerztInLektionen > 0
-          ? [`🔒 In ${geschwaerztInLektionen} Lektion(en) standen Geheimnisse — vor dem Zusammenfassen geschwärzt (die Lektionen selbst bleiben unverändert).`]
+          ? [`🔒 ${geschwaerztInLektionen} lesson(s) contained secrets — redacted before summarizing (the lessons themselves stay unchanged).`]
           : []),
       ];
 
@@ -1631,7 +1631,7 @@ export async function handleTeamTool(
       };
       // Tor zu den Fremden (schreibtor.ts): diese Lektion wird fuer andere Entwickler veroeffentlicht.
       // Geheimnisse werden geschwaerzt, ein Verdacht auf Anweisung oder Befehl stoppt die Veroeffentlichung.
-      const ziel = fuerWeitergabe({ topic: rohTopic, lesson: rohLektion, framework: rohFramework }, 'die oeffentliche Bibliothek');
+      const ziel = fuerWeitergabe({ topic: rohTopic, lesson: rohLektion, framework: rohFramework }, 'the public library');
       if (!ziel.ok) return ziel.meldung;
       const { topic, lesson, framework } = ziel.felder;
       const redis = await getConnection(instance_id);

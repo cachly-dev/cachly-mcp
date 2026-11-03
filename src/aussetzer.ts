@@ -33,6 +33,20 @@
 const gemeldet = new Set<string>();
 
 /**
+ * Im Terminal-Assistenten (`setup`, `autopilot`) liest ein MENSCH stderr mit.
+ * Dort stand am 03.11.2026 zwischen den Einrichtungsschritten:
+ * "[aussetzer] bedeutung-abbruch: der Bedeutungspfad brach ab … — diese Suche
+ * lief nur ueber Woerter". Das ist eine Protokollzeile fuer uns, kein Schritt
+ * fuer den Nutzer. Leise heisst: vermerkt (schonGemeldet bleibt wahr), nicht
+ * gedruckt. Der MCP-Server selbst bleibt laut — dort landet stderr im Protokoll
+ * des Editors, und genau dort soll es stehen.
+ */
+let leise = false;
+export function aussetzerLeise(): void {
+  leise = true;
+}
+
+/**
  * Aus einem geworfenen Wert einen lesbaren Grund machen.
  *
  * JavaScript laesst zu, dass ALLES geworfen wird — ein Error, ein String, ein
@@ -66,7 +80,7 @@ export function fehlerText(e: unknown): string {
 export function meldeEinmal(grund: string, text: string): boolean {
   if (gemeldet.has(grund)) return false;
   gemeldet.add(grund);
-  console.error(`[aussetzer] ${grund}: ${text}`);
+  if (!leise) console.error(`[aussetzer] ${grund}: ${text}`);
   return true;
 }
 
@@ -93,6 +107,7 @@ export function gemeldeteGruende(): string[] {
  */
 export function setzeAussetzerZurueck(): void {
   gemeldet.clear();
+  leise = false;
 }
 
 /** Der Grund, um den es beim Anlass ging: Bedeutungsabgleich ohne Vektoren. */

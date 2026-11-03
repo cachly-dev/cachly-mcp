@@ -110,7 +110,7 @@ describe('schreibtor — Bausteine', () => {
   it('beim Speichern zaehlen Etiketten und Verfasser nicht, bei der Weitergabe die Etiketten schon', () => {
     const felder = { text: HARMLOS, tags: [GIFT], author: GIFT };
     expect(fuerEigenenSpeicher(felder).verdacht).toEqual([]);
-    const w = fuerWeitergabe(felder, 'die Commons');
+    const w = fuerWeitergabe(felder, 'the Commons');
     expect(w.ok).toBe(false);
   });
 
@@ -119,23 +119,23 @@ describe('schreibtor — Bausteine', () => {
   });
 
   it('fuerWeitergabe: ohne Verdacht ok mit geschwaerztem Text; mit Verdacht eine Meldung ohne den Text', () => {
-    const ok = fuerWeitergabe({ t: `Token ${SCHLUESSEL}` }, 'die Commons');
+    const ok = fuerWeitergabe({ t: `Token ${SCHLUESSEL}` }, 'the Commons');
     expect(ok.ok).toBe(true);
     if (ok.ok) {
       expect(ok.felder.t).toContain(GESCHWAERZT);
       expect(ok.geschwaerzt).toEqual(['t: GitHub-Token']);
     }
-    const nein = fuerWeitergabe({ t: GIFT_BEFEHL }, 'die Commons');
+    const nein = fuerWeitergabe({ t: GIFT_BEFEHL }, 'the Commons');
     expect(nein.ok).toBe(false);
     if (!nein.ok) {
-      expect(nein.meldung).toContain('NICHT an die Commons weitergegeben');
+      expect(nein.meldung).toContain('NOT passed on to the Commons');
       expect(nein.meldung).toContain('befehl/skript-aus-dem-netz-in-die-shell');
       expect(nein.meldung).not.toContain('203.0.113.9');
     }
   });
 
   it('Zitiertes ist Erwaehnen: wer die Floskel in Anfuehrungszeichen beschreibt, wird weitergegeben', () => {
-    expect(fuerWeitergabe({ t: `Angriffe beginnen oft mit "${GIFT}" — nicht darauf hereinfallen.` }, 'die Commons').ok).toBe(true);
+    expect(fuerWeitergabe({ t: `Angriffe beginnen oft mit "${GIFT}" — nicht darauf hereinfallen.` }, 'the Commons').ok).toBe(true);
   });
 
   it('markiert / istMarkiert / hinweise / zaehlHinweise', () => {
@@ -146,11 +146,11 @@ describe('schreibtor — Bausteine', () => {
     expect(istMarkiert({ tags: ['a'] })).toBe(false);
     expect(istMarkiert(null)).toBe(false);
     expect(hinweise({ geschwaerzt: [], verdacht: [] })).toEqual([]);
-    expect(hinweise({ geschwaerzt: ['t: GitHub-Token'], verdacht: ['t: injektion/rollenwechsel'] }).join('\n')).toContain('Geheimnis(se) geschwaerzt');
-    expect(hinweise({ geschwaerzt: [], verdacht: ['t: injektion/rollenwechsel'] }, 'notiz')[0]).toContain('unter "verdacht" vermerkt');
-    expect(hinweise({ geschwaerzt: [], verdacht: ['t: injektion/rollenwechsel'] }, 'wert')[0]).toContain('nicht markiert werden');
+    expect(hinweise({ geschwaerzt: ['t: GitHub-Token'], verdacht: ['t: injektion/rollenwechsel'] }).join('\n')).toContain('secret(s) redacted');
+    expect(hinweise({ geschwaerzt: [], verdacht: ['t: injektion/rollenwechsel'] }, 'notiz')[0]).toContain('under "verdacht" (suspicion)');
+    expect(hinweise({ geschwaerzt: [], verdacht: ['t: injektion/rollenwechsel'] }, 'wert')[0]).toContain('cannot be flagged');
     expect(zaehlHinweise(0, 0, '3 Commits')).toEqual([]);
-    expect(zaehlHinweise(2, 1, '3 Commits').join('\n')).toMatch(/2 von 3 Commits.*\n.*1 von 3 Commits/);
+    expect(zaehlHinweise(2, 1, '3 Commits').join('\n')).toMatch(/2 of 3 Commits.*\n.*1 of 3 Commits/);
   });
 
   it('die mitgelieferte Starter-Saat ist sauber (sie wird ungefiltert geschrieben)', () => {
@@ -187,7 +187,7 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       expect(aufrufe).toHaveLength(1);
       expect(JSON.stringify(aufrufe[0])).not.toContain(SCHLUESSEL);
       expect(String(aufrufe[0]!.body.what_worked)).toContain(GESCHWAERZT);
-      expect(aus).toContain('vor der Weitergabe geschwaerzt');
+      expect(aus).toContain('redacted before sharing');
       expect(aus).not.toContain(SCHLUESSEL);
     });
 
@@ -197,7 +197,7 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       const aus = String(await handleFedbrainTool('fedbrain_contribute', { instance_id: 'i1', lesson_key: 'ci:gift' }, getConn, apiFetch));
       expect(aufrufe).toHaveLength(0);
       expect(aus).toContain('⛔ Tuersteher');
-      expect(aus).toContain('NICHT an die Commons weitergegeben');
+      expect(aus).toContain('NOT passed on to the Commons');
       expect(alles(redis)).not.toContain('cachly:fedbrain:cert');
     });
 
@@ -206,7 +206,7 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       const { apiFetch, aufrufe } = stub();
       const aus = String(await handleFedbrainTool('fedbrain_contribute', { instance_id: 'i1', lesson_key: 'ci:markiert' }, getConn, apiFetch));
       expect(aufrufe).toHaveLength(0);
-      expect(aus).toContain('als verdaechtig markiert');
+      expect(aus).toContain('flagged as suspicious when it was saved');
     });
 
     it('harmlose Lektion geht unveraendert hinaus, ohne Zusatzzeile', async () => {
@@ -215,7 +215,7 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       const aus = String(await handleFedbrainTool('fedbrain_contribute', { instance_id: 'i1', lesson_key: 'ci:sauber' }, getConn, apiFetch));
       expect(aufrufe).toHaveLength(1);
       expect(aufrufe[0]!.body.what_worked).toBe(HARMLOS);
-      expect(aus).not.toContain('geschwaerzt');
+      expect(aus).not.toContain('redacted');
       expect(aus).not.toContain('Tuersteher');
     });
   });
@@ -247,14 +247,14 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       expect(JSON.stringify(aufrufe)).not.toContain(SCHLUESSEL);
       expect(String(aufrufe[0]!.body.what_worked)).toContain(GESCHWAERZT);
       expect(aufrufe[0]!.body.scope).toBe('public');
-      expect(aus).toContain('vor der Weitergabe geschwaerzt');
+      expect(aus).toContain('redacted before sharing');
     });
 
-    it.each([['public', 'die Commons'], ['org', 'die Org']])('Verdacht (scope=%s): nichts gesendet', async (scope, ziel) => {
+    it.each([['public', 'the Commons'], ['org', 'the org']])('Verdacht (scope=%s): nichts gesendet', async (scope, ziel) => {
       const { apiFetch, aufrufe } = stub(antwort);
       const aus = String(await handleSyndicateTool('syndicate', { topic: 'ci:gift', what_worked: `Cache leeren. ${GIFT}`, scope }, getConn, apiFetch));
       expect(aufrufe).toHaveLength(0);
-      expect(aus).toContain(`NICHT an ${ziel} weitergegeben`);
+      expect(aus).toContain(`NOT passed on to ${ziel}`);
     });
 
     it('Verdacht in den Etiketten stoppt ebenfalls', async () => {
@@ -268,7 +268,7 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       const { apiFetch, aufrufe } = stub(antwort);
       const aus = String(await handleSyndicateTool('syndicate', { topic: 'ci:ok', what_worked: HARMLOS, tags: ['ci'] }, getConn, apiFetch));
       expect(aufrufe[0]!.body).toMatchObject({ topic: 'ci:ok', what_worked: HARMLOS, tags: ['ci'] });
-      expect(aus).not.toContain('geschwaerzt');
+      expect(aus).not.toContain('redacted');
     });
   });
 
@@ -284,7 +284,7 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       expect(aufrufe).toHaveLength(1);
       expect(JSON.stringify(aufrufe)).not.toContain(SCHLUESSEL);
       expect(JSON.stringify(aufrufe[0]!.body.lessons)).toContain(GESCHWAERZT);
-      expect(aus).toContain('vor der Weitergabe geschwaerzt');
+      expect(aus).toContain('redacted before sharing');
     });
 
     it('verdaechtige Lektion bleibt zurueck und wird genannt, die uebrigen gehen hinaus', async () => {
@@ -296,7 +296,7 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       const aus = String(await handleShareTool('brain_share', { instance_id: 'i1' }, getConn, apiFetch));
       const gesendet = (aufrufe[0]!.body.lessons as Array<{ topic: string }>).map((l) => l.topic);
       expect(gesendet).toEqual(['ci:sauber']);
-      expect(aus).toContain('3 Lektion(en) NICHT in die Share aufgenommen');
+      expect(aus).toContain('3 lesson(s) NOT included in the share');
       expect(aus).toContain('ci:gift');
       expect(aus).toContain('ci:markiert (beim Speichern markiert)');
       expect(JSON.stringify(aufrufe)).not.toContain('Einschraenkungen');
@@ -316,7 +316,7 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       const { apiFetch, aufrufe } = stub(antwort);
       const aus = String(await handleShareTool('brain_share', { instance_id: 'i1' }, getConn, apiFetch));
       expect(aufrufe).toHaveLength(0);
-      expect(aus).toContain('NICHT in die Share aufgenommen');
+      expect(aus).toContain('NOT included in the share');
     });
 
     it('Verdacht im Titel oder in der Beschreibung stoppt die ganze Share', async () => {
@@ -325,7 +325,7 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       const a = String(await handleShareTool('brain_share', { instance_id: 'i1', title: GIFT }, getConn, apiFetch));
       const b = String(await handleShareTool('brain_share', { instance_id: 'i1', description: GIFT_BEFEHL }, getConn, apiFetch));
       expect(aufrufe).toHaveLength(0);
-      expect(a).toContain('NICHT an die Share weitergegeben');
+      expect(a).toContain('NOT passed on to the share');
       expect(b).toContain('⛔ Tuersteher');
     });
 
@@ -344,7 +344,7 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       const aus = String(await handleShareTool('brain_share', { instance_id: 'i1', dry_run: true }, getConn, apiFetch));
       expect(aufrufe).toHaveLength(0);
       expect(aus).toContain('would share 1 lesson');
-      expect(aus).toContain('1 Lektion(en) NICHT in die Share aufgenommen');
+      expect(aus).toContain('1 lesson(s) NOT included in the share');
     });
   });
 
@@ -354,7 +354,7 @@ describe('Weitergabe an andere: Geheimnis geschwaerzt, Verdacht geht nicht hinau
       expect(alles(redis)).not.toContain(SCHLUESSEL);
       expect(alles(redis)).toContain(GESCHWAERZT);
       expect(aus).not.toContain(SCHLUESSEL);
-      expect(aus).toContain('vor der Weitergabe geschwaerzt');
+      expect(aus).toContain('redacted before sharing');
     });
 
     it.each([['Anweisung', GIFT], ['Befehl', GIFT_BEFEHL]])('Verdacht (%s): nichts veroeffentlicht', async (_n, text) => {
@@ -544,7 +544,7 @@ describe('eigener Speicher: Geheimnis geschwaerzt, Verdacht markiert und gemelde
       await f.vorher?.(redis);
       const aus = await f.lauf(HARMLOS, ctx);
       expect(aus).not.toContain('Tuersteher');
-      expect(aus).not.toContain('geschwaerzt');
+      expect(aus).not.toContain('redacted');
       expect(alles(redis)).not.toContain('verdacht');
     });
   });
@@ -586,7 +586,7 @@ describe('eigener Speicher: Wege mit eigener Vorbereitung', () => {
       const aus = String(await handleFedbrainTool('brain_from_git', { instance_id: 'i1', repo_path: dir }, getConn, stub().apiFetch));
       expect(alles(redis)).not.toContain(SCHLUESSEL);
       expect(alles(redis)).toContain(GESCHWAERZT);
-      expect(aus).toContain('enthielten Geheimnisse');
+      expect(aus).toContain('contained secrets');
     });
 
     it('eingeschleuste Anweisung im Betreff: Lektion markiert, Bericht warnt', async () => {
@@ -658,7 +658,7 @@ describe('eigener Speicher: Wege mit eigener Vorbereitung', () => {
       const aus = await kopieren();
       expect(alles(ziel)).not.toContain(SCHLUESSEL);
       expect(alles(ziel)).toContain(GESCHWAERZT);
-      expect(aus).toContain('enthielten Geheimnisse');
+      expect(aus).toContain('contained secrets');
     });
 
     it('Verdacht: Kopie ist markiert, Antwort warnt, vorhandene Etiketten bleiben', async () => {
@@ -692,7 +692,7 @@ describe('eigener Speicher: Wege mit eigener Vorbereitung', () => {
       const aus = String(await handleShareTool('brain_import', { instance_id: 'i1', share_id: 'sx' }, getConn, s.apiFetch));
       const l = JSON.parse((await redis.get('cachly:lesson:best:web:cache'))!) as { tags: string[] };
       expect(l.tags).toEqual(['web', VERDACHT_TAG]);
-      expect(aus).toContain('1 von 1 Eintraegen sehen nach Anweisung');
+      expect(aus).toContain('1 of 1 entries look like an instruction');
     });
 
     it('brain_import: Geheimnis in einem Feld, das die Share frei mitbringt, wird auch geschwaerzt', async () => {

@@ -382,43 +382,26 @@ const AUTH_HEAL_COOLDOWN_MS = 60_000;
 // Surfaced in session_start / get_api_status so the user is never left guessing.
 let _authDegradedNotice = '';
 
-/** Persist a (possibly refreshed) API key to ~/.claude/mcp.json so restarts keep it.
- * Also updates CACHLY_JWT in Cursor and Windsurf configs when they already have a cachly entry,
- * so users who auth via one editor don't lose their session in the others.
+/** Updates CACHLY_JWT in ~/.claude/mcp.json, Cursor and Windsurf configs when they already
+ * have a cachly entry, so users who auth via one editor don't lose their session in the others.
+ *
+ * Bis 0.10.225 legte diese Funktion ~/.claude/mcp.json neu an, mit dem Schluessel
+ * im Klartext. Claude Code liest die Datei nicht (siehe Step 4b in setup), der
+ * Server findet den Schluessel in ~/.cachly/credentials.json. Jetzt wird eine
+ * vorhandene Datei nachgefuehrt, keine neue angelegt — wie bei Cursor und Windsurf.
  */
 async function persistApiKeyToConfig(apiKey: string): Promise<void> {
   try {
-    const { writeFile, mkdir, readFile } = await import('node:fs/promises');
+    const { writeFile, readFile } = await import('node:fs/promises');
     const { existsSync } = await import('node:fs');
-    const { resolve, dirname } = await import('node:path');
+    const { resolve } = await import('node:path');
     const home = process.env.HOME ?? process.env.USERPROFILE ?? process.env.APPDATA ?? '';
     if (!home) return;
 
-    // Primary config: create or update ~/.claude/mcp.json
-    const claudePath = resolve(home, '.claude', 'mcp.json');
-    let cfg: { mcpServers?: Record<string, { command?: string; args?: string[]; env?: Record<string, string> }> } = {};
-    if (existsSync(claudePath)) {
-      try { cfg = JSON.parse(await readFile(claudePath, 'utf-8')) as typeof cfg; } catch { /* corrupt — start fresh */ }
-    }
-    cfg.mcpServers ??= {};
-    const existing = cfg.mcpServers['cachly'];
-    if (existing) {
-      existing.env ??= {};
-      existing.env['CACHLY_JWT'] = apiKey;
-    } else {
-      const freshEnv: Record<string, string> = {};
-      freshEnv['CACHLY_JWT'] = apiKey;
-      cfg.mcpServers['cachly'] = {
-        command: 'npx', args: ['-y', '@cachly-dev/mcp-server@latest'],
-        env: freshEnv,
-      };
-    }
-    await mkdir(dirname(claudePath), { recursive: true });
-    await writeFile(claudePath, JSON.stringify(cfg, null, 2), 'utf-8');
-
-    // Secondary configs: update CACHLY_JWT wherever cachly is already configured.
+    // Update CACHLY_JWT wherever cachly is already configured.
     // Never create from scratch — only update existing entries (the user set these up).
     const secondaryPaths = [
+      resolve(home, '.claude', 'mcp.json'),
       resolve(home, '.cursor', 'mcp.json'),
       resolve(home, '.codeium', 'windsurf', 'mcp_config.json'),
     ];
@@ -1021,7 +1004,8 @@ import { handleRoadmapTool } from './handlers/roadmap.js';
 import { handleAdvancedTool } from './handlers/advanced.js';
 import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
-import { extractFirstRecallProof, renderFirstRecallProof } from './first-recall-proof.js';
+import { extractFirstRecallProof, extractTopHit, fuersTerminal, renderFirstRecallProof } from './first-recall-proof.js';
+import { aussetzerLeise } from './aussetzer.js';
 import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import {
   CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, EDITOR_FILES, ANWEISUNGS_DATEIEN, buildClaudeMdBlock, setzeAnweisungsblock, sollSchreiben, type SchreibErgebnis,
@@ -1104,22 +1088,6 @@ let _firstCallSuccessSent = false;
 // wrapper so the many call sites here stay unchanged.
 function detectEditor(): string {
   return detectEditorImpl();
-}
-
-/**
- * Pulls topic + preview snippet out of a `smart_recall` result's top hit
- * (format: `**💡 <topic>** ... \n> <preview>`). Returns `null` on any
- * mismatch — the seed-path proof is a bonus, never invented.
- */
-function extractTopHit(text: string): { topic: string; what: string } | null {
-  if (!text) return null;
-  const topicMatch = text.match(/\*\*💡\s+([^*]+)\*\*/);
-  const whatMatch = text.match(/^>\s+(.+)$/m);
-  if (!topicMatch || !whatMatch) return null;
-  const topic = topicMatch[1]!.trim();
-  const what = whatMatch[1]!.trim();
-  if (!topic || !what) return null;
-  return { topic, what };
 }
 
 /** Derive an anonymous, non-reversible fingerprint from the JWT sub claim. */
@@ -3596,8 +3564,20 @@ if (process.argv[2] === 'init') {
   if (apiUrlFlag) { API_URL = apiUrlFlag.replace(/\/+$/, ''); }
 
   // Zero-arg path: fall back to credentials saved by a previous `setup`
-  // (~/.claude/mcp.json). Makes `init` a fast, idempotent re-configuration command
-  // you can run in any project without copy-pasting tokens.
+  // (~/.cachly/credentials.json, from older versions ~/.claude/mcp.json). Makes
+  // `init` a fast, idempotent re-configuration command you can run in any
+  // project without copy-pasting tokens.
+  if (!instanceId || !apiKey) {
+    const gespeicherterSchluessel = readSavedApiKey();
+    const gespeicherteInstanz = readInstanceId();
+    if (gespeicherterSchluessel && gespeicherteInstanz) {
+      apiKey ??= gespeicherterSchluessel;
+      instanceId ??= gespeicherteInstanz;
+      if (apiKey === gespeicherterSchluessel && instanceId === gespeicherteInstanz) {
+        console.log('✓  Reusing credentials from ~/.cachly/credentials.json (saved by a prior setup)');
+      }
+    }
+  }
   if (!instanceId || !apiKey) {
     try {
       const { existsSync } = await import('node:fs');
@@ -4126,6 +4106,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
 
   const setupStartMs = Date.now();
   const cliSource = _isAutopilotCli ? 'autopilot' : 'setup';
+  aussetzerLeise(); // hier liest ein Mensch stderr mit (aussetzer.ts)
   // Self-hosting: `setup --api-url https://cachly.mycorp.internal` points the whole
   // wizard (auth, provisioning, config writes) at a private backend.
   const _apiUrlIdx = process.argv.indexOf('--api-url');
@@ -4489,7 +4470,7 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
 
   // Auto-configure all detected editors — no prompt needed.
   const editorsToSetup = detected;
-  console.log(`Step 3: Configuring for: ${editorsToSetup.map(editorLabel).join(', ')}\n`);
+  console.log(`🔧 Configuring for: ${editorsToSetup.map(editorLabel).join(', ')}\n`);
 
   // ── Step 4: Write editor configs (project-level) ─────────────────────────
   // Uses mergeMcpConfig to preserve all existing MCP servers — only adds/updates
@@ -4500,6 +4481,9 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   const configWriteFailures: Array<{ file: string; reason: string }> = [];
   let configWriteSuccesses = 0;
   saveApiKey(token);
+  // Das Brain daneben: `init` ohne Argumente und die Hooks lesen beides hier.
+  // Bis 0.10.225 fand `init` die Instanz nur in ~/.claude/mcp.json (Step 4b).
+  saveInstanceId(instance.id, { apiKey: token });
   for (const editor of editorsToSetup) {
     const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
     const configPath = resolve(cwd, configFile);
@@ -4518,38 +4502,24 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     }
   }
 
-  // ── Step 4b: Write global Claude Code config (~/.claude/mcp.json) ─────────
-  // Merges cachly into the existing global config so it works in every project,
-  // without removing other MCP servers the user may have configured.
-  const globalClaudePath = resolve(home, '.claude', 'mcp.json');
-  try {
-    await mkdir(dirname(globalClaudePath), { recursive: true });
-    let globalConfig: { mcpServers?: Record<string, unknown> } = {};
-    if (existsSync(globalClaudePath)) {
-      try {
-        globalConfig = JSON.parse(await readFile(globalClaudePath, 'utf-8')) as typeof globalConfig;
-      } catch { /* corrupt — start fresh */ }
-    }
-    globalConfig.mcpServers ??= {};
-    globalConfig.mcpServers['cachly'] = {
-      command: 'npx',
-      args: ['-y', '@cachly-dev/mcp-server@latest'],
-      env: buildServerEnv(token, instance.id, { includeApiKey: true }),
-    };
-    await writeFile(globalClaudePath, JSON.stringify(globalConfig, null, 2), 'utf-8');
-    console.log(`✅ Written: ~/.claude/mcp.json  (global — works in every project)`);
-    configWriteSuccesses++;
-  } catch (e) {
-    const reason = (e as Error).message;
-    console.log(`⚠️  Could not write ~/.claude/mcp.json: ${reason}`);
-    configWriteFailures.push({ file: '~/.claude/mcp.json', reason });
-  }
+  // ── Step 4b entfaellt seit 0.10.226 ──────────────────────────────────────
+  // Hier schrieb setup ~/.claude/mcp.json mit dem Schluessel im Klartext und
+  // meldete "global — works in every project". Claude Code liest diese Datei
+  // nicht: Seine Doku nennt fuer MCP-Server nur `.mcp.json` im Projekt,
+  // `~/.claude.json` (Nutzer- und lokaler Bereich) und `managed-mcp.json`
+  // (code.claude.com/docs/en/mcp, nachgelesen 03.11.2026). Der Schluessel
+  // liegt seit GROW-015 in ~/.cachly/credentials.json (saveApiKey oben), und
+  // dort findet ihn der Server. Fuer alle Projekte auf einmal gibt es das
+  // Claude-Code-Plugin.
 
 
   // ── Step 5: Instructions für alle Vendors (immer, idempotent) ─────────────
   const instrResults = await writeInstructions(cwd, instance.id);
   for (const [file, res] of Object.entries(instrResults)) {
-    console.log(anweisungsZeile(file, res));
+    // Relativ zum Projekt, wie die .mcp.json-Zeile davor — der volle Pfad
+    // brach im Terminal ueber zwei Zeilen.
+    const { relative } = await import('node:path');
+    console.log(anweisungsZeile(relative(cwd, file) || file, res));
   }
 
   // ── Step 5b: Bootstrap Brain from git history ─────────────────────────────
@@ -4565,13 +4535,19 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
         repo_path: cwd,
         limit: 100,
       });
-      const ingestedMatch = gitResult.match(/Ingested: \*\*(\d+)\*\*/);
-      gitLessonCount = ingestedMatch ? parseInt(ingestedMatch[1], 10) : 0;
-      console.log(` ✓  ${gitLessonCount} lesson${gitLessonCount === 1 ? '' : 's'} extracted from git history`);
-      const gitProofBlock = extractFirstRecallProof(gitResult);
-      if (gitProofBlock) {
-        console.log('');
-        console.log(gitProofBlock);
+      // Ein Fehler ist kein "✓ 0 lessons" (bis 0.10.225 sah ein abgebrochener
+      // Import genau so aus wie ein Repo ohne Lernstoff).
+      if (gitResult.startsWith('❌')) {
+        console.log(` (skipped: ${fuersTerminal(gitResult.replace(/^❌\s*/, '')).split('\n')[0]!.slice(0, 160)})`);
+      } else {
+        const ingestedMatch = gitResult.match(/Ingested: \*\*(\d+)\*\*/);
+        gitLessonCount = ingestedMatch ? parseInt(ingestedMatch[1], 10) : 0;
+        console.log(` ✓  ${gitLessonCount} lesson${gitLessonCount === 1 ? '' : 's'} extracted from git history`);
+        const gitProofBlock = extractFirstRecallProof(gitResult);
+        if (gitProofBlock) {
+          console.log('');
+          console.log(fuersTerminal(gitProofBlock));
+        }
       }
     } catch (e) {
       console.log(` (skipped: ${(e as Error).message.slice(0, 80)})`);
@@ -4608,80 +4584,25 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     }
   }
 
-  // ── Step 6: Show Brain health (Aha moment) ────────────────────────────────
-  // Fetch brain health from the API to show the user what their agent will see.
-  process.stdout.write('\n⏳ Fetching your Brain health preview...');
+  // ── Step 6: Wie viel das Brain jetzt weiss ────────────────────────────────
+  // Bis 0.10.225 stand hier ein Kasten mit "Level: Mid Dev ⚡" (aus der
+  // Lektionszahl erfunden), einem "Quality score" und darunter ein zweiter
+  // Kasten mit der Antwort von brain_predict: Markdown roh, nach 51 Zeichen
+  // mitten im Wort abgeschnitten, und "✅ 100% tls:cert-expiry" fuer ein
+  // frisches Projekt ohne TLS (gesehen 03.11.2026). Jetzt: die gezaehlte Zahl.
   try {
     const brainRes = await fetch(`${API_URL}/api/v1/instances/${instance.id}/memory`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(6000),
     });
     if (brainRes.ok) {
-      const brainData = await brainRes.json() as {
-        lesson_count?: number; context_count?: number;
-        iq_boost_pct?: number;
-      };
+      const brainData = await brainRes.json() as { lesson_count?: number };
       const lessons = brainData.lesson_count ?? 0;
-      const contexts = brainData.context_count ?? 0;
-      const score = Math.round(brainData.iq_boost_pct ?? 0);
-      const level = lessons === 0 ? 'Intern 🌱' :
-        lessons < 10  ? 'Junior Dev 🔧' :
-        lessons < 30  ? 'Mid Dev ⚡' :
-        lessons < 60  ? 'Senior Dev 🧠' :
-        lessons < 100 ? 'Staff Eng 🚀' : 'Principal Eng 🏆';
-      console.log(' ✓\n');
-      console.log('┌──────────────────────────────────────────────────────┐');
-      console.log(`│  🧠  Brain Health Report                            │`);
-      console.log('├──────────────────────────────────────────────────────┤');
-      console.log(`│  Lessons stored    : ${String(lessons).padEnd(6)} │  Level: ${level.padEnd(20)}│`);
-      console.log(`│  Context entries   : ${String(contexts).padEnd(6)} │  Quality score: ${String(score).padEnd(3)}%       │`);
-      if (lessons === 0) {
-        console.log('├──────────────────────────────────────────────────────┤');
-        console.log('│  Your Brain is empty and ready to learn.            │');
-        console.log('│  After your first coding session it will contain:   │');
-        console.log('│    • Lessons from every bug you fixed               │');
-        console.log('│    • Your project\'s indexed files                   │');
-        console.log('│    • A session summary for next time                │');
-      }
-      console.log('└──────────────────────────────────────────────────────┘');
-
-      // ── Step 6b: brain_predict preview (only if we have real lessons) ───────
-      if (lessons >= 5) {
-        process.stdout.write('\n⏳ Running predictive risk scan...');
-        try {
-          const predictResult = await handleTool('brain_predict', {
-            instance_id: instance.id,
-            context: 'starting a new development session',
-          });
-          const predictLines = predictResult
-            .split('\n')
-            .filter((l: string) => l.trim())
-            .slice(0, 6);
-          if (predictLines.length > 0) {
-            console.log(' ✓\n');
-            console.log('┌──────────────────────────────────────────────────────┐');
-            console.log('│  🔮  Brain Risk Preview (brain_predict)              │');
-            console.log('├──────────────────────────────────────────────────────┤');
-            for (const pl of predictLines) {
-              console.log(`│  ${pl.slice(0, 51).padEnd(51)} │`);
-            }
-            console.log('└──────────────────────────────────────────────────────┘');
-          } else {
-            console.log(' (no risks found — clean slate!)');
-          }
-        } catch { console.log(' (skipped)'); }
-      }
-    } else {
-      console.log(' (skipped)');
+      console.log(lessons === 0
+        ? '\n🧠 Your Brain is empty. It learns from your fixes and commits from now on.'
+        : `\n🧠 Your Brain now holds ${lessons} lesson${lessons === 1 ? '' : 's'}.`);
     }
-  } catch { console.log(' (skipped)'); }
-
-  console.log(`\n🎉  Your AI just got a permanent brain.`);
-  console.log(`   Restart your editor — from this session on, it arrives pre-briefed.\n`);
-  console.log(`   No more re-explaining your stack. No repeated mistakes.\n`);
-  console.log(`   Dashboard: ${cachlyUrl(`/instances/${instance.id}`, cliSource)}`);
-  console.log(`\n   📛 Add a live badge to your README:`);
-  console.log(`      npx @cachly-dev/mcp-server@latest badge\n`);
+  } catch { /* eine Zahl weniger, die Einrichtung bleibt gueltig */ }
 
   // ── Step 6c: Governance bootstrap — assign the first admin role ─────────────
   // Optional nudge: ask once whether the user wants to establish the role model.
@@ -4809,7 +4730,12 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
     for (const f of configWriteFailures) console.log(`     • ${f.file} — ${f.reason}`);
     console.log('   Fix the permissions above and re-run setup to configure them too.');
   }
-  console.log('');
+  // Der naechste Schritt steht zuletzt: dort liest man nach dem Durchlauf.
+  console.log('\n👉 Next: restart your editor, start a new chat and ask:');
+  console.log('      What does my cachly Brain know about this project?');
+  console.log('   Your AI should call the cachly tool smart_recall and answer from your Brain.\n');
+  console.log(`   Dashboard: ${cachlyUrl(`/instances/${instance.id}`, cliSource)}`);
+  console.log(`   Step-by-step guide: ${cachlyUrl('/docs/setup', cliSource)}\n`);
 
   rl.close();
   // Give the fire-and-forget telemetry a moment to flush before exit.
