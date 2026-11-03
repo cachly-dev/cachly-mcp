@@ -22,8 +22,18 @@ import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { instanzIdFuerSkript } from './git-ohne-shell.js';
 
-/** Bumped whenever the hook script changes so installers can upgrade old hooks. */
-export const CLS_HOOK_VERSION = 'v3';
+/**
+ * Bumped whenever the hook script changes so installers can upgrade old hooks.
+ *
+ * v4 (03.11.2026): v3 rief `execFileSync('npx', …)` ohne Shell. Unter Windows
+ * heisst npx aber npx.cmd, Node findet es so nicht (ENOENT, nachgestellt auf
+ * diesem Rechner), und `catch{}` schluckte den Fehler: Unter Windows lernte das
+ * Brain aus KEINEM Commit, waehrend setup "your brain will learn from every
+ * commit" meldete. v4 startet npm's npx-cli.js mit dem laufenden node selbst —
+ * ohne Shell, auf allen Systemen gleich, das JSON bleibt EIN Argument.
+ * Dieselbe Loesung wie im JetBrains-Plugin (CachlyInstructionWriter.kt).
+ */
+export const CLS_HOOK_VERSION = 'v4';
 
 /**
  * Matches any previously-installed cachly CLS block (from its marker comment
@@ -78,14 +88,30 @@ export async function installClsPostCommitHook(
   return 'appended';
 }
 
-/** The node `-e` program — reads commit data from env, ingests via the CLI. */
-const CLS_NODE_PROGRAM =
+/**
+ * The node `-e` program — reads commit data from env, ingests via the CLI.
+ *
+ * Steht im Hook in doppelten Anfuehrungszeichen: es darf kein `"`, kein `$`,
+ * keinen Backtick und keinen Backslash enthalten (Test in cls-hook.test.ts).
+ * npx-cli.js liegt bei den ueblichen Node-Installationen neben node(.exe)
+ * (Windows) bzw. unter ../lib/node_modules (Linux, macOS). Ohne die Datei:
+ * auf Linux/macOS `npx` direkt (dort ein echtes Programm), unter Windows nichts
+ * — besser als ein Aufruf, der nur scheitert. Zeitgrenze 30 s: der Hook laeuft
+ * im Hintergrund, und der erste npx-Start laedt das Paket (gemessen bis 22,5 s).
+ */
+export const CLS_NODE_PROGRAM =
   "try{" +
+  "var cp=require('child_process'),pa=require('path'),fs=require('fs');" +
   "var p={instance_id:process.env.CACHLY_BRAIN_INSTANCE_ID,source:'git_commit'," +
   "payload:{message:process.env.CLS_MSG||'',sha:process.env.CLS_SHA||''," +
   "files:(process.env.CLS_FILES||'').split(',').filter(Boolean)}};" +
-  "require('child_process').execFileSync('npx',['@cachly-dev/mcp-server@latest','cls-ingest',JSON.stringify(p)]," +
-  "{stdio:'ignore',timeout:8000});" +
+  "var a=['-y','@cachly-dev/mcp-server@latest','cls-ingest',JSON.stringify(p)];" +
+  "var o={stdio:'ignore',timeout:30000};" +
+  "var d=pa.dirname(process.execPath);" +
+  "var c=[pa.join(d,'node_modules','npm','bin','npx-cli.js'),pa.join(d,'..','lib','node_modules','npm','bin','npx-cli.js')]" +
+  ".filter(function(f){return fs.existsSync(f)})[0];" +
+  "if(c){cp.execFileSync(process.execPath,[c].concat(a),o)}" +
+  "else if(process.platform!=='win32'){cp.execFileSync('npx',a,o)}" +
   "}catch(e){}";
 
 /**

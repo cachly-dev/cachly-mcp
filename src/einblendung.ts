@@ -45,7 +45,7 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 
 import { Einblendbestand, torWoerter, type EinblendLektion } from './einblendung-kern.js';
-import { rahmeEin } from './einblendung-rahmen.js';
+import { rahmeEin, RAHMEN_HINWEIS } from './einblendung-rahmen.js';
 import { istMarkiert } from './verdacht-marke.js';
 import { istBlossesThema } from './blosses-thema.js';
 import { leserText as leserTextZuschnitt } from './seltenheitsbestand.js';
@@ -690,8 +690,16 @@ export function sitzungsKontext(alle: EinblendLektion[]): string {
     .sort((a, b) => (Number(b.recall_count) || 0) - (Number(a.recall_count) || 0))
     .slice(0, SITZUNG_TOP_N);
   const body = top.map(renderLesson).join('\n');
+  // 03.11.2026 (plugin-briefing-claims-proven-reuse-on-empty-brain): "proven reuse" nur,
+  // wenn eine der gezeigten Lektionen wirklich schon abgerufen wurde. Ein frisches Brain
+  // hat nur Starter-Lektionen mit recall_count 0.
+  const bewaehrt = top.some((l) => (Number(l.recall_count) || 0) > 0);
+  const kopf = bewaehrt ? 'Top by proven reuse' : 'Starter tips (not yet from your project)';
+  const hinweis = bewaehrt
+    ? RAHMEN_HINWEIS
+    : RAHMEN_HINWEIS.replace('Stored notes from earlier sessions.', 'General starter notes, not yet from your project.');
   return `🧠 Cachly Brain — ambient recall active (${lessons.length} lessons). ` +
-    `Top by proven reuse:\n${rahmeEin(body)}\n` +
+    `${kopf}:\n${rahmeEin(body, hinweis)}\n` +
     `(Relevant lessons for each task are auto-injected per prompt. ~${estimateTokens(body)} tokens.)`;
 }
 

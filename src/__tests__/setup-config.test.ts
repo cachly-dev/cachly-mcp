@@ -303,7 +303,7 @@ describe('writeInstructions', () => {
     expect(result[regel]).toBe('written');
     expect(readFileSync(regel, 'utf-8')).toContain(instanceId);
     // Zweiter Lauf: Marker ersetzt, nicht doppelt angehaengt.
-    expect((await writeInstructions(mit, instanceId))[regel]).toBe('updated');
+    expect((await writeInstructions(mit, instanceId))[regel]).toBe('unchanged');
     expect(readFileSync(regel, 'utf-8').split(CLAUDE_MD_MARKER_START).length).toBe(2);
   });
 });
@@ -350,6 +350,27 @@ describe('writeInstructions — Gemini CLI und Junie', () => {
     expect(text).toContain('smart_recall(instance_id="' + id + '"');
   });
 
+  it('Zed: eine vorhandene .rules oder .cursorrules bekommt den Block, eine neue entsteht nicht (03.11.2026)', async () => {
+    // Zed liest nur die ERSTE Datei: .rules vor .cursorrules vor .windsurfrules.
+    const ohne = resolve(wurzel, 'zed-ohne');
+    await writeInstructions(ohne, id, leer);
+    expect(existsSync(resolve(ohne, '.rules'))).toBe(false);
+    expect(existsSync(resolve(ohne, '.cursorrules'))).toBe(false);
+
+    const p = resolve(wurzel, 'zed-mit');
+    mkdirSync(p, { recursive: true });
+    writeFileSync(resolve(p, '.rules'), 'Always use tabs.\n');
+    writeFileSync(resolve(p, '.cursorrules'), 'Prefer small functions.\n');
+    const r = await writeInstructions(p, id, leer);
+    for (const name of ['.rules', '.cursorrules']) {
+      const datei = resolve(p, name);
+      expect(r[datei], name).toBe('appended');
+      const text = readFileSync(datei, 'utf-8');
+      expect(text, name).toContain(name === '.rules' ? 'Always use tabs.' : 'Prefer small functions.');
+      expect(text, name).toContain('smart_recall(instance_id="' + id + '"');
+    }
+  });
+
   it('schreibt GEMINI.md auch, wenn nur der Heimordner .gemini/ hat', async () => {
     const heim = resolve(wurzel, 'heim-mit-gemini');
     mkdirSync(resolve(heim, '.gemini'), { recursive: true });
@@ -373,7 +394,7 @@ describe('writeInstructions — Gemini CLI und Junie', () => {
     writeFileSync(resolve(p, "GEMINI.md"), '# Meine Regeln\nNiemals Tabs.\n');
     const datei = resolve(p, 'GEMINI.md');
     expect((await writeInstructions(p, id, leer))[datei]).toBe('appended');
-    expect((await writeInstructions(p, id, leer))[datei]).toBe('updated');
+    expect((await writeInstructions(p, id, leer))[datei]).toBe('unchanged');
     const text = readFileSync(datei, 'utf-8');
     expect(text.startsWith('# Meine Regeln\nNiemals Tabs.')).toBe(true);
     expect(text.split(CLAUDE_MD_MARKER_START).length).toBe(2);

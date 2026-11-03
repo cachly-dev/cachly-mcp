@@ -34,6 +34,41 @@ function projekt(settings?: string): { p: string; datei: string } {
 
 const RECHTE = '{\n  "permissions": { "allow": ["Bash(npm test)"] }';
 
+describe('installAmbientHooks schreibt projektbezogene Pfade (04.11.2026)', () => {
+  // Bis 0.10.227 stand der absolute Pfad des Rechners in settings.json. Die Datei
+  // wird oft eingecheckt: bei jedem Kollegen und nach jedem Verschieben brach der Hook.
+  it('neu: node "${CLAUDE_PROJECT_DIR}/.claude/hooks/…", kein Pfad dieses Rechners', async () => {
+    const { p, datei } = projekt();
+    await installAmbientHooks(p, 'i1');
+    const text = readFileSync(datei, 'utf8');
+    const befehle = Object.values(JSON.parse(text).hooks as Record<string, Array<{ hooks: Array<{ command: string }> }>>)
+      .flat().flatMap((g) => g.hooks.map((h) => h.command));
+    expect(befehle).toHaveLength(4);
+    for (const b of befehle) expect(b).toMatch(/^node "\$\{CLAUDE_PROJECT_DIR\}\/\.claude\/hooks\/cachly-ambient-[a-z-]+\.mjs"$/);
+    expect(text).not.toContain(p.replace(/\\/g, '\\\\'));
+    expect(text).not.toContain(p.replace(/\\/g, '/'));
+  });
+
+  it('ein alter Eintrag mit absolutem Pfad wird ersetzt, nicht verdoppelt; fremde Hooks bleiben', async () => {
+    const alt = join('C:\\alter\\ort', '.claude', 'hooks', 'cachly-ambient-prompt-submit.mjs');
+    const { p, datei } = projekt(JSON.stringify({ hooks: { UserPromptSubmit: [
+      { hooks: [{ type: 'command', command: `node "${alt}"`, timeout: 10 }] },
+      { hooks: [{ type: 'command', command: 'echo fremd' }] },
+    ] } }));
+    await installAmbientHooks(p, 'i1');
+    const gruppen = JSON.parse(readFileSync(datei, 'utf8')).hooks.UserPromptSubmit as Array<{ hooks: Array<{ command: string }> }>;
+    const befehle = gruppen.flatMap((g) => g.hooks.map((h) => h.command));
+    expect(befehle).toContain('echo fremd');
+    expect(befehle.filter((b) => b.includes('cachly-ambient-'))).toEqual(['node "${CLAUDE_PROJECT_DIR}/.claude/hooks/cachly-ambient-prompt-submit.mjs"']);
+  });
+
+  it('portable: false schreibt weiter den absoluten Pfad', async () => {
+    const { p, datei } = projekt();
+    await installAmbientHooks(p, 'i1', undefined, { portable: false });
+    expect(readFileSync(datei, 'utf8')).not.toContain('CLAUDE_PROJECT_DIR');
+  });
+});
+
 describe('installAmbientHooks laesst eine unlesbare settings.json stehen', () => {
   it('abgeschnittenes JSON: Datei byte-gleich, keine Skripte, Grund genannt', async () => {
     const kaputt = RECHTE + ',\n  "hooks": {';

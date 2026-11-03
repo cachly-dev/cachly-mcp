@@ -312,10 +312,18 @@ export function mergeAmbientSettings(
 
 export interface AmbientInstallOptions {
   /**
-   * Write `"$CLAUDE_PROJECT_DIR"/.claude/hooks/…` commands into settings.json
-   * instead of absolute paths. Use for hooks that are COMMITTED to a repo
-   * (dogfooding/team setups): the settings stay valid on every checkout
-   * location. Claude Code sets $CLAUDE_PROJECT_DIR when running hooks.
+   * `true` (default since 0.10.228): settings.json gets
+   * `node "${CLAUDE_PROJECT_DIR}/.claude/hooks/…"` — valid on every checkout
+   * location and for every teammate who gets the committed file. `false`:
+   * absolute paths, as before 0.10.228.
+   *
+   * Gemessen 04.11.2026 mit Claude Code 2.1.314 unter Windows (Git Bash):
+   * `${CLAUDE_PROJECT_DIR}` und `$CLAUDE_PROJECT_DIR` laufen wie der absolute
+   * Pfad. Aus einem Unterordner gestartet, laedt Claude Code die Projekt-
+   * settings.json gar nicht — auch der absolute Pfad lief dort nicht. Die
+   * Klammerform empfiehlt die Hook-Doku; aktuelle Versionen setzen sie selbst
+   * ein (auch fuer PowerShell), aeltere ab v1.0.58 ueber die Umgebungsvariable.
+   * Die `args`-Form gibt es erst ab v2.1.139 und wird deshalb nicht benutzt.
    * NOTE: never pass an apiKey together with portable — committed scripts
    * must not embed credentials; the CLI falls back to the env's CACHLY_JWT.
    */
@@ -407,14 +415,15 @@ export async function installAmbientHooks(
     }
   }
 
-  // Merge the settings fragment (upgrade-safe: prior ambient groups replaced).
-  // Portable installs (committed hooks) reference $CLAUDE_PROJECT_DIR so the
-  // settings work at any checkout location; local installs use absolute paths.
+  // Merge the settings fragment (upgrade-safe: prior ambient groups replaced,
+  // also the absolute-path entries written before 0.10.228 — they carry the
+  // same `.claude/hooks/cachly-ambient-` marker). Default: ${CLAUDE_PROJECT_DIR}
+  // so the settings work at any checkout location (see AmbientInstallOptions).
   // These are SCRIPT PATHS — buildAmbientSettingsHooks wraps them as
   // `node "<path>"`, so the portable var sits inside the double quotes and is
   // expanded by the shell at hook time.
   const commandFor = (e: AmbientHookEvent) =>
-    options.portable ? `$CLAUDE_PROJECT_DIR/${CLAUDE_HOOK_DIR}/${SCRIPT_NAMES[e]}` : pathFor(e);
+    options.portable !== false ? `\${CLAUDE_PROJECT_DIR}/${CLAUDE_HOOK_DIR}/${SCRIPT_NAMES[e]}` : pathFor(e);
   const { settings, changed } = mergeAmbientSettings(existingSettings, {
     sessionStart: commandFor('SessionStart'),
     userPromptSubmit: commandFor('UserPromptSubmit'),

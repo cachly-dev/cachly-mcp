@@ -51,6 +51,18 @@ export function ckgSlug(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9\-:]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
 }
 
+/**
+ * Thema einer Commit-Lektion aus dem Git-Hook (cls_ingest git_commit).
+ *
+ * Der Commit-Typ steht schon vorn im Thema. Bis 0.10.226 kam er ein zweites
+ * Mal aus der Nachricht mit: "fix: x" wurde zu `fix:fix:-x` (gesehen beim
+ * echten Hook-Lauf, 03.11.2026). Jetzt faellt "typ(bereich)!: " vorn weg.
+ */
+export function commitThema(domain: string, message: string): string {
+  const ohneTyp = message.replace(/^[a-z]+(\([^)]*\))?!?:\s*/i, '');
+  return `${domain}:${ckgSlug((ohneTyp || message).slice(0, 60))}`;
+}
+
 /** Extract 1-3 significant keywords from free text for a problem concept */
 export function extractProblemConcept(text: string): string | null {
   const words = text.toLowerCase()

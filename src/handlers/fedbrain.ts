@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto';
 import type { Redis } from 'ioredis';
-import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
+import { ckgSlug, commitThema, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { safeJsonParse } from '../utils.js';
@@ -222,7 +222,7 @@ export async function handleFedbrainTool(
         const files = (Array.isArray(payload.files) ? payload.files : []) as string[];
 
         const domain = /^fix/i.test(message) ? 'fix' : /^feat/i.test(message) ? 'feat' : /^refactor/i.test(message) ? 'refactor' : /^test/i.test(message) ? 'test' : 'commit';
-        const slug = `${domain}:${ckgSlug(message.slice(0, 60))}`;
+        const slug = commitThema(domain, message);
         const conceptId = ckgSlug(slug);
 
         await ckgUpsertNode(redis, conceptId, domain, 'commit');

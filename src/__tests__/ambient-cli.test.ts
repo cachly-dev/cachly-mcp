@@ -79,6 +79,27 @@ describe('stopObservation (auto-learn fix signal)', () => {
     expect(obs!.details).toContain('root cause');
   });
 
+  // 03.11.2026 plugin-stop-failure-stored-as-success
+  it('speichert ein Scheitern nicht als Erfolg', () => {
+    const scheitern =
+      'Unfortunately I could not get this fixed. The failing migration still deadlocks and the tests are still red; root cause unknown, I gave up.';
+    expect(stopObservation({ hook_event_name: 'Stop', last_assistant_message: scheitern })).toBeNull();
+    const deutsch =
+      'Ich habe den Fehler leider nicht behoben. Die Ursache ist weiterhin unklar und die Tests sind noch rot, deshalb höre ich hier auf.';
+    expect(stopObservation({ hook_event_name: 'Stop', last_assistant_message: deutsch })).toBeNull();
+  });
+
+  it('"root cause" allein ist kein Loesungssignal', () => {
+    const msg = 'I looked at the root cause candidates in the scheduler module and listed them below for the next person to check.';
+    expect(stopObservation({ hook_event_name: 'Stop', last_assistant_message: msg })).toBeNull();
+  });
+
+  it('nimmt das Thema aus der Zeile mit dem Loesungssignal, nicht aus der Floskel', () => {
+    const msg = 'Ich habe den Fehler gesucht und mehrere Dateien gelesen.\nThe bug was a missing await in queue.ts which made the worker exit early on every run.';
+    const obs = stopObservation({ hook_event_name: 'Stop', last_assistant_message: msg })!;
+    expect(obs.action.startsWith('The bug was')).toBe(true);
+  });
+
   it('returns null for short or signal-free messages (no brain spam)', () => {
     expect(stopObservation({ hook_event_name: 'Stop', last_assistant_message: 'Done.' })).toBeNull();
     expect(

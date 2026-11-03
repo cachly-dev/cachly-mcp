@@ -186,11 +186,34 @@ export interface HookInspection {
   settingsExists: boolean;
   wiredEvents: string[];
   scriptFiles: { path: string; exists: boolean; version: 'current' | 'stale' | 'unknown' }[];
+  /**
+   * Editoren ausser Claude Code, deren Hook-Datei cachly verdrahtet (cli-2, 03.11.2026).
+   * Optional, damit aeltere Aufrufer und Tests ohne das Feld weiter passen.
+   */
+  editorHooks?: string[];
 }
+
+/** Hook-Datei und Buendel je Editor ausser Claude Code (Pfade wie in ambient-hooks.ts). */
+const EDITOR_HOOK_DATEIEN: ReadonlyArray<{ editor: string; konfig: string; buendel: string }> = [
+  { editor: 'cursor',  konfig: '.cursor/hooks.json',                 buendel: '.cursor/hooks/cachly-ambient-einblendung.mjs' },
+  { editor: 'copilot', konfig: '.github/hooks/cachly-ambient.json',  buendel: '.github/hooks/cachly-ambient-einblendung.mjs' },
+  { editor: 'codex',   konfig: '.codex/hooks.json',                  buendel: '.codex/hooks/cachly-ambient-einblendung.mjs' },
+  { editor: 'gemini',  konfig: '.gemini/settings.json',              buendel: '.gemini/hooks/cachly-ambient-einblendung.mjs' },
+];
 
 /** Read-only look at .claude/ in projectDir — never throws. */
 export function inspectAmbientHooks(projectDir: string): HookInspection {
-  const out: HookInspection = { settingsExists: false, wiredEvents: [], scriptFiles: [] };
+  const out: HookInspection = { settingsExists: false, wiredEvents: [], scriptFiles: [], editorHooks: [] };
+  // cli-2 (03.11.2026): init --editor cursor|copilot|codex|gemini schreibt die Hooks
+  // in eigene Dateien. doctor sah nur .claude/settings.json und warnte zu Unrecht.
+  for (const e of EDITOR_HOOK_DATEIEN) {
+    try {
+      const konfig = resolve(projectDir, e.konfig);
+      if (existsSync(konfig) && readFileSync(konfig, 'utf-8').includes('cachly-ambient') && existsSync(resolve(projectDir, e.buendel))) {
+        out.editorHooks!.push(e.editor);
+      }
+    } catch { /* unlesbar = nicht verdrahtet */ }
+  }
   try {
     const settingsPath = resolve(projectDir, '.claude/settings.json');
     out.settingsExists = existsSync(settingsPath);
@@ -212,7 +235,9 @@ export function inspectAmbientHooks(projectDir: string): HookInspection {
               const cmd = norm(h.command);
               const m = cmd.match(/["']?([^"']*\.claude\/hooks\/cachly-ambient-[^"']+)["']?/);
               if (!m) continue;
-              const scriptPath = m[1].replace('$CLAUDE_PROJECT_DIR', projectDir);
+              // Beide Schreibweisen der Variable: seit 0.10.228 schreibt setup die
+              // mit Klammern (`${CLAUDE_PROJECT_DIR}`), aeltere Einrichtungen ohne.
+              const scriptPath = m[1].replace(/\$\{CLAUDE_PROJECT_DIR\}|\$CLAUDE_PROJECT_DIR/, projectDir);
               const exists = existsSync(scriptPath);
               let version: 'current' | 'stale' | 'unknown' = 'unknown';
               if (exists) {
@@ -236,11 +261,15 @@ const AMBIENT_EVENTS = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'Stop'
 /** Ambient hooks wired, scripts present, version current. */
 export function checkHooks(inspection: HookInspection): DoctorCheck {
   if (!inspection.settingsExists || inspection.wiredEvents.length === 0) {
+    const andere = inspection.editorHooks ?? [];
+    if (andere.length > 0) {
+      return { name: 'Hooks', status: 'ok', detail: `Ambient Recall hooks wired for ${andere.join(', ')}` };
+    }
     return {
       name: 'Hooks',
       status: 'warn',
       detail: 'Ambient Recall hooks are not installed in this project',
-      hint: 'Run `npx @cachly-dev/mcp-server@latest init` here — memory then injects itself (no hooks = pull-only).',
+      hint: 'Run `npx @cachly-dev/mcp-server@latest init` here (add `--editor cursor|copilot|codex|gemini` if you do not use Claude Code) — memory then injects itself (no hooks = pull-only).',
     };
   }
   const missingEvents = AMBIENT_EVENTS.filter((e) => !inspection.wiredEvents.includes(e));

@@ -100,6 +100,15 @@ describe('hook inspection (real filesystem)', () => {
     expect(c.detail).toContain(AMBIENT_HOOK_VERSION);
   });
 
+  it('all green for the ${CLAUDE_PROJECT_DIR} form that setup writes since 0.10.228', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'doc-'));
+    const script = join(dir, '.claude/hooks/cachly-ambient-session-start.mjs');
+    writeSettings(dir, 'node "${CLAUDE_PROJECT_DIR}/.claude/hooks/cachly-ambient-session-start.mjs"');
+    writeFileSync(script, `// cachly Ambient Recall — SessionStart ${AMBIENT_HOOK_VERSION}\n`);
+    const c = checkHooks(inspectAmbientHooks(dir));
+    expect(c.status).toBe('ok');
+  });
+
   it('fail when settings wire a script that does not exist on disk', () => {
     const dir = mkdtempSync(join(tmpdir(), 'doc-'));
     writeSettings(dir, `node "${join(dir, '.claude/hooks/cachly-ambient-session-start.mjs')}"`);

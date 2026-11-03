@@ -50,8 +50,9 @@ export interface ExportLesson {
 export function vonRohLektion(roh: unknown): ExportLesson | null {
   if (typeof roh !== 'object' || roh === null) return null;
   const r = roh as Record<string, unknown>;
-  const topic = typeof r.topic === 'string' ? r.topic : '';
-  if (!topic) return null;
+  // cli-8 (03.11.2026): eine Lektion ohne Thema wurde still verworfen (33 statt 34).
+  // Der Export gehoert dem Nutzer: sie bleibt, mit Platzhalter-Titel.
+  const topic = typeof r.topic === 'string' && r.topic ? r.topic : '(no topic)';
   const text = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
   const liste = (v: unknown): string[] | undefined =>
     Array.isArray(v) && v.length > 0 ? v.filter((x): x is string => typeof x === 'string') : undefined;

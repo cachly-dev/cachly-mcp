@@ -7,6 +7,78 @@
 
 ---
 
+## [0.10.228] – 2026-11-04 — *"The hook settings work on every machine."*
+
+**`.claude/settings.json` no longer contains a path of your machine.** `setup`,
+`autopilot` and `init` wrote the hook commands with the absolute path of the
+project, like `node "C:\Users\me\project\.claude\hooks\…"`. That file is often
+committed, so the hooks broke for every teammate and after moving the folder.
+They now write `node "${CLAUDE_PROJECT_DIR}/.claude/hooks/…"`, the form the
+Claude Code hook docs recommend. Checked with Claude Code 2.1.314 on Windows:
+this form runs exactly like the absolute path. Started from a subfolder,
+Claude Code does not load the project's `settings.json` at all, so the
+absolute path had no advantage there. Existing cachly entries with absolute
+paths are replaced the next time you run `setup` or `init`; your own hooks
+stay. `doctor` understands both spellings of the variable.
+
+---
+
+## [0.10.227] – 2026-11-03 — *"A wrong key no longer replaces the right one."*
+
+Found by a group of testers who each walked one user path for real, with a
+second reviewer per finding trying to refute it.
+
+**Command line**
+- `init` checks before it writes anything. A flag value that is another flag
+  (`--instance-id --api-key …`), an instance ID that is not a UUID, a key that
+  does not start with `cky_` (or is a JWT), or a key the server rejects all end
+  with exit 1 and "Nothing was written". Until now a typo replaced the working
+  key in `~/.cachly/credentials.json`, dropped the Brain ID and still printed
+  success; every project then failed with HTTP 401.
+- `--help`, `-h` and `help` print the command list, `--version` and `-v` the
+  version. A mistyped command in a terminal shows the list and exits 1. Before,
+  all of these silently started the MCP server and the terminal seemed to hang.
+  Starting the server from an editor (no argument, pipes) is unchanged.
+- `init --editor` with an unknown name is rejected and lists the valid names.
+- `health` knows `.codex/config.toml` and `.gemini/settings.json`, and `doctor`
+  finds the hook files of Cursor, Copilot, Codex and Gemini. After a correct
+  `init --editor codex` or `gemini`, `health` no longer reports "No editor MCP
+  configs found" and no longer sends you to `autopilot`.
+- Running `init` twice prints "Unchanged" for files whose content is the same,
+  instead of "Updated".
+- `export` keeps a lesson without a topic (title "(no topic)") and says
+  INCOMPLETE if it wrote fewer lessons than the Brain holds.
+
+**Your commits reach the Brain on Windows.** The git hook that `setup`,
+`autopilot` and `init` install called `npx` directly. On Windows that file is
+`npx.cmd`, Node cannot start it that way, and the hook swallowed the error, so
+on Windows the Brain learned from no commit at all, while setup said "your
+brain will learn from every commit". The hook (now v4) starts npm's
+`npx-cli.js` with the running `node` instead: no shell, the same on every
+system, and the commit data stays one argument. Checked with a real
+`git commit` on Windows; the message with quotes, an apostrophe and `%`
+arrived in the Brain. Existing hooks are upgraded the next time you run
+`setup` or `init`. Commit lessons are named `fix:upload-button-…` instead of
+`fix:fix:-upload-button-…`.
+
+**Zed sees the rule.** Zed reads only the first rule file it finds, in this
+order: `.rules`, `.cursorrules`, `.windsurfrules`, … `AGENTS.md`, `CLAUDE.md`.
+If your project already has a `.rules` or `.cursorrules`, the cachly block is
+now added there too. A new `.rules` is not created, because in Zed it would
+hide the rules in your `.cursorrules`.
+
+**Claude Code plugin hooks**
+- The Stop hook no longer saves an attempt that failed as a successful lesson.
+  Messages with "could not", "still red", "gave up", "unknown" and similar are
+  skipped, and "root cause" alone no longer counts as a fix. The topic comes
+  from the line that reports the fix.
+- On a new Brain the session briefing says "Starter tips (not yet from your
+  project)" instead of "Top by proven reuse" and "Stored notes from earlier
+  sessions".
+- The README describes what the hooks really do.
+
+---
+
 ## [0.10.226] – 2026-11-03 — *"The second project learns too."*
 
 Found by running `setup` in two fresh test projects, the way a new user does.

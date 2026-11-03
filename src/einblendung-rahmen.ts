@@ -51,8 +51,8 @@ export function entschaerfe(text: string): string {
 }
 
 /** Setzt eingeblendeten Gedaechtnistext in den gekennzeichneten Block. Leer bleibt leer. */
-export function rahmeEin(inhalt: string): string {
+export function rahmeEin(inhalt: string, hinweis: string = RAHMEN_HINWEIS): string {
   const sauber = entschaerfe(inhalt).trim();
   if (!sauber) return '';
-  return `<${RAHMEN_ETIKETT}>\n${RAHMEN_HINWEIS}\n\n${sauber}\n</${RAHMEN_ETIKETT}>`;
+  return `<${RAHMEN_ETIKETT}>\n${hinweis}\n\n${sauber}\n</${RAHMEN_ETIKETT}>`;
 }

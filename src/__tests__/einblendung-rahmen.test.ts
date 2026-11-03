@@ -82,6 +82,24 @@ describe('die fertigen Einblendungen rahmen beide Formen', () => {
   });
 });
 
+// 03.11.2026 plugin-briefing-claims-proven-reuse-on-empty-brain
+describe('Briefing auf neuem Brain', () => {
+  const starter = (t: string): EinblendLektion => ({ topic: t, what_worked: 'Tipp', recall_count: 0, source: 'starter' });
+
+  it('behauptet keine bewaehrte Nutzung, wenn nichts je abgerufen wurde', () => {
+    const t = sitzungsKontext([starter('docker:layer-cache'), starter('redis:eviction-policy')]);
+    expect(t).not.toContain('proven reuse');
+    expect(t).not.toContain('earlier sessions');
+    expect(t).toContain('Starter tips');
+  });
+
+  it('sagt "proven reuse", sobald eine Lektion abgerufen wurde', () => {
+    const t = sitzungsKontext([starter('a:b'), { topic: 'deploy:api', what_worked: 'x', recall_count: 3 }]);
+    expect(t).toContain('Top by proven reuse');
+    expect(t).toContain('earlier sessions');
+  });
+});
+
 describe('der abhaengigkeitsfreie Hook nutzt denselben Rahmen', () => {
   it('tools/ambient-recall/lib.mjs liefert byteweise dieselbe Ausgabe', async () => {
     const lib = resolve(__dirname, '..', '..', '..', '..', 'tools', 'ambient-recall', 'lib.mjs');

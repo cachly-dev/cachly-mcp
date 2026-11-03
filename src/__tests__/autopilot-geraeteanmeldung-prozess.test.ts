@@ -58,6 +58,8 @@ async function starteGegenstelle(): Promise<{ url: string; anfragen: Anfrage[]; 
       // Ab hier soll der Lauf enden: 401 beendet die Einrichtung mit Exit 1.
       if (pfad === '/api/v1/instances') return json(401, { error: 'test stops here' });
       if (pfad === '/api/v1/telemetry/mcp') return json(200, { ok: true });
+      // cli-1 (03.11.2026): init fragt vor dem Schreiben, ob Schluessel und Instanz zusammenpassen.
+      if (pfad === `/api/v1/instances/${INSTANZ}/memory`) return json(200, { top_lessons: [] });
       return json(404, { error: 'not found' });
     });
   });

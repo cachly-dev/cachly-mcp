@@ -1901,6 +1901,7 @@ export async function handleTeamTool(
         for (const target of targets) {
           const ergebnis = await setzeAnweisungsblock(target.path, block, target.prefix);
           const wie = ergebnis === 'written' ? 'written'
+            : ergebnis === 'unchanged' ? 'already current, nothing changed'
             : ergebnis === 'updated' ? 'cachly block updated, rest of the file unchanged'
             : 'cachly block appended, your text kept';
           written.push(`✅ [${target.ide}] → \`${target.path.replace(project_dir, '.')}\` (${wie})`);

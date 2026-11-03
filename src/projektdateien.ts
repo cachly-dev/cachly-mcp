@@ -67,7 +67,7 @@ export interface AnweisungsDatei {
   nurMit?: { projekt?: readonly string[]; heim?: readonly string[] };
 }
 
-export type BlockErgebnis = 'written' | 'updated' | 'appended';
+export type BlockErgebnis = 'written' | 'updated' | 'appended' | 'unchanged';
 
 /** Ergebnis je Datei: geschrieben oder ein gemeldeter Fehler samt Grund. */
 export type SchreibErgebnis = BlockErgebnis | `failed:${string}`;
@@ -101,7 +101,11 @@ export async function setzeAnweisungsblock(datei: string, block: string, prefix?
     const vorhanden = await readFile(datei, 'utf-8');
     if (vorhanden.includes(CLAUDE_MD_MARKER_START)) {
       // Funktion als Ersatz: ein "$" im Block (z. B. "$PATH") bleibt woertlich.
-      await writeFile(datei, vorhanden.replace(blockMuster(), () => block), 'utf-8');
+      const neu = vorhanden.replace(blockMuster(), () => block);
+      // cli-7 (03.11.2026): gleicher Inhalt = nicht schreiben. Sonst aenderte jeder
+      // init-Lauf die Dateizeit, Editoren luden neu, und "Updated" stimmte nicht.
+      if (neu === vorhanden) return 'unchanged';
+      await writeFile(datei, neu, 'utf-8');
       return 'updated';
     }
     await appendFile(datei, '\n' + block + '\n', 'utf-8');
@@ -126,6 +130,15 @@ export const ANWEISUNGS_DATEIEN: readonly AnweisungsDatei[] = [
   { pfad: ['.junie', 'guidelines.md'], nurMit: { projekt: ['.junie'] } },
   // Continue liest .continue/rules/*.md; nur wo Continue benutzt wird (Projekt oder ~/.continue).
   { pfad: ['.continue', 'rules', 'cachly.md'], prefix: CONTINUE_RULE_FRONTMATTER, nurMit: { projekt: ['.continue'], heim: ['.continue'] } },
+  // Zed liest genau EINE Regeldatei, die erste in dieser Reihenfolge: .rules,
+  // .cursorrules, .windsurfrules, .clinerules, .github/copilot-instructions.md,
+  // AGENT.md, AGENTS.md, CLAUDE.md (zed.dev/docs/ai/rules, Polsia 03.11.2026).
+  // Unser Block steht immer in .windsurfrules — liegt aber schon eine eigene
+  // .rules oder .cursorrules im Projekt, sieht Zed ihn nie. Deshalb kommt er
+  // dort mit hinein, und nur dort, wo die Datei schon existiert: eine neue
+  // .rules wuerde in Zed die eigenen Regeln aus .cursorrules verdecken.
+  { pfad: ['.rules'], nurMit: { projekt: ['.rules'] } },
+  { pfad: ['.cursorrules'], nurMit: { projekt: ['.cursorrules'] } },
 ];
 
 /** Der Pflichtblock fuer alle Anweisungsdateien — die EINZIGE Quelle (init, autopilot, setup_ai_memory). */

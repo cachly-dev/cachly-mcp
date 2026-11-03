@@ -1010,6 +1010,7 @@ import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } fr
 import {
   CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, EDITOR_FILES, ANWEISUNGS_DATEIEN, buildClaudeMdBlock, setzeAnweisungsblock, sollSchreiben, type SchreibErgebnis,
 } from './projektdateien.js';
+import { klassiereArgument, leseFlag, flagsOhneWert, pruefeInitEingaben } from './cli-argumente.js';
 // buildClaudeMdBlock liegt seit 0.10.212 in projektdateien.ts (eine Quelle fuer init, autopilot und setup_ai_memory).
 // Die Gleichheitstests in web, sdk/vscode und sdk/intellij lesen die Funktion dort.
 export { buildClaudeMdBlock };
@@ -2477,6 +2478,7 @@ export async function writeInstructions(projectDir: string, instanceId: string, 
 /** Eine Zeile je Datei fuer die Konsole. */
 export function anweisungsZeile(datei: string, res: SchreibErgebnis): string {
   if (res.startsWith('failed:')) return `⚠️  Could not write ${datei}: ${res.slice(7)} (the rest of the setup continues)`;
+  if (res === 'unchanged') return `✓  Unchanged: ${datei}`;
   const verb = res === 'updated' ? '✅ Updated' : res === 'appended' ? '✅ Appended to' : '✅ Written';
   return `${verb}: ${datei}`;
 }
@@ -2646,6 +2648,10 @@ if (process.argv[2] === 'export') {
       // weitergereicht statt geschluckt — ein abgeschnittener Export, der wie
       // ein vollstaendiger aussieht, ist schlimmer als ein Fehler.
       if (dump.complete === false) unvollstaendig = dump.note ?? 'the server reported an incomplete read';
+      // cli-8 (03.11.2026): weniger geschrieben als der Server zaehlt = laut sagen, nicht "complete".
+      else if (typeof dump.lesson_count === 'number' && lessons.length < dump.lesson_count) {
+        unvollstaendig = `the server counts ${dump.lesson_count} lessons, but only ${lessons.length} could be read as lessons`;
+      }
     } else if (expRes.status === 404) {
       // Aeltere Server kennen /export noch nicht. Dann gibt es die
       // Zusammenfassung — aber der Nutzer erfaehrt, dass er sie bekommt.
@@ -3442,7 +3448,18 @@ if (process.argv[2] === 'badge') {
 // ── CLI: no-args splash screen ────────────────────────────────────────────────
 // When run with no recognized subcommand, show a compelling pitch + help.
 
-if (!process.argv[2] && process.stdout.isTTY) {
+// cli-5 (03.11.2026): --help, --version und unbekannte Befehle am Terminal starteten
+// still den Stdio-Server. Jetzt: Hilfe bzw. Version und Ende. Der MCP-Start ohne
+// Argument und mit Pipes (Editor) bleibt unveraendert.
+const _argumentArt = klassiereArgument(process.argv[2], process.stdin.isTTY === true && process.stdout.isTTY === true);
+if (_argumentArt === 'version') {
+  process.stdout.write(`${CURRENT_VERSION}\n`, () => process.exit(0));
+  await new Promise(() => undefined);
+}
+if (_argumentArt === 'unbekannt') {
+  console.error(`\nUnknown command: ${process.argv[2]}`);
+}
+if ((!process.argv[2] && process.stdout.isTTY) || _argumentArt === 'hilfe' || _argumentArt === 'unbekannt') {
   console.log('');
   console.log('\x1b[35m  ╔═══════════════════════════════════════════════════════╗\x1b[0m');
   console.log('\x1b[35m  ║\x1b[0m  \x1b[1m🧠 cachly — Persistent AI Memory for Developers\x1b[0m   \x1b[35m║\x1b[0m');
@@ -3490,7 +3507,7 @@ if (!process.argv[2] && process.stdout.isTTY) {
   // gleichzeitig als 122 und als 126, weil beide von Hand gepflegt wurden.
   console.log(`  \x1b[90mGDPR · German servers · ${TOOLS.length} MCP tools\x1b[0m`);
   console.log('');
-  process.exit(0);
+  process.exit(_argumentArt === 'unbekannt' ? 1 : 0);
 }
 
 // ── CLI: cachly-mcp init ──────────────────────────────────────────────────────────
@@ -3553,7 +3570,13 @@ if (process.argv[2] === 'init') {
   const { resolve, dirname } = await import('node:path');
 
   const argv = process.argv.slice(3);
-  const flag = (name: string) => { const i = argv.indexOf(`--${name}`); return i !== -1 ? argv[i + 1] : undefined; };
+  // cli-1 (03.11.2026): ein folgendes --flag ist kein Wert (sonst wurde "--api-key" die Instanz).
+  const flag = (name: string) => leseFlag(argv, name);
+  const ohneWert = flagsOhneWert(argv, ['instance-id', 'api-key', 'editor', 'project-dir', 'api-url']);
+  if (ohneWert.length > 0) {
+    console.error(`\nMissing value for ${ohneWert.map((n) => `--${n}`).join(', ')}. Nothing was written.\n`);
+    process.exit(1);
+  }
 
   let instanceId = flag('instance-id') ?? process.env.CACHLY_BRAIN_INSTANCE_ID;
   let apiKey     = flag('api-key')     ?? process.env.CACHLY_JWT;
@@ -3598,14 +3621,42 @@ if (process.argv[2] === 'init') {
   }
 
   if (!instanceId || !apiKey) {
-    console.error('\nUsage: npx @cachly-dev/mcp-server@latest init --instance-id <uuid> --api-key <cky_live_...> [--editor claude|cursor|windsurf|copilot|continue|codex|gemini] [--project-dir /path] [--api-url https://your-self-hosted-backend]\n');
+    console.error('\nUsage: npx @cachly-dev/mcp-server@latest init --instance-id <uuid> --api-key <cky_live_...> [--editor claude|cursor|windsurf|copilot|continue|cline|zed|codex|gemini] [--project-dir /path] [--api-url https://your-self-hosted-backend]\n');
     console.error('First time? Run the zero-config wizard (signs you in, auto-provisions): npx @cachly-dev/mcp-server@latest autopilot\n');
     console.error(`Get your credentials from: ${cachlyUrl('/setup-ai', 'init')}\n`);
     process.exit(1);
   }
 
-  if (editor === 'codex' || editor === 'gemini') {
+  // cli-1 + cli-6 (03.11.2026): erst pruefen, dann schreiben. Vorher ueberschrieb ein
+  // Tippfehler den funktionierenden Schluessel in credentials.json und meldete Erfolg.
+  const eingabeFehler = pruefeInitEingaben({ instanceId, apiKey, editor }, [...Object.keys(EDITOR_FILES), 'codex', 'gemini']);
+  if (eingabeFehler.length > 0) {
+    console.error('\nNothing was written:');
+    for (const f of eingabeFehler) console.error(`  - ${f}`);
+    console.error('');
+    process.exit(1);
+  }
+  try {
+    const antwort = await fetch(`${API_URL}/api/v1/instances/${instanceId}/memory`, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (antwort.status === 401 || antwort.status === 403 || antwort.status === 404) {
+      console.error(`\nThe server does not accept this key and instance (HTTP ${antwort.status}). Nothing was written.`);
+      console.error(`Get your credentials from: ${cachlyUrl('/setup-ai', 'init')}\n`);
+      process.exit(1);
+    }
+  } catch {
+    console.log('⚠️  Could not reach the server to check the key — writing the config anyway.');
+  }
+  const sichereSchluessel = () => {
     saveApiKey(apiKey);
+    // Die Instanz neben den Schluessel legen, aber keine vorhandene Instanz ueberschreiben.
+    if (!readInstanceId()) saveInstanceId(instanceId, { apiKey });
+  };
+
+  if (editor === 'codex' || editor === 'gemini') {
+    sichereSchluessel();
     console.log('');
     await installEditorMcp(editor, projectDir, buildServerEnv(apiKey, instanceId), '');
   } else {
@@ -3615,7 +3666,7 @@ if (process.argv[2] === 'init') {
     const { existsSync: exInit } = await import('node:fs');
     const configExisted = exInit(configPath);
     const prevConfig = configExisted ? await readFile(configPath, 'utf-8').catch(() => '') : '';
-    saveApiKey(apiKey);
+    sichereSchluessel();
     const merged = await mergeMcpConfig(configPath, apiKey, instanceId, editor, { readFile, existsSync: exInit });
     // Idempotent: only write when the content actually changes.
     if (merged !== prevConfig) {
@@ -3899,6 +3950,9 @@ if (process.argv[2] === 'health') {
     { editor: 'Copilot / Cline', path: '.vscode/mcp.json' },
     { editor: 'Zed',             path: '.zed/settings.json' },
     { editor: 'Continue.dev',    path: '.continue/config.json' },
+    // cli-2 (03.11.2026): init --editor codex|gemini schreibt hierhin; health kannte die Dateien nicht.
+    { editor: 'Codex',           path: '.codex/config.toml' },
+    { editor: 'Gemini CLI',      path: '.gemini/settings.json' },
   ];
   let configsFound = 0;
   for (const { editor, path } of editorConfigs) {
@@ -3919,7 +3973,7 @@ if (process.argv[2] === 'health') {
     }
   }
   if (configsFound === 0) {
-    fail('No editor MCP configs found — run: npx @cachly-dev/mcp-server@latest autopilot');
+    fail('No editor MCP configs found in this folder — run: npx @cachly-dev/mcp-server@latest init (add --editor cursor|copilot|codex|gemini if needed)');
   }
 
   // ── 5. Git hook ─────────────────────────────────────────────────────────────
@@ -5206,7 +5260,7 @@ if (httpPort) {
     beobachteHookKonto();
     starteBrandWachhund();
     beiStdinEnde(process.stdin, (grund) => {
-      process.stderr.write(`[cachly-mcp] ${grund} — Session zu Ende, Server geht mit
+      process.stderr.write(`[cachly-mcp] ${grund} — session over, server exits too
 `);
       void (async () => {
         await autoEndSession().catch(() => undefined);

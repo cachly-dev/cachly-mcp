@@ -103,8 +103,16 @@ export interface StopObservation {
 // Conservative fix-signal: only turns whose final message clearly reports a
 // resolved problem become auto-lessons. Anything looser floods the brain with
 // junk on every turn-end — the exact noise §6.4 warns about.
+// 03.11.2026 (plugin-stop-failure-stored-as-success): "root cause" allein traf auch
+// "root cause unknown" und speicherte ein Scheitern als Erfolg. Jetzt nur noch
+// "root cause was/found/is ...", und Zweifelswoerter (ZWEIFEL_RE) sperren die Nachricht.
 const FIX_SIGNAL_RE =
-  /\b(fixed|resolved|behoben|gefixt|root cause|the bug was|der fehler (lag|war)|ursache (war|gefunden)|now passes|tests? (are|is|sind) (green|grün)|deployed successfully)\b/i;
+  /\b(fixed|resolved|behoben|gefixt|root cause (was|is|found)|the bug was|der fehler (lag|war)|ursache (war|gefunden)|now passes|tests? (are|is|sind) (green|grün)|deployed successfully)\b/i;
+
+// Wer scheitert, schreibt "could not", "still red", "unknown", "konnte nicht" ...
+// Solche Nachrichten sind kein Beleg fuer eine Loesung und werden nicht gespeichert.
+const ZWEIFEL_RE =
+  /\b(could not|couldn't|cannot|can't|unable to|not (yet )?(fixed|resolved|working)|still (fail|red|broken|not|deadlock)\w*|unknown|unclear|gave up|nicht (behoben|gefixt|gel(ö|oe)st)|konnte (ich )?(\w+ )?nicht|noch nicht|weiterhin|unklar)\b/i;
 
 /**
  * Derive an auto-learn observation from a Stop payload, or null when the turn
@@ -114,7 +122,10 @@ export function stopObservation(payload: HookPayload): StopObservation | null {
   const msg = (payload.last_assistant_message ?? '').trim();
   if (msg.length < 80) return null; // too short to describe a real fix
   if (!FIX_SIGNAL_RE.test(msg)) return null;
-  const firstLine = msg.split('\n').find((l) => l.trim().length > 0)?.trim() ?? msg;
+  if (ZWEIFEL_RE.test(msg)) return null;
+  // Thema aus der Zeile mit dem Loesungssignal, nicht aus der Hoeflichkeitsfloskel am Anfang.
+  const zeilen = msg.split('\n').map((l) => l.trim()).filter((l) => l.length > 0);
+  const firstLine = zeilen.find((l) => FIX_SIGNAL_RE.test(l)) ?? zeilen[0] ?? msg;
   return {
     action: firstLine.slice(0, 200),
     outcome: 'success',

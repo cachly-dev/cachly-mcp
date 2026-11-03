@@ -27,7 +27,7 @@ problem returns. Your Brain (the store of your lessons) lives on EU servers.
 There is no JSON to write, no path to set and no key to copy. Without a key, cachly creates
 a test Brain on EU servers when the session starts (the plugin hook does it; the first tool
 call does it if the hook did not). The test Brain has 14 days of
-the Dev tier. After that it runs on the free tier with the same key.
+the Solo tier. After that it runs on the free tier with the same key.
 
 Check it with `claude mcp list`. You should see `plugin:cachly-brain:cachly … ✔ Connected`.
 `claude plugin details` shows `MCP servers (0)` even when the server runs, because it
@@ -37,9 +37,9 @@ The plugin adds three Claude Code hooks:
 
 | Hook | What it does |
 |------|--------------|
-| `SessionStart` | Gives your AI a briefing: last session, open failures, recent lessons |
+| `SessionStart` | Gives your AI a short briefing: the 5 most-reused lessons (on a new Brain: starter tips) |
 | `UserPromptSubmit` | Puts the lessons that match your prompt next to it |
-| `Stop` | Can record a fix while it is fresh |
+| `Stop` | Saves a lesson when the AI's last message clearly reports a fix. It skips messages that say something failed or is unclear. It tells you nothing when it saves. |
 
 Turn on auto-update once: `/plugin` → **Marketplaces** → **cachly** → **Enable auto-update**.
 Claude Code leaves it off for marketplaces outside Anthropic's own. The MCP server updates
