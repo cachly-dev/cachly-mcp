@@ -1863,7 +1863,25 @@ class UnknownToolError extends Error {}
 // Prompt-Hook (JetBrains, Copilot) hatten nur diesen Satz als Anstoss, und das
 // Modell entschied jedes Mal, die Aufgabe sei trivial. Jetzt: JEDE Aufgabe,
 // und zwar zuerst.
-const CACHLY_MCP_INSTRUCTIONS = `This project has a Cachly AI Brain — persistent, cross-session memory of past fixes, decisions, and gotchas for THIS codebase. Use it proactively; it makes you faster and stops you repeating known mistakes.
+// Die Anweisung, die jeder MCP-Client beim Verbinden bekommt — fuer Nutzer ohne
+// Regeldatei (CLAUDE.md) die EINZIGE Stelle, die der KI sagt, cachly zu fragen.
+//
+// Gemessen 03.11.2026 (Claude Code 2.1.314, nur cachly als Server, keine Hooks,
+// keine CLAUDE.md, Aufgabe "Test schlaegt fehl, behebe den Fehler"):
+//   alte Anweisung ("Use it proactively ..."), 26 bzw. 8 Werkzeuge, Sonnet und
+//     Opus: 0 von 5 Laeufen riefen ein cachly-Werkzeug
+//   diese Anweisung (erster Satz zwingend, nennt die Werkzeugsuche): 4 von 4
+//     (Sonnet 2, Opus 1, Haiku 1) riefen smart_recall, zweimal als ersten Schritt
+//   mit Regeldatei (CLAUDE.md, wie setup sie schreibt): 3 von 3
+// Messaufbau: scratchpad aktivierungsprobe/lauf.sh (claude -p --strict-mcp-config
+// --setting-sources project), ein Test-Brain mit User-Agent cachly-test.
+// Anlass: Kein fremdes Konto hatte je einen Abruf; 4 Konten mit verbundenem
+// Server (5–13 Sitzungen) riefen nie ein Werkzeug. Claude Code laedt
+// MCP-Werkzeuge erst ueber die Werkzeugsuche — ohne ausdruecklichen Auftrag
+// sucht die KI nicht danach. Den ersten Satz nicht weichspuelen.
+const CACHLY_MCP_INSTRUCTIONS = `REQUIRED FIRST STEP for every task in this project: before you read or edit any file, call the cachly tool smart_recall with one line describing the task (if it is not loaded yet, load it with your tool search first). It returns fixes, decisions and known traps from earlier sessions in THIS codebase. Do this even for small tasks.
+
+This project has a Cachly AI Brain — persistent, cross-session memory of past fixes, decisions, and gotchas for THIS codebase.
 
 - At the START of every task, before reading files or editing: call smart_recall with one line about the task. If it returns lessons, apply them before researching from scratch.
 - WHEN debugging an error: call causal_trace with the exact error first — a known fix may already exist.

@@ -7,6 +7,23 @@
 
 ---
 
+## [0.10.222] – 2026-11-03 — *"Your AI checks its memory first."*
+
+**The server now tells your AI, in its first sentence, to call `smart_recall`
+before it starts a task.** Until now the instructions said "use it
+proactively". Without a rule file such as `CLAUDE.md`, the AI never did.
+
+| Measured with Claude Code, cachly as the only MCP server, no rule file | Runs that called a cachly tool |
+| --- | --- |
+| Old instructions (Sonnet, Opus; 26 or 8 tools) | 0 of 5 |
+| New instructions (Sonnet ×2, Opus, Haiku) | 4 of 4, each called `smart_recall` |
+| Old instructions plus `CLAUDE.md` rule, for comparison | 3 of 3 |
+
+Task in every run: "price.test.js fails. Fix the bug in price.js so the test
+passes, then run the test to confirm." Nothing changes for setups that already
+have the rule file. Everyone who starts the server with `@latest` gets the new
+instructions on the next start.
+
 ## [0.10.221] – 2026-11-02 — *"No money amounts."*
 
 **The MCP server no longer shows money amounts for saved cost.** The digest
