@@ -7,7 +7,7 @@ description: >
   prediction (brain_predict), learning from git history (brain_from_git) and a
   Team Brain, with search in 11 languages.
   No sign-up needed: the first tool call creates a test Brain on EU servers.
-  Own account: npx @cachly-dev/mcp-server@latest claim.
+  Setup with rule files that make your AI use it: npx @cachly-dev/mcp-server@latest autopilot.
 
 startCommand:
   type: stdio

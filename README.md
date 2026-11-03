@@ -64,13 +64,19 @@ move is refused with a message.
 npx @cachly-dev/mcp-server@latest autopilot
 ```
 
-`autopilot` finds the editors you use and writes the MCP config for each. It adds a git
+`autopilot` finds the editors you use and writes the MCP config for each. It also writes
+the rule file each editor reads in every chat (`CLAUDE.md`, `AGENTS.md`,
+`.cursor/rules/cachly.mdc`, `.github/copilot-instructions.md`, `.windsurfrules`,
+`.clinerules`), which tells your AI to check its memory before a task. It adds a git
 hook that learns from your commits and fills your Brain from your git history. You sign
 in once in the browser (a device code, no password, no credit card), so the Brain
 belongs to your own account from the start. Restart your editor afterwards.
 
 You can also add the server by hand (see [Manual Setup](#manual-setup)). Without a key,
-the first tool call creates the same test Brain as in Claude Code.
+the first tool call creates the same test Brain as in Claude Code. Without a rule file,
+Claude Code still starts each task with `smart_recall`, because the server's instructions
+ask for it. Some editors do not pass those instructions to the AI (Cline, for example);
+there, the rule file from `autopilot` is what makes your AI use its memory.
 
 > **Already inside Claude, Cursor or Copilot?** Paste this to your AI:
 > ```
