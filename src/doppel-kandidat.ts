@@ -182,9 +182,9 @@ export async function mitFrist<T>(p: Promise<T | null>, ms: number = DOPPEL_WART
  */
 export function doppelHinweis(k: DoppelKandidat | null, schonGenannt = ''): string {
   if (!k || schonGenannt.includes(`\`${k.alt}\``)) return '';
-  return `♻️ Sagt fast dasselbe wie \`${k.alt}\` (Bedeutung ${k.naehe.toFixed(2)}). `
-    + `Ist das die neuere Fassung: dieselbe Lektion noch einmal mit \`ersetzt="${k.alt}"\` und \`grund\` schreiben. `
-    + 'Ist es eine eigene Sache: nichts zu tun.';
+  return `♻️ Says almost the same as \`${k.alt}\` (similarity ${k.naehe.toFixed(2)}). `
+    + `If this is the newer version: write the same lesson again with \`ersetzt="${k.alt}"\` and \`grund\`. `
+    + 'If it is a separate matter: nothing to do.';
 }
 
 /**

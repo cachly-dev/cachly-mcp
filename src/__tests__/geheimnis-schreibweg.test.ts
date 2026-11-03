@@ -47,7 +47,7 @@ describe('Geheimnis im Schreibweg', () => {
     expect(gespeichert).toContain('[GESCHWAERZT]');
     expect(aus).not.toContain(SCHLUESSEL);
     expect(aus).toContain('Geheimnis(se) geschwaerzt');
-    expect(aus).toMatch(/Beleg: `[0-9a-f]{8}`/);
+    expect(aus).toMatch(/receipt: `[0-9a-f]{8}`/);
   });
 
   it('ohne Geheimnis: kein Hinweis, Beleg wie immer', async () => {
@@ -60,6 +60,6 @@ describe('Geheimnis im Schreibweg', () => {
       ),
     );
     expect(aus).not.toContain('geschwaerzt');
-    expect(aus).toMatch(/Beleg: `[0-9a-f]{8}`/);
+    expect(aus).toMatch(/receipt: `[0-9a-f]{8}`/);
   });
 });

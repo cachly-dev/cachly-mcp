@@ -99,7 +99,7 @@ describe('Doppelung beim Schreiben: vermerken, im Briefing nennen, nie zusammenl
 
   it('Weg a: die Antwort von learn_from_attempts nennt die Doppelung sofort, mit dem Weg ersetzt', async () => {
     const antwort = String(await lerne('node1:kc-hostname-stillgelegt', '[DOPPEL] KC_HOSTNAME ist seit 03.09. stillgelegt, Keycloak 26 nimmt den Host aus der Anfrage.'));
-    expect(antwort).toMatch(/Sagt fast dasselbe wie `node1:keycloak-hostname-fest` \(Bedeutung 0\.8[45]\)/);
+    expect(antwort).toMatch(/Says almost the same as `node1:keycloak-hostname-fest` \(similarity 0\.8[45]\)/);
     expect(antwort).toContain('ersetzt="node1:keycloak-hostname-fest"');
   });
 
@@ -110,7 +110,7 @@ describe('Doppelung beim Schreiben: vermerken, im Briefing nennen, nie zusammenl
     expect(dauer).toBeGreaterThanOrEqual(DOPPEL_WARTE_MS - 50);
     expect(dauer).toBeLessThan(DOPPEL_WARTE_MS + 800);
     expect(antwort).toContain('Lesson stored');
-    expect(antwort).not.toContain('Sagt fast dasselbe');
+    expect(antwort).not.toContain('Says almost the same');
     await vi.waitFor(async () => {
       expect(Object.keys(await redis.hgetall(DOPPEL_SCHLUESSEL))).toContain('node1:kc-langsam');
     }, { timeout: 5000 });
@@ -120,7 +120,7 @@ describe('Doppelung beim Schreiben: vermerken, im Briefing nennen, nie zusammenl
     const antwort = String(await lerne('node1:keycloak-realm-export', '[VERWANDT] Der Keycloak-Realm wird als JSON exportiert und im Repo keycloak-deploy gepflegt.'));
     await warteAufPruefung('node1:keycloak-realm-export');
 
-    expect(antwort).not.toContain('Sagt fast dasselbe');
+    expect(antwort).not.toContain('Says almost the same');
     expect(await redis.hgetall(DOPPEL_SCHLUESSEL)).toEqual({});
     const briefing = String(await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch));
     expect(briefing).not.toContain('Possible duplicates');

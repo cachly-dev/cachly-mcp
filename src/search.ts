@@ -1840,7 +1840,10 @@ async function bestandHolen(
     const stream = redis.scanStream({ match: pattern, count: 500 });
     return new Promise<string[]>((resolve, reject) => {
       stream.on('data', (batch: string[]) => {
-        keys.push(...batch.filter((k: string) => !k.endsWith(':meta')));
+        // cachly:idx:hash:<datei> ist der Aenderungsabdruck von index_project
+        // ("17:17:e535…"), kein Inhalt. Das Muster cachly:idx:* traf ihn mit;
+        // am 03.11.2026 stand er im Probelauf als eigener Treffer in smart_recall.
+        keys.push(...batch.filter((k: string) => !k.endsWith(':meta') && !k.startsWith('cachly:idx:hash:')));
       });
       stream.on('end', () => resolve(keys));
       stream.on('error', reject);

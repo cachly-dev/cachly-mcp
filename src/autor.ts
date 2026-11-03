@@ -188,9 +188,9 @@ export function autorHinweis(h: AutorHerkunft): string | null {
   // Wer ausdruecklich anonym speichert, bekommt keine Belehrung.
   if (h.quelle === 'anonym') return null;
   return (
-    `👤 **Kein Autor ermittelt** — weder \`author\`, noch \`CACHLY_AUTHOR\`, noch \`git config user.name\`. ` +
-    `Ohne Autor zählt diese Lektion nicht als Team-Wissen: \`brain_who_knows\` findet niemanden und ` +
-    `Wiederverwendung über Personengrenzen bleibt ungezählt. Ein \`git config user.name "Vorname"\` ` +
-    `im Projekt genügt für alle künftigen Lektionen.`
+    `👤 **No author found** — neither \`author\`, nor \`CACHLY_AUTHOR\`, nor \`git config user.name\`. ` +
+    `Without an author this lesson does not count as team knowledge: \`brain_who_knows\` finds nobody and ` +
+    `reuse across people stays uncounted. A \`git config user.name "Your Name"\` ` +
+    `in the project is enough for all future lessons.`
   );
 }

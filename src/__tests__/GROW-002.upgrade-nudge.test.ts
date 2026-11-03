@@ -20,27 +20,27 @@ const FREI = 500; // Freimenge je Monat, Quelle: instance_handler.go Z.420-423
 
 describe('GROW-002: der Hinweis kommt vor der Wand, nicht danach', () => {
   it('schweigt bei unbegrenzten Abrufen (Pro und darueber, limit = -1)', () => {
-    expect(upgradeNudge({ used: 99_999, limit: -1, savedMins: 5000 })).toBeNull();
+    expect(upgradeNudge({ used: 99_999, limit: -1 })).toBeNull();
   });
 
   it('schweigt, wenn die Grenze unbekannt ist (limit = 0 — Stats nicht erreichbar)', () => {
-    expect(upgradeNudge({ used: 400, limit: 0, savedMins: 5000 })).toBeNull();
+    expect(upgradeNudge({ used: 400, limit: 0 })).toBeNull();
   });
 
   it('schweigt unterhalb von 80 Prozent — kein Genoergel bei normaler Nutzung', () => {
-    expect(upgradeNudge({ used: 0, limit: FREI, savedMins: 600 })).toBeNull();
-    expect(upgradeNudge({ used: 399, limit: FREI, savedMins: 600 })).toBeNull();
+    expect(upgradeNudge({ used: 0, limit: FREI })).toBeNull();
+    expect(upgradeNudge({ used: 399, limit: FREI })).toBeNull();
   });
 
   it('meldet sich ab 80 Prozent und nennt die gemessene Restzahl', () => {
-    const text = upgradeNudge({ used: 400, limit: FREI, savedMins: 0 });
+    const text = upgradeNudge({ used: 400, limit: FREI });
     expect(text).toBeTruthy();
     expect(text as string).toContain('100'); // 500 - 400 = 100 Abrufe uebrig
   });
 
   it('nennt bei aufgebrauchter Menge die Null, nicht eine negative Zahl', () => {
-    const genau = upgradeNudge({ used: FREI, limit: FREI, savedMins: 0 }) as string;
-    const drueber = upgradeNudge({ used: FREI + 37, limit: FREI, savedMins: 0 }) as string;
+    const genau = upgradeNudge({ used: FREI, limit: FREI }) as string;
+    const drueber = upgradeNudge({ used: FREI + 37, limit: FREI }) as string;
     expect(genau).toBeTruthy();
     expect(drueber).toBeTruthy();
     expect(genau).toContain('0');
@@ -48,33 +48,28 @@ describe('GROW-002: der Hinweis kommt vor der Wand, nicht danach', () => {
   });
 
   it('fuehrt zur Preisseite, damit der naechste Schritt ein Klick ist', () => {
-    const text = upgradeNudge({ used: 450, limit: FREI, savedMins: 0 }) as string;
+    const text = upgradeNudge({ used: 450, limit: FREI }) as string;
     expect(text).toContain('cachly.dev/pricing');
   });
 
   it('nennt WEDER Preis NOCH Prozentzahl (Drift-Schutz, Lehre RES-017)', () => {
     for (const used of [400, 450, 500, 900]) {
-      const text = upgradeNudge({ used, limit: FREI, savedMins: 3000 }) as string;
+      const text = upgradeNudge({ used, limit: FREI }) as string;
       expect(text).not.toMatch(/€|EUR|\bUSD\b|\$\d/);
       expect(text).not.toMatch(/\d+\s*%/);
     }
   });
 
-  it('stellt den Nutzen daneben, sobald er messbar ist (>= 60 Minuten)', () => {
-    const mitNutzen = upgradeNudge({ used: 450, limit: FREI, savedMins: 120 }) as string;
-    expect(mitNutzen).toContain('2h');
-  });
-
-  it('behauptet keinen Nutzen, wenn keiner gemessen wurde (< 60 Minuten)', () => {
-    const ohneNutzen = upgradeNudge({ used: 450, limit: FREI, savedMins: 12 }) as string;
-    expect(ohneNutzen).toBeTruthy();
-    expect(ohneNutzen).not.toMatch(/saved/i);
+  it('nennt keine gesparte Zeit — das war eine Schaetzung, keine Zaehlung (03.11.2026)', () => {
+    const text = upgradeNudge({ used: 450, limit: FREI }) as string;
+    expect(text).toBeTruthy();
+    expect(text).not.toMatch(/saved|~\d+\s*(h|m|min)\b/i);
   });
 
   it('vertraegt kaputte Eingaben, statt die Sitzung zu sprengen', () => {
-    expect(upgradeNudge({ used: Number.NaN, limit: FREI, savedMins: 0 })).toBeNull();
-    expect(upgradeNudge({ used: 450, limit: Number.NaN, savedMins: 0 })).toBeNull();
-    expect(() => upgradeNudge({ used: -5, limit: FREI, savedMins: -5 })).not.toThrow();
+    expect(upgradeNudge({ used: Number.NaN, limit: FREI })).toBeNull();
+    expect(upgradeNudge({ used: 450, limit: Number.NaN })).toBeNull();
+    expect(() => upgradeNudge({ used: -5, limit: FREI })).not.toThrow();
   });
 });
 
@@ -101,11 +96,10 @@ describe('GROW-002: die Nahtstelle — der Hinweis haengt wirklich im Briefing',
     // Genau das Genoergel, das der Vertrag ausschliesst. Deshalb wird jetzt auf
     // die Zeichenkette verankert, die es NUR im Briefing gibt.
     const src = readFileSync(new URL('../handlers/brain.ts', import.meta.url), 'utf8');
-    // ANKER VERSCHOBEN 22.08.2026: Der alte Satz "(time not re-researching
-    // known fixes)" ist weg — die Zahl nennt jetzt ihre Grundlage. Der neue
-    // Anker erfuellt dieselbe Bedingung: er kommt NUR im Briefing vor, nicht
-    // im Pro-Lektion-Banner von smart_recall. Die Probe unten beweist das.
-    const anker = src.indexOf('of your own lessons that already helped');
+    // ANKER VERSCHOBEN 22.08.2026 und 03.11.2026: Die Zeitzeile im Briefing
+    // ist ganz weg (nur Gezaehltes). Der Anker ist jetzt der Kopf des
+    // Briefings selbst — er kommt NUR dort vor. Die Probe unten beweist das.
+    const anker = src.indexOf('Session Briefing**${providerLabel}');
     const aufruf = src.indexOf('upgradeNudge(');
     expect(anker).toBeGreaterThan(-1);
     expect(aufruf).toBeGreaterThan(-1);
@@ -118,12 +112,12 @@ describe('GROW-002: die Nahtstelle — der Hinweis haengt wirklich im Briefing',
     // ersten Treffer im smart_recall-Banner und bewies damit das Gegenteil von
     // dem, was drueberstand. Ein Anker, der mehrfach vorkommt, ist kein Anker.
     const src = readFileSync(new URL('../handlers/brain.ts', import.meta.url), 'utf8');
-    const treffer = src.split('of your own lessons that already helped').length - 1;
+    const treffer = src.split('Session Briefing**${providerLabel}').length - 1;
     expect(treffer, 'Anker kommt mehrfach vor — die Probe oben wird unzuverlaessig').toBe(1);
 
     // Die Gegenprobe, die zeigt, dass diese Zaehlung ueberhaupt etwas findet:
-    // die alte, mehrdeutige Zeichenkette steht weiterhin mehrfach da.
-    const alteFalle = src.split('Brain saved you ~').length - 1;
+    // der kuerzere, mehrdeutige Wortlaut steht mehrfach da.
+    const alteFalle = src.split('Session Briefing').length - 1;
     expect(alteFalle).toBeGreaterThan(1);
   });
 

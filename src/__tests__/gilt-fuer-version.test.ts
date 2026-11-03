@@ -80,7 +80,7 @@ describe('gilt_fuer — Schreiben, Abruf, Einblendung', () => {
     expect((await gespeichert('deploy:x')).gilt_fuer).toEqual(['next@<15', 'react@>=18 <19']);
     expect(antwort).toContain('next@<15');
     // Unlesbares wird benannt und NICHT gespeichert — die Lektion selbst wird trotzdem gespeichert
-    expect(antwort).toContain('gilt_fuer nicht gespeichert');
+    expect(antwort).toContain('gilt_fuer not stored');
     expect(antwort).toContain('unlesbar');
     expect(antwort).toContain('go@kaputt');
     expect((await gespeichert('deploy:x')).what_worked).toBe('plugh Text.');
@@ -89,21 +89,21 @@ describe('gilt_fuer — Schreiben, Abruf, Einblendung', () => {
   it('ohne gilt_fuer: kein Feld in der Lektion, keine Zeile in der Rueckmeldung', async () => {
     const antwort = String(await lerne('deploy:y', 'plugh Text.'));
     expect(await gespeichert('deploy:y')).not.toHaveProperty('gilt_fuer');
-    expect(antwort).not.toContain('Gilt fuer');
+    expect(antwort).not.toContain('Applies to');
     expect(antwort).not.toContain('gilt_fuer');
   });
 
   it('nur Unlesbares: die Lektion wird gespeichert, ohne Feld, mit Warnung', async () => {
     const antwort = String(await lerne('deploy:z', 'plugh Text.', { gilt_fuer: ['kaputt'] }));
     expect(await gespeichert('deploy:z')).not.toHaveProperty('gilt_fuer');
-    expect(antwort).toContain('gilt_fuer nicht gespeichert');
+    expect(antwort).toContain('gilt_fuer not stored');
   });
 
   it('Update ohne gilt_fuer behaelt den Bereich; [] loescht ihn; ein neuer ersetzt ihn', async () => {
     await lerne('deploy:u', 'plugh erste Fassung.', { gilt_fuer: ['next@<15'] });
     const u1 = String(await lerne('deploy:u', 'plugh zweite Fassung.', { grund: 'Text praezisiert' }));
     expect((await gespeichert('deploy:u')).gilt_fuer).toEqual(['next@<15']);
-    expect(u1).toContain('aus der Vorfassung uebernommen');
+    expect(u1).toContain('carried over from the previous version');
     await lerne('deploy:u', 'plugh dritte Fassung.', { grund: 'gilt jetzt ab 15', gilt_fuer: ['next@>=15'] });
     expect((await gespeichert('deploy:u')).gilt_fuer).toEqual(['next@>=15']);
     await lerne('deploy:u', 'plugh vierte Fassung.', { grund: 'gilt fuer alle', gilt_fuer: [] });
@@ -225,7 +225,7 @@ describe('gilt_fuer — Schreiben, Abruf, Einblendung', () => {
     schreibePackageJson(projekt, '^15.2.0');
     stelleProjektAuf(projekt);
     const antwort = await einzeln('next:cache-plain');
-    expect(antwort).not.toContain('Gilt fuer');
+    expect(antwort).not.toContain('Applies to');
     expect(antwort).not.toContain('GILT NICHT');
   });
 

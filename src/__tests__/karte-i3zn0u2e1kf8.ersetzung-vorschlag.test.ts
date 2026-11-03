@@ -81,7 +81,7 @@ describe('im Schreibpfad', () => {
       instance_id: 'i1', topic: 'deploy:cache-npm-zentral', outcome: 'success',
       what_worked: 'Der plugh-Cache wird doch nicht von Hand geleert — stattdessen zentral.',
     }, getConn, noopApiFetch));
-    expect(out).toContain('Korrektur von');
+    expect(out).toContain('correction of');
     expect(out).toContain('ersetzt="deploy:cache-npm"');
   });
 
@@ -95,7 +95,7 @@ describe('im Schreibpfad', () => {
       instance_id: 'i1', topic: 'monitoring:loki-rotation', outcome: 'success',
       what_worked: 'Das xyzzy-Log rotiert jetzt woechentlich per Timer.',
     }, getConn, noopApiFetch));
-    expect(out).not.toContain('Korrektur von');
+    expect(out).not.toContain('correction of');
   });
 
   it('wer die Kante schon setzt, bekommt keinen Vorschlag obendrauf', async () => {
@@ -109,7 +109,7 @@ describe('im Schreibpfad', () => {
       what_worked: 'Der plugh-Cache wird doch nicht von Hand geleert — stattdessen zentral.',
       ersetzt: 'deploy:cache-npm',
     }, getConn, noopApiFetch));
-    expect(out).not.toContain('Korrektur von');
-    expect(out).toContain('verdraengt');
+    expect(out).not.toContain('correction of');
+    expect(out).toContain('recall hides the old version');
   });
 });

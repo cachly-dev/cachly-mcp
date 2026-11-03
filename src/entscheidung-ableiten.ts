@@ -53,5 +53,5 @@ export function leiteEntscheidungAb(text: string): Entscheidung | null {
 
 /** Die Zeile, die der Recall zeigt — an EINEM Ort, fuer beide Ansichten. */
 export function entscheidungsZeile(e: Entscheidung): string {
-  return `⚖️ **Bewusst entschieden GEGEN ${e.gegen}**${e.grund ? ` — Grund: ${e.grund}` : ''}. Nicht ohne NEUEN Grund aufweichen.`;
+  return `⚖️ **Deliberately decided AGAINST ${e.gegen}**${e.grund ? ` — reason: ${e.grund}` : ''}. Do not soften this without a NEW reason.`;
 }

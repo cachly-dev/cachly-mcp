@@ -78,10 +78,10 @@ export function geschaetzteToken(zeichen: number): number {
 export function kostenZeilen(k: SitzungsKosten): string[] {
   if (k.recalls === 0) return [];
   const zeilen = [
-    `🧾 **Gedächtnis-Kosten:** ${k.recalls} Recall${k.recalls === 1 ? '' : 's'}, davon ${k.wiederholungen} Wiederholung${k.wiederholungen === 1 ? '' : 'en'} (fast gleiche Anfrage), ~${geschaetzteToken(k.antwortZeichen)} Token Werkzeugantworten.`,
+    `🧾 **Memory cost:** ${k.recalls} recall${k.recalls === 1 ? '' : 's'}, ${k.wiederholungen} of them repeat${k.wiederholungen === 1 ? '' : 's'} (almost the same query), ~${geschaetzteToken(k.antwortZeichen)} tokens of tool answers (est.).`,
   ];
   if (k.wiederholungen >= 2) {
-    zeilen.push('   ↪ Einmal abrufen, dann handeln — Umformulierungen liefern dieselben Treffer und kosten jede Runde den ganzen Kontext.');
+    zeilen.push('   ↪ Recall once, then act — rephrasing returns the same matches and costs the whole context every round.');
   }
   return zeilen;
 }

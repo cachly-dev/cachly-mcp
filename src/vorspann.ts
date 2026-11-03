@@ -168,23 +168,23 @@ export function vorspannHinweis(whatWorked: string | null | undefined): string |
    */
   if (b.traegtTatsache && b.abgeschnitten) {
     return (
-      `📏 **Der Vorspann endet mitten im Satz** — die Zahl steht vorn, ihre Wirkung nicht. ` +
-      `Das Briefing der nächsten Sitzung bricht bei ${VORSPANN_ZEICHEN} Zeichen ab und zeigt dann ` +
-      `eine Zahl ohne Bedeutung. Ein abgeschlossener Satz in den ersten ${VORSPANN_ZEICHEN} Zeichen ` +
-      `genügt: nicht „13 davon grün weil", sondern „13 Wächter waren grün, ohne etwas zu prüfen."`
+      `📏 **The opening stops mid-sentence** — the number is up front, its meaning is not. ` +
+      `The next session's briefing cuts off at ${VORSPANN_ZEICHEN} characters and then shows ` +
+      `a number without meaning. One complete sentence within the first ${VORSPANN_ZEICHEN} characters ` +
+      `is enough: not "13 of them green because", but "13 checks were green without testing anything."`
     );
   }
   if (b.traegtTatsache) return null;
 
   if (b.tatsacheStehtSpaeter) {
     return (
-      `📏 **Die entscheidende Tatsache steht bei Zeichen ${b.ersteTatsacheBei}** — das Briefing der nächsten ` +
-      `Sitzung endet bei ${VORSPANN_ZEICHEN}. Stell die Zahl, Adresse oder den Befehl an den Anfang von ` +
-      `\`what_worked\`; die Vorgeschichte gehört ans Ende oder in \`context\`.`
+      `📏 **The decisive fact starts at character ${b.ersteTatsacheBei}** — the next session's briefing ` +
+      `ends at ${VORSPANN_ZEICHEN}. Put the number, address or command at the start of ` +
+      `\`what_worked\`; the background belongs at the end or in \`context\`.`
     );
   }
   return (
-    `📏 **In den ersten ${VORSPANN_ZEICHEN} Zeichen steht keine Zahl, Adresse oder Befehl** — nur so viel sieht ` +
-    `die nächste Sitzung im Briefing. Trägt diese Lektion eine harte Tatsache, gehört sie nach vorn.`
+    `📏 **No number, address or command in the first ${VORSPANN_ZEICHEN} characters** — that is all the next ` +
+    `session sees in its briefing. If this lesson carries a hard fact, move it to the front.`
   );
 }

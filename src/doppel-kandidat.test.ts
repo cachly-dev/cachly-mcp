@@ -137,7 +137,7 @@ describe('Weg a: Satz in der Antwort und Frist', () => {
 
   it('nennt Thema, Naehe und den Weg ersetzt', () => {
     const s = doppelHinweis(k);
-    expect(s).toContain('`node1:keycloak-hostname-fest` (Bedeutung 0.85)');
+    expect(s).toContain('`node1:keycloak-hostname-fest` (similarity 0.85)');
     expect(s).toContain('ersetzt="node1:keycloak-hostname-fest"');
   });
 

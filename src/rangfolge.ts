@@ -432,11 +432,11 @@ export { ABLEHN_ABSTAND };
 export function knapperSiegSatz(abstand: number | null): string | null {
   if (abstand === null || abstand >= ABLEHN_ABSTAND) return null;
   return (
-    '⚖️ **Kein klarer Bester** — Platz 1 liegt nur '
+    '⚖️ **No clear winner** — rank 1 is only '
     + abstand.toFixed(2)
-    + ` Punkte vor Platz 2 (Schwelle ${ABLEHN_ABSTAND}). Bei so knappem Abstand ist die Reihenfolge `
-    + 'ein Ratespiel: gemessen treffen solche Antworten 6- bis 9-mal häufiger daneben als sonst. '
-    + 'Die Treffer unten sind das Nächstliegende, kein Befund.'
+    + ` points ahead of rank 2 (threshold ${ABLEHN_ABSTAND}). With a gap this small the order `
+    + 'is a guess: measured, such answers miss 6 to 9 times more often than others. '
+    + 'The matches below are the nearest entries, not a finding.'
   );
 }
 

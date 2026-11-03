@@ -64,7 +64,7 @@ describe('Karte pguy341m6u7s — Sichtbarkeits-Drift im Recall-Pfad', () => {
 
     // Kein Namens-Leak, keine Abruf-Anleitung auf ein privates Topic:
     expect(out).not.toContain('deploy:geheime-ursache');
-    expect(out).not.toContain('die gueltige Antwort:');
+    expect(out).not.toContain('the current answer:');
     // Die team-sichtbare alte Fassung bleibt lesbar (kein stiller Verlust):
     expect(out).toContain('liegt am Netz');
   });
@@ -79,9 +79,9 @@ describe('Karte pguy341m6u7s — Sichtbarkeits-Drift im Recall-Pfad', () => {
     }, getConn, noopApiFetch));
 
     expect(out).not.toContain('deploy:geheime-ursache');
-    expect(out).not.toContain('die gueltige Antwort steht in');
+    expect(out).not.toContain('the current answer is in');
     // Ehrlich bleiben: DASS ersetzt wurde, darf gesagt werden — nur nicht wodurch.
-    expect(out.toLowerCase()).toContain('ersetzt');
+    expect(out.toLowerCase()).toContain('replaced');
   });
 
   it('GEGENPROBE: team-sichtbarer Nachfolger — Banner und Wegweiser exakt wie bisher', async () => {
@@ -91,7 +91,7 @@ describe('Karte pguy341m6u7s — Sichtbarkeits-Drift im Recall-Pfad', () => {
     const recall = String(await handleBrainTool('recall_best_solution', {
       instance_id: 'i1', topic: 'deploy:alte-weisheit',
     }, getConn, noopApiFetch));
-    expect(recall).toContain('DIESE FASSUNG IST ERSETZT');
+    expect(recall).toContain('THIS VERSION IS REPLACED');
     expect(recall).toContain('deploy:echte-ursache');
   });
 });

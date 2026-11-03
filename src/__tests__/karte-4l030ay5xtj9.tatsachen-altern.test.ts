@@ -33,7 +33,7 @@ describe('Karte 4l030ay5xtj9 — gilt_ab und gilt_bis', () => {
     const out = String(await handleBrainTool('recall_best_solution', {
       instance_id: 'i1', topic: 'whisper:node4',
     }, getConn, noopApiFetch));
-    expect(out).toContain('Gilt seit 2026-08-13');
+    expect(out).toContain('Valid since 2026-08-13');
   });
 
   it('ein unlesbares gilt_ab wird NICHT gespeichert — kein erfundenes Datum', async () => {
@@ -60,13 +60,13 @@ describe('Karte 4l030ay5xtj9 — gilt_ab und gilt_bis', () => {
     const einzeln = String(await handleBrainTool('recall_best_solution', {
       instance_id: 'i1', topic: 'deploy:alt',
     }, getConn, noopApiFetch));
-    expect(einzeln).toContain('GALT BIS 2026-01-01');
+    expect(einzeln).toContain('WAS VALID UNTIL 2026-01-01');
     expect(einzeln).toContain('liegt am Netz'); // lesbar bleibt lesbar
 
     const suche = String(await handleBrainTool('smart_recall', {
       instance_id: 'i1', query: 'plugh timeout',
     }, getConn, noopApiFetch));
-    expect(suche).toContain('galt bis 2026-01-01');
+    expect(suche).toContain('was valid until 2026-01-01');
     expect(suche).toContain('liegt am Netz'); // auffindbar bleibt auffindbar
   });
 

@@ -91,7 +91,7 @@ describe('vorspannHinweis', () => {
     expect(h).toBeTruthy();
     // Ohne Zahl waere der Hinweis eine Ermahnung; mit Zahl ist er eine
     // Anweisung, die man in zehn Sekunden befolgen kann.
-    expect(h).toMatch(/Zeichen \d+/);
+    expect(h).toMatch(/character \d+/);
     expect(h).toContain('what_worked');
   });
 
@@ -136,7 +136,7 @@ describe('Vorspann: endet er mitten im Satz?', () => {
   it('und er bekommt einen Hinweis, obwohl die Zahlen vorn stehen', () => {
     const h = vorspannHinweis(ECHTER_FALL);
     expect(h).toBeTruthy();
-    expect(h).toContain('mitten im Satz');
+    expect(h).toContain('mid-sentence');
   });
 
   it('derselbe Inhalt mit abgeschlossenem Satz bekommt KEINEN Hinweis', () => {

@@ -245,7 +245,7 @@ export function alterssatzFuerBelegte(tage: readonly number[]): string | null {
   // Der JUENGSTE entscheidet: ein einziger frisch bestaetigter Treffer
   // beantwortet "is this still true?" — dann braucht es keinen Zusatz.
   if (juengster < ALTER_NENNEN_AB_TAGEN) return null;
-  if (gueltig.length === 1) return `Der belegte Treffer ist ${aeltester} Tage unbestätigt.`;
-  if (juengster === aeltester) return `Die belegten Treffer sind ${aeltester} Tage unbestätigt.`;
-  return `Die belegten Treffer sind seit ${juengster}–${aeltester} Tagen unbestätigt.`;
+  if (gueltig.length === 1) return `The backed match has not been confirmed for ${aeltester} days.`;
+  if (juengster === aeltester) return `The backed matches have not been confirmed for ${aeltester} days.`;
+  return `The backed matches have not been confirmed for ${juengster}–${aeltester} days.`;
 }

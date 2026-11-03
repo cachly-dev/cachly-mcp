@@ -34,7 +34,7 @@ describe('Karte rekvh30prcet — Grund am Ersetzt-Verweis', () => {
     const out = String(await lerne('deploy:echte-ursache', 'Der Timeout lag an DNS, nicht am Netz.', {
       ersetzt: 'deploy:alte-weisheit', grund: 'tcpdump zeigte 30 s DNS-Wartezeit, das Netz war frei',
     }));
-    expect(out).toContain('samt Grund');
+    expect(out).toContain('with the reason');
 
     const alt = JSON.parse((await redis.get('cachly:lesson:best:deploy:alte-weisheit'))!) as { ersetzt_grund?: string };
     expect(alt.ersetzt_grund).toBe('tcpdump zeigte 30 s DNS-Wartezeit, das Netz war frei');
@@ -42,8 +42,8 @@ describe('Karte rekvh30prcet — Grund am Ersetzt-Verweis', () => {
     const abruf = String(await handleBrainTool('recall_best_solution', {
       instance_id: 'i1', topic: 'deploy:alte-weisheit',
     }, getConn, noopApiFetch));
-    expect(abruf).toContain('DIESE FASSUNG IST ERSETZT');
-    expect(abruf).toContain('Grund: tcpdump zeigte 30 s DNS-Wartezeit');
+    expect(abruf).toContain('THIS VERSION IS REPLACED');
+    expect(abruf).toContain('Reason: tcpdump zeigte 30 s DNS-Wartezeit');
   });
 
   it('smart_recall nennt den Grund in der Verdraengungs-Notiz', async () => {
@@ -54,19 +54,19 @@ describe('Karte rekvh30prcet — Grund am Ersetzt-Verweis', () => {
     const out = String(await handleBrainTool('smart_recall', {
       instance_id: 'i1', query: 'deploy timeout netz',
     }, getConn, noopApiFetch));
-    expect(out).toContain('verdraengt');
-    expect(out).toContain('Grund: DNS-Wartezeit gemessen');
+    expect(out).toContain('hidden — replaced by');
+    expect(out).toContain('reason: DNS-Wartezeit gemessen');
   });
 
   it('GEGENPROBE: ohne grund steht "Grund nicht erfasst" — und die learn-Ausgabe bittet um die Zeile', async () => {
     await lerne('deploy:alte-weisheit', 'Der Timeout liegt am Netz.');
     const out = String(await lerne('deploy:echte-ursache', 'Der Timeout lag an DNS.', { ersetzt: 'deploy:alte-weisheit' }));
-    expect(out).toContain('Grund nicht erfasst');
+    expect(out).toContain('No reason recorded');
 
     const abruf = String(await handleBrainTool('recall_best_solution', {
       instance_id: 'i1', topic: 'deploy:alte-weisheit',
     }, getConn, noopApiFetch));
-    expect(abruf).toContain('Grund nicht erfasst');
-    expect(abruf).not.toContain('Grund: ');
+    expect(abruf).toContain('No reason recorded');
+    expect(abruf).not.toContain('Reason: ');
   });
 });

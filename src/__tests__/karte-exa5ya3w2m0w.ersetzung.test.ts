@@ -44,7 +44,7 @@ describe('Karte exa5ya3w2m0w — Ersetzung quer ueber Themen', () => {
 
   it('ein Verweis auf ein Thema, das nicht existiert, wird NICHT gespeichert', async () => {
     const out = String(await lerne('deploy:neu', 'Text.', { ersetzt: 'gibt:es-nicht' }));
-    expect(out).toContain('existiert nicht');
+    expect(out).toContain('does not exist');
     const neu = JSON.parse((await redis.get('cachly:lesson:best:deploy:neu'))!) as { ersetzt?: string };
     expect(neu.ersetzt).toBeUndefined();
   });
@@ -56,7 +56,7 @@ describe('Karte exa5ya3w2m0w — Ersetzung quer ueber Themen', () => {
     const out = String(await handleBrainTool('recall_best_solution', {
       instance_id: 'i1', topic: 'deploy:alte-weisheit',
     }, getConn, noopApiFetch));
-    expect(out).toContain('DIESE FASSUNG IST ERSETZT');
+    expect(out).toContain('THIS VERSION IS REPLACED');
     expect(out).toContain('deploy:echte-ursache');
     // Vorgeschichte bleibt lesbar — der alte Text steht weiter drin.
     expect(out).toContain('Der Timeout liegt am Netz.');
@@ -69,7 +69,7 @@ describe('Karte exa5ya3w2m0w — Ersetzung quer ueber Themen', () => {
     const out = String(await handleBrainTool('smart_recall', {
       instance_id: 'i1', query: 'plugh timeout',
     }, getConn, noopApiFetch));
-    expect(out).toContain('verdraengt');
+    expect(out).toContain('hidden — replaced by');
     expect(out).toContain('deploy:alte-weisheit');
     // Der alte VOLLTEXT erscheint nicht mehr als eigener Treffer.
     expect(out).not.toContain('liegt am Netz');
@@ -84,6 +84,6 @@ describe('Karte exa5ya3w2m0w — Ersetzung quer ueber Themen', () => {
     }, getConn, noopApiFetch));
     expect(out).toContain('sicht-a');
     expect(out).toContain('sicht-b');
-    expect(out).not.toContain('verdraengt');
+    expect(out).not.toContain('hidden — replaced by');
   });
 });

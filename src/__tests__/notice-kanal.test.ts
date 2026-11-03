@@ -44,7 +44,7 @@ describe('notice-Kanal: von der API bis in die Sitzung', () => {
     // known fixes)" ist weg — die Zahl nennt jetzt ihre Grundlage. Der neue
     // Anker erfuellt dieselbe Bedingung: er kommt NUR im Briefing vor, nicht
     // im Pro-Lektion-Banner von smart_recall. Die Probe unten beweist das.
-    const anker = quelle.indexOf('of your own lessons that already helped');
+    const anker = quelle.indexOf('Session Briefing**${providerLabel}');
     const stelle = quelle.indexOf('recallGate.notice');
     expect(anker).toBeGreaterThan(-1);
     expect(stelle).toBeGreaterThan(-1);

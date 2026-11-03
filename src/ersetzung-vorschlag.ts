@@ -78,20 +78,20 @@ export function schlageErsetzungVor(
     const tj = jaccard(neueWoerter, staemme(k.what_worked ?? ''));
     if (tn >= 0.5) {
       if (!bester || tn > bester.wert) {
-        bester = { topic: k.topic, grund: `Themen-Naehe ${(100 * tn).toFixed(0)} %`, wert: tn };
+        bester = { topic: k.topic, grund: `topic similarity ${(100 * tn).toFixed(0)} %`, wert: tn };
       }
     } else if (tj >= 0.3) {
       if (!bester || tj > bester.wert) {
-        bester = { topic: k.topic, grund: `Text-Ueberlappung ${(100 * tj).toFixed(0)} %`, wert: tj };
+        bester = { topic: k.topic, grund: `text overlap ${(100 * tj).toFixed(0)} %`, wert: tj };
       }
     }
   }
   if (!bester) return null;
 
   return (
-    `🔁 Das klingt wie eine Korrektur von \`${bester.topic}\` `
-    + `("${signal[0]}" + ${bester.grund}). Wenn ja: dieselbe Lektion noch einmal mit `
-    + `\`ersetzt="${bester.topic}"\` schreiben — dann wird die alte Fassung im Abruf `
-    + `verdraengt statt weiter als aktuell geliefert. Wenn nein: nichts zu tun.`
+    `🔁 This sounds like a correction of \`${bester.topic}\` `
+    + `("${signal[0]}" + ${bester.grund}). If so: write the same lesson again with `
+    + `\`ersetzt="${bester.topic}"\` — then recall hides the old version `
+    + `instead of still serving it as current. If not: nothing to do.`
   );
 }

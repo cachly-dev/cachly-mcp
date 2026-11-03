@@ -352,7 +352,7 @@ describe('Der dritte Ausgang: knapper Sieg', () => {
     // Erst der gelesene Wert, dann das Urteil — ohne den Abstand im Text
     // kann niemand pruefen, ob die Warnung berechtigt war.
     expect(s).toContain('0.03');
-    expect(s).toContain('Kein klarer Bester');
+    expect(s).toContain('No clear winner');
   });
 
   /*

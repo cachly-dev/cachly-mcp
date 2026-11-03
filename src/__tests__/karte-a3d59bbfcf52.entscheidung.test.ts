@@ -46,7 +46,7 @@ describe('leiteEntscheidungAb — die reine Ableitung', () => {
 
   it('entscheidungsZeile traegt die Warnung vor dem Aufweichen', () => {
     expect(entscheidungsZeile({ gegen: 'GraphQL', grund: 'zweite Wahrheit' }))
-      .toBe('⚖️ **Bewusst entschieden GEGEN GraphQL** — Grund: zweite Wahrheit. Nicht ohne NEUEN Grund aufweichen.');
+      .toBe('⚖️ **Deliberately decided AGAINST GraphQL** — reason: zweite Wahrheit. Do not soften this without a NEW reason.');
   });
 });
 
@@ -72,8 +72,8 @@ describe('im Schreib- und Lesepfad', () => {
     const out = String(await handleBrainTool('recall_best_solution', {
       instance_id: 'i1', topic: 'architektur:kein-plugh-gateway',
     }, getConn, noopApiFetch));
-    expect(out).toContain('Bewusst entschieden GEGEN ein plugh-Gateway');
-    expect(out).toContain('Nicht ohne NEUEN Grund aufweichen');
+    expect(out).toContain('Deliberately decided AGAINST ein plugh-Gateway');
+    expect(out).toContain('Do not soften this without a NEW reason');
   });
 
   it('GEGENPROBE: eine Lektion ohne Entscheidungs-Wortlaut bekommt KEINE Zeile', async () => {
@@ -86,6 +86,6 @@ describe('im Schreib- und Lesepfad', () => {
     const out = String(await handleBrainTool('recall_best_solution', {
       instance_id: 'i1', topic: 'deploy:xyzzy-cache',
     }, getConn, noopApiFetch));
-    expect(out).not.toContain('Bewusst entschieden GEGEN');
+    expect(out).not.toContain('Deliberately decided AGAINST');
   });
 });

@@ -7,6 +7,33 @@
 
 ---
 
+## [0.10.224] – 2026-11-03 — *"Your first session reads in one language and shows only what was counted."*
+
+We ran a full first session against a fresh test Brain (session start, three
+lessons, recalls with and without a match, an update, a trace, session end)
+and read every answer. Four things were wrong:
+
+- **"Brain saved you ~0min here" over an answer with no match.** The banner
+  only appeared from a lesson's second recall on, and since August 2026 a
+  lesson counts saved time only on its first recall, so it always said "~0min". It
+  also named a lesson that was not in the answer. The banner is gone.
+- **"Brain saved you ~6h 30m total" after one session with five lessons.**
+  The number was an estimate (30–240 min per lesson), not a count. The line is
+  gone from the briefing, and the upgrade notice no longer adds "You've
+  already saved ~Xh". This follows 0.10.221: users see counts only.
+- **German sentences for everyone.** Recall, update and session-end answers
+  are now English: `3 of 7 backed by evidence …`, `Did one of these help? …`,
+  `Update rejected: … needs the field grund`, `Memory cost: …`, `No clear
+  winner …`, the replacement notes (`hidden — replaced by …`, `THIS VERSION IS
+  REPLACED`), `Valid since` / `WAS VALID UNTIL`, the 100-character hint, the
+  near-duplicate and correction hints, `Applies to …` and the write receipt.
+- **An index fingerprint as a match.** `index_project` keeps a change
+  fingerprint per file (`cachly:idx:hash:<file>`, content like
+  `17:17:e535…`). Recall listed it as its own result. It is skipped now.
+
+Not changed in this release: the warnings of the write gate (suspicious text,
+redacted secrets) and the `brain_stats` sections are still German.
+
 ## [0.10.223] – 2026-11-03 — *"The first answer shows your project."*
 
 **A new or empty Brain now answers the first recall with your project's

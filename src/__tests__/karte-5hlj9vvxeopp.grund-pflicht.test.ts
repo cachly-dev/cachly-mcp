@@ -45,7 +45,7 @@ describe('Karte 5hlj9vvxeopp — grund-Pflicht beim Update', () => {
       what_worked: 'Fassung zwei — ohne Begruendung.',
     }, getConn, noopApiFetch);
 
-    expect(String(out)).toContain('Update abgewiesen');
+    expect(String(out)).toContain('Update rejected');
     expect(String(out)).toContain('grund');
     // Das Artefakt schlaegt die Meldung: der Bestand traegt weiter Fassung eins.
     expect(await redis.get('cachly:lesson:best:deploy:probe')).toBe(vorher);

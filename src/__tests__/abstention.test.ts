@@ -235,18 +235,18 @@ describe('alterssatzFuerBelegte — "is this still true?" als eigener Grund', ()
   });
 
   it('nennt bei EINEM belegten Treffer dessen Alter', () => {
-    expect(alterssatzFuerBelegte([40])).toBe('Der belegte Treffer ist 40 Tage unbestätigt.');
+    expect(alterssatzFuerBelegte([40])).toBe('The backed match has not been confirmed for 40 days.');
   });
 
   it('nennt bei mehreren die Spanne vom juengsten zum aeltesten', () => {
-    expect(alterssatzFuerBelegte([12, 40])).toBe('Die belegten Treffer sind seit 12–40 Tagen unbestätigt.');
+    expect(alterssatzFuerBelegte([12, 40])).toBe('The backed matches have not been confirmed for 12–40 days.');
   });
 
   it('gleiche Alter werden nicht als Spanne verkauft', () => {
-    expect(alterssatzFuerBelegte([40, 40])).toBe('Die belegten Treffer sind 40 Tage unbestätigt.');
+    expect(alterssatzFuerBelegte([40, 40])).toBe('The backed matches have not been confirmed for 40 days.');
   });
 
   it('GEGENPROBE: genau an der Schwelle wird genannt, nicht geschwiegen', () => {
-    expect(alterssatzFuerBelegte([ALTER_NENNEN_AB_TAGEN])).toContain('unbestätigt');
+    expect(alterssatzFuerBelegte([ALTER_NENNEN_AB_TAGEN])).toContain('not been confirmed');
   });
 });

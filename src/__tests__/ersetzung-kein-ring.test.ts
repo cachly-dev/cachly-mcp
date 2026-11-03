@@ -53,7 +53,7 @@ describe('Ersetzung — kein Ring', () => {
       grund: 'Gegenprobe fuer den Ring',
     }));
 
-    expect(aus).toContain('koennen sich nicht gegenseitig ersetzen');
+    expect(aus).toContain('cannot replace each other');
     const alt = await gelesen('node:adresse-alt');
     expect(alt.ersetzt).toBeUndefined();
 
@@ -67,7 +67,7 @@ describe('Ersetzung — kein Ring', () => {
     await lerne('port:b', 'Der Port ist 3201, nicht 3001.', { ersetzt: 'port:a' });
     const aus = String(await lerne('port:c', 'Der Port ist 3095.', { ersetzt: 'port:b' }));
 
-    expect(aus).not.toContain('koennen sich nicht gegenseitig ersetzen');
+    expect(aus).not.toContain('cannot replace each other');
     expect((await gelesen('port:c')).ersetzt).toBe('port:b');
     expect((await gelesen('port:b')).ersetzt).toBe('port:a');
     expect((await gelesen('port:b')).ersetzt_durch).toBe('port:c');
@@ -78,7 +78,7 @@ describe('Ersetzung — kein Ring', () => {
     await lerne('x:zwei', 'Text zwei.');
     const aus = String(await lerne('x:drei', 'Text drei.', { ersetzt: 'x:eins' }));
 
-    expect(aus).not.toContain('koennen sich nicht gegenseitig ersetzen');
+    expect(aus).not.toContain('cannot replace each other');
     expect((await gelesen('x:drei')).ersetzt).toBe('x:eins');
   });
 });

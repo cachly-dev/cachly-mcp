@@ -45,9 +45,9 @@ describe('Karte eutmy0ly93ch — Gedaechtnis-Kosten je Sitzung', () => {
     await recall('timeout beim deploy im netz');
     await recall('netz deploy timeout ursache');
     const out = String(await ende());
-    expect(out).toContain('3 Recalls, davon 2 Wiederholungen');
-    expect(out).toContain('Token Werkzeugantworten');
-    expect(out).toContain('Einmal abrufen, dann handeln');
+    expect(out).toContain('3 recalls, 2 of them repeats');
+    expect(out).toContain('tokens of tool answers');
+    expect(out).toContain('Recall once, then act');
 
     const last = JSON.parse((await redis.get('cachly:session:last'))!) as { memory_cost?: { recalls: number; wiederholungen: number } };
     expect(last.memory_cost?.recalls).toBe(3);
@@ -59,8 +59,8 @@ describe('Karte eutmy0ly93ch — Gedaechtnis-Kosten je Sitzung', () => {
     await recall('redis eviction policy');
     await recall('keycloak realm import');
     const out = String(await ende());
-    expect(out).toContain('3 Recalls, davon 0 Wiederholungen');
-    expect(out).not.toContain('Einmal abrufen, dann handeln');
+    expect(out).toContain('3 recalls, 0 of them repeats');
+    expect(out).not.toContain('Recall once, then act');
 
     await redis.set('cachly:session:current', JSON.stringify({ started: new Date().toISOString() }));
     const leer = String(await ende());

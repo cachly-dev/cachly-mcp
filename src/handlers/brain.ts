@@ -1178,13 +1178,13 @@ async function handleBrainToolInner(
       const warumZeile = String(grund ?? '').trim();
       if (existingRaw && !warumZeile) {
         return [
-          `✋ **Update abgewiesen:** \`${topic}\` existiert bereits — eine Aktualisierung braucht das Feld \`grund\`.`,
+          `✋ **Update rejected:** \`${topic}\` already exists — an update needs the field \`grund\` (the reason).`,
           ``,
-          `Eine Zeile genuegt: WARUM war die bisherige Fassung falsch oder unvollstaendig?`,
-          `Beispiel: grund="Die IP stimmte nicht mehr — node-4 ist seit dem Umzug Peer .7"`,
+          `One line is enough: WHY was the previous version wrong or incomplete?`,
+          `Example: grund="The IP changed — the worker moved to 10.8.0.7"`,
           ``,
-          `Der Diff sagt, WAS sich aendert. Die grund-Zeile sagt, warum es vorher falsch war —`,
-          `und genau sie wird in zwei Monaten gelesen (audit_trail, recall_best_solution).`,
+          `The diff says WHAT changes. The grund line says why the old version was wrong —`,
+          `and that is the line someone reads two months from now (audit_trail, recall_best_solution).`,
         ].filter(Boolean).join('\n');
       }
       if (existingRaw) {
@@ -1339,11 +1339,11 @@ async function handleBrainToolInner(
       let ersetztHinweis = '';
       let ersetztAltRaw: string | null = null;
       if (ersetztZiel === topic && ersetztZiel) {
-        ersetztHinweis = '⚠️ `ersetzt` zeigt auf dasselbe Thema — fuer Korrekturen im selben Thema reicht das Update samt `grund`. Der Verweis wurde ignoriert.';
+        ersetztHinweis = '⚠️ `ersetzt` points to the same topic — for a correction within one topic, an update with `grund` is enough. The link was ignored.';
       } else if (ersetztZiel) {
         ersetztAltRaw = await redis.get(`cachly:lesson:best:${ersetztZiel}`);
         if (!ersetztAltRaw) {
-          ersetztHinweis = `⚠️ Die zu ersetzende Lektion \`${ersetztZiel}\` existiert nicht — der Verweis wurde NICHT gespeichert. Themennamen zeigt \`smart_recall\`.`;
+          ersetztHinweis = `⚠️ The lesson to replace, \`${ersetztZiel}\`, does not exist — the link was NOT stored. \`smart_recall\` shows topic names.`;
         } else if (
           safeJsonParse<{ ersetzt?: string }>(ersetztAltRaw, {}).ersetzt === topic
         ) {
@@ -1355,7 +1355,7 @@ async function handleBrainToolInner(
           // an dieser Reihenfolge: sie wuerde je nach Lesepfad mal die eine
           // und mal die andere Fassung unterdruecken.
           ersetztAltRaw = null;
-          ersetztHinweis = `⚠️ \`${ersetztZiel}\` ersetzt bereits \`${topic}\` — zwei Lektionen koennen sich nicht gegenseitig ersetzen. Der Verweis wurde NICHT gespeichert. Wenn diese Fassung die neuere ist: die Kante in \`${ersetztZiel}\` entfernen und danach hier setzen.`;
+          ersetztHinweis = `⚠️ \`${ersetztZiel}\` already replaces \`${topic}\` — two lessons cannot replace each other. The link was NOT stored. If this version is the newer one: remove the link in \`${ersetztZiel}\` first, then set it here.`;
         } else {
           (lessonObj as Record<string, unknown>).ersetzt = ersetztZiel;
         }
@@ -1846,7 +1846,7 @@ async function handleBrainToolInner(
       // Weg a (4.4): hoechstens DOPPEL_WARTE_MS auf die Pruefung im Hintergrund.
       const doppelung = await mitFrist(doppelPruefung);
       return [
-        `${emoji} **Lesson ${action}:** \`${topic}\` (${outcome}) ${sevEmoji} ${severity} · Beleg: \`${beleg}\``,
+        `${emoji} **Lesson ${action}:** \`${topic}\` (${outcome}) ${sevEmoji} ${severity} · receipt: \`${beleg}\``,
         geschwaerzt.funde.length
           ? `🔒 **${geschwaerzt.funde.length} Geheimnis(se) geschwaerzt** vor dem Speichern (${geschwaerzt.funde.join('; ')}). Der Wert ist nicht im Brain — verweise kuenftig auf den Ort (z. B. Infisical-Pfad oder Variablenname).`
           : '',
@@ -1864,7 +1864,7 @@ async function handleBrainToolInner(
           ? `♻️ Updated (recall count: ${recallCount} · audit entries: ${auditTrail.length})`
           : `💡 Recall later with \`recall_best_solution(topic="${topic}")\``,
         (autorFeld && (outcome === 'success' || outcome === 'partial'))
-          ? `👥 Auto-shared with team (by _${autorFeld}_${herkunft.quelle !== 'uebergeben' ? ` · aus ${herkunft.quelle}` : ''}) — visible in \`team_recall\``
+          ? `👥 Auto-shared with team (by _${autorFeld}_${herkunft.quelle !== 'uebergeben' ? ` · from ${herkunft.quelle}` : ''}) — visible in \`team_recall\``
           : '',
         autorTipp ?? '',
         depends_on.length > 0
@@ -1873,13 +1873,13 @@ async function handleBrainToolInner(
         ersetzungsVorschlag,
         doppelHinweis(doppelung, ersetzungsVorschlag),
         giltFuer.angaben.length
-          ? `📦 Gilt fuer ${giltFuer.angaben.map((a) => `\`${a}\``).join(', ')}${giltFuer.uebernommen ? ' (aus der Vorfassung uebernommen)' : ''} — passt das Projekt nicht, steht die Lektion im Abruf hinten und ist markiert.`
+          ? `📦 Applies to ${giltFuer.angaben.map((a) => `\`${a}\``).join(', ')}${giltFuer.uebernommen ? ' (carried over from the previous version)' : ''} — if the project does not match, the lesson ranks last in recall and is marked.`
           : '',
-        ...giltFuer.fehler.map((f) => `⚠️ gilt_fuer nicht gespeichert, ${f}. Form: paket@bereich, zum Beispiel next@<15 oder python:fastapi@>=0.100 <0.110.`),
+        ...giltFuer.fehler.map((f) => `⚠️ gilt_fuer not stored, ${f}. Format: package@range, for example next@<15 or python:fastapi@>=0.100 <0.110.`),
         ersetztAltRaw && bestGeschrieben
           ? warumZeile
-            ? `↷ Ersetzt \`${ersetztZiel}\` — die alte Fassung wird im Abruf verdraengt und nennt ihre Nachfolgerin samt Grund.`
-            : `↷ Ersetzt \`${ersetztZiel}\` — die alte Fassung wird im Abruf verdraengt und nennt ihre Nachfolgerin. Ohne \`grund\` steht dort 'Grund nicht erfasst' — eine Zeile (warum die alte falsch war) macht den Verweis pruefbar.`
+            ? `↷ Replaces \`${ersetztZiel}\` — recall hides the old version and names its successor with the reason.`
+            : `↷ Replaces \`${ersetztZiel}\` — recall hides the old version and names its successor. Without \`grund\` it says 'No reason recorded' — one line (why the old one was wrong) makes the link checkable.`
           : ersetztHinweis,
         ...templateWarnings,
         ...iWasWrongWarning,
@@ -1887,7 +1887,7 @@ async function handleBrainToolInner(
         // ergaenzt wurde. Eine stille Aenderung an fremden Worten waere
         // genau die Sorte Hilfe, die niemand bestellt hat.
         datiert > 0
-          ? `🗓️ ${datiert} relative Zeitangabe${datiert === 1 ? '' : 'n'} datiert (z. B. "gestern" → "gestern (${new Date(jetzt.getTime() - 864e5).toISOString().slice(0, 10)})") — der Originaltext bleibt unveraendert, das Datum steht daneben.`
+          ? `🗓️ ${datiert} relative time reference${datiert === 1 ? '' : 's'} dated (e.g. "yesterday" → "yesterday (${new Date(jetzt.getTime() - 864e5).toISOString().slice(0, 10)})") — the original text stays unchanged, the date stands next to it.`
           : '',
         // GROW-044: Die 100-Zeichen-Regel wird geprueft, nicht geglaubt.
         // Das Briefing der naechsten Sitzung zeigt je Lektion rund 100
@@ -2244,12 +2244,12 @@ async function handleBrainToolInner(
         // ebenso). Ein Banner, das dann auf ihn zeigt, ist ein Wegweiser ins
         // Leere — und diese Fassung bliebe fuer immer "ersetzt" durch ein Nichts.
         const ersetztAmText = (lesson as { ersetzt_am?: string }).ersetzt_am
-          ? ` (am ${(lesson as { ersetzt_am?: string }).ersetzt_am!.slice(0, 10)})`
+          ? ` (on ${(lesson as { ersetzt_am?: string }).ersetzt_am!.slice(0, 10)})`
           : '';
         const nachfolgerDa = ersetztDurch ? await redis.get(`cachly:lesson:best:${ersetztDurch}`) : null;
         // Karte rekvh30prcet: der Grund der Ersetzung steht AM Verweis.
         const ersetztGrund = String((lesson as { ersetzt_grund?: string }).ersetzt_grund ?? '').trim();
-        const ersetztGrundText = ersetztGrund ? ` Grund: ${ersetztGrund}` : ' Grund nicht erfasst.';
+        const ersetztGrundText = ersetztGrund ? ` Reason: ${ersetztGrund}` : ' No reason recorded.';
         // Karte pguy341m6u7s ("persistence is not permission"): ein PRIVATER
         // Nachfolger darf hier weder beim Namen genannt noch als Abrufziel
         // ausgewiesen werden — der Banner leakte sonst Existenz + Topic und
@@ -2265,9 +2265,9 @@ async function handleBrainToolInner(
         const ersetztBanner = ersetztDurch
           ? nachfolgerDa
             ? nachfolgerPrivat
-              ? `🚫 **DIESE FASSUNG IST ERSETZT**${ersetztAmText} — die Nachfolge-Lektion ist nicht team-sichtbar (privat). Der Text unten bleibt als Vorgeschichte lesbar; die gueltige Fassung kennt ihr Autor.`
-              : `🚫 **DIESE FASSUNG IST ERSETZT**${ersetztAmText} — die gueltige Antwort steht in \`recall_best_solution(topic="${ersetztDurch}")\`.${ersetztGrundText} Der Text unten bleibt als Vorgeschichte lesbar.`
-            : `⚠️ **ERSETZT-VERWEIS INS LEERE**${ersetztAmText} — der Nachfolger \`${ersetztDurch}\` wurde inzwischen geloescht. Diese Fassung gilt wieder als beste VORHANDENE Antwort; bei Gelegenheit neu bestaetigen (learn_from_attempts mit grund).`
+              ? `🚫 **THIS VERSION IS REPLACED**${ersetztAmText} — the successor lesson is private, not visible to the team. The text below stays readable as history; its author knows the current version.`
+              : `🚫 **THIS VERSION IS REPLACED**${ersetztAmText} — the current answer is in \`recall_best_solution(topic="${ersetztDurch}")\`.${ersetztGrundText} The text below stays readable as history.`
+            : `⚠️ **REPLACEMENT POINTS NOWHERE**${ersetztAmText} — the successor \`${ersetztDurch}\` has been deleted. This version applies again as the best EXISTING answer; confirm it when you can (learn_from_attempts with grund).`
           : '';
 
         // Karte 4l030ay5xtj9: gilt_ab ist eine Aussage ueber die TATSACHE,
@@ -2275,11 +2275,11 @@ async function handleBrainToolInner(
         // in der Vergangenheit) wird laut markiert, bleibt aber lesbar.
         const giltAb = (lesson as { gilt_ab?: string }).gilt_ab;
         const giltBis = (lesson as { gilt_bis?: string }).gilt_bis;
-        const giltZeile = giltAb ? `📅 Gilt seit ${String(giltAb).slice(0, 10)}.` : '';
+        const giltZeile = giltAb ? `📅 Valid since ${String(giltAb).slice(0, 10)}.` : '';
         const ent = (lesson as { entscheidung?: { gegen: string; grund?: string | null } }).entscheidung;
         const entZeile = ent?.gegen ? entscheidungsZeile({ gegen: ent.gegen, grund: ent.grund ?? null }) : '';
         const abgelaufen = giltBis && Date.parse(String(giltBis)) < Date.now()
-          ? `⏳ **DIESE TATSACHE GALT BIS ${String(giltBis).slice(0, 10)}** — sie ist Geschichte, keine aktuelle Auskunft.`
+          ? `⏳ **THIS FACT WAS VALID UNTIL ${String(giltBis).slice(0, 10)}** — it is history, not current information.`
           : '';
 
         return [
@@ -2812,9 +2812,7 @@ async function handleBrainToolInner(
           .catch(() => { /* kein Pfad ist besser als keine Antwort */ });
       }
 
-      // Increment recall_count on matched lessons (fire-and-forget) + collect "Brain saved you here" signal.
-      type RecalledLesson = { topic: string; severity: string; recall_count: number; savedMins: number; ts?: string; author?: string };
-      const savedHere: RecalledLesson[] = [];
+      // Increment recall_count on matched lessons (fire-and-forget).
       // Exclude archived lessons — they are kept for audit but must not surface in recall.
       const lessonMatches = kwGemischt.filter(m => m.key.startsWith('cachly:lesson:best:'));
       let crossAuthorThisCall = 0;
@@ -2862,22 +2860,12 @@ async function handleBrainToolInner(
 
             if (lesson.outcome === 'success') successRecallsThisCall++;
 
-            // Surface banner for proven successes (recall_count >= 1 means it's been validated).
-            //
-            // Der Startvorrat kommt hier NICHT ins Banner. "Brain saved you ~8h
-            // here — docker:layer-cache" ist keine Leistung des Gedaechtnisses,
-            // sondern mitgeliefertes Allgemeinwissen. Genau dieses Banner hat
-            // die Zahl im Panel jahrelang glaubwuerdig aussehen lassen.
-            if (lesson.outcome === 'success' && (lesson.recall_count ?? 0) >= 1 && !istStarterLektion(lesson)) {
-              savedHere.push({
-                topic: m.key.replace('cachly:lesson:best:', ''),
-                severity: (lesson.severity as string) ?? 'major',
-                recall_count: (lesson.recall_count ?? 0) + 1,
-                savedMins,
-                ts: lesson.ts,
-                author: lesson.author,
-              });
-            }
+            // Hier stand bis 03.11.2026 das Banner "Brain saved you ~X here".
+            // Es kam nur ab dem zweiten Abruf, und ab dem zweiten Abruf zaehlt
+            // die Ersparnis seit 22.08. null (wertbeitrag.ts) — es zeigte also
+            // immer "~0min", auch ueber einer Antwort ohne Treffer, fuer eine
+            // Lektion, die gar nicht angezeigt wurde. Zeitschaetzungen zeigen
+            // wir ohnehin nicht mehr (#914–#916): nur Gezaehltes.
           }
         }
       }
@@ -3142,7 +3130,7 @@ async function handleBrainToolInner(
         const ld = safeJsonParse<{ gilt_bis?: string }>(r.content, {});
         if (ld.gilt_bis && Date.parse(String(ld.gilt_bis)) < Date.now()) {
           ersetzungsNotizen.push(
-            `⏳ \`${r.key.replace('cachly:lesson:best:', '')}\` galt bis ${String(ld.gilt_bis).slice(0, 10)} — Geschichte, keine aktuelle Tatsache.`,
+            `⏳ \`${r.key.replace('cachly:lesson:best:', '')}\` was valid until ${String(ld.gilt_bis).slice(0, 10)} — history, not a current fact.`,
           );
         }
         // Der Lesepfad zu lesson_verified(haelt=false). Jemand hat den
@@ -3177,7 +3165,7 @@ async function handleBrainToolInner(
           if (daKeys.has(`cachly:lesson:best:${ld.ersetzt_durch}`)) {
             hybridResults.splice(i, 1);
             ersetzungsNotizen.push(
-              `↷ \`${altThema}\` verdraengt — ersetzt durch \`${ld.ersetzt_durch}\`${ld.ersetzt_am ? ` am ${ld.ersetzt_am.slice(0, 10)}` : ''}${grundText ? ` — Grund: ${grundText}` : ' — Grund nicht erfasst'}`,
+              `↷ \`${altThema}\` hidden — replaced by \`${ld.ersetzt_durch}\`${ld.ersetzt_am ? ` on ${ld.ersetzt_am.slice(0, 10)}` : ''}${grundText ? ` — reason: ${grundText}` : ' — no reason recorded'}`,
             );
           } else if (await redis.get(`cachly:lesson:best:${ld.ersetzt_durch}`)) {
             // Karte pguy341m6u7s: ein privater Nachfolger wird NICHT beim
@@ -3190,11 +3178,11 @@ async function handleBrainToolInner(
             );
             if (!darfHeraus(nf)) {
               ersetzungsNotizen.push(
-                `↷ \`${altThema}\`: von einer nicht team-sichtbaren Fassung ersetzt — diese Fassung bleibt die beste sichtbare Antwort.`,
+                `↷ \`${altThema}\`: replaced by a version that is not visible to the team — this version stays the best visible answer.`,
               );
             } else {
               ersetzungsNotizen.push(
-                `⚠️ \`${altThema}\` ist ersetzt durch \`${ld.ersetzt_durch}\` (nicht in dieser Liste) — die gueltige Antwort: \`recall_best_solution(topic="${ld.ersetzt_durch}")\``,
+                `⚠️ \`${altThema}\` is replaced by \`${ld.ersetzt_durch}\` (not in this list) — the current answer: \`recall_best_solution(topic="${ld.ersetzt_durch}")\``,
               );
             }
           } else {
@@ -3202,7 +3190,7 @@ async function handleBrainToolInner(
             // stehen, die Notiz erklaert die Lage, statt den Leser in ein
             // totes Thema zu schicken.
             ersetzungsNotizen.push(
-              `↩️ \`${altThema}\` war ersetzt durch \`${ld.ersetzt_durch}\` — der Nachfolger wurde geloescht, diese Fassung gilt wieder (bei Gelegenheit neu bestaetigen).`,
+              `↩️ \`${altThema}\` was replaced by \`${ld.ersetzt_durch}\` — the successor was deleted, so this version applies again (confirm it when you can).`,
             );
           }
         }
@@ -3249,11 +3237,11 @@ async function handleBrainToolInner(
             if (naehe < NAHDUPLIKAT_SCHWELLE) continue;
             const tsVon = (inhalt: string | undefined): string => {
               const ld = safeJsonParse<{ ts?: string; verified_at?: string }>(inhalt ?? '', {});
-              return String(ld.verified_at ?? ld.ts ?? '').slice(0, 10) || 'ohne Datum';
+              return String(ld.verified_at ?? ld.ts ?? '').slice(0, 10) || 'no date';
             };
             nahduplikatNotizen.push(
-              `⚠️ \`${a}\` (${tsVon(fenster[i].content)}) und \`${b}\` (${tsVon(fenster[j].content)}) sagen fast dasselbe — `
-              + 'prueft, welche Fassung fuer euren Fall gilt; die neuere ist nicht automatisch die richtige.',
+              `⚠️ \`${a}\` (${tsVon(fenster[i].content)}) und \`${b}\` (${tsVon(fenster[j].content)}) say almost the same — `
+              + 'check which version fits your case; the newer one is not automatically right.',
             );
           }
         }
@@ -3372,25 +3360,6 @@ async function handleBrainToolInner(
         lines.push(`${recallGate.goodwillMessage}\n`);
       }
 
-      // "Brain saved you here" banner — surfaces value inline for proven recalled lessons
-      const SORDER: Record<string, number> = { critical: 0, major: 1, minor: 2 };
-      const topLesson = savedHere.sort((a, b) => (SORDER[a.severity] ?? 1) - (SORDER[b.severity] ?? 1))[0];
-      if (topLesson) {
-        const fmtMins = (m: number) => m >= 60 ? `${m / 60}h` : `${m}min`;
-        const learnedStr = (() => {
-          if (!topLesson.ts) return null;
-          const d = new Date(topLesson.ts);
-          if (isNaN(d.getTime())) return null;
-          const now = new Date();
-          const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-          const sameYear = d.getFullYear() === now.getFullYear();
-          return sameYear ? `${d.getDate()} ${months[d.getMonth()]}` : `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}`;
-        })();
-        const debugCostMins = topLesson.severity === 'critical' ? 120 : topLesson.severity === 'major' ? 60 : 20;
-        const authorStr = topLesson.author && topLesson.author !== requester ? ` · by @${topLesson.author}` : '';
-        const learnedPart = learnedStr ? ` · learned ${learnedStr} (was a ${fmtMins(debugCostMins)} debug)` : '';
-        lines.push(`> 💡 **Brain saved you ~${fmtMins(topLesson.savedMins)} here** — \`${topLesson.topic}\`${learnedPart} · recalled ${topLesson.recall_count}×${authorStr}\n`);
-      }
       if (crossAuthorThisCall > 0) {
         lines.push(`> 👥 **Team knowledge reuse** — ${crossAuthorThisCall} of these lesson${crossAuthorThisCall !== 1 ? 's were' : ' was'} written by a teammate. This is the value only a shared brain delivers.\n`);
       }
@@ -3489,9 +3458,9 @@ async function handleBrainToolInner(
           }
           const alter = alterssatzFuerBelegte(belegteAlter);
           lines.push(
-            `> 📊 ${abstention.belegte} von ${hybridResults.length} belegt ` +
-              `(mind. ein getroffenes Wort, Bedeutungsnähe oder Kante). ` +
-              `Die übrigen sind das Nächstliegende, kein Beleg.` +
+            `> 📊 ${abstention.belegte} of ${hybridResults.length} backed by evidence ` +
+              `(at least one matching word, close meaning or a graph link). ` +
+              `The rest are only the nearest entries, not evidence.` +
               (alter ? ` ⏳ ${alter}` : '') +
               `\n`,
           );
@@ -3659,9 +3628,9 @@ async function handleBrainToolInner(
       if (!kompakt && hybridResults.length > 0) {
         lines.push('');
         lines.push(
-          '↩︎ Hat eine davon geholfen? `recall_feedback(query=…, topic=…, helped=true, rank=N)` — '
-          + 'und wenn die richtige Lektion **nicht** dabei war: dieselbe Meldung mit `rank=0`. '
-          + 'Das ist die einzige Zahl, die die Sortierung besser macht.',
+          '↩︎ Did one of these help? `recall_feedback(query=…, topic=…, helped=true, rank=N)` — '
+          + 'and if the right lesson was **not** in the list: the same call with `rank=0`. '
+          + 'That is the only number that improves the ranking.',
         );
 
         /*
@@ -3833,43 +3802,21 @@ async function handleBrainToolInner(
       // 7. Save session start marker
       await merkeSitzungsbeginn(redis, focus, provider);
 
-      // 8. Time saved counter
-      let timeSavedMins = 0;
-      try {
-        const raw = await redis.get(`cachly:stats:time_saved_mins:${instance_id}`);
-        timeSavedMins = parseFloat(raw ?? '0');
-      } catch { /* non-critical */ }
-
       // ── Build briefing ──────────────────────────────────────────────────────
       const providerLabel = provider ? ` · ${provider}` : '';
       const lines: string[] = [`🧠 **Session Briefing**${providerLabel}`, ''];
       if (streakMessage) lines.push(streakMessage, '');
 
-      // Time saved (only show when meaningful — 30+ minutes)
-      //
-      // Die Zahl nennt ihre Grundlage. Bis zum 22.08.2026 stand hier nur
-      // "~1664h total" — eine Zahl, die niemand nachrechnen konnte und die auf
-      // diesem 82 Tage alten Brain mehr Stunden behauptete, als eine Person in
-      // dieser Zeit ueberhaupt haette arbeiten koennen. Jetzt steht daneben,
-      // WORAUS sie entsteht: so viele eigene Lektionen, jede einmal gezaehlt.
-      // Wer will, kann sie abzaehlen.
-      if (timeSavedMins >= 30) {
-        const h = Math.floor(timeSavedMins / 60);
-        const m = Math.round(timeSavedMins % 60);
-        const timeStr = h > 0 ? `${h}h${m > 0 ? ` ${m}m` : ''}` : `${m}m`;
-        const zaehlende = lessons.filter(
-          (l) => !istStarterLektion(l) && ((l as { recall_count?: number }).recall_count ?? 0) > 0,
-        ).length;
-        const grundlage = zaehlende > 0
-          ? ` — ${zaehlende} of your own lessons that already helped, counted once each`
-          : ' (time not re-researching known fixes)';
-        lines.push(`⏱️ **Brain saved you ~${timeStr} total**${grundlage}`, '');
-      }
+      // Hier stand bis 03.11.2026 "⏱️ Brain saved you ~Xh total". Die Zahl
+      // war eine Schaetzung (30–240 min je Lektion), keine Zaehlung, und
+      // "helped" hiess nur "stand in einer Antwort". Im Probelauf vom 03.11.
+      // meldete ein Brain nach EINER Sitzung mit fuenf Lektionen 6h 30m.
+      // Nutzer sehen seit #914–#916 nur Gezaehltes.
 
       // Upgrade nudge — surfaces the free-tier quota BEFORE the wall, once
-      // per session and right next to the value it just proved.
+      // per session.
       const recallGate = await getRecallGate(instance_id, apiFetch);
-      const nudge = upgradeNudge({ used: recallGate.used, limit: recallGate.limit, savedMins: timeSavedMins });
+      const nudge = upgradeNudge({ used: recallGate.used, limit: recallGate.limit });
       if (nudge) lines.push(nudge, '');
 
       // Notice from the API — the only channel that reaches a WORKING account.

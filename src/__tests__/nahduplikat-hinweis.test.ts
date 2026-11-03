@@ -51,11 +51,11 @@ describe('Nahduplikat-Hinweis im Recall', () => {
       instance_id: 'i1', query: 'staging datenbank port',
     }, getConn, noopApiFetch));
 
-    expect(out).toContain('sagen fast dasselbe');
+    expect(out).toContain('say almost the same');
     expect(out).toContain('deploy:staging-port-alt');
     expect(out).toContain('deploy:staging-port-neu');
     // Der Hinweis WAEHLT nicht: kein Text, der eine Fassung fuer gueltig erklaert.
-    expect(out).toContain('die neuere ist nicht automatisch die richtige');
+    expect(out).toContain('the newer one is not automatically right');
   });
 
   it('GEGENPROBE: verwandte, aber verschiedene Vektoren -> KEIN Hinweis', async () => {
@@ -69,7 +69,7 @@ describe('Nahduplikat-Hinweis im Recall', () => {
       instance_id: 'i1', query: 'staging datenbank',
     }, getConn, noopApiFetch));
 
-    expect(out).not.toContain('sagen fast dasselbe');
+    expect(out).not.toContain('say almost the same');
   });
 
   it('GEGENPROBE: fehlende Vektoren -> stiller No-op, kein Absturz', async () => {
@@ -80,6 +80,6 @@ describe('Nahduplikat-Hinweis im Recall', () => {
       instance_id: 'i1', query: 'staging datenbank',
     }, getConn, noopApiFetch));
 
-    expect(out).not.toContain('sagen fast dasselbe');
+    expect(out).not.toContain('say almost the same');
   });
 });

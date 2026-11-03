@@ -42,12 +42,12 @@ describe('Karte g4j4fy030fsp — haengende Ersetzung nach Loeschung', () => {
       instance_id: 'i1', topic: 'deploy:alte-weisheit',
     }, getConn, noopApiFetch));
 
-    expect(out).toContain('geloescht');
-    expect(out).toContain('gilt wieder');
+    expect(out).toContain('deleted');
+    expect(out).toContain('applies again');
     // Der geloeschte Nachfolger wird GENANNT (Vorgeschichte), aber nicht
     // laenger als Ort der gueltigen Antwort ausgegeben.
     expect(out).toContain('deploy:echte-ursache');
-    expect(out).not.toContain('die gueltige Antwort steht in');
+    expect(out).not.toContain('the current answer is in');
     // Der Inhalt der alten Fassung ist wieder lesbar.
     expect(out).toContain('liegt am Netz');
   });
@@ -64,9 +64,9 @@ describe('Karte g4j4fy030fsp — haengende Ersetzung nach Loeschung', () => {
     // Die alte Fassung ist als Treffer da (nicht verdraengt) …
     expect(out).toContain('liegt am Netz');
     // … und die Notiz erklaert die Lage, statt in ein totes Thema zu schicken.
-    expect(out).toContain('geloescht');
-    expect(out).toContain('gilt wieder');
-    expect(out).not.toContain('die gueltige Antwort:');
+    expect(out).toContain('deleted');
+    expect(out).toContain('applies again');
+    expect(out).not.toContain('the current answer:');
   });
 
   it('GEGENPROBE recall: existierender Nachfolger -> Banner und Wegweiser unveraendert', async () => {
@@ -77,9 +77,9 @@ describe('Karte g4j4fy030fsp — haengende Ersetzung nach Loeschung', () => {
       instance_id: 'i1', topic: 'deploy:alte-weisheit',
     }, getConn, noopApiFetch));
 
-    expect(out).toContain('DIESE FASSUNG IST ERSETZT');
-    expect(out).toContain('die gueltige Antwort steht in');
-    expect(out).not.toContain('gilt wieder');
+    expect(out).toContain('THIS VERSION IS REPLACED');
+    expect(out).toContain('the current answer is in');
+    expect(out).not.toContain('applies again');
   });
 
   it('GEGENPROBE smart_recall: existierender Nachfolger ausserhalb der Liste -> Wegweiser unveraendert', async () => {
@@ -91,7 +91,7 @@ describe('Karte g4j4fy030fsp — haengende Ersetzung nach Loeschung', () => {
       instance_id: 'i1', query: 'plugh timeout',
     }, getConn, noopApiFetch));
 
-    expect(out).toContain('die gueltige Antwort:');
-    expect(out).not.toContain('gilt wieder');
+    expect(out).toContain('the current answer:');
+    expect(out).not.toContain('applies again');
   });
 });
