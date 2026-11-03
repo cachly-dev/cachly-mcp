@@ -1024,19 +1024,25 @@ describe('Trust badges (recall_best_solution)', () => {
   const getConn = async () => redis as unknown as Redis;
   beforeEach(() => { redis = new MockRedis(); });
 
-  it('shows "Battle-tested" when recall_count crosses 10', async () => {
+  // Bis 03.11.2026 gab es ab recall_count 5 "Proven" und ab 10 "Battle-tested
+  // … Trust this". recall_count zaehlt Anzeigen, keine Bewaehrung — deshalb
+  // steht die Zahl jetzt nur noch neutral im Kopf.
+  it('names how often a lesson was in answers, without calling it proven', async () => {
     await seedLesson(redis, 'redis:pool', { recall_count: 9, what_worked: 'set max_retries=3' });
     const out = (await handleBrainTool('recall_best_solution', { instance_id: 'i1', topic: 'redis:pool' }, getConn, noopApiFetch))!;
-    expect(out).toContain('Battle-tested');
-    expect(out).toContain('recalled 10×');
+    expect(out).toContain('in 10 answers so far');
+    expect(out).not.toContain('Battle-tested');
+    expect(out).not.toContain('Proven');
+    expect(out).not.toContain('Trust this');
   });
 
-  it('shows "Proven" when recall_count is between 5 and 9', async () => {
+  it('shows "Team-verified" only for two or more distinct authors', async () => {
     await seedLesson(redis, 'api:auth', { recall_count: 4 });
+    const zwei = JSON.parse((await redis.get('cachly:lesson:best:api:auth'))!);
+    await redis.set('cachly:lesson:best:api:auth', JSON.stringify({ ...zwei, authors: ['alice', 'bob'] }));
     const out = (await handleBrainTool('recall_best_solution', { instance_id: 'i1', topic: 'api:auth' }, getConn, noopApiFetch))!;
-    expect(out).toContain('Proven');
-    expect(out).toContain('recalled 5×');
-    expect(out).not.toContain('Battle-tested');
+    expect(out).toContain('Team-verified');
+    expect(out).toContain('confirmed by 2 developers');
   });
 
   it('shows no trust badge for a fresh low-recall lesson', async () => {
@@ -1128,42 +1134,69 @@ describe('last_recalled_at stamping', () => {
   });
 });
 
-describe('Proven Laws crystallization (session_start)', () => {
+// Bis 03.11.2026: "Proven Laws" ab recall_count 5. Jetzt "Confirmed lessons":
+// nur angeheftet oder durch die Wirkungsspur belegt (gemeldet geholfen, oder
+// mindestens zweimal nach einer Suche geoeffnet). Anzeigen allein zaehlen nicht.
+describe('Confirmed lessons (session_start)', () => {
   let redis: MockRedis;
   const getConn = async () => redis as unknown as Redis;
+  const spur = async (thema: string, quelle: 'gemeldet' | 'abgeleitet', geholfen = true) =>
+    redis.rpush('cachly:wirkung:i1', JSON.stringify({
+      ts: new Date().toISOString(), quelle, frage: 'q', thema, geholfen, platz: 1, notiz: '', autor: '',
+    }));
   beforeEach(async () => {
     redis = new MockRedis();
     // Provide a last session so session_start does not attempt git reconstruction.
     await redis.set('cachly:session:last', JSON.stringify({ summary: 'prior work', ts: new Date().toISOString(), files_changed: [] }));
   });
 
-  it('surfaces lessons recalled >= 5 in the Proven Laws section', async () => {
-    await seedLesson(redis, 'infra:k3s', { recall_count: 7, what_worked: 'add WireGuard IP to TLS-SAN' });
-    await seedLesson(redis, 'random:note', { recall_count: 1 });
+  it('GEGENPROBE: a lesson shown in 40 answers but never used is NOT confirmed', async () => {
+    await seedLesson(redis, 'chore:initial-commit', { recall_count: 40, what_worked: 'Initial commit: demo app skeleton' });
     const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
-    expect(out).toContain('Proven Laws');
+    expect(out).not.toContain('Confirmed lessons');
+    expect(out).not.toContain('Proven Laws');
+  });
+
+  it('a lesson reported helpful once is confirmed, with the reason', async () => {
+    await seedLesson(redis, 'infra:k3s', { recall_count: 7, what_worked: 'add WireGuard IP to TLS-SAN' });
+    await spur('infra:k3s', 'gemeldet');
+    const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
+    expect(out).toContain('Confirmed lessons');
     expect(out).toContain('infra:k3s');
-    expect(out).toContain('recalled 7×');
+    expect(out).toContain('reported helpful 1×');
+  });
+
+  it('opened twice after a search counts, opened once does not', async () => {
+    await seedLesson(redis, 'deploy:zweimal', { what_worked: 'restart both api copies' });
+    await seedLesson(redis, 'deploy:einmal', { what_worked: 'render env first' });
+    await spur('deploy:zweimal', 'abgeleitet');
+    await spur('deploy:zweimal', 'abgeleitet');
+    await spur('deploy:einmal', 'abgeleitet');
+    const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
+    expect(out).toContain('`deploy:zweimal` _(opened 2× after a search)_');
+    expect(out).not.toContain('`deploy:einmal` _(');
+  });
+
+  it('a "not helpful" report does not confirm a lesson', async () => {
+    await seedLesson(redis, 'misc:falsch', { what_worked: 'wrong advice' });
+    await spur('misc:falsch', 'gemeldet', false);
+    const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
+    expect(out).not.toContain('Confirmed lessons');
   });
 
   it('surfaces an explicitly pinned lesson even with low recall', async () => {
     await seedLesson(redis, 'team:convention', { recall_count: 0, pinned: true, what_worked: 'always snake_case handlers' });
     const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
-    expect(out).toContain('Proven Laws');
+    expect(out).toContain('Confirmed lessons');
     expect(out).toContain('team:convention');
     expect(out).toContain('pinned');
   });
 
-  it('omits the Proven Laws section when nothing qualifies', async () => {
-    await seedLesson(redis, 'small:thing', { recall_count: 1 });
-    const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
-    expect(out).not.toContain('Proven Laws');
-  });
-
-  it('does not crystallize failure lessons', async () => {
+  it('does not confirm failure lessons', async () => {
     await seedLesson(redis, 'broken:flow', { recall_count: 9, outcome: 'failure', what_failed: 'never works' });
+    await spur('broken:flow', 'gemeldet');
     const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
-    expect(out).not.toContain('Proven Laws');
+    expect(out).not.toContain('Confirmed lessons');
   });
 });
 

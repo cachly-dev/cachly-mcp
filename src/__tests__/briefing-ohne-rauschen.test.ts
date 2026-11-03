@@ -71,7 +71,12 @@ describe('session_start ohne Rauschen', () => {
       ],
     }));
     // Bewaehrt: waere frueher in "Proven Laws" UND "Most valuable" gestanden.
+    // Seit 03.11.2026 braucht "Confirmed lessons" einen Beleg in der
+    // Wirkungsspur, nicht nur viele Anzeigen.
     await lektion(redis, 'deploy:bewaehrt', { recall_count: 40, ts: vor(24 * 30), verified_at: vor(1) });
+    await redis.rpush('cachly:wirkung:i1', JSON.stringify({
+      ts: vor(1), quelle: 'gemeldet', frage: 'deploy', thema: 'deploy:bewaehrt', geholfen: true, platz: 1, notiz: '', autor: 'alice',
+    }));
     // Von einem Teammitglied, frisch: frueher in "Recent", "Team", Liste neuer Lektionen und "decisions".
     await lektion(redis, 'team:frische-lektion', { author: 'bob' });
     // Ein Fehlschlag ohne Bezug zum Fokus: frueher in "Unresolved".
@@ -104,7 +109,7 @@ describe('session_start ohne Rauschen', () => {
     const b = await briefing();
     expect(b).toContain('Relevant for "zahlung alembic"');
     expect(b).toContain('`zahlung:webhook-idempotenz`');
-    expect(b).toContain('Proven Laws');
+    expect(b).toContain('Confirmed lessons');
     expect(b).toContain('`deploy:bewaehrt`');
     expect(b).toContain('Last session');
   });

@@ -7,6 +7,7 @@ import {
   lehrwert,
   werteAus,
   leiteAb,
+  belegeJeThema,
   SICHTBARE_PLAETZE,
   type Wirkungseintrag,
 } from '../wirkungsspur.js';
@@ -275,5 +276,27 @@ describe('Das Werkzeug ist wirklich angemeldet', () => {
     const block = brain.slice(ab, brain.indexOf("case 'recall_best_solution':", ab));
     expect(block).toContain('rpush');
     expect(block).not.toMatch(/redis\.set\(\s*schluessel/);
+  });
+});
+
+describe('belegeJeThema — was eine Lektion bewirkt hat, nicht wie oft sie dastand', () => {
+  const e = (thema: string, quelle: 'gemeldet' | 'abgeleitet', geholfen: boolean): Wirkungseintrag => ({
+    ts: '2026-11-03T12:00:00Z', quelle, frage: 'q', thema, geholfen, platz: 1, notiz: '', autor: '',
+  });
+
+  it('zaehlt gemeldet-geholfen und geoeffnet getrennt', () => {
+    const b = belegeJeThema([
+      e('a', 'gemeldet', true), e('a', 'abgeleitet', true), e('a', 'abgeleitet', true), e('b', 'abgeleitet', true),
+    ]);
+    expect(b.get('a')).toEqual({ geholfen: 1, geoeffnet: 2 });
+    expect(b.get('b')).toEqual({ geholfen: 0, geoeffnet: 1 });
+  });
+
+  it('GEGENPROBE: "hat nicht geholfen" zaehlt nirgends als Beleg', () => {
+    expect(belegeJeThema([e('a', 'gemeldet', false)]).get('a')).toEqual({ geholfen: 0, geoeffnet: 0 });
+  });
+
+  it('vertraegt kaputte Zeilen', () => {
+    expect(belegeJeThema([null as unknown as Wirkungseintrag, { ...e('', 'gemeldet', true) }]).size).toBe(0);
   });
 });

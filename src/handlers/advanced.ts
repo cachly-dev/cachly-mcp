@@ -482,7 +482,7 @@ export async function handleAdvancedTool(
           solutions.forEach((c, i) => {
             const l = c.lesson;
             const date = new Date(l.ts).toLocaleDateString('de-DE');
-            lines.push(`  ${i + 1}. ✅ \`${l.topic}\` — ${date} · recalled ${l.recall_count ?? 0}×`);
+            lines.push(`  ${i + 1}. ✅ \`${l.topic}\` — ${date} · in ${l.recall_count ?? 0} answers`);
             if (l.what_worked) lines.push(`     ${l.what_worked.slice(0, 200)}`);
           });
           lines.push('');

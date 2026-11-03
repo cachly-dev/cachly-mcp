@@ -483,7 +483,7 @@ export async function handleTeamTool(
         const reviewStr = l.reviewed_by
           ? ` · reviewed by ${l.reviewed_by}${(l.endorsements ?? 0) > 1 ? ` +${(l.endorsements ?? 0) - 1}` : ''}`
           : '';
-        const recallStr = (l.recall_count ?? 0) > 0 ? ` · recalled ${l.recall_count}×` : '';
+        const recallStr = (l.recall_count ?? 0) > 0 ? ` · in ${l.recall_count} answers` : '';
         const ago = Math.round((Date.now() - new Date(l.ts).getTime()) / 86400000);
         const agoStr = ago === 0 ? 'today' : ago === 1 ? 'yesterday' : `${ago}d ago`;
         lines.push(`${emoji} ${sev}**\`${l.topic}\`**${reviewBadge}${authorStr}${reviewStr}${recallStr} · ${agoStr}`);

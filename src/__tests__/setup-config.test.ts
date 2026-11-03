@@ -333,6 +333,23 @@ describe('writeInstructions — Gemini CLI und Junie', () => {
     expect(readFileSync(datei, 'utf-8')).toContain('smart_recall(instance_id="' + id + '"');
   });
 
+  it('schreibt .continue/rules/cachly.md mit alwaysApply, wenn Continue benutzt wird — sonst nicht', async () => {
+    const ohne = resolve(wurzel, 'ohne-continue');
+    await writeInstructions(ohne, id, leer);
+    expect(existsSync(resolve(ohne, '.continue'))).toBe(false);
+
+    const heim = resolve(wurzel, 'heim-mit-continue');
+    mkdirSync(resolve(heim, '.continue'), { recursive: true });
+    const p = resolve(wurzel, 'mit-continue');
+    const r = await writeInstructions(p, id, heim);
+    const datei = resolve(p, '.continue', 'rules', 'cachly.md');
+    expect(r[datei]).toBe('written');
+    const text = readFileSync(datei, 'utf-8');
+    expect(text.startsWith('---\nname: cachly AI Brain\n')).toBe(true);
+    expect(text).toContain('alwaysApply: true');
+    expect(text).toContain('smart_recall(instance_id="' + id + '"');
+  });
+
   it('schreibt GEMINI.md auch, wenn nur der Heimordner .gemini/ hat', async () => {
     const heim = resolve(wurzel, 'heim-mit-gemini');
     mkdirSync(resolve(heim, '.gemini'), { recursive: true });

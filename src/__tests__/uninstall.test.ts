@@ -9,6 +9,7 @@ import {
   installAmbientHooks, installCodexHooks, installCopilotHooks, installCursorHooks, installGeminiHooks,
   buildAmbientSettingsHooks,
 } from '../ambient-hooks.js';
+import { CONTINUE_RULE_FRONTMATTER } from '../projektdateien.js';
 import { installClsPostCommitHook } from '../cls-hook.js';
 import { ALTER_BRAIN_WATCH_BLOCK } from './alter-brain-watch-block.js';
 import { installCodexMcp, installGeminiMcp } from '../editor-mcp-eintrag.js';
@@ -131,6 +132,15 @@ describe('entferneAnweisungsBlock: Text ausserhalb bleibt byte-gleich', () => {
     if (r.art !== 'entfernt') return;
     expect(istLeerNachRueckbau(r.rest, true)).toBe(true);
     expect(istLeerNachRueckbau(r.rest, false)).toBe(false);
+    expect(istLeerNachRueckbau(r.rest + 'Meine Regel\n', true)).toBe(false);
+  });
+
+  it('Continue .continue/rules/cachly.md: nur unser Kopf uebrig heisst leer', () => {
+    const datei = CONTINUE_RULE_FRONTMATTER + buildClaudeMdBlock(IID) + '\n';
+    const r = entferneAnweisungsBlock(datei);
+    expect(r.art).toBe('entfernt');
+    if (r.art !== 'entfernt') return;
+    expect(istLeerNachRueckbau(r.rest, true)).toBe(true);
     expect(istLeerNachRueckbau(r.rest + 'Meine Regel\n', true)).toBe(false);
   });
 });

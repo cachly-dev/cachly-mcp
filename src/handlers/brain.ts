@@ -134,7 +134,7 @@ import {
   knapperSiegSatz,
 } from '../rangfolge.js';
 import {
-  pruefeWirkung, werteAus, lehrwert, leiteAb,
+  pruefeWirkung, werteAus, lehrwert, leiteAb, belegeJeThema,
   type Wirkungseintrag, type WirkungsEingabe, type LetzterRecall,
 } from '../wirkungsspur.js';
 import { merkeSuchlauf } from "../suchstatistik.js";
@@ -2214,25 +2214,21 @@ async function handleBrainToolInner(
 
         // "Never Google This Again" — suggest pinning after 3rd recall
         const suggestPin = updatedLesson.recall_count === 3 && !(lesson as { pinned?: boolean }).pinned
-          ? `📌 **You've looked this up 3 times.** Consider pinning it for instant access: add \`pinned: true\` via \`learn_from_attempts\` to always surface it first.`
+          ? `📌 **This lesson came up in 3 answers so far.** If you need it often, pin it: add \`pinned: true\` via \`learn_from_attempts\` to always surface it first.`
           : '';
 
-        // ── Trust signal (today-safe consensus layer) ───────────────────────
-        // A lesson recalled many times — or confirmed by multiple distinct
-        // authors — has proven its value. Surface that as social proof.
+        // ── Trust signal ────────────────────────────────────────────────────
+        // Nur, was gezaehlt eine Bestaetigung ist: mehrere Autoren. Bis
+        // 03.11.2026 stand hier ab recall_count 5 "Proven" und ab 10
+        // "Battle-tested … Trust this". recall_count zaehlt jede ANZEIGE,
+        // auch als fuenfter Treffer ohne ein getroffenes Wort — das ist keine
+        // Bewaehrung. Die Anzeigezahl steht neutral im Kopf ("in N answers").
         const lessonAuthors = (lesson as { authors?: string[]; author?: string }).authors
           ?? ((lesson as { author?: string }).author ? [(lesson as { author?: string }).author!] : []);
         const distinctAuthors = [...new Set(lessonAuthors.filter(Boolean))];
-        const rc = updatedLesson.recall_count;
         let trustBadge = '';
-        if (distinctAuthors.length >= 2 && rc >= 5) {
-          trustBadge = `🏆 **Battle-tested** — recalled ${rc}× · verified by ${distinctAuthors.length} developers. Trust this.`;
-        } else if (rc >= 10) {
-          trustBadge = `🏆 **Battle-tested** — recalled ${rc}×. This is one of your most-proven solutions.`;
-        } else if (distinctAuthors.length >= 2) {
+        if (distinctAuthors.length >= 2) {
           trustBadge = `✅ **Team-verified** — confirmed by ${distinctAuthors.length} developers.`;
-        } else if (rc >= 5) {
-          trustBadge = `✅ **Proven** — recalled ${rc}× without contradiction.`;
         }
 
         // Ersetzt? Dann steht das ZUERST — laut, vor jedem Inhalt (Karte
@@ -2294,7 +2290,7 @@ async function handleBrainToolInner(
           entZeile,
           rememberWhen,
           trustBadge,
-          `${badge} **Best solution for \`${topic}\`** ${sevEmoji}${lesson.severity ? ` (${lesson.severity})` : ''} · recalled ${updatedLesson.recall_count}×`,
+          `${badge} **Best solution for \`${topic}\`** ${sevEmoji}${lesson.severity ? ` (${lesson.severity})` : ''} · in ${updatedLesson.recall_count} answer${updatedLesson.recall_count === 1 ? '' : 's'} so far`,
           quelleZeile((lesson as { author?: string }).author, (lesson as { source?: LektionsQuelle }).source),
           ``,
           // what_worked may be empty for unresolved failure lessons (the API
@@ -4065,15 +4061,23 @@ async function handleBrainToolInner(
         );
       }
 
-      // ── 📌 Proven Laws — auto-crystallized lessons (quick win 3) ─────────────
-      // A lesson that has proven itself (recalled ≥ CRYSTALLIZE_RECALLS times) or
-      // was explicitly pinned becomes a "law" — surfaced at the top of every
-      // briefing so the most battle-tested knowledge is never buried. This is
-      // the today-safe version of swarm crystallization: enough confirmations
-      // auto-promote a lesson without any manual step.
+      // ── 📌 Confirmed lessons — angeheftet oder durch eine Handlung belegt ────
+      // Bis 03.11.2026 hiess der Abschnitt "Proven Laws" und nahm jede Lektion
+      // ab recall_count 5. recall_count zaehlt ANZEIGEN, auch als fuenfter
+      // Treffer ohne ein getroffenes Wort: Im Probelauf einer ersten Sitzung
+      // stand "Initial commit: demo app skeleton" nach EINER Sitzung als
+      // Gesetz da. Jetzt zaehlt nur, was eine Handlung belegt (Wirkungsspur):
+      // angeheftet, als hilfreich gemeldet, oder mindestens
+      // BESTAETIGT_GEOEFFNET-mal nach einer Suche geoeffnet. Die Rangfolge der
+      // Suche bleibt davon unberuehrt.
       {
         type LessonPin = typeof lessons[0] & { pinned?: boolean };
-        const CRYSTALLIZE_RECALLS = 5;
+        const BESTAETIGT_GEOEFFNET = 2;
+        const spurRoh = await redis.lrange(`cachly:wirkung:${instance_id}`, 0, -1).catch(() => [] as string[]);
+        const belege = belegeJeThema(
+          spurRoh.map((z) => safeJsonParse(z, null as null | Wirkungseintrag)).filter(Boolean) as Wirkungseintrag[],
+        );
+        const belegVon = (t: string) => belege.get(t) ?? { geholfen: 0, geoeffnet: 0 };
         // Der Startvorrat wird nie zum Gesetz. Eine mitgelieferte Lektion sammelt
         // Abrufe, weil sie zu allem ein bisschen passt — nicht, weil sie sich
         // bewaehrt hat. Gemessen am 17.08.2026: Die fuenf obersten "Gesetze"
@@ -4081,19 +4085,32 @@ async function handleBrainToolInner(
         // echten Lektionen standen darunter bei zwei bis fuenf Abrufen.
         const laws = (lessons as LessonPin[])
           .filter(l => !istStarterLektion(l))
-          .filter(l => l.outcome === 'success' && (l.pinned === true || (l.recall_count ?? 0) >= CRYSTALLIZE_RECALLS))
+          .filter(l => {
+            if (l.outcome !== 'success') return false;
+            const b = belegVon(l.topic);
+            return l.pinned === true || b.geholfen >= 1 || b.geoeffnet >= BESTAETIGT_GEOEFFNET;
+          })
           .filter(l => !gezeigt.has(l.topic))
-          .sort((a, b) => (b.recall_count ?? 0) - (a.recall_count ?? 0))
+          .sort((a, b) => {
+            const ba = belegVon(a.topic);
+            const bb = belegVon(b.topic);
+            return (bb.geholfen - ba.geholfen) || (bb.geoeffnet - ba.geoeffnet)
+              || ((b.recall_count ?? 0) - (a.recall_count ?? 0));
+          })
           .slice(0, 5);
         if (laws.length > 0) {
-          lines.push(`📌 **Proven Laws** (auto-crystallized — your most-trusted knowledge):`);
+          lines.push(`📌 **Confirmed lessons** (pinned, reported helpful, or opened after a search — being shown does not count):`);
           for (const l of laws) {
             gezeigt.add(l.topic);
             const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
-            const rc  = l.recall_count ?? 0;
-            const why = l.pinned === true ? 'pinned' : `recalled ${rc}×`;
+            const b = belegVon(l.topic);
+            const why = [
+              l.pinned === true ? 'pinned' : '',
+              b.geholfen > 0 ? `reported helpful ${b.geholfen}×` : '',
+              b.geoeffnet > 0 ? `opened ${b.geoeffnet}× after a search` : '',
+            ].filter(Boolean).join(' · ');
             const body = lessonPreviewLines(l as PreviewLesson);
-            lines.push(`  🏆${sev} \`${l.topic}\` _(${why})_ — ${body[0] ?? ''}`, ...body.slice(1));
+            lines.push(`  ✅${sev} \`${l.topic}\` _(${why})_ — ${body[0] ?? ''}`, ...body.slice(1));
           }
           lines.push('');
         }
@@ -4564,7 +4581,7 @@ async function handleBrainToolInner(
         const sevIcon = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '⚠️' : '✅';
         const sevLabel = l.severity ? `[${l.severity}] ` : '[minor] ';
         const rc = l.recall_count ?? 0;
-        const rcStr = rc > 0 ? ` (✓ recalled ${rc}×)` : '';
+        const rcStr = rc > 0 ? ` (in ${rc} answer${rc === 1 ? '' : 's'})` : '';
         const snippet = l.what_worked.slice(0, 110);
         // GROW-045: `author` wurde bisher nur entgegengenommen, nie benutzt —
         // obwohl die Werkzeug-Spezifikation "used for team lesson filtering"

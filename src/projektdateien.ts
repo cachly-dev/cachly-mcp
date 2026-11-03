@@ -28,6 +28,19 @@ export const CURSOR_MDC_FRONTMATTER =
   'alwaysApply: true\n' +
   '---\n\n';
 
+/**
+ * Kopf fuer .continue/rules/cachly.md. Continue gibt die Server-Anweisung
+ * (`instructions`) nicht an das Modell weiter (core/context/mcp/MCPConnection.ts
+ * liest sie nie, geprueft 03.11.2026) — dort ist die Regeldatei der einzige Weg.
+ * `alwaysApply: true` heisst laut Doku "Always included, regardless of file context".
+ */
+export const CONTINUE_RULE_FRONTMATTER =
+  '---\n' +
+  'name: cachly AI Brain\n' +
+  'description: Persistent memory protocol (recall before tasks, learn after fixes)\n' +
+  'alwaysApply: true\n' +
+  '---\n\n';
+
 /** Die MCP-Konfigurationsdatei je Editor, relativ zum Projekt. */
 export const EDITOR_FILES: Record<string, string> = {
   claude:   '.mcp.json',
@@ -111,6 +124,8 @@ export const ANWEISUNGS_DATEIEN: readonly AnweisungsDatei[] = [
   { pfad: ['GEMINI.md'], nurMit: { projekt: ['.gemini'], heim: ['.gemini'] } },
   // JetBrains Junie liest .junie/guidelines.md; nur wo das Plugin .junie/ angelegt hat.
   { pfad: ['.junie', 'guidelines.md'], nurMit: { projekt: ['.junie'] } },
+  // Continue liest .continue/rules/*.md; nur wo Continue benutzt wird (Projekt oder ~/.continue).
+  { pfad: ['.continue', 'rules', 'cachly.md'], prefix: CONTINUE_RULE_FRONTMATTER, nurMit: { projekt: ['.continue'], heim: ['.continue'] } },
 ];
 
 /** Der Pflichtblock fuer alle Anweisungsdateien — die EINZIGE Quelle (init, autopilot, setup_ai_memory). */

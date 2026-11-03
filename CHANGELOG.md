@@ -7,6 +7,34 @@
 
 ---
 
+## [0.10.225] – 2026-11-03 — *"Shown is not helped."*
+
+**"Proven" now needs proof.** A lesson's `recall_count` goes up every time it
+appears in an answer, even as the fifth nearest entry with no matching word.
+In a replayed first session, the commit "Initial commit: demo app skeleton"
+was a "Proven Law (recalled 5×)" after one session.
+
+- The briefing section **"Proven Laws" is now "Confirmed lessons"**. A lesson
+  is listed only if it is pinned, was reported helpful (`recall_feedback`
+  with `helped=true`), or was opened at least twice right after a search
+  (`recall_best_solution` on a topic from the previous `smart_recall`). The
+  reason is printed: `pinned`, `reported helpful 1×`, `opened 2× after a
+  search`. Being shown does not count.
+- `recall_best_solution` no longer shows "Proven — recalled 5×" or
+  "Battle-tested … Trust this". The header says `in 5 answers so far`.
+  "Team-verified" stays: it counts distinct authors.
+- "recalled N×" elsewhere (team list, causal trace, brain summary) reads
+  "in N answers".
+
+**Continue gets a rule file.** Continue does not pass the server's
+`instructions` to the model, so the rule file is the only way to tell it to
+recall first. `autopilot`/`setup` now write `.continue/rules/cachly.md`
+(`alwaysApply: true`) where Continue is used (a `.continue` folder in the
+project or in your home folder). `uninstall` removes it again.
+
+Not changed: search ranking still uses `recall_count`. Changing it needs its
+own benchmark run.
+
 ## [0.10.224] – 2026-11-03 — *"Your first session reads in one language and shows only what was counted."*
 
 We ran a full first session against a fresh test Brain (session start, three

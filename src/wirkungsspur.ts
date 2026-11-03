@@ -314,3 +314,32 @@ export function werteAus(spur: Wirkungseintrag[]): {
     nachLehrwert,
   };
 }
+
+/** Belege je Thema: gemeldet geholfen und nach einer Suche geoeffnet — getrennt. */
+export type ThemenBeleg = { geholfen: number; geoeffnet: number };
+
+/**
+ * Wie oft hat eine Lektion WIRKLICH etwas bewirkt — nicht, wie oft stand sie da?
+ *
+ * Fuer das Briefing (03.11.2026). Bis dahin wurden Lektionen ab
+ * `recall_count >= 5` zum "Proven Law". `recall_count` zaehlt jede Anzeige,
+ * auch auf Platz 5 mit 0 getroffenen Woertern: Im Probelauf einer ersten
+ * Sitzung stand "Initial commit: demo app skeleton" nach EINER Sitzung als
+ * Gesetz da ("recalled 5×").
+ *
+ * Gezaehlt werden hier nur die zwei Signale, die eine Handlung belegen:
+ *   geholfen  `gemeldet` mit geholfen = true (recall_feedback)
+ *   geoeffnet `abgeleitet`: nach einer Suche genau diese Lektion geoeffnet
+ * Beide bleiben getrennt — eine Auswahl ist keine Loesung (siehe Quelle).
+ */
+export function belegeJeThema(spur: Wirkungseintrag[]): Map<string, ThemenBeleg> {
+  const je = new Map<string, ThemenBeleg>();
+  for (const e of spur) {
+    if (!e || typeof e.thema !== 'string' || !e.thema) continue;
+    const b = je.get(e.thema) ?? { geholfen: 0, geoeffnet: 0 };
+    if (e.quelle === 'gemeldet' && e.geholfen === true) b.geholfen++;
+    else if (e.quelle === 'abgeleitet') b.geoeffnet++;
+    je.set(e.thema, b);
+  }
+  return je;
+}

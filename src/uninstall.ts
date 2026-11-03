@@ -418,7 +418,9 @@ function planeAnweisungen(o: PlanEingabe, plan: Plan): void {
       plan.vonHand.push({ stufe: 'projekt', text: `${rel}: a cachly marker has no partner. Remove the block by hand.` });
       continue;
     }
-    if (istLeerNachRueckbau(r.rest, rel.endsWith('.mdc'))) {
+    // Cursor (.mdc) und Continue (.continue/rules) tragen unseren Kopf ueber dem
+    // Block — bleibt nur er stehen, gehoert die ganze Datei uns.
+    if (istLeerNachRueckbau(r.rest, rel.endsWith('.mdc') || d.prefix !== undefined)) {
       plan.funde.push({ stufe: 'projekt', aktion: 'datei-loeschen', pfad, was: 'only the cachly block was in it', vorher: text });
     } else {
       plan.funde.push({ stufe: 'projekt', aktion: 'block-entfernen', pfad, was: 'cachly block between the markers; your text stays as it is', vorher: text, nachher: r.rest });
