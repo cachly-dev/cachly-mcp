@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import type { Redis } from 'ioredis';
 import { handleBrainTool } from '../handlers/brain.js';
 import { MockRedis } from './redis-mock.js';
+import { SCHWEIGEN_MARKE } from '../abstention.js';
 
 /**
  * Karte bninni0fimfy — die Zurueckhaltung haengt am ausgelieferten Pfad.
@@ -107,8 +108,8 @@ describe('Verhalten: der Abruf sagt Nein, und er sagt es mit Zahlen', () => {
         noopApiFetch,
       ),
     );
-    expect(out).toContain('Nichts Passendes im Bestand');
-    expect(out).toContain('noch keine Lektion');
+    expect(out).toContain(SCHWEIGEN_MARKE);
+    expect(out).toContain('no lesson for this question yet');
   });
 
   it('GEGENPROBE: ein passender Treffer wird geliefert, nicht verschwiegen', async () => {
@@ -131,7 +132,7 @@ describe('Verhalten: der Abruf sagt Nein, und er sagt es mit Zahlen', () => {
       ),
     );
     expect(out).toContain('liegt am Netz');
-    expect(out).not.toContain('Nichts Passendes im Bestand');
+    expect(out).not.toContain(SCHWEIGEN_MARKE);
   });
 
   it('GEGENPROBE: die lange Frage wird nicht bestraft', async () => {
@@ -152,6 +153,6 @@ describe('Verhalten: der Abruf sagt Nein, und er sagt es mit Zahlen', () => {
       ),
     );
     expect(out).toContain('xyzzy');
-    expect(out).not.toContain('Nichts Passendes im Bestand');
+    expect(out).not.toContain(SCHWEIGEN_MARKE);
   });
 });

@@ -96,6 +96,46 @@ export interface StartLage {
   lerntAusGit: boolean;
   /** Ohne Git kommt stattdessen der Startvorrat. */
   startvorrat?: boolean;
+  /**
+   * Die letzten Commit-Betreffe des Projekts (startwissen.ts projektCommits),
+   * leer ausserhalb eines Git-Projekts. Nur dann gezeigt, wenn vorhanden.
+   */
+  commits?: readonly string[];
+}
+
+// ── Die letzten Commits fuer die erste Antwort (03.11.2026) ─────────────────
+//
+// index.ts setzt die Quelle im stdio-Betrieb (wie das Startwissen). Geholt
+// wird einmal je Prozess; die Antwort wartet hoechstens WARTE_MS darauf.
+let _commitQuelle: (() => Promise<string[]>) | undefined;
+let _commits: Promise<string[]> | undefined;
+const WARTE_MS = 1500;
+
+/** Setzt, woher die Commit-Betreffe kommen. Ohne Quelle zeigt keine Antwort Commits. */
+export function setzeCommitQuelle(quelle: (() => Promise<string[]>) | undefined): void {
+  _commitQuelle = quelle;
+  _commits = undefined;
+}
+
+/** Die Commit-Betreffe des Projekts, oder [] nach hoechstens `warteMs`. Wirft nie. */
+export async function projektCommitsKurz(warteMs = WARTE_MS): Promise<string[]> {
+  if (!_commitQuelle) return [];
+  _commits ??= _commitQuelle().catch(() => []);
+  let uhr: ReturnType<typeof setTimeout> | undefined;
+  const frist = new Promise<string[]>((fertig) => {
+    uhr = setTimeout(() => fertig([]), warteMs);
+    uhr.unref?.();
+  });
+  try {
+    return await Promise.race([_commits, frist]);
+  } finally {
+    if (uhr) clearTimeout(uhr);
+  }
+}
+
+/** startLage plus die Commit-Betreffe — fuer die ersten Antworten (smart_recall, session_start). */
+export async function startLageMitCommits(instanzId: string): Promise<StartLage> {
+  return { ...startLage(instanzId), commits: await projektCommitsKurz() };
 }
 
 /** Die StartLage eines Brains; beides false, sobald das Startwissen ausgegangen ist. */
@@ -170,6 +210,30 @@ function startSatz(lage: StartLage): string[] {
     + '`smart_recall` finds them.'];
 }
 
+/**
+ * Die letzten Commits des Projekts als Beleg, dass das Brain DIESES Projekt
+ * kennt. Lernt es gerade aus Git, ersetzt der Block den Wenn-Satz (startSatz):
+ * mit Commits ist sicher, dass es ein Repo ist. Ein leeres Brain, das nicht
+ * gerade lernt, bekommt den Weg dorthin (brain_from_git).
+ */
+function commitBlock(lage: StartLage): string[] {
+  const commits = lage.commits ?? [];
+  if (!commits.length) return [];
+  const kopf = lage.lerntAusGit
+    ? `🗂️ **Learning from this project now** — the Brain is reading its last ${STARTWISSEN_COMMITS} commits `
+      + 'in the background and turns them into lessons. The latest:'
+    : '🗂️ **This project\'s latest commits** — the Brain has not read them yet:';
+  const fuss = lage.lerntAusGit
+    ? 'A short notice comes with the next answer once that is done; from then on `smart_recall` finds them.'
+    : 'To turn them into lessons now: `brain_from_git(repo_path="<this project>")`.';
+  return [kopf, ...commits.map((c) => `  • ${c}`), fuss];
+}
+
+/** Commits, wenn es welche gibt — sonst der Wenn-Satz zum Startwissen. */
+function lernBlock(lage: StartLage): string[] {
+  return lage.commits?.length ? commitBlock(lage) : startSatz(lage);
+}
+
 const ERSTE_LEKTION = 'The first own lesson comes from `learn_from_attempts` after a fix or a discovery.';
 
 /**
@@ -183,7 +247,7 @@ export function neuesBrainAntwort(kopf: string, lage: StartLage): string {
     '',
     `📭 **${NEUES_BRAIN} and still empty** — it was created a moment ago and is starting up on the server `
       + 'right now. Nothing is stored in it yet.',
-    ...startSatz(lage),
+    ...lernBlock(lage),
     ERSTE_LEKTION,
   ].join('\n');
 }
@@ -199,7 +263,7 @@ export async function sofortAntwortNeuesBrain(
   kopf: string,
 ): Promise<string | null> {
   if (!(await startetNochLeer(instanzId, apiFetch))) return null;
-  return neuesBrainAntwort(kopf, startLage(instanzId));
+  return neuesBrainAntwort(kopf, await startLageMitCommits(instanzId));
 }
 
 /**
@@ -221,8 +285,12 @@ export function neuesBrainBriefing(lage: StartLage & { instanzId: string; provid
       + 'It has no lessons and no stored context yet, so there is nothing to brief you on.',
     '',
   );
-  const satz = startSatz(lage);
-  if (satz.length) zeilen.push(`📚 ${satz[0]}`, '');
+  if (lage.commits?.length) {
+    zeilen.push(...commitBlock(lage), '');
+  } else {
+    const satz = startSatz(lage);
+    if (satz.length) zeilen.push(`📚 ${satz[0]}`, '');
+  }
   zeilen.push(
     '**How to work with cachly:**',
     '  • Before a task → `smart_recall(query="what you are about to do")`',
@@ -265,6 +333,6 @@ export function leeresBrainAntwort(query: string, lage: StartLage & { startet: b
       + 'for this question. It is starting up on the server right now.'
     : '📭 **This Brain is still empty** — it has no lessons and no stored context yet, so there is nothing '
       + 'to recall for this question.');
-  zeilen.push(...startSatz(lage), ERSTE_LEKTION);
+  zeilen.push(...lernBlock(lage), ERSTE_LEKTION);
   return zeilen.join('\n');
 }

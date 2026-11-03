@@ -54,7 +54,10 @@ vi.mock('../leser.js', async (original) => {
 
 import { handleBrainTool } from '../handlers/brain.js';
 import { MockRedis } from './redis-mock.js';
-import { merkeNeuesBrain, neuesBrain, _neueBrainsZuruecksetzen, leeresBrainAntwort } from '../leeres-brain.js';
+import {
+  merkeNeuesBrain, neuesBrain, _neueBrainsZuruecksetzen, leeresBrainAntwort, neuesBrainBriefing,
+  setzeCommitQuelle, projektCommitsKurz,
+} from '../leeres-brain.js';
 import { _startwissenZuruecksetzen, starteStartwissen } from '../startwissen.js';
 import { setzeAussetzerZurueck, schonGemeldet, OHNE_VEKTOREN } from '../aussetzer.js';
 import { suchProtokollSchluessel } from '../recall-trichter.js';
@@ -183,6 +186,55 @@ describe('leeresBrainAntwort', () => {
     { startet: false, lerntAusGit: false },
   ])('enthaelt "no lessons" (%o)', (lage) => {
     expect(leeresBrainAntwort(FRAGE, lage)).toContain('no lessons');
+  });
+});
+
+// 03.11.2026: Seit MCP 0.10.222 ruft die KI smart_recall als ersten Schritt. Auf
+// einem neuen Brain las der Nutzer nur "still empty". Jetzt zeigt die erste
+// Antwort die letzten Commits SEINES Projekts — echt, nicht erfunden.
+describe('erste Antwort zeigt die letzten Commits des Projekts', () => {
+  const COMMITS = ['Fix rounding of invoice totals', 'Add README'];
+
+  it('neues Brain, das aus Git lernt: Commits statt Wenn-Satz, "no lessons" bleibt', () => {
+    const text = leeresBrainAntwort(FRAGE, { startet: true, lerntAusGit: true, commits: COMMITS });
+    expect(text).toContain('Learning from this project now');
+    for (const c of COMMITS) expect(text).toContain(`• ${c}`);
+    expect(text).not.toContain('If the project folder is a git repository');
+    expect(text).toContain('no lessons');
+  });
+
+  it('leeres Brain, das nicht gerade lernt: Commits plus der Weg brain_from_git', () => {
+    const text = leeresBrainAntwort(FRAGE, { startet: false, lerntAusGit: false, commits: COMMITS });
+    expect(text).toContain('has not read them yet');
+    expect(text).toContain('brain_from_git(');
+    expect(text).toContain('no lessons');
+  });
+
+  it('ohne Commits (kein Repo, Paketordner) bleibt die Antwort wie bisher', () => {
+    const ohne = leeresBrainAntwort(FRAGE, { startet: true, lerntAusGit: true, commits: [] });
+    expect(ohne).toContain('If the project folder is a git repository');
+    expect(ohne).not.toContain('🗂️');
+  });
+
+  it('das Briefing von session_start zeigt sie auch', () => {
+    const text = neuesBrainBriefing({ instanzId: 'i-1', lerntAusGit: true, commits: COMMITS });
+    expect(text).toContain('Learning from this project now');
+    expect(text).toContain(`• ${COMMITS[0]}`);
+  });
+
+  it('projektCommitsKurz wartet hoechstens die Frist und fragt die Quelle nur einmal', async () => {
+    let aufrufe = 0;
+    setzeCommitQuelle(() => { aufrufe++; return new Promise(() => { /* haengt */ }); });
+    const start = Date.now();
+    expect(await projektCommitsKurz(50)).toEqual([]);
+    expect(Date.now() - start).toBeLessThan(1000);
+    await projektCommitsKurz(10);
+    expect(aufrufe).toBe(1);
+
+    setzeCommitQuelle(async () => COMMITS);
+    expect(await projektCommitsKurz()).toEqual(COMMITS);
+    setzeCommitQuelle(undefined);
+    expect(await projektCommitsKurz()).toEqual([]);
   });
 });
 

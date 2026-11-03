@@ -42,11 +42,12 @@ import type { Redis } from 'ioredis';
 import { baueBestand } from './echter-korpus.js';
 import { handleBrainTool } from '../handlers/brain.js';
 import { MockRedis } from '../__tests__/redis-mock.js';
+import { SCHWEIGEN_MARKE } from '../abstention.js';
 
 const HIER = dirname(fileURLToPath(import.meta.url));
 
 /** Der Satz, den die Zurueckhaltung ausgibt — die Erkennung steht neben der Zahl. */
-const SCHWEIGT = 'Nichts Passendes im Bestand';
+const SCHWEIGT = SCHWEIGEN_MARKE;
 
 /**
  * Fragen OHNE Antwort im Bestand.

@@ -71,6 +71,7 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import type { Redis } from 'ioredis';
 import { MockRedis } from '../__tests__/redis-mock.js';
+import { SCHWEIGEN_MARKE } from '../abstention.js';
 
 const argv = process.argv.slice(2);
 const flag = (n: string): string | undefined => {
@@ -270,7 +271,7 @@ async function main(): Promise<void> {
     haus.push(bestePlatzierung(hausOben, q.relevant));
     // Die Zurueckhaltung zeigt keine Liste — das ist eine andere Frage als
     // die Reihenfolge und wird getrennt gezaehlt, nicht als Abweichung.
-    if (out.includes('Nichts Passendes im Bestand')) { schweigen++; continue; }
+    if (out.includes(SCHWEIGEN_MARKE)) { schweigen++; continue; }
     const ausgabeOben = gezeigt.slice(0, hausOben.length);
     const gleich = ausgabeOben.length === hausOben.length && ausgabeOben.every((t, i) => t === hausOben[i]);
     // Mehrthemen-Fragen gruppiert die Ausgabe nach Teilfrage ("_Detected N

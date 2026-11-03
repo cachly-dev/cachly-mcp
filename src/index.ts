@@ -1063,10 +1063,10 @@ import {
 import { sichereZugang, echterWert } from './zugang.js';
 import { zeitpunkt } from './zeitmessung.js';
 import { warteAufLaufendeInstanz, gemeinsamerAufbau } from './instanz-warten.js';
-import { merkeNeuesBrain, startetLautLetztemBlick } from './leeres-brain.js';
+import { merkeNeuesBrain, startetLautLetztemBlick, setzeCommitQuelle } from './leeres-brain.js';
 import {
   starteStartwissen, startwissenGestartet, beanspruchStartwissen, holeStartwissenHinweis, waehleProjektOrdner,
-  startvorratErlaubt,
+  startvorratErlaubt, projektCommits,
 } from './startwissen.js';
 import { eigeneFassung, pruefeNeueFassung, holeNeueFassungHinweis } from './neue-fassung.js';
 import { beiStdinEnde } from './stdin-ende.js';
@@ -5274,6 +5274,9 @@ if (httpPort) {
   const cliBefehl = typeof process.argv[2] === 'string' && !process.argv[2].startsWith('-');
   if (!cliBefehl) {
     _startwissenErlaubt = true;
+    // Die erste Antwort eines leeren Brains zeigt die letzten Commits des
+    // Projekts (leeres-brain.ts) — nur hier, wo der Ordner der des Nutzers ist.
+    setzeCommitQuelle(() => projektCommits(projektOrdnerVomClient));
     beobachteHookKonto();
     starteBrandWachhund();
     beiStdinEnde(process.stdin, (grund) => {

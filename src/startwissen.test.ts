@@ -13,7 +13,43 @@ import {
   starteStartwissen, lerneAusGitGeschichte, holeStartwissenHinweis, beanspruchStartwissen,
   ausschlussGrund, waehleProjektOrdner, startwissenGestartet, _startwissenZuruecksetzen,
   STARTWISSEN_MARKE, STARTWISSEN_COMMITS, type StartwissenUmfeld,
+  letzteCommitBetreffe, projektCommits,
 } from './startwissen.js';
+
+// 03.11.2026: die erste Antwort eines leeren Brains zeigt die letzten Commits.
+// Echt: git in einem Wegwerf-Repo. Derselbe Ausschluss wie beim Import.
+describe('projektCommits / letzteCommitBetreffe', () => {
+  let repo = '';
+  beforeEach(() => {
+    repo = realpathSync(mkdtempSync(join(tmpdir(), 'cachly-commits-')));
+    const git = (...a: string[]) => execFileSync('git', a, { cwd: repo, stdio: 'ignore' });
+    git('init', '-q');
+    git('config', 'user.email', 'probe@example.com');
+    git('config', 'user.name', 'Probe');
+    for (const m of ['Erster Commit', 'Fix rounding of invoice totals', 'x'.repeat(120)]) {
+      git('commit', '-q', '--allow-empty', '-m', m);
+    }
+  });
+  afterEach(() => rmSync(repo, { recursive: true, force: true }));
+
+  it('liefert die Betreffe, neueste zuerst, lange gekuerzt', async () => {
+    const c = await letzteCommitBetreffe(repo, 5);
+    expect(c).toHaveLength(3);
+    expect(c[0]).toHaveLength(90);
+    expect(c[0].endsWith('…')).toBe(true);
+    expect(c[1]).toBe('Fix rounding of invoice totals');
+  });
+
+  it('projektCommits nimmt den Projektordner und liefert dieselben Betreffe', async () => {
+    expect(await projektCommits(async () => repo, {})).toContain('Fix rounding of invoice totals');
+  });
+
+  it('kein Repo oder ausgeschlossener Ordner: nichts', async () => {
+    expect(await projektCommits(async () => repo, {}, async () => '')).toEqual([]);
+    expect(await projektCommits(async () => repo, { CLAUDE_PLUGIN_ROOT: repo })).toEqual([]);
+    expect(await projektCommits(async () => { throw new Error('kein Client'); }, {})).toEqual([]);
+  });
+});
 
 /*
  * Befund 11.10.2026: Ein frisches Test-Brain antwortete auf das erste

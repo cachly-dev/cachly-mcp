@@ -182,27 +182,38 @@ export function beurteileTreffer(
  * (Dieselbe Regel wie bei den Waechtern: erst den gelesenen Wert melden, dann
  * das Urteil.)
  */
+/**
+ * Woran Messlaeufe und Tests ein Schweigen erkennen. Steht in beiden Fassungen
+ * des Satzes — und ist zugleich die Wendung, an der index.ts (srHit) einen
+ * leeren Abruf erkennt.
+ *
+ * Bis 03.11.2026 war der Satz deutsch ("Nichts Passendes im Bestand"): Jeder
+ * Nutzer las als erste cachly-Zeile Deutsch, und srHit (prueft auf "No matches
+ * found") hielt ein Schweigen auf einem gefuellten Brain fuer einen Treffer.
+ */
+export const SCHWEIGEN_MARKE = 'No matches found';
+
 export function abstentionSatz(
   urteil: AbstentionUrteil,
   schwellen: AbstentionSchwellen = {},
 ): string {
   if (urteil.geprueft === 0) {
-    return '🔍 **Nichts Passendes im Bestand** — zu dieser Frage gibt es noch keine Lektion.';
+    return `🔍 **${SCHWEIGEN_MARKE}** — there is no lesson for this question yet.`;
   }
   const woerterSchwelle = schwellen.woerter ?? WORT_BELEG_SCHWELLE;
   const naeheSchwelle = schwellen.naehe ?? SINN_BELEG_SCHWELLE;
 
   return [
-    '🔍 **Nichts Passendes im Bestand.**',
+    `🔍 **${SCHWEIGEN_MARKE}.**`,
     '',
     // Der benannte Zaehl-Grund zuerst (Karte 4ssv2t1qqlu6): "N betrachtet,
     // keiner belegt" ist ein strukturiertes Signal, kein weiches Nein. Danach
     // die gelesenen Werte, damit das Urteil nachpruefbar bleibt.
-    `${urteil.geprueft} Treffer betrachtet, keiner belegt — der beste enthielt ${urteil.besteWortBelege} der gesuchten Wörter (nötig: ${woerterSchwelle}), ` +
-      `höchste Bedeutungsnähe ${urteil.besteNaehe.toFixed(2)} (nötig: ${naeheSchwelle.toFixed(2)}).`,
-    'Sie werden bewusst NICHT gezeigt: ein schwacher Treffer sieht wie ein starker aus, und der Unterschied entscheidet.',
+    `${urteil.geprueft} candidates checked, none confirmed — the best contained ${urteil.besteWortBelege} of the searched words (needed: ${woerterSchwelle}), ` +
+      `highest semantic similarity ${urteil.besteNaehe.toFixed(2)} (needed: ${naeheSchwelle.toFixed(2)}).`,
+    'They are deliberately NOT shown: a weak match looks like a strong one, and the difference matters.',
     '',
-    '_Wenn die Antwort trotzdem im Bestand liegen sollte, hilft eine Frage mit anderen Worten — oder `recall_best_solution(topic="…")`, wenn das Thema bekannt ist._',
+    '_If the answer should be in the Brain anyway, ask with other words — or use `recall_best_solution(topic="…")` if you know the topic._',
   ].join('\n');
 }
 

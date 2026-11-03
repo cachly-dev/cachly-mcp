@@ -7,6 +7,32 @@
 
 ---
 
+## [0.10.223] – 2026-11-03 — *"The first answer shows your project."*
+
+**A new or empty Brain now answers the first recall with your project's
+latest commits.** Since 0.10.222 the AI calls `smart_recall` first. On a new
+Brain it read only "still empty, nothing to recall". Now the answer lists the
+last 5 commit subjects of the project and says what happens with them:
+
+```
+🔍 No matches found — there is no lesson for this question yet.
+📭 This Brain is brand new and still empty — …
+🗂️ Learning from this project now — the Brain is reading its last 30 commits in the background and turns them into lessons. The latest:
+  • Add README
+  • Test: invoice totals must be whole cents
+  • Add invoice total in cents
+```
+
+An empty Brain that is not learning right now shows the same list with the way
+to start: `brain_from_git(repo_path="<this project>")`. The subjects come from
+a local `git log` in the project folder (same folder rules as the git import:
+no package, plugin or home folder). The answer waits at most 1.5 s for them.
+
+**The "nothing found" sentence is now English.** It was German ("Nichts
+Passendes im Bestand") in every answer. It now says "No matches found" — the
+phrase the server already used to tell an empty recall from a hit. Before, an
+empty recall on a filled Brain counted as a hit.
+
 ## [0.10.222] – 2026-11-03 — *"Your AI checks its memory first."*
 
 **The server now tells your AI, in its first sentence, to call `smart_recall`

@@ -5,6 +5,7 @@ import {
   alterssatzFuerBelegte,
   beurteileTreffer,
   istBelegt,
+  SCHWEIGEN_MARKE,
 } from '../abstention.js';
 import {
   CKG_BELEG_SCHWELLE,
@@ -145,23 +146,32 @@ describe('abstentionSatz — das Nein traegt seine Zahlen', () => {
     expect(satz).toContain('0.5');
     expect(satz).toContain('0.11');
     // Der benannte Zaehl-Grund zuerst (Karte 4ssv2t1qqlu6).
-    expect(satz).toContain('1 Treffer betrachtet');
-    expect(satz).toContain('keiner belegt');
-    expect(satz).toContain(`nötig: ${WORT_BELEG_SCHWELLE}`);
+    expect(satz).toContain('1 candidates checked');
+    expect(satz).toContain('none confirmed');
+    expect(satz).toContain(`needed: ${WORT_BELEG_SCHWELLE}`);
     expect(satz).toContain(SINN_BELEG_SCHWELLE.toFixed(2));
   });
 
   it('der leere Bestand bekommt einen eigenen, kuerzeren Satz', () => {
     const satz = abstentionSatz(beurteileTreffer([]));
-    expect(satz).toContain('noch keine Lektion');
+    expect(satz).toContain('no lesson for this question yet');
     // Keine Schwellen-Arithmetik, wo es nichts zu vergleichen gab.
-    expect(satz).not.toContain('nötig');
+    expect(satz).not.toContain('needed');
+  });
+
+  // 03.11.2026: index.ts (srHit) erkennt einen leeren Abruf an "No matches
+  // found". Der deutsche Satz enthielt das nicht — ein Schweigen auf einem
+  // gefuellten Brain zaehlte als Treffer (Abrufzahl, Erst-Abruf-Mail).
+  it('beide Fassungen tragen die Marke, an der srHit ein Schweigen erkennt', () => {
+    expect(abstentionSatz(beurteileTreffer([]))).toContain(SCHWEIGEN_MARKE);
+    expect(abstentionSatz(beurteileTreffer([{ wortBelege: 0.5 }]))).toContain(SCHWEIGEN_MARKE);
+    expect(SCHWEIGEN_MARKE).toBe('No matches found');
   });
 
   it('GEGENPROBE: der Satz behauptet nie, der Bestand sei leer, wenn es Treffer GAB', () => {
     const satz = abstentionSatz(beurteileTreffer([{ wortBelege: 0.5 }]));
-    expect(satz).not.toContain('noch keine Lektion');
-    expect(satz).toContain('betrachtet');
+    expect(satz).not.toContain('no lesson for this question yet');
+    expect(satz).toContain('candidates checked');
   });
 
   it('nennt einen Weg weiter, statt nur abzulehnen', () => {

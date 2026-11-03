@@ -193,6 +193,52 @@ export function echteGitWurzel(ordner: string): Promise<string> {
   });
 }
 
+/** So viele Commit-Betreffe zeigt die erste Antwort eines leeren Brains. */
+export const ERSTE_ANTWORT_COMMITS = 5;
+
+/**
+ * Die Betreffzeilen der letzten Commits, neueste zuerst. Leer bei jedem
+ * Fehler — die erste Antwort kommt dann ohne sie, nie spaeter als noetig.
+ */
+export function letzteCommitBetreffe(wurzel: string, anzahl = ERSTE_ANTWORT_COMMITS): Promise<string[]> {
+  return new Promise((fertig) => {
+    try {
+      execFile('git', ['log', `-n${anzahl}`, '--format=%s'], { cwd: wurzel, timeout: 3000, windowsHide: true }, (fehler, aus) => {
+        if (fehler) return fertig([]);
+        fertig(String(aus ?? '').split(/\r?\n/).map((z) => z.trim()).filter(Boolean)
+          .map((z) => (z.length > 90 ? `${z.slice(0, 89)}…` : z)));
+      });
+    } catch {
+      fertig([]);
+    }
+  });
+}
+
+/**
+ * Die letzten Commit-Betreffe DES PROJEKTS — fuer die erste Antwort eines
+ * leeren Brains (leeres-brain.ts). Derselbe Weg wie der Import: Projektordner,
+ * Git-Wurzel, und kein Paket-, Plugin- oder Heimordner (ausschlussGrund).
+ *
+ * Warum (03.11.2026): Seit MCP 0.10.222 ruft die KI smart_recall als ersten
+ * Schritt. Auf einem neuen Brain las der Nutzer darauf nur "still empty,
+ * nothing to recall" — nichts aus seinem Projekt. Die Betreffe sind echt,
+ * kommen lokal in Millisekunden und zeigen, woraus das Brain gerade lernt.
+ */
+export async function projektCommits(
+  projektOrdner: () => Promise<string>,
+  env: Record<string, string | undefined> = process.env,
+  gitWurzel: (ordner: string) => Promise<string> = echteGitWurzel,
+  betreffe: (wurzel: string) => Promise<string[]> = letzteCommitBetreffe,
+): Promise<string[]> {
+  try {
+    const wurzel = await gitWurzel(resolve(await projektOrdner()));
+    if (!wurzel || ausschlussGrund(wurzel, env)) return [];
+    return await betreffe(wurzel);
+  } catch {
+    return [];
+  }
+}
+
 /** Der Satz an der ersten Antwort nach dem Import. Geht an den Assistenten. */
 export function startwissenSatz(lektionen: number, wurzel: string): string {
   return [

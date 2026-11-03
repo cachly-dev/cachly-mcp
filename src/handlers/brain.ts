@@ -91,7 +91,7 @@ import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
 import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
          splitMultiQuery, levenshtein, indexVocab as _indexVocab, bestandHolen } from '../search.js';
-import { startetNochLeer, leeresBrainAntwort, startLage, sofortAntwortNeuesBrain,
+import { startetNochLeer, leeresBrainAntwort, startLageMitCommits, sofortAntwortNeuesBrain,
          neuesBrainBriefing } from '../leeres-brain.js';
 import { rerankByQuality, qualityMultiplier, extractLessonQuality } from '../rerank.js';
 import { computeEmbedding, hasEmbedProvider, EMBED_PROVIDER } from '../embeddings.js';
@@ -2382,7 +2382,7 @@ async function handleBrainToolInner(
           .then((r) => vermerkeLeereSuche(r, instance_id, String(query ?? ''), dauer))
           .catch(() => { /* Messzeile stoppt nie die Antwort */ });
         zeitpunkt('smart_recall: neues Brain startet noch — sofort geantwortet');
-        return leeresBrainAntwort(String(query ?? ''), { startet: true, ...startLage(instance_id) });
+        return leeresBrainAntwort(String(query ?? ''), { startet: true, ...(await startLageMitCommits(instance_id)) });
       }
 
       const redis = await getConnection(instance_id);
@@ -2421,7 +2421,7 @@ async function handleBrainToolInner(
       if (!wortbestand) {
         vermerkeLeereSuche(redis, instance_id, String(query ?? ''), Date.now() - suchStart);
         zeitpunkt('smart_recall: Brain leer — sofort geantwortet');
-        return leeresBrainAntwort(String(query ?? ''), { startet: false, ...startLage(instance_id) });
+        return leeresBrainAntwort(String(query ?? ''), { startet: false, ...(await startLageMitCommits(instance_id)) });
       }
       const lektionenImBestand = wortbestand.docs
         .reduce((n, d) => n + (d.key.startsWith('cachly:lesson:best:') ? 1 : 0), 0);
@@ -3754,7 +3754,7 @@ async function handleBrainToolInner(
           })
           .catch(() => { /* das Nachschreiben stoppt nie die Antwort */ });
         zeitpunkt('session_start: neues Brain startet noch — sofort geantwortet');
-        return neuesBrainBriefing({ instanzId: instance_id, provider, ...startLage(instance_id) });
+        return neuesBrainBriefing({ instanzId: instance_id, provider, ...(await startLageMitCommits(instance_id)) });
       }
 
       const redis = await getConnection(instance_id);
