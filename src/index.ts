@@ -1006,7 +1006,7 @@ import { handleSyndicateTool } from './handlers/syndicate.js';
 import { handleFedbrainTool, _lastBrainFromGitCounts } from './handlers/fedbrain.js';
 import { extractFirstRecallProof, extractTopHit, fuersTerminal, renderFirstRecallProof } from './first-recall-proof.js';
 import { aussetzerLeise } from './aussetzer.js';
-import { buildClsPostCommitHook, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
+import { buildClsPostCommitHook, gitHookOrdner, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import {
   CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, EDITOR_FILES, ANWEISUNGS_DATEIEN, buildClaudeMdBlock, setzeAnweisungsblock, sollSchreiben, type SchreibErgebnis,
 } from './projektdateien.js';
@@ -1057,6 +1057,7 @@ import { eigeneFassung, pruefeNeueFassung, holeNeueFassungHinweis } from './neue
 import { beiStdinEnde } from './stdin-ende.js';
 import { merkeWerkzeugAufruf, starteBrandWachhund } from './brand-wachhund.js';
 import { sichtbareWerkzeuge, VERTEILER } from './werkzeug-auswahl.js';
+import { fehlendePflichtfelder } from './pflichtfelder.js';
 import { buildLessonsMarkdown, buildLessonsJsonl, vonRohLektion, type ExportLesson } from './brain-export.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
@@ -1857,7 +1858,8 @@ This project has a Cachly AI Brain — persistent, cross-session memory of past 
 - AFTER a fix, deploy, or discovery: call learn_from_attempts so the knowledge persists.
 - BEFORE a risky op (deploy, migration, dependency bump): call brain_predict.
 
-The Brain instance id comes from the CACHLY_BRAIN_INSTANCE_ID environment variable.`;
+You do not need to pass instance_id: the server uses CACHLY_BRAIN_INSTANCE_ID if it is set, and otherwise the Brain saved by \`cachly setup\` in ~/.cachly/credentials.json.
+session_start gives a briefing at the start of a session; it does not replace smart_recall for a concrete task.`;
 
 /**
  * Baut einen frischen MCP-Server mit allen Handlern.
@@ -2110,6 +2112,16 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
     }
     name = innen;
     args = (p.arguments ?? {}) as Record<string, unknown>;
+  }
+
+  // Fehlende Pflichtfelder vor jedem Handler abfangen (ki-03, 04.11.2026): sonst
+  // kam "Cannot read properties of undefined" als Protokollfehler zurueck.
+  // Drei Werkzeuge pruefen selbst und akzeptieren auch deutsche Feldnamen.
+  if (!['learn_from_attempts', 'smart_recall', 'recall_feedback'].includes(name)) {
+    const spec = (TOOLS as unknown as { name: string; inputSchema?: Parameters<typeof fehlendePflichtfelder>[1] }[])
+      .find((w) => w.name === name);
+    const problem = spec ? fehlendePflichtfelder(name, spec.inputSchema, (args ?? {}) as Record<string, unknown>) : null;
+    if (problem) return { content: [{ type: 'text', text: problem }], isError: true };
   }
 
   // Auto-start brain session on first tool call that has an instance_id.
@@ -3567,7 +3579,7 @@ async function installEditorHooks(editor: keyof typeof EDITOR_HOOK_ZEILEN, proje
 if (process.argv[2] === 'init') {
   const initStart = Date.now();
   const { writeFile, mkdir, readFile } = await import('node:fs/promises');
-  const { resolve, dirname } = await import('node:path');
+  const { resolve, dirname, relative } = await import('node:path');
 
   const argv = process.argv.slice(3);
   // cli-1 (03.11.2026): ein folgendes --flag ist kein Wert (sonst wurde "--api-key" die Instanz).
@@ -3688,10 +3700,12 @@ if (process.argv[2] === 'init') {
   // ── CLS Phase 4: Auto-install git post-commit hook ─────────────────────────
   try {
     const r = await installClsPostCommitHook(projectDir, instanceId);
-    if (r === 'written')        console.log(`✅ Written: .git/hooks/post-commit (CLS hook)`);
-    else if (r === 'upgraded')  console.log(`✅ Upgraded: .git/hooks/post-commit (CLS hook → ${CLS_HOOK_VERSION})`);
-    else if (r === 'appended')  console.log(`✅ Appended: .git/hooks/post-commit (CLS hook)`);
-    else if (r === 'unchanged') console.log(`✓  CLS hook already current in .git/hooks/post-commit`);
+    // Der Ordner, den Git wirklich nutzt (core.hooksPath, Husky) — nicht immer .git/hooks (cli-4).
+    const hookDatei = relative(projectDir, resolve(gitHookOrdner(projectDir), 'post-commit')).replace(/\\/g, '/');
+    if (r === 'written')        console.log(`✅ Written: ${hookDatei} (CLS hook)`);
+    else if (r === 'upgraded')  console.log(`✅ Upgraded: ${hookDatei} (CLS hook → ${CLS_HOOK_VERSION})`);
+    else if (r === 'appended')  console.log(`✅ Appended: ${hookDatei} (CLS hook)`);
+    else if (r === 'unchanged') console.log(`✓  CLS hook already current in ${hookDatei}`);
   } catch { /* non-critical — git hook is a best-effort feature */ }
 
   // ── Ambient Recall Phase 4: auto-install SessionStart + UserPromptSubmit hooks ─

@@ -307,7 +307,12 @@ export async function handleCacheTool(
       });
 
       if (!searchRes.ok) {
-        throw new McpError(ErrorCode.InternalError, `Vector search failed: ${searchRes.statusText}`);
+        // 04.11.2026 (team-semsuche): nur "Bad Request" sagte der KI nichts; der Antworttext nennt den Grund.
+        const grund = (await searchRes.text().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 200);
+        throw new McpError(
+          ErrorCode.InternalError,
+          `Vector search failed (HTTP ${searchRes.status}${searchRes.statusText ? ` ${searchRes.statusText}` : ''})${grund ? `: ${grund}` : ''}`,
+        );
       }
 
       const results = (await searchRes.json()) as SemanticSearchResponse[];
@@ -315,7 +320,12 @@ export async function handleCacheTool(
       if (!results.length || (results.length === 1 && !results[0].found)) {
         return (
           `🔍 No semantically similar entries found for:\n  _"${query}"_\n\n` +
-          `Try lowering the threshold (current: ${threshold}) or using different keywords.`
+          `Try lowering the threshold (current: ${threshold}) or using different keywords.` +
+          // 04.11.2026 (team-namespace): index_project schreibt nach "cachly:sem:code", dieser Aufruf
+          // sucht standardmaessig in "cachly:sem" — ohne den Hinweis blieb der Treffer unauffindbar.
+          (namespace === 'cachly:sem'
+            ? `\nFiles indexed with index_project are stored in namespace "cachly:sem:code". Search there with namespace: "cachly:sem:code".`
+            : '')
         );
       }
 
@@ -484,7 +494,7 @@ export async function handleCacheTool(
     case 'index_project': {
       const {
         instance_id,
-        dir,
+        dir: dirArg,
         extensions: extArg,
         max_files = 100,
         ttl = 86400,
@@ -503,6 +513,7 @@ export async function handleCacheTool(
         hintergrund?: boolean;
       };
 
+      let dir = dirArg;
       const ALLOWED_EXT = new Set(
         (extArg ?? ['ts', 'js', 'tsx', 'jsx', 'go', 'py', 'java', 'rs', 'md', 'kt', 'swift']).map(
           (e) => (e.startsWith('.') ? e : `.${e}`),
@@ -527,6 +538,13 @@ export async function handleCacheTool(
           }
         }
       }
+      // 04.11.2026 (team-index-dir): ohne dir (oder mit "path") lief walk(undefined) und die KI las
+      // "No matching files found in `undefined`". Jetzt: Pfad-Alias annehmen, sonst klar sagen, was fehlt.
+      if (typeof dir !== 'string' || !dir.trim()) {
+        const alias = (args as { path?: unknown }).path;
+        if (typeof alias === 'string' && alias.trim()) dir = alias;
+        else return '❌ index_project needs `dir`: the absolute path of the folder to index.';
+      }
       await walk(dir);
 
       if (files.length === 0) {
@@ -543,6 +561,8 @@ export async function handleCacheTool(
       let skipped = 0;
       let errors = 0;
       let semanticIndexed = 0;
+      let semanticFailed = 0;
+      let semanticGrund: string | undefined;
       let unchanged = 0;
       const details: string[] = [];
       const expiresAt = new Date(Date.now() + ttl * 1000).toISOString();
@@ -609,16 +629,26 @@ export async function handleCacheTool(
               throw fehler;
             });
             const id = randomUUID();
-            await fetch(`${vectorUrl}/entries`, {
+            const antwort = await fetch(`${vectorUrl}/entries`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ id, prompt, namespace: nsArg, embedding, expires_at: expiresAt }),
               signal: AbortSignal.timeout(8000),
             });
+            // 04.11.2026 (team-index-vektor): ein 400 (z. B. Vektorgroesse ueber dem Tarif) zaehlte
+            // frueher als "vector-searchable". Jetzt zaehlt nur, was der Server angenommen hat.
+            if (!antwort.ok) {
+              const text = (await antwort.text().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 200);
+              throw new Error(`HTTP ${antwort.status}${text ? `: ${text}` : ''}`);
+            }
             await redis.set(`${nsArg}:val:${id}`, relPath, 'EX', ttl);
             semanticIndexed++;
-          } catch {
-            // Semantic indexing failed — keyword index is enough
+          } catch (fehler) {
+            // Semantic indexing failed — keyword index is enough. Der Pruefwert wird entfernt,
+            // damit der naechste Lauf die Datei erneut versucht statt sie "unveraendert" zu ueberspringen.
+            semanticFailed++;
+            semanticGrund ??= fehler instanceof Error ? fehler.message : String(fehler);
+            await redis.del(hashKey).catch(() => undefined);
           }
         }
       }
@@ -632,6 +662,7 @@ export async function handleCacheTool(
         `  ✅ Indexed:   **${indexed}** files (new/changed)`,
         `  ♻️  Unchanged: ${unchanged} files (hash match — skipped)`,
         ...(canEmbed ? [`  🎯 Semantic:  **${semanticIndexed}** files (vector-searchable)`] : []),
+        ...(semanticFailed > 0 ? [`  ⚠️  Semantic failed for ${semanticFailed} file(s): ${semanticGrund}. The keyword index still works (brain_search).`] : []),
         `  ⏭️  Skipped:   ${skipped} (too large or filtered)`,
         `  ❌ Errors:    ${errors}`,
         `  ⏱️  TTL:       ${ttl}s (${Math.round(ttl / 3600)}h)`,

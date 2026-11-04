@@ -15,7 +15,7 @@
 import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { installClsPostCommitHook, type ClsHookResult } from './cls-hook.js';
+import { gitHookOrdner, installClsPostCommitHook, type ClsHookResult } from './cls-hook.js';
 import { instanzIdFuerSkript } from './git-ohne-shell.js';
 
 /**
@@ -56,7 +56,7 @@ export async function installBrainWatchHook(
   if (!existsSync(resolve(projectDir, '.git'))) {
     return { result: 'skipped-no-git', hookPath: '', alterBlockEntfernt: false };
   }
-  const hookPath = resolve(projectDir, '.git', 'hooks', 'post-commit');
+  const hookPath = resolve(gitHookOrdner(projectDir), 'post-commit');
   let vorher = '';
   try { vorher = await readFile(hookPath, 'utf-8'); } catch { /* kein Hook */ }
   const bereinigt = ohneBrainWatchBlock(vorher);

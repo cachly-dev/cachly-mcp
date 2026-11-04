@@ -9,7 +9,7 @@ describe('Speicherlage beurteilen', () => {
     const u = beurteileSpeicher({ benutzt: 23.6 * MB, grenze: 25 * MB, richtlinie: 'allkeys-lru' });
     const raeumung = u[0];
     expect(raeumung.art).toBe('fehler');
-    expect(raeumung.text).toContain('GELOESCHT');
+    expect(raeumung.text).toContain('DELETED');
     expect(raeumung.text).toContain('volatile-lru');
   });
 
@@ -54,7 +54,7 @@ describe('Speicherlage beurteilen', () => {
   it('meldet eine fehlende Obergrenze als Hinweis', () => {
     const u = beurteileSpeicher({ benutzt: 3 * MB, grenze: 0, richtlinie: 'noeviction' });
     expect(u[1].art).toBe('hinweis');
-    expect(u[1].text).toContain('keine Obergrenze');
+    expect(u[1].text).toContain('no size limit');
   });
 
   it('rechnet den Anteil nur, wenn beides da ist', () => {

@@ -7,6 +7,59 @@
 
 ---
 
+## [0.10.229] – 2026-11-04 — *"Plain answers to wrong input, honest labels for weak matches."*
+
+Second round of testers who walked real paths against a test Brain: the AI's
+view of every tool, and a second week of team use.
+
+**Clear rejections instead of raw JavaScript errors.** Calls without a
+required field (`recall_best_solution`, `causal_trace`, `brain_predict`,
+`remember_context`, `recall_context`, `brain_search`, `forget_context`,
+`session_end` and others) answered "Cannot read properties of undefined" or
+stored "Summary: undefined". The server now checks the required fields of the
+tool schema first and names the missing one. `learn_from_attempts` rejects a
+missing or invalid `outcome` (it stored "banana" and showed it as a failure),
+`team_learn` an invalid outcome and an author made of spaces, and
+`roadmap_add`/`roadmap_update` a status or priority that the schema does not
+allow (an entry with status "bogus" vanished from every list).
+`forget_context` also accepts `key`.
+
+**`smart_recall` about 1.5 to 2.4 seconds faster.** The knowledge-graph step
+ran one request after another: a scan over the whole Brain per query word,
+then one request per node, per edge and per lesson. These requests now run at
+the same time, and the plan's tier is remembered for five minutes instead of
+being fetched on every search. The edges are applied in the same order as
+before, so the results stay the same (a test compares both on 4 queries).
+Measured against the same test Brain: 5.04 s → 3.59 s and 5.36 s → 3.65 s
+per search; the graph step went from 2.2–2.5 s to 0.76 s.
+
+**The git hook lands where git runs it.** With `core.hooksPath` set (Husky,
+shared hook templates), git ignores `.git/hooks`; setup still wrote the hook
+there and reported success, so no commit was ever learned. The installer now
+asks git for its hook folder; for Husky 9 (`.husky/_`) it uses `.husky/` and
+keeps an existing hook. `uninstall` and the `init` output use the same folder.
+
+**Weak matches say so.** `smart_recall` said "Results (40)" and showed 8; it
+now says "showing 8 of 43" and marks entries without evidence. `causal_trace`
+called a lesson that matched 1 of 5 words the "Most likely fix"; that title now
+needs a strong match, otherwise it says "Closest solution (weak match …)".
+Queries are cut to 2,000 characters: a 58,000-character question returned
+60,428 characters and broke the embedding.
+
+**Team and second-week fixes.** `team_recall` showed "NaNd ago", ignored
+`query` and crashed on `limit: 0`. `index_project` counted files as
+searchable that the server had rejected, then skipped them as unchanged;
+`semantic_search` now shows the server's reason instead of "Bad Request".
+
+**Texts.** `brain_doctor` is English and says it reports, not that it can
+"fix" anything. The server instructions say where the Brain ID really comes
+from (`~/.cachly/credentials.json` first). The `session_start` description
+no longer suggests it replaces `smart_recall`. The feedback hint under
+`smart_recall` names the `cachly_tool` route, because `recall_feedback` is not
+in the default tool list.
+
+---
+
 ## [0.10.228] – 2026-11-04 — *"The hook settings work on every machine."*
 
 **`.claude/settings.json` no longer contains a path of your machine.** `setup`,

@@ -201,7 +201,15 @@ export async function handleContextTool(
     }
 
     case 'forget_context': {
-      const { instance_id, keys } = args as { instance_id: string; keys: string[] };
+      const { instance_id } = args as { instance_id: string };
+      // 04.11.2026 (team-forget-keys): eine KI schreibt oft `key: "wip:x"` (wie bei recall_context) oder
+      // einen einzelnen String. Das warf "n is not iterable" und loeschte nichts. Jetzt: beides annehmen,
+      // sonst klar sagen, was fehlt.
+      const roh = (args as { keys?: unknown; key?: unknown }).keys ?? (args as { key?: unknown }).key;
+      const keys = (Array.isArray(roh) ? roh : [roh]).filter((k): k is string => typeof k === 'string' && k.trim() !== '');
+      if (keys.length === 0) {
+        return '❌ forget_context needs `keys`: a list of context keys to delete, e.g. keys: ["wip:billing"]. Use list_remembered to see the keys.';
+      }
       const redis = await getConnection(instance_id);
       let deleted = 0;
 

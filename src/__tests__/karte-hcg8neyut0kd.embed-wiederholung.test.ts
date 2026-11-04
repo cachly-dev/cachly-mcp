@@ -44,7 +44,7 @@ describe('Schreibpfad-Aussetzer werden DAUERHAFT vermerkt (26.08., Teil 2 der Ka
     const { readFileSync } = await import('node:fs');
     const src = readFileSync(new URL('../handlers/team.ts', import.meta.url), 'utf8');
     expect(src).toContain('leseVermerke(redis)');
-    expect(src).toContain('Write-path failure noted');
+    expect(src).toContain('Failure noted');
   });
 });
 

@@ -87,6 +87,7 @@ export function recallNurLesen(): boolean {
   return process.env.CACHLY_RECALL_NUR_LESEN === '1';
 }
 import type { CKGEdge, PersonNode, ServiceNode } from '../ckg.js';
+import { gemerkterTarif, holeKantenVorrat, type KantenRedis } from '../kanten-vorrat.js';
 import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
 import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
@@ -133,7 +134,7 @@ import {
   bewerteTopf, spreizeImTopf, reichereAn, inhaltsWoerter, grobStamm, GEWICHTE,
   knapperSiegSatz,
 } from '../rangfolge.js';
-import { fehlendeLernfelder, hatFrage } from '../pflichtfelder.js';
+import { fehlendeLernfelder, hatFrage, kappeAnfrage, ungueltigerAusgang } from '../pflichtfelder.js';
 import {
   pruefeWirkung, wirkungsEingabeAus, werteAus, lehrwert, leiteAb, belegeJeThema,
   type Wirkungseintrag, type LetzterRecall,
@@ -987,6 +988,8 @@ async function handleBrainToolInner(
       {
         const fehlt = fehlendeLernfelder(args as Record<string, unknown>);
         if (fehlt.length) return `⚠️ learn_from_attempts needs ${fehlt.join(' and ')}. Nothing was stored.`;
+        const falsch = ungueltigerAusgang(args as Record<string, unknown>);
+        if (falsch) return falsch;
       }
       // Geheimnis-Filter VOR allem anderen: kein Schluessel erreicht Bestand,
       // Kausalgraph, Team-Kopie oder Antworttext (geheimnis-filter.ts).
@@ -2358,12 +2361,15 @@ async function handleBrainToolInner(
       const suchStart = Date.now();
       const {
         instance_id,
-        query,
+        query: rohQuery,
         threshold = 0.78,
         author: requester = '',
         context_files: rawContextFiles = [],
         limit: rawLimit,
       } = args as { instance_id: string; query: string; threshold?: number; author?: string; context_files?: unknown[]; limit?: unknown };
+      // Gekappt (ki-07, 04.11.2026): eine eingefuegte Logdatei als query gab 60 KB
+      // Antwort und liess die Einbettung mit HTTP 400 (ueber 32.000 Zeichen) scheitern.
+      const query = kappeAnfrage(rohQuery);
       // Ausdruecklich verlangte Trefferzahl (1-20); ohne sie gelten 8 bzw. 12 (recall-tiefe.ts).
       const verlangt = verlangteTiefe(rawLimit);
       const contextFiles: string[] = Array.isArray(rawContextFiles)
@@ -2908,7 +2914,14 @@ async function handleBrainToolInner(
       // Semantic recall is a Premium depth layer: free tier keeps full keyword +
       // CKG recall (the magic moment), paid tiers add embedding-based retrieval.
       zeitpunkt('smart_recall: Treffer gezaehlt');
-      const inst = await apiFetch<Instance | null>(`/api/v1/instances/${instance_id}`).catch(() => null);
+      // Kanten-Suche, Tarif und Sinn-Dienst laufen gleichzeitig (04.11.2026,
+      // kanten-vorrat.ts). Vorher nacheinander: ~2,2-2,5 s je Suche. Angewendet
+      // wird unten in der alten Reihenfolge — das Ergebnis bleibt gleich.
+      const kantenVorrat = holeKantenVorrat(
+        redis as unknown as KantenRedis,
+        tokenize(query).filter(t => t.length >= 4).slice(0, 4),
+      ).catch(() => null);
+      const inst = await gemerkterTarif(instance_id, () => apiFetch<Instance | null>(`/api/v1/instances/${instance_id}`));
       zeitpunkt('smart_recall: Tarif abgefragt');
       const tierIsFree = !inst?.tier || inst.tier.toLowerCase() === 'free';
       type SemHit = { key: string; similarity: number; content: string };
@@ -2925,14 +2938,15 @@ async function handleBrainToolInner(
           });
           if (searchRes.ok) {
             const results = (await searchRes.json()) as SemanticSearchResponse[];
-            for (const hit of results.filter(r => r.found && r.id)) {
+            // Die Inhalte gleichzeitig holen, in der Reihenfolge der Treffer (04.11.2026).
+            const treffer = results.filter(r => r.found && r.id).map((hit) => {
               const parts = hit.id!.replace('ctx:', '').split(':');
-              const category = parts[0];
-              const key = parts.slice(1).join(':');
-              const redisKey = `cachly:ctx:${category}:${key}`;
-              const content = await redis.get(redisKey).catch(() => null);
-              semHits.push({ key: redisKey, similarity: hit.similarity ?? 0, content: content ?? '(evicted)' });
-            }
+              return { hit, redisKey: `cachly:ctx:${parts[0]}:${parts.slice(1).join(':')}` };
+            });
+            const inhalte = await Promise.all(treffer.map((t) => redis.get(t.redisKey).catch(() => null)));
+            treffer.forEach((t, i) => {
+              semHits.push({ key: t.redisKey, similarity: t.hit.similarity ?? 0, content: inhalte[i] ?? '(evicted)' });
+            });
           }
         } catch {
           // Semantic search failed silently — keyword results are enough
@@ -3022,48 +3036,31 @@ async function handleBrainToolInner(
       }
       // ── Layer 3: CKG traversal — follow "fixes" edges to find lessons that solved
       // structurally similar problems, even when vocabulary differs ───────────────
+      // Die Kanten kamen oben gleichzeitig mit Tarif und Sinn-Dienst (kanten-vorrat.ts);
+      // hier gilt dieselbe Logik in derselben Reihenfolge wie die alte Schleife.
       try {
-        const qTokens = tokenize(query).filter(t => t.length >= 4).slice(0, 4);
-        const candidateNodeIds = new Set<string>();
-        for (const token of qTokens) {
-          const nodeStream = redis.scanStream({ match: `cachly:ckg:node:*${token}*`, count: 20 });
-          await new Promise<void>((res, rej) => {
-            nodeStream.on('data', (batch: string[]) => {
-              for (const k of batch.slice(0, 5)) candidateNodeIds.add(k.replace('cachly:ckg:node:', ''));
-            });
-            nodeStream.on('end', res);
-            nodeStream.on('error', rej);
-          });
-        }
-
+        const vorrat = await kantenVorrat;
         const seenFroms = new Set<string>();
-        for (const nodeId of [...candidateNodeIds].slice(0, 12)) {
-          const inboundEdgeKeys = await redis.smembers(`cachly:ckg:idx:to:${nodeId}`);
-          for (const ek of inboundEdgeKeys.slice(0, 6)) {
-            const er = await redis.get(ek);
-            if (!er) continue;
-            const edge = safeJsonParse<CKGEdge | null>(er, null);
-            if (!edge || edge.edgeType !== 'fixes' || edge.confidence < 0.35) continue;
-            if (seenFroms.has(edge.from)) continue;
-            seenFroms.add(edge.from);
+        for (const { kante: edge, inhalt } of vorrat ?? []) {
+          if (edge.edgeType !== 'fixes' || edge.confidence < 0.35) continue;
+          if (seenFroms.has(edge.from)) continue;
+          seenFroms.add(edge.from);
 
-            const lessonKey = `cachly:lesson:best:${edge.from}`;
-            const existing = hybridMap.get(lessonKey);
-            if (existing) {
-              // Already found by BM25/semantic — boost with causal confirmation
-              existing.ckgScore = Math.max(existing.ckgScore ?? 0, edge.confidence);
-              existing.hybridScore = existing.hybridScore * 0.88 + edge.confidence * 0.12;
-              if (existing.matchType === 'keyword') existing.matchType = 'hybrid';
-            } else {
-              const content = await redis.get(lessonKey).catch(() => null);
-              if (!content) continue;
-              hybridMap.set(lessonKey, {
-                key: lessonKey, content,
-                ckgScore: edge.confidence,
-                hybridScore: edge.confidence * 0.30, // CKG-only: lower than text hits
-                matchType: 'ckg',
-              });
-            }
+          const lessonKey = `cachly:lesson:best:${edge.from}`;
+          const existing = hybridMap.get(lessonKey);
+          if (existing) {
+            // Already found by BM25/semantic — boost with causal confirmation
+            existing.ckgScore = Math.max(existing.ckgScore ?? 0, edge.confidence);
+            existing.hybridScore = existing.hybridScore * 0.88 + edge.confidence * 0.12;
+            if (existing.matchType === 'keyword') existing.matchType = 'hybrid';
+          } else {
+            if (!inhalt) continue;
+            hybridMap.set(lessonKey, {
+              key: lessonKey, content: inhalt,
+              ckgScore: edge.confidence,
+              hybridScore: edge.confidence * 0.30, // CKG-only: lower than text hits
+              matchType: 'ckg',
+            });
           }
         }
       } catch { /* non-critical — keyword + semantic always available */ }
@@ -3444,7 +3441,14 @@ async function handleBrainToolInner(
           : hasCKG
           ? `keyword + CKG hybrid`
           : `keyword`;
-        lines.push(`### 🔍 Results (${hybridResults.length} — ${modeLabel})\n`);
+        // Die Kopfzahl nannte bis 0.10.227 ALLE Treffer (40), die Liste zeigte
+        // aber nur die ersten (8) — ki-05, 04.11.2026. Jetzt: gezeigt von gefunden.
+        const gezeigt = Math.min(visibleCount, hybridResults.length);
+        lines.push(
+          `### 🔍 Results (${gezeigt < hybridResults.length && subQueries.length <= 1
+            ? `showing ${gezeigt} of ${hybridResults.length}`
+            : hybridResults.length} — ${modeLabel})\n`,
+        );
         // Population ausweisen (Karte kdnqoilo1fs7, eligible_seen): wie viele
         // der gezeigten Treffer die Beleg-Schwelle EINZELN passiert haben.
         // Mikhails count:0-Fall an unserem Recall — "gezeigt" ist nicht
@@ -3553,7 +3557,15 @@ async function handleBrainToolInner(
             const vorschau = recallVorschau(
               r.key, r.content, kompakt ? RECALL_ROH_ZEICHEN : RECALL_VOLLTEXT_ZEICHEN, RECALL_ROH_ZEICHEN,
             );
-            lines.push(kompakt ? `**${label}**` : `**${label}**${authorBadge}${contextBadge} _(${scorePart})_`);
+            // Treffer ohne Beleg tragen es am Eintrag selbst (ki-05, 04.11.2026):
+            // sonst liest die KI nur die ersten Zeilen und haelt Nachbarn fuer Belege.
+            // Nur wenn die Liste gemischt ist; bei lauter Belegten waere es Laerm.
+            const ohneBelegMarke = abstention.belegte > 0 && abstention.belegte < hybridResults.length
+              && !istBelegt({ wortBelege: r.wortBelege, semScore: r.semScore, ckgScore: r.ckgScore })
+              ? ' · ⚠️ no evidence' : '';
+            lines.push(kompakt
+              ? `**${label}**${ohneBelegMarke}`
+              : `**${label}**${authorBadge}${contextBadge} _(${scorePart})_${ohneBelegMarke}`);
             // Entscheidungs-Gedaechtnis (WOW #2): eine gemerkte Entscheidung
             // steht VOR dem Auszug — sie ist der Grund, warum diese Lektion
             // mehr ist als ein aehnlicher Text.
@@ -3641,7 +3653,10 @@ async function handleBrainToolInner(
       if (!kompakt && hybridResults.length > 0) {
         lines.push('');
         lines.push(
-          '↩︎ Did one of these help? `recall_feedback(query=…, topic=…, helped=true, rank=N)` — '
+          // ki-02, 04.11.2026: recall_feedback steht nicht im schlanken Katalog, ist aber
+          // aufrufbar. Ohne den Weg ueber cachly_tool fand die KI das Werkzeug nicht.
+          '↩︎ Did one of these help? `recall_feedback(query=…, topic=…, helped=true, rank=N)` '
+          + '(not in your tool list? use `cachly_tool(tool="recall_feedback", arguments={…})`) — '
           + 'and if the right lesson was **not** in the list: the same call with `rank=0`. '
           + 'That is the only number that improves the ranking.',
         );
@@ -4442,7 +4457,7 @@ async function handleBrainToolInner(
         if (lessons.length === 0) reasons.push('brain is empty');
         if (openFailureCount > 0) reasons.push(`${openFailureCount} open failure${openFailureCount > 1 ? 's' : ''}`);
         if (staleCount > 0) reasons.push(`${staleCount} stale lesson${staleCount > 1 ? 's' : ''}`);
-        lines.push(`🩺 _Run \`brain_doctor\` to fix: ${reasons.join(', ')}._`);
+        lines.push(`🩺 _Run \`brain_doctor\` for details: ${reasons.join(', ')}._`);
       }
 
       // ── Auto-Changelog — new lessons since last session ──────────────────────

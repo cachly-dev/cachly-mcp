@@ -117,12 +117,12 @@ describe('formatiereBauabdruck — die Zeile fuer brain_doctor', () => {
       jetzt,
     );
     expect(zeile).toContain('🟡');
-    expect(zeile).toContain('laenger als 14 Tage');
+    expect(zeile).toContain('more than 14 days');
   });
 
   it('sagt "unbekannt", wenn noch nie gebaut wurde — statt etwas zu erfinden', () => {
     const zeile = formatiereBauabdruck(RUECKFALL_BAUABDRUCK, jetzt);
-    expect(zeile).toContain('unbekannt');
+    expect(zeile).toContain('unknown');
     expect(zeile).not.toContain('🟡');
     expect(zeile).not.toContain('✅');
   });

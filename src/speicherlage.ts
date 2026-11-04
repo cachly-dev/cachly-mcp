@@ -61,30 +61,32 @@ export function beurteileSpeicher(l: Speicherlage): Urteil[] {
   if (l.richtlinie === null) {
     aus.push({
       art: 'ungemessen',
-      text: 'Raeumungsregel nicht ablesbar (CONFIG GET gesperrt) — unbekannt, ob dieser Speicher bei Platzmangel still loescht.',
+      // Die Texte dieser Datei sind seit 04.11.2026 englisch (ki-10): sie stehen in
+      // brain_doctor, das eine KI und ihr Nutzer lesen.
+      text: 'Eviction policy cannot be read (CONFIG GET is blocked) — unknown whether this store silently deletes when it is full.',
     });
   } else if (l.richtlinie.startsWith('allkeys')) {
     aus.push({
       art: 'fehler',
-      text: `Raeumungsregel ist \`${l.richtlinie}\`: bei Platzmangel wird die am laengsten ungenutzte Lektion GELOESCHT, ohne Meldung. Ein Gedaechtnis darf nicht raeumen wie ein Zwischenspeicher. Richtig waere \`volatile-lru\` (raeumt nur, was ohnehin ablaeuft) oder \`noeviction\` (scheitert laut).`,
+      text: `Eviction policy is \`${l.richtlinie}\`: when the store is full, the least recently used lesson is DELETED without a message. A memory must not evict like a cache. Use \`volatile-lru\` (only evicts what expires anyway) or \`noeviction\` (fails loudly).`,
     });
   } else if (l.richtlinie === 'volatile-lru' || l.richtlinie === 'noeviction') {
-    aus.push({ art: 'gut', text: `Raeumungsregel \`${l.richtlinie}\` — Lektionen ohne Ablaufdatum sind sicher.` });
+    aus.push({ art: 'gut', text: `Eviction policy \`${l.richtlinie}\` — lessons without an expiry date are safe.` });
   } else {
-    aus.push({ art: 'hinweis', text: `Raeumungsregel \`${l.richtlinie}\` — ungeprueft fuer diesen Zweck.` });
+    aus.push({ art: 'hinweis', text: `Eviction policy \`${l.richtlinie}\` — not checked for this use.` });
   }
 
   const a = anteil(l);
   if (l.benutzt === null) {
-    aus.push({ art: 'ungemessen', text: 'Belegung nicht ablesbar.' });
+    aus.push({ art: 'ungemessen', text: 'Usage cannot be read.' });
   } else if (a === null) {
-    aus.push({ art: 'hinweis', text: `${mb(l.benutzt)} belegt, keine Obergrenze gesetzt — dieser Speicher waechst, bis der Rechner voll ist.` });
+    aus.push({ art: 'hinweis', text: `${mb(l.benutzt)} used, no size limit set — this store grows until the machine is full.` });
   } else if (a >= 0.9) {
-    aus.push({ art: 'fehler', text: `${mb(l.benutzt)} von ${mb(l.grenze as number)} belegt (${Math.round(a * 100)} %). Die naechsten Lektionen scheitern bald.` });
+    aus.push({ art: 'fehler', text: `${mb(l.benutzt)} of ${mb(l.grenze as number)} used (${Math.round(a * 100)} %). New lessons will soon fail to save.` });
   } else if (a >= 0.75) {
-    aus.push({ art: 'hinweis', text: `${mb(l.benutzt)} von ${mb(l.grenze as number)} belegt (${Math.round(a * 100)} %).` });
+    aus.push({ art: 'hinweis', text: `${mb(l.benutzt)} of ${mb(l.grenze as number)} used (${Math.round(a * 100)} %).` });
   } else {
-    aus.push({ art: 'gut', text: `${mb(l.benutzt)} von ${mb(l.grenze as number)} belegt (${Math.round(a * 100)} %).` });
+    aus.push({ art: 'gut', text: `${mb(l.benutzt)} of ${mb(l.grenze as number)} used (${Math.round(a * 100)} %).` });
   }
 
   return aus;

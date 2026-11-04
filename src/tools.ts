@@ -748,7 +748,7 @@ const TOOLS = [
   {
     name: 'session_start',
     description:
-      'Single-call session briefing. Call this at the START of every session INSTEAD of multiple separate smart_recall/recall_best_solution calls. ' +
+      'Single-call session briefing for the START of a session: last summary, recent lessons, health. It does not replace smart_recall for a concrete task. ' +
       'Returns: last session summary, recent lessons sorted by recency, relevant lessons for your focus area, ' +
       'brain health stats (counts of open failures and stale lessons), team telepathy (what teammates learned this week), ' +
       'predictive pre-warnings (if your focus area has known failure patterns), and memory crystals (compressed wisdom from old sessions). ' +

@@ -87,17 +87,18 @@ export function istAlt(gebautAm: string, jetzt: Date = new Date()): boolean {
  */
 export function formatiereBauabdruck(a: Bauabdruck, jetzt: Date = new Date()): string {
   if (a.gebautAm === 'unbekannt') {
-    return `❔ **Bauabdruck: unbekannt** — noch kein \`npm run build\` gelaufen, Version/Commit nicht feststellbar`;
+    // Englisch seit 04.11.2026 (ki-10): die Zeile steht in brain_doctor.
+    return `❔ **Build: unknown** — no \`npm run build\` has run, so version and commit cannot be told`;
   }
   const datum = new Date(a.gebautAm);
   const gueltigesDatum = !Number.isNaN(datum.getTime());
   const alt = gueltigesDatum && istAlt(a.gebautAm, jetzt);
   const tage = gueltigesDatum ? Math.floor((jetzt.getTime() - datum.getTime()) / 86_400_000) : null;
-  const alterText = tage === null ? '' : ` (vor ${tage} Tag${tage === 1 ? '' : 'en'})`;
+  const alterText = tage === null ? '' : ` (${tage} day${tage === 1 ? '' : 's'} ago)`;
   const emoji = alt ? '🟡' : '✅';
   const hinweis = alt
-    ? ` — laeuft laenger als ${ALTER_SCHWELLE_TAGE} Tage. Kein Fehler, aber sichtbar.`
+    ? ` — running for more than ${ALTER_SCHWELLE_TAGE} days. Not an error, but worth knowing.`
     : '';
   const datumsText = gueltigesDatum ? a.gebautAm.slice(0, 10) : a.gebautAm;
-  return `${emoji} **Bauabdruck:** v${a.version} · commit \`${a.commit}\` · gebaut am ${datumsText}${alterText}${hinweis}`;
+  return `${emoji} **Build:** v${a.version} · commit \`${a.commit}\` · built ${datumsText}${alterText}${hinweis}`;
 }

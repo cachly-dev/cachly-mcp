@@ -140,6 +140,6 @@ describe('session_start ohne Rauschen', () => {
 
   it('die Zahlen von Fehlschlaegen und veralteten Lektionen stehen im brain_doctor-Hinweis', async () => {
     const b = await briefing();
-    expect(b).toContain('Run `brain_doctor` to fix: 1 open failure, 1 stale lesson.');
+    expect(b).toContain('Run `brain_doctor` for details: 1 open failure, 1 stale lesson.');
   });
 });

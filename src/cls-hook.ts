@@ -17,10 +17,10 @@
 //     cleared of keys. `cls-ingest` resolves the key at run time like every
 //     other entry point (resolveApiKey: env, then ~/.cachly/credentials.json).
 
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { readFile, writeFile, chmod, mkdir } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { instanzIdFuerSkript } from './git-ohne-shell.js';
+import { basename, dirname, resolve } from 'node:path';
+import { gitLesen, instanzIdFuerSkript } from './git-ohne-shell.js';
 
 /**
  * Bumped whenever the hook script changes so installers can upgrade old hooks.
@@ -46,6 +46,38 @@ export const CLS_BLOCK_RE = /(?:#!\/bin\/sh\n)?# cachly CLS[\s\S]*?\nexit 0\n?/;
 export type ClsHookResult = 'written' | 'upgraded' | 'appended' | 'unchanged' | 'skipped-no-git';
 
 /**
+ * Der Ordner, in dem Git die Hooks dieses Projekts wirklich ausfuehrt.
+ *
+ * Befund cli-4 (04.11.2026): Ist `core.hooksPath` gesetzt (Husky, eigene
+ * Vorlagen), liest Git `.git/hooks` gar nicht mehr. Der Hook lag dort, setup
+ * meldete Erfolg, und kein Commit wurde je gelernt. Deshalb fragt dieser Aufruf
+ * Git selbst (`rev-parse --git-path hooks`, ohne Shell); ein relativer Pfad
+ * gilt ab dem Projektordner. Ohne Git oder ohne Repo bleibt `.git/hooks`.
+ *
+ * Husky 9 setzt `core.hooksPath` auf `.husky/_`. Der Ordner wird bei jedem
+ * `npm install` neu erzeugt und enthaelt nur Weiterleitungen auf die eigenen
+ * Hooks in `.husky/`. Dort wuerde unser Block verschwinden, also nehmen wir
+ * `.husky/` selbst. (Husky 8 nutzt `.husky/` direkt.)
+ */
+export function gitHookOrdner(projectDir: string): string {
+  const standard = resolve(projectDir, '.git', 'hooks');
+  // Ein Git-Arbeitsbaum hat `.git` als Datei. Dort schreibt cachly wie bisher
+  // keinen Hook (uninstall.ts sagt das auch so) — nicht still in den Hook-Ordner
+  // des Haupt-Repos, den alle Arbeitsbaeume teilen.
+  try { if (!statSync(resolve(projectDir, '.git')).isDirectory()) return standard; } catch { return standard; }
+  let roh = '';
+  try {
+    roh = gitLesen(projectDir, ['rev-parse', '--git-path', 'hooks']).trim();
+  } catch {
+    return standard;
+  }
+  if (!roh) return standard;
+  const ordner = resolve(projectDir, roh);
+  if (basename(ordner) === '_' && basename(dirname(ordner)) === '.husky') return dirname(ordner);
+  return ordner;
+}
+
+/**
  * Idempotently install/upgrade the CLS post-commit hook in `projectDir`.
  * Returns a status the caller can log; throws only for an `instanceId`
  * with shell-significant characters (see `buildClsPostCommitHook`).
@@ -59,7 +91,7 @@ export async function installClsPostCommitHook(
   _apiKey?: string,
 ): Promise<ClsHookResult> {
   if (!existsSync(resolve(projectDir, '.git'))) return 'skipped-no-git';
-  const hookDir = resolve(projectDir, '.git', 'hooks');
+  const hookDir = gitHookOrdner(projectDir);
   const hookPath = resolve(hookDir, 'post-commit');
   await mkdir(hookDir, { recursive: true });
   const script = buildClsPostCommitHook(instanceId);

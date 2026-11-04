@@ -4,7 +4,7 @@ import {
   ANWEISUNGS_DATEIEN, CLAUDE_MD_MARKER_END, CLAUDE_MD_MARKER_START, EDITOR_FILES, blockMuster,
 } from './projektdateien.js';
 import { PROJEKT_HOOK_MARKE, istCachlyEintrag } from './hook-zugang.js';
-import { CLS_BLOCK_RE } from './cls-hook.js';
+import { CLS_BLOCK_RE, gitHookOrdner } from './cls-hook.js';
 import { BRAIN_WATCH_BLOCK_RE } from './brain-watch-hook.js';
 import {
   CLAUDE_HOOK_DIR, CLAUDE_SETTINGS_DATEI, CODEX_HOOKS_DATEI, CODEX_HOOK_DIR, COPILOT_HOOKS_DATEI, COPILOT_HOOK_DIR,
@@ -530,7 +530,9 @@ function planeGitHook(o: PlanEingabe, plan: Plan): void {
     plan.vonHand.push({ stufe: 'projekt', text: '.git is a file here (a Git worktree). cachly never writes a post-commit hook there. If you set one up in the main repository, check its .git/hooks/post-commit.' });
     return;
   }
-  const pfad = join(git, 'hooks', 'post-commit');
+  // Derselbe Ordner, in den setup schreibt: bei core.hooksPath (Husky) nicht
+  // .git/hooks (cls-hook.ts, Befund cli-4, 04.11.2026).
+  const pfad = join(gitHookOrdner(o.projekt), 'post-commit');
   const text = liesDatei(pfad);
   if (text === null) return;
   const r = entferneGitHookBloecke(text);

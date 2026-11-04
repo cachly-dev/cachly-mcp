@@ -13,7 +13,7 @@ import { ersparteMinuten, istStarterLektion, fmtStunden } from '../wertbeitrag.j
 import {
   CURSOR_MDC_FRONTMATTER, buildClaudeMdBlock, setzeAnweisungsblock,
 } from '../projektdateien.js';
-import { leseVermerke } from '../aussetzer.js';
+import { aussetzerEinzelheit, aussetzerErklaerung, leseVermerke } from '../aussetzer.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
 import { VERDACHT_TAG, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
 import { fuerEigenenSpeicher, fuerWeitergabe, fuerZusammenfassung, hinweise, markiert, markierungsWarnung, weitergabeHinweis } from '../schreibtor.js';
@@ -291,6 +291,12 @@ export async function handleTeamTool(
       if (!author || !topic || !outcome || !what_worked) {
         return '❌ Required: author, topic, outcome, what_worked';
       }
+      // 04.11.2026 (team-learn-eingabe): "bogus" als outcome und ein Autor aus Leerzeichen wurden
+      // gespeichert und liefen danach als "❌"-Lektion bzw. als leerer Autor durch team_recall.
+      if (!['success', 'failure', 'partial'].includes(outcome)) {
+        return '❌ outcome must be one of: success, failure, partial';
+      }
+      if (!author.trim()) return '❌ Required: author (a name or handle, not blank)';
       const iid = instance_id;
       if (!iid) return '❌ instance_id required';
 
@@ -309,7 +315,10 @@ export async function handleTeamTool(
         file_paths: file_paths ?? [],
         commands: commands ?? [],
         tags: [...(tags ?? []), 'team', ...(verdacht.length ? [VERDACHT_TAG] : [])],
+        // 04.11.2026 (team-nan-alter): team_recall liest `ts`; ohne dieses Feld stand "NaNd ago" da.
+        // `timestamp` bleibt fuer alte Leser erhalten.
         timestamp: new Date().toISOString(),
+        ts: new Date().toISOString(),
         recall_count: 0,
         version: 2,
       };
@@ -416,12 +425,17 @@ export async function handleTeamTool(
 
     // ── team_recall ───────────────────────────────────────────────────────────
     case 'team_recall': {
-      const { instance_id, topic, author, limit = 10 } = args as {
+      const { instance_id, author, limit: limitRoh = 10 } = args as {
         instance_id: string;
-        topic?: string;
         author?: string;
         limit?: number;
       };
+      // 04.11.2026 (team-recall-query): eine KI schreibt hier oft `query` statt `topic` (wie bei
+      // smart_recall). Das wurde ignoriert und es kamen alle Lektionen, egal was gefragt war.
+      const topic = (args as { topic?: string }).topic
+        ?? (typeof (args as { query?: unknown }).query === 'string' ? (args as { query: string }).query : undefined);
+      // limit 0, negativ oder Text: sonst "Cannot read properties of undefined (reading 'slice')" bzw. leere Liste.
+      const limit = Number.isFinite(Number(limitRoh)) && Number(limitRoh) >= 1 ? Math.floor(Number(limitRoh)) : 10;
       const redis = await getConnection(instance_id);
 
       const lessonKeys: string[] = [];
@@ -434,7 +448,7 @@ export async function handleTeamTool(
 
       type TeamLesson = {
         topic: string; outcome: string; what_worked: string;
-        ts: string; severity?: string; recall_count?: number;
+        ts?: string; timestamp?: string; severity?: string; recall_count?: number;
         author?: string; tags?: string[];
         reviewed_by?: string; review_level?: string; endorsements?: number;
       };
@@ -467,8 +481,9 @@ export async function handleTeamTool(
       lessons = lessons.slice(0, limit);
 
       if (lessons.length === 0) {
-        return topic
-          ? `📭 No team lessons found for \`${topic}\`.\n\nShared instance: add lessons with \`learn_from_attempts\` and include an \`author\` field.`
+        // 04.11.2026: Filter nach Autor allein meldete "No lessons in this brain yet" — falsch, das Brain hat Lektionen.
+        return topic || author
+          ? `📭 No team lessons found for ${[topic && `topic \`${topic}\``, author && `author \`${author}\``].filter(Boolean).join(' and ')}.\n\nAdd lessons with \`team_learn\` (requires an \`author\`).`
           : `📭 No lessons in this brain yet.\n\nAll team members sharing this instance will see lessons here.`;
       }
 
@@ -484,9 +499,12 @@ export async function handleTeamTool(
           ? ` · reviewed by ${l.reviewed_by}${(l.endorsements ?? 0) > 1 ? ` +${(l.endorsements ?? 0) - 1}` : ''}`
           : '';
         const recallStr = (l.recall_count ?? 0) > 0 ? ` · in ${l.recall_count} answers` : '';
-        const ago = Math.round((Date.now() - new Date(l.ts).getTime()) / 86400000);
-        const agoStr = ago === 0 ? 'today' : ago === 1 ? 'yesterday' : `${ago}d ago`;
-        lines.push(`${emoji} ${sev}**\`${l.topic}\`**${reviewBadge}${authorStr}${reviewStr}${recallStr} · ${agoStr}`);
+        // 04.11.2026 (team-nan-alter): aeltere team_learn-Lektionen tragen nur `timestamp`; ohne
+        // lesbare Zeit lassen wir die Altersangabe weg statt "NaNd ago" zu zeigen.
+        const zeitMs = new Date(l.ts ?? l.timestamp ?? '').getTime();
+        const ago = Math.max(0, Math.round((Date.now() - zeitMs) / 86400000));
+        const agoStr = Number.isNaN(zeitMs) ? '' : ago === 0 ? ' · today' : ago === 1 ? ' · yesterday' : ` · ${ago}d ago`;
+        lines.push(`${emoji} ${sev}**\`${l.topic}\`**${reviewBadge}${authorStr}${reviewStr}${recallStr}${agoStr}`);
         // Beim Speichern als verdaechtig markiert (tuersteher:verdacht): gezeigt, aber mit Warnung vor dem Auszug.
         const markierung = markierungsWarnung(l);
         if (markierung) lines.push(`   ${markierung}`);
@@ -968,11 +986,13 @@ export async function handleTeamTool(
       try {
         const vermerke = await leseVermerke(redis);
         for (const v of vermerke ?? []) {
+          // Englisch erklaert statt interner deutscher Schluessel (ki-10, 04.11.2026).
+          const einzelheit = aussetzerEinzelheit(v.text);
           checks.push(
-            `⚠️ **Write-path failure noted:** ${v.grund} — ${v.anzahl}× (last: ${v.zuletzt})`
-            + (v.text ? ` · ${String(v.text).slice(0, 140)}` : ''),
+            `⚠️ **Failure noted:** ${aussetzerErklaerung(v.grund)} — ${v.anzahl}× (last: ${v.zuletzt})`
+            + (einzelheit ? ` · ${einzelheit}` : ''),
           );
-          issues.push(`write-path failures recorded for "${v.grund}" (${v.anzahl}×) — see check above for the reason.`);
+          issues.push(`failures recorded (${v.anzahl}×): ${aussetzerErklaerung(v.grund)} — see the check above.`);
         }
       } catch {
         // Vermerke sind Auskunft, kein Gate — ein Lesefehler hier darf den
@@ -1061,12 +1081,12 @@ export async function handleTeamTool(
         };
         for (const u of beurteileSpeicher(lage)) {
           const zeichen = u.art === 'fehler' ? '🔴' : u.art === 'hinweis' ? '🟡' : u.art === 'ungemessen' ? '⚪' : '🟢';
-          const zeile = `${zeichen} **Speicher:** ${u.text}`;
+          const zeile = `${zeichen} **Storage:** ${u.text}`;
           if (u.art === 'fehler' || u.art === 'ungemessen') issues.push(zeile); else checks.push(zeile);
         }
       } catch {
         // Auch das Scheitern der Messung ist eine Nachricht, keine Stille.
-        issues.push('⚪ **Speicher:** Lage nicht abfragbar — unbekannt, ob dieser Speicher bei Platzmangel still loescht.');
+        issues.push('⚪ **Storage:** state could not be read — unknown whether this store silently deletes when it is full.');
       }
       if (uniqueAuthors.size >= 2) {
         checks.push(`👥 **Team:** ${uniqueAuthors.size} contributors (${[...uniqueAuthors].join(', ')})`);
@@ -1170,7 +1190,8 @@ export async function handleTeamTool(
         lines.push(`**🔧 Action Items** (${issues.length} issue${issues.length > 1 ? 's' : ''})`);
         issues.forEach((item, idx) => lines.push(`  ${idx + 1}. ${item}`));
         lines.push('');
-        lines.push(`_Fix the action items above, then re-run \`brain_doctor\` to verify._`);
+        // brain_doctor liest nur und aendert nichts; "Fix" klang nach Selbstreparatur (ki-10, 04.11.2026).
+        lines.push(`_brain_doctor only reports and changes nothing. Act on the items above, then run it again to check._`);
       } else {
         lines.push('**✅ All checks passed** — Brain is healthy!');
         lines.push('');

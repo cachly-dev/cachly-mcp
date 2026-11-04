@@ -9,6 +9,7 @@ import { doppelPaare } from '../doppel-kandidat.js';
 import { DOPPEL_SCHWELLE } from '../rangfolge-stellschrauben.js';
 import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
 import { fuerWeitergabe } from '../schreibtor.js';
+import { kappeAnfrage, trefferIstStark } from '../pflichtfelder.js';
 
 /**
  * Der dritte Lesepfad (Karte lr9c9h26kmb5). `causal_trace` kennt den Fragenden
@@ -314,9 +315,12 @@ export async function handleAdvancedTool(
 
     // ── v0.6 Cognitive Cache: causal_trace ───────────────────────────────────
     case 'causal_trace': {
-      const { instance_id, problem, max_depth = 5, tags: filterTags = [] } = args as {
+      const { instance_id, problem: rohProblem, max_depth = 5, tags: filterTags = [] } = args as {
         instance_id: string; problem: string; max_depth?: number; tags?: string[];
       };
+      // Eine ganze Logdatei als "problem" blaeht Antwort und Rechenzeit auf
+      // (ki-07, 04.11.2026). Die ersten 2000 Zeichen tragen die Fehlermeldung.
+      const problem = kappeAnfrage(rohProblem);
       // Ein neues Brain, das noch startet, ist leer (leeres-brain.ts).
       const sofort = await sofortAntwortNeuesBrain(instance_id, apiFetch,
         `🔍 **Causal Trace: "${problem}"**\n\nNo matching lessons found in brain.`);
@@ -490,7 +494,14 @@ export async function handleAdvancedTool(
 
         const topSolution = solutions[0]?.lesson;
         if (topSolution?.what_worked) {
-          lines.push(`**⚡ Most likely fix:**`);
+          // "Most likely fix" nur, wenn die Lektion die Frage wirklich trifft.
+          // Passte nur EIN Wort von vielen, war es bis 0.10.227 trotzdem "most
+          // likely" (ki-06, 04.11.2026: "zebra quantum banana nonsense" fand die
+          // Zebra-Lektion). Die Reihenfolge bleibt; nur die Beschriftung ist ehrlich.
+          const stark = trefferIstStark(solutions[0].score, tokens);
+          lines.push(stark
+            ? `**⚡ Most likely fix:**`
+            : `**Closest solution (weak match: ${solutions[0].score} of ${new Set(tokens).size} words — check that it fits before using it):**`);
           lines.push(`\`\`\``);
           lines.push(topSolution.what_worked.slice(0, 500));
           lines.push(`\`\`\``);

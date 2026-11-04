@@ -185,6 +185,32 @@ export const VERSUCH_LEER = 'versuch-laeuft-leer';
 /** Schluessel-Vorsatz der Vermerke. */
 export const AUSSETZER_VORSATZ = 'cachly:aussetzer:';
 
+/**
+ * Was ein Grund fuer einen Leser bedeutet, auf Englisch (ki-10, 04.11.2026).
+ * brain_doctor zeigte bis 0.10.227 den internen deutschen Schluessel und den
+ * deutschen Satz dahinter. Die Schluessel selbst bleiben, wie sie sind: sie
+ * stehen in bestehenden Brains. Unbekannter Grund: der Schluessel selbst.
+ */
+export function aussetzerErklaerung(grund: string): string {
+  switch (grund) {
+    case OHNE_VEKTOREN: return 'no stored vectors, so search by meaning could not run';
+    case OHNE_DIENST: return 'embedding service not reachable, so search by meaning could not run';
+    case OHNE_FRAGEVEKTOR: return 'the question could not be embedded, so that search used words only';
+    case SINNPFAD_ABBRUCH: return 'search by meaning failed unexpectedly, so that search used words only';
+    case OHNE_SCHREIBVEKTOR: return 'embedding failed while saving a lesson; the lesson is saved but not findable by meaning';
+    case VERSUCH_LEER: return 'an experiment is switched on but has no effect';
+    default: return grund;
+  }
+}
+
+/** Nur die Fehlermeldung in Klammern aus dem (deutschen) Vermerktext, sonst leer. */
+export function aussetzerEinzelheit(text: unknown): string {
+  const t = String(text ?? '');
+  const von = t.indexOf('(');
+  const bis = t.lastIndexOf(')');
+  return von >= 0 && bis > von + 1 ? t.slice(von + 1, bis).slice(0, 140) : '';
+}
+
 /** 30 Tage. Wird bei jedem Vermerk erneuert. */
 export const AUSSETZER_TTL_SEKUNDEN = 30 * 24 * 60 * 60;
 

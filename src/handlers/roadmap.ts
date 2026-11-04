@@ -6,6 +6,9 @@ import { fuerEigenenSpeicher, hinweise } from '../schreibtor.js';
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
 
+export const ROADMAP_STATUS = ['planned', 'in-progress', 'done', 'blocked', 'cancelled'];
+export const ROADMAP_PRIORITY = ['critical', 'high', 'medium', 'low'];
+
 export const ROADMAP_TOOL_NAMES = new Set([
   'roadmap_add', 'roadmap_update', 'roadmap_list', 'roadmap_next',
 ]);
@@ -33,6 +36,9 @@ export async function handleRoadmapTool(
       // Geheimnisse schwaerzen, Verdacht vermerken (schreibtor.ts).
       const tor = fuerEigenenSpeicher({ title: rohTitel, description: rohDesc, tags: rohTags, milestone: rohMeilenstein });
       const { title, description: desc, tags: rtags, milestone } = tor.felder;
+      if (!ROADMAP_PRIORITY.includes(priority)) {
+        return `⚠️ **roadmap_add** – Unknown priority \`${priority}\`. Use one of: ${ROADMAP_PRIORITY.join(', ')}.`;
+      }
       const redis = await getConnection(rid);
       const id = `rm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`;
       const item = {
@@ -76,6 +82,14 @@ export async function handleRoadmapTool(
       // Geheimnisse schwaerzen, Verdacht vermerken (schreibtor.ts).
       const tor = fuerEigenenSpeicher({ notes: rohNotizen, title: rohTitel, description: rohBeschreibung });
       const { notes: newNotes, title: newTitle, description: newDesc } = tor.felder;
+      // 04.11.2026 (team-roadmap-status): ein unbekannter Status ("finished", "bogus") wurde gespeichert;
+      // der Eintrag verschwand dann aus roadmap_list und roadmap_next. Jetzt wird er abgelehnt.
+      if (newStatus && !ROADMAP_STATUS.includes(newStatus)) {
+        return `⚠️ **roadmap_update** – Unknown status \`${newStatus}\`. Use one of: ${ROADMAP_STATUS.join(', ')}.`;
+      }
+      if (newPriority && !ROADMAP_PRIORITY.includes(newPriority)) {
+        return `⚠️ **roadmap_update** – Unknown priority \`${newPriority}\`. Use one of: ${ROADMAP_PRIORITY.join(', ')}.`;
+      }
       const redis = await getConnection(rid);
       const raw = await redis.hget(`cachly:roadmap:${rid}`, itemId);
       if (!raw) return `⚠️ **roadmap_update** – Item \`${itemId}\` not found. Use \`roadmap_list\` to see all items.`;
