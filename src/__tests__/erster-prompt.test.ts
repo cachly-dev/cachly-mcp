@@ -142,6 +142,10 @@ beforeEach(async () => {
 afterEach(async () => {
   // Der Nebenlauf des Start-Imports ist abgekoppelt. Er endet mit dem Auftrag;
   // erst danach Gegenstelle und Ordner abbauen, sonst schreibt er ins Leere.
+  // Bricht ein Test ab, solange seine Instanz noch "startet", kaeme der Auftrag
+  // nie — und auf den echten Fehler folgte ein zweiter, irrefuehrender
+  // ("kein Auftrag nach 15000 ms", CI 04.11.2026). Darum laeuft sie hier an.
+  g.laeuft = true;
   if (importLief && sofortTests().length > 0 && existsSync(credentials())) await warteAufAuftrag();
   g.server.closeAllConnections();
   await new Promise<void>((r) => g.server.close(() => r()));
@@ -371,10 +375,13 @@ describe('Der erste Prompt nach der Installation', () => {
     expect(anzahl()).toBe(2);
 
     const r = await prompt();
-    const dauer = Date.now() - start;
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout).hookSpecificOutput.additionalContext).toContain('fail2ban');
-    expect(dauer, `${dauer} ms`).toBeLessThan(5000);
+    // Gemessen wird der Prompt-Hook allein: Er darf nicht auf die Instanz
+    // warten (live 14.10.: 11 s). Bis 04.11. lief die Uhr ab SessionStart und
+    // zaehlte zwei Prozessstarts plus Kontoanlage mit; unter CI-Last waren das
+    // 5.784 ms, ohne dass der Prompt-Hook gewartet haette.
+    expect(r.ms, `${r.ms} ms`).toBeLessThan(5000);
     expect(g.gelernt, 'die Instanz laeuft noch nicht').toEqual([]);
 
     // Die Instanz laeuft: der Import geht durch, der Server bekommt vomHook.
