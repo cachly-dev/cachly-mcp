@@ -26,12 +26,13 @@ import { createServer, type Server } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { erzeugeDateien, jetbrainsDateien } from '../../scripts/plugin-hooks-schreiben.mjs';
+import { erzeugeDateien, jetbrainsDateien, vscodeDateien } from '../../scripts/plugin-hooks-schreiben.mjs';
 import {
   HOOK_BUENDEL,
-  JETBRAINS_VORLAGE,
+  HOOK_VORLAGE,
   PLUGIN_HOOK_DIR,
   PLUGIN_HOOK_EVENTS,
+  SETTINGS_VORLAGE,
   VORLAGE_EREIGNIS,
   VORLAGE_INSTANZ,
   installAmbientHooks,
@@ -58,31 +59,43 @@ describe('Hook-Buendel — Erzeugnis und Quelle', () => {
   });
 
   // 04.11.2026: Das JetBrains-Plugin schrieb bis 0.9.7 eine eigene Abschrift der Skripte und blieb
-  // bei v3 stehen (npx je Prompt, 7,7 s warm gegen 10 s Grenze). Jetzt traegt es Buendel und
-  // Vorlage als Ressourcen; der oeffentliche Spiegel cachly-mcp hat sdk/intellij nicht.
-  it.skipIf(!existsSync(resolve(SDK, '..', 'intellij')))('JetBrains traegt dasselbe Buendel und die Vorlage aus buildHook', async () => {
-    const buendel = readFileSync(BUENDEL, 'utf8');
-    for (const [pfad, inhalt] of Object.entries(jetbrainsDateien(buendel))) {
-      const ziel = join(SDK, pfad);
-      expect(existsSync(ziel) && readFileSync(ziel, 'utf8') === inhalt, `${pfad} veraltet — cd sdk/mcp && npm run plugin-hooks:write`).toBe(true);
-    }
-    // Die Vorlage, so ausgefuellt wie im Plugin, ist genau das Skript, das installAmbientHooks schreibt.
-    const vorlage = readFileSync(join(SDK, '..', 'intellij', 'src', 'main', 'resources', 'hooks', JETBRAINS_VORLAGE), 'utf8');
-    const instanz = "a1b2c3d4-0000-4000-8000-00000000'\\x";
-    const js = (s: string) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    const projekt = mkdtempSync(join(tmpdir(), 'cachly-jb-vorlage-'));
-    try {
-      const r = await installAmbientHooks(projekt, instanz);
-      for (const [ereignis, datei] of [
-        ['SessionStart', r.sessionStartPath], ['UserPromptSubmit', r.promptSubmitPath],
-        ['PreToolUse', r.preToolUsePath!], ['Stop', r.stopPath!],
-      ] as const) {
-        const ausgefuellt = vorlage.split(VORLAGE_EREIGNIS).join(js(ereignis)).split(VORLAGE_INSTANZ).join(js(instanz));
-        expect(ausgefuellt, ereignis).toBe(readFileSync(datei, 'utf8'));
+  // bei v3 stehen (npx je Prompt, 7,7 s warm gegen 10 s Grenze). Jetzt tragen JetBrains und VS Code
+  // Buendel und Vorlagen; ihre eigenen Tests vergleichen ihre Abschriften damit. Der oeffentliche
+  // Spiegel cachly-mcp hat die beiden Ordner nicht.
+  describe.each([
+    ['JetBrains', 'intellij', ['src', 'main', 'resources', 'hooks'], jetbrainsDateien],
+    ['VS Code', 'vscode', ['hooks'], vscodeDateien],
+  ] as const)('%s traegt dasselbe Buendel und die Vorlagen', (_name, sdkOrdner, teil, dateien) => {
+    const da = existsSync(resolve(SDK, '..', sdkOrdner));
+    const ordner = join(SDK, '..', sdkOrdner, ...teil);
+
+    it.skipIf(!da)('byte-gleich mit dem Erzeuger', () => {
+      for (const [pfad, inhalt] of Object.entries(dateien(readFileSync(BUENDEL, 'utf8')))) {
+        const ziel = join(SDK, pfad);
+        expect(existsSync(ziel) && readFileSync(ziel, 'utf8') === inhalt, `${pfad} veraltet — cd sdk/mcp && npm run plugin-hooks:write`).toBe(true);
       }
-    } finally {
-      rmSync(projekt, { recursive: true, force: true });
-    }
+    });
+
+    it.skipIf(!da)('die Vorlagen ergeben genau, was installAmbientHooks schreibt', async () => {
+      const vorlage = readFileSync(join(ordner, HOOK_VORLAGE), 'utf8');
+      const instanz = "a1b2c3d4-0000-4000-8000-00000000'\\x";
+      const js = (s: string) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const projekt = mkdtempSync(join(tmpdir(), 'cachly-vorlage-'));
+      try {
+        const r = await installAmbientHooks(projekt, instanz);
+        for (const [ereignis, datei] of [
+          ['SessionStart', r.sessionStartPath], ['UserPromptSubmit', r.promptSubmitPath],
+          ['PreToolUse', r.preToolUsePath!], ['Stop', r.stopPath!],
+        ] as const) {
+          const ausgefuellt = vorlage.split(VORLAGE_EREIGNIS).join(js(ereignis)).split(VORLAGE_INSTANZ).join(js(instanz));
+          expect(ausgefuellt, ereignis).toBe(readFileSync(datei, 'utf8'));
+        }
+        const settings = JSON.parse(readFileSync(join(projekt, '.claude', 'settings.json'), 'utf8'));
+        expect(settings.hooks).toEqual(JSON.parse(readFileSync(join(ordner, SETTINGS_VORLAGE), 'utf8')));
+      } finally {
+        rmSync(projekt, { recursive: true, force: true });
+      }
+    });
   });
 
   it('das Buendel braucht kein node_modules — nur Node-Bordmittel', () => {

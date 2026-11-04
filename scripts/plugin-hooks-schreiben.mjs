@@ -33,7 +33,8 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  buildAmbientHookVorlage, buildPluginHooksJson, HOOK_BUENDEL, JETBRAINS_VORLAGE, PLUGIN_HOOK_DIR,
+  buildAmbientHookVorlage, buildAmbientSettingsVorlage, buildPluginHooksJson,
+  HOOK_BUENDEL, HOOK_VORLAGE, PLUGIN_HOOK_DIR, SETTINGS_VORLAGE,
 } from '../src/ambient-hooks.ts';
 
 const WURZEL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -77,13 +78,23 @@ export async function erzeugeDateien() {
   };
 }
 
-/** Die Ressourcen des JetBrains-Plugins, nach Pfad relativ zu sdk/mcp. */
-export function jetbrainsDateien(buendel) {
-  const ordner = '../intellij/src/main/resources/hooks';
+/** Buendel und Vorlagen fuer einen anderen Einrichtungsweg, nach Pfad relativ zu sdk/mcp. */
+function kopien(ordner, buendel) {
   return {
     [`${ordner}/${HOOK_BUENDEL}`]: buendel,
-    [`${ordner}/${JETBRAINS_VORLAGE}`]: `${buildAmbientHookVorlage()}\n`,
+    [`${ordner}/${HOOK_VORLAGE}`]: `${buildAmbientHookVorlage()}\n`,
+    [`${ordner}/${SETTINGS_VORLAGE}`]: buildAmbientSettingsVorlage(),
   };
+}
+
+/** Die Ressourcen des JetBrains-Plugins. */
+export function jetbrainsDateien(buendel) {
+  return kopien('../intellij/src/main/resources/hooks', buendel);
+}
+
+/** Die Dateien der VS-Code-Erweiterung (kommen mit ins VSIX; die Vorlagen sind zusammen unter 2 KB). */
+export function vscodeDateien(buendel) {
+  return kopien('../vscode/hooks', buendel);
 }
 
 async function main() {
@@ -122,10 +133,12 @@ async function main() {
   // Die VS-Code-Erweiterung traegt eine Kopie (sdk/vscode/hooks, siehe buendel-kopieren.mjs).
   // Am 21.10.2026 vergessen (#867): nur sdk/mcp/hooks wurde neu geschrieben, und main war im
   // VS-Code-Job rot. Darum hier gleich mit — der oeffentliche Spiegel hat sdk/vscode nicht.
-  const vscodeHooks = join(WURZEL, '..', 'vscode', 'hooks');
-  if (existsSync(vscodeHooks)) {
-    writeFileSync(join(vscodeHooks, HOOK_BUENDEL), buendel, 'utf8');
-    process.stdout.write(`sdk/vscode/hooks/${HOOK_BUENDEL}: mitgeschrieben.\n`);
+  // Seit 04.11.2026 dazu die Vorlagen; HookVorlage.test.ts in VS Code vergleicht seine Abschrift damit.
+  if (existsSync(join(WURZEL, '..', 'vscode', 'hooks'))) {
+    for (const [name, inhalt] of Object.entries(vscodeDateien(buendel))) {
+      writeFileSync(join(WURZEL, name), inhalt, 'utf8');
+      process.stdout.write(`sdk/${name.slice(3)}: mitgeschrieben.\n`);
+    }
   }
   // Das JetBrains-Plugin traegt Buendel und Skript-Vorlage als Ressourcen (04.11.2026). Bis 0.9.7
   // schrieb es eine eigene Abschrift der Skripte und blieb bei v3 stehen (npx je Prompt).

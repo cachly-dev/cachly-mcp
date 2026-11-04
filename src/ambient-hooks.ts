@@ -112,7 +112,7 @@ function buildHook(event: AmbientHookEvent, opts: AmbientHookOptions): string {
  */
 export const VORLAGE_EREIGNIS = '__CACHLY_EREIGNIS__';
 export const VORLAGE_INSTANZ = '__CACHLY_INSTANZ__';
-export const JETBRAINS_VORLAGE = 'cachly-ambient-vorlage.mjs';
+export const HOOK_VORLAGE = 'cachly-ambient-vorlage.mjs';
 
 /** Das Projekt-Skript mit Platzhaltern statt Ereignis und Instanz. */
 export function buildAmbientHookVorlage(): string {
@@ -254,6 +254,24 @@ const SCRIPT_NAMES: Record<AmbientHookEvent, string> = {
   Stop: 'cachly-ambient-stop.mjs',
 };
 const AMBIENT_SCRIPT_MARKER = '.claude/hooks/cachly-ambient-';
+
+/**
+ * Das settings.json-Fragment, so wie installAmbientHooks es schreibt (Pfade
+ * ueber ${CLAUDE_PROJECT_DIR}). VS Code und JetBrains bauen es selbst; ihre
+ * Tests vergleichen gegen diese Vorlage (04.11.2026). Bis dahin standen
+ * Zeitgrenzen, Matcher und Befehlsform dort ohne jeden Vergleich.
+ */
+export const SETTINGS_VORLAGE = 'cachly-ambient-settings.vorlage.json';
+export function buildAmbientSettingsVorlage(): string {
+  const pfad = (e: AmbientHookEvent) => `\${CLAUDE_PROJECT_DIR}/${CLAUDE_HOOK_DIR}/${SCRIPT_NAMES[e]}`;
+  const fragment = buildAmbientSettingsHooks({
+    sessionStart: pfad('SessionStart'),
+    userPromptSubmit: pfad('UserPromptSubmit'),
+    preToolUse: pfad('PreToolUse'),
+    stop: pfad('Stop'),
+  });
+  return `${JSON.stringify(fragment, null, 2)}\n`;
+}
 
 export interface AmbientInstallResult {
   sessionStartPath: string;
