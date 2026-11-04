@@ -1602,11 +1602,18 @@ async function handleBrainToolInner(
           // nicht. Der Sortierer bewertet beide getrennt (naeheText 1,0,
           // naeheThema 0,6). Bis zum 20.08.2026 gab es diese Vektoren nur im
           // Messstand — deshalb war rangfolge.ts auch nie verdrahtet.
+          // Ein Thema nur aus Trennzeichen ("--", "::") hat keinen Namenstext.
+          // Dann gibt es nichts einzubetten — und auch nichts nachzuholen.
+          const namensText = textFuerNamensVektor(topic);
           try {
-            const nv = await computeEmbedding(textFuerNamensVektor(topic), { geduld: 'lang' });
-            if (nv?.length) {
-              await redis.set(`${NAME_VEKTOR_PRAEFIX}${topic}`, packe(nv));
+            if (!namensText) {
               await redis.srem(NAME_VEKTOR_NACHTRAG, topic).catch(() => { /* still */ });
+            } else {
+              const nv = await computeEmbedding(namensText, { geduld: 'lang' });
+              if (nv?.length) {
+                await redis.set(`${NAME_VEKTOR_PRAEFIX}${topic}`, packe(nv));
+                await redis.srem(NAME_VEKTOR_NACHTRAG, topic).catch(() => { /* still */ });
+              }
             }
           } catch (e) {
             await meldeUndVermerke(redis, OHNE_SCHREIBVEKTOR,
@@ -6615,8 +6622,16 @@ async function heileVektorNachtrag(redis: Redis, ausnahmeTopic: string | undefin
     }
     // Namens- und Zweit-Vektoren (21.10.2026): eigene Vermerke, dieselbe
     // Regel — erst schreiben, dann austragen; geloeschte Lektion verfaellt.
+    // Ohne Namenstext (Thema "" oder nur Trennzeichen) gibt es nichts zu
+    // holen: null traegt den Vermerk aus. Bis 04.11.2026 ging hier bei jeder
+    // Suche eine Einbettung mit 0 Zeichen an die API (Ablehnung, Vermerk blieb,
+    // brain_doctor meldete die Luecke fuer immer). Anlass: eine Lektion mit
+    // topic "" aus der Zeit vor 0.10.226, die leere Themen noch annahm.
     await heileNachtragsart(redis, NAME_VEKTOR_NACHTRAG, NAME_VEKTOR_PRAEFIX, ausnahmeTopic, max,
-      (t) => computeEmbedding(textFuerNamensVektor(t), { geduld: 'lang' }));
+      (t) => {
+        const namensText = textFuerNamensVektor(t);
+        return namensText ? computeEmbedding(namensText, { geduld: 'lang' }) : Promise.resolve(null);
+      });
     if (EMBED_PROVIDER === 'cachly' || EMBED_PROVIDER === 'ollama') {
       await heileNachtragsart(redis, ZWEIT_VEKTOR_NACHTRAG, ZWEIT_VEKTOR_PRAEFIX, ausnahmeTopic, max,
         (_t, gel) => computeEmbedding(textFuerVektor(gel), { geduld: 'lang', modell: ZWEIT_MODELL }));
@@ -6624,7 +6639,11 @@ async function heileVektorNachtrag(redis: Redis, ausnahmeTopic: string | undefin
   } catch { /* der Nachtrag stoert nie */ }
 }
 
-/** Ein Nachtrags-Set abarbeiten: hoechstens `max` Themen, write-ahead wie oben. */
+/**
+ * Ein Nachtrags-Set abarbeiten: hoechstens `max` Themen, write-ahead wie oben.
+ * Liefert `bette` null, gibt es fuer dieses Thema nichts einzubetten: der
+ * Vermerk faellt. Ein Fehler oder ein leerer Vektor laesst ihn stehen.
+ */
 async function heileNachtragsart(
   redis: Redis,
   set: string,
@@ -6642,7 +6661,9 @@ async function heileNachtragsart(
     if (await redis.exists(`${praefix}${t}`)) { await redis.srem(set, t); continue; }
     try {
       const v = await bette(t, safeJsonParse(inhalt, {} as Record<string, unknown>));
-      if (v?.length) {
+      if (v === null) {
+        await redis.srem(set, t);
+      } else if (v?.length) {
         await redis.set(`${praefix}${t}`, packe(v));
         await redis.srem(set, t);
       }

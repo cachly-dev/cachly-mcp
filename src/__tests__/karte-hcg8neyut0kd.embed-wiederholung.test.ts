@@ -99,6 +99,17 @@ describe('computeEmbedding — der Wrapper am gestubbten fetch', () => {
     text: async () => '', json: async () => ({ embedding: [0.1, 0.2], dimensions: 2 }),
   }) as unknown as Response;
 
+  it('leerer Text geht nicht ueber das Netz (04.11.2026: 0 Zeichen je Suche)', async () => {
+    let rufe = 0;
+    globalThis.fetch = (async () => { rufe++; return ok(); }) as typeof fetch;
+    await expect(computeEmbedding('', { geduld: 'lang' })).rejects.toThrow(/empty text/);
+    await expect(computeEmbedding('  \n ')).rejects.toThrow(/empty text/);
+    expect(rufe).toBe(0);
+    // KONTROLLE: ein echter Text geht weiter hinaus.
+    await computeEmbedding('fail2ban');
+    expect(rufe).toBe(1);
+  });
+
   it('derselbe Text wird nur einmal eingebettet, ein Fehlschlag nicht gemerkt (03.11.2026)', async () => {
     // smart_recall bettete dieselbe Frage drei- bis viermal ein, je 200-850 ms.
     let rufe = 0;

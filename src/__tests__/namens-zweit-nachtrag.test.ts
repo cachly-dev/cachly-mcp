@@ -101,6 +101,30 @@ describe('Nachtrag fuer Namens- und Zweit-Vektoren', () => {
     expect(doc).toMatch(/0 full-text, 1 topic-name, 1 second-model/);
   });
 
+  // 04.11.2026: Eine Lektion mit topic "" (vor 0.10.226 noch angenommen) liess
+  // bei jeder Suche eine Einbettung mit 0 Zeichen an die API gehen; der Vermerk
+  // blieb fuer immer. GEGENPROBE: ohne den Fix in brain.ts sind beide Proben rot.
+  const leerEingebettet = () => embedMock.mock.calls.filter(([text]) => String(text).trim() === '');
+
+  it('ein Thema ohne Namenstext ("--") bettet nie leer ein und laesst keinen Vermerk liegen', async () => {
+    scheitertBei(() => false);
+    await lerne('--');
+    await ausstehen();
+    expect(leerEingebettet()).toEqual([]);
+    expect(await redis.get(`${VEKTOR_PRAEFIX}--`)).not.toBeNull();
+    expect(await redis.smembers(NAME_VEKTOR_NACHTRAG)).not.toContain('--');
+  });
+
+  it('ein alter Vermerk zu einem leeren Thema verfaellt, statt bei jedem Lauf leer einzubetten', async () => {
+    scheitertBei(() => false);
+    await redis.set('cachly:lesson:best:', JSON.stringify({ topic: '', outcome: 'success', what_worked: 'x' }));
+    await redis.sadd(NAME_VEKTOR_NACHTRAG, '');
+    await lerne('deploy:danach');
+    await ausstehen();
+    expect(leerEingebettet()).toEqual([]);
+    expect(await redis.smembers(NAME_VEKTOR_NACHTRAG)).toEqual([]);
+  });
+
   it('eine geloeschte Lektion erledigt ihren Vermerk von selbst', async () => {
     scheitertBei((text) => text === textFuerNamensVektor('deploy:weg'));
     await lerne('deploy:weg');

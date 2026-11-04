@@ -435,6 +435,11 @@ async function einbettungMitWiederholung(text: string, opts?: { geduld?: EmbedGe
   if (opts?.modell && EMBED_PROVIDER !== 'cachly' && EMBED_PROVIDER !== 'ollama') {
     throw new Error(`Anbieter "${EMBED_PROVIDER}" kann kein abweichendes Modell anfragen (verlangt: ${opts.modell}).`);
   }
+  // Ein leerer Text hat keinen Vektor; die API lehnt ihn ab. Bis 04.11.2026
+  // ging trotzdem bei jeder Suche einer ueber das Netz (Namensvektor eines
+  // Themas ohne Namen, gefunden mit CACHLY_ZEITMESSUNG=1). Jetzt endet der
+  // Aufruf hier, ohne Anfrage.
+  if (text.trim() === '') throw new Error('nothing to embed: empty text');
   let versuch = 0;
   for (;;) {
     versuch++;
