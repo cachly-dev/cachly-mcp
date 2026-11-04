@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect } from 'vitest';
 import { readFileSync, rmSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { STARTER_CORPUS } from './starter-corpus.js';
 import {
   LERN_PARALLEL, LERN_VERSUCHE, alsBestand, gitAnfragen, hookImportFuerAuftrag, importiereStartwissen,
@@ -8,7 +9,11 @@ import {
 import { leseCommits } from './git-lektionen.js';
 import { bestandPfad } from './einblendung.js';
 
-const ID = '11111111-2222-3333-4444-555555555555';
+// Eine eigene Kennung je Lauf (04.11.2026): bestandPfad liegt im gemeinsamen
+// Temp-Ordner und haengt nur an der Kennung. Mit der festen 11111111-…, die auch
+// andere Testdateien nutzen, las "Vorab-Bestand" unter Last die Datei eines
+// parallelen Laufs ("expected +0 to be 2", main-Lauf 41790238072).
+const ID = randomUUID();
 afterEach(() => rmSync(bestandPfad(ID), { force: true }));
 
 /*
