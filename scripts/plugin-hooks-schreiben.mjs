@@ -32,7 +32,9 @@ import { build } from 'esbuild';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { buildPluginHooksJson, HOOK_BUENDEL, PLUGIN_HOOK_DIR } from '../src/ambient-hooks.ts';
+import {
+  buildAmbientHookVorlage, buildPluginHooksJson, HOOK_BUENDEL, JETBRAINS_VORLAGE, PLUGIN_HOOK_DIR,
+} from '../src/ambient-hooks.ts';
 
 const WURZEL = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const EINSTIEG = join(WURZEL, 'src', 'ambient-hook-start.ts');
@@ -72,6 +74,15 @@ export async function erzeugeDateien() {
   return {
     [`${PLUGIN_HOOK_DIR}/${HOOK_BUENDEL}`]: await erzeugeBuendel(),
     [`${PLUGIN_HOOK_DIR}/hooks.json`]: buildPluginHooksJson(),
+  };
+}
+
+/** Die Ressourcen des JetBrains-Plugins, nach Pfad relativ zu sdk/mcp. */
+export function jetbrainsDateien(buendel) {
+  const ordner = '../intellij/src/main/resources/hooks';
+  return {
+    [`${ordner}/${HOOK_BUENDEL}`]: buendel,
+    [`${ordner}/${JETBRAINS_VORLAGE}`]: `${buildAmbientHookVorlage()}\n`,
   };
 }
 
@@ -115,6 +126,16 @@ async function main() {
   if (existsSync(vscodeHooks)) {
     writeFileSync(join(vscodeHooks, HOOK_BUENDEL), buendel, 'utf8');
     process.stdout.write(`sdk/vscode/hooks/${HOOK_BUENDEL}: mitgeschrieben.\n`);
+  }
+  // Das JetBrains-Plugin traegt Buendel und Skript-Vorlage als Ressourcen (04.11.2026). Bis 0.9.7
+  // schrieb es eine eigene Abschrift der Skripte und blieb bei v3 stehen (npx je Prompt).
+  // Waechter: src/__tests__/plugin-hooks.test.ts und HookVorlageTest.kt im Plugin.
+  if (existsSync(join(WURZEL, '..', 'intellij'))) {
+    for (const [name, inhalt] of Object.entries(jetbrainsDateien(buendel))) {
+      mkdirSync(dirname(join(WURZEL, name)), { recursive: true });
+      writeFileSync(join(WURZEL, name), inhalt, 'utf8');
+      process.stdout.write(`sdk/${name.slice(3)}: mitgeschrieben.\n`);
+    }
   }
   // Nicht loeschen, nur melden: eine fremde Datei dort ist eine Frage, keine Muellabfuhr.
   if (ueberzaehlig.length) {

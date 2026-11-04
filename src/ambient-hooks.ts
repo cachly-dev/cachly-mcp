@@ -103,6 +103,23 @@ function buildHook(event: AmbientHookEvent, opts: AmbientHookOptions): string {
 }
 
 /**
+ * Platzhalter der Skript-Vorlage fuer das JetBrains-Plugin. Das Plugin
+ * (Kotlin) kann buildHook nicht aufrufen und schrieb bis 0.9.7 eine eigene
+ * Abschrift — die blieb bei v3 stehen, mit npx je Prompt (7,7 s warm, 17,1 s
+ * kalt gegen 10 s Grenze). Seit 04.11.2026 liest es diese Vorlage aus seinen
+ * Ressourcen (scripts/plugin-hooks-schreiben.mjs schreibt sie dorthin) und
+ * setzt Ereignis und Instanz ein, escaped wie jsString.
+ */
+export const VORLAGE_EREIGNIS = '__CACHLY_EREIGNIS__';
+export const VORLAGE_INSTANZ = '__CACHLY_INSTANZ__';
+export const JETBRAINS_VORLAGE = 'cachly-ambient-vorlage.mjs';
+
+/** Das Projekt-Skript mit Platzhaltern statt Ereignis und Instanz. */
+export function buildAmbientHookVorlage(): string {
+  return buildHook(VORLAGE_EREIGNIS as AmbientHookEvent, { instanceId: VORLAGE_INSTANZ });
+}
+
+/**
  * Where the bundle sits in this package: `hooks/` next to `src/` in the
  * monorepo (tests), or next to `dist/` in the published package. null when
  * neither exists.

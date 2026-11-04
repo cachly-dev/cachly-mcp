@@ -26,11 +26,14 @@ import { createServer, type Server } from 'node:http';
 import { type AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { erzeugeDateien } from '../../scripts/plugin-hooks-schreiben.mjs';
+import { erzeugeDateien, jetbrainsDateien } from '../../scripts/plugin-hooks-schreiben.mjs';
 import {
   HOOK_BUENDEL,
+  JETBRAINS_VORLAGE,
   PLUGIN_HOOK_DIR,
   PLUGIN_HOOK_EVENTS,
+  VORLAGE_EREIGNIS,
+  VORLAGE_INSTANZ,
   installAmbientHooks,
 } from '../ambient-hooks.js';
 import { bestandPfad } from '../einblendung.js';
@@ -52,6 +55,34 @@ describe('Hook-Buendel — Erzeugnis und Quelle', () => {
     }
     const vorhanden = readdirSync(join(SDK, PLUGIN_HOOK_DIR)).map((n) => `${PLUGIN_HOOK_DIR}/${n}`).sort();
     expect(vorhanden).toEqual(Object.keys(soll).sort());
+  });
+
+  // 04.11.2026: Das JetBrains-Plugin schrieb bis 0.9.7 eine eigene Abschrift der Skripte und blieb
+  // bei v3 stehen (npx je Prompt, 7,7 s warm gegen 10 s Grenze). Jetzt traegt es Buendel und
+  // Vorlage als Ressourcen; der oeffentliche Spiegel cachly-mcp hat sdk/intellij nicht.
+  it.skipIf(!existsSync(resolve(SDK, '..', 'intellij')))('JetBrains traegt dasselbe Buendel und die Vorlage aus buildHook', async () => {
+    const buendel = readFileSync(BUENDEL, 'utf8');
+    for (const [pfad, inhalt] of Object.entries(jetbrainsDateien(buendel))) {
+      const ziel = join(SDK, pfad);
+      expect(existsSync(ziel) && readFileSync(ziel, 'utf8') === inhalt, `${pfad} veraltet — cd sdk/mcp && npm run plugin-hooks:write`).toBe(true);
+    }
+    // Die Vorlage, so ausgefuellt wie im Plugin, ist genau das Skript, das installAmbientHooks schreibt.
+    const vorlage = readFileSync(join(SDK, '..', 'intellij', 'src', 'main', 'resources', 'hooks', JETBRAINS_VORLAGE), 'utf8');
+    const instanz = "a1b2c3d4-0000-4000-8000-00000000'\\x";
+    const js = (s: string) => s.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    const projekt = mkdtempSync(join(tmpdir(), 'cachly-jb-vorlage-'));
+    try {
+      const r = await installAmbientHooks(projekt, instanz);
+      for (const [ereignis, datei] of [
+        ['SessionStart', r.sessionStartPath], ['UserPromptSubmit', r.promptSubmitPath],
+        ['PreToolUse', r.preToolUsePath!], ['Stop', r.stopPath!],
+      ] as const) {
+        const ausgefuellt = vorlage.split(VORLAGE_EREIGNIS).join(js(ereignis)).split(VORLAGE_INSTANZ).join(js(instanz));
+        expect(ausgefuellt, ereignis).toBe(readFileSync(datei, 'utf8'));
+      }
+    } finally {
+      rmSync(projekt, { recursive: true, force: true });
+    }
   });
 
   it('das Buendel braucht kein node_modules — nur Node-Bordmittel', () => {
