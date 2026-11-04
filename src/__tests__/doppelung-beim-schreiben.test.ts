@@ -14,9 +14,13 @@ const WINKEL: Record<string, number> = {
   ALT: 0,
   DOPPEL: Math.acos(0.85),
   VERWANDT: -Math.acos(0.76),
-  // Wie DOPPEL, aber der Einbettungsdienst braucht 2,5 s (laenger als DOPPEL_WARTE_MS).
+  // Wie DOPPEL, aber der Einbettungsdienst braucht LANGSAM_MS (laenger als DOPPEL_WARTE_MS).
   LANGSAM: Math.acos(0.85),
 };
+// 5 s statt 2,5 s (04.11.2026): Mit 2,5 s lag ein Rueckfall ("wartet auf den Dienst") nur 200 ms ueber
+// der Grenze DOPPEL_WARTE_MS + 800. Auf main unter CI-Last brauchte der RICHTIGE Weg 2.410 ms und riss
+// sie (Lauf auf 593ec0f0). Jetzt je 1,5 s Abstand: richtig ~1,5 s < Grenze 3,5 s < Rueckfall >= 5 s.
+const LANGSAM_MS = 5000;
 const vektorFuer = (text: string): number[] => {
   const marke = Object.keys(WINKEL).find((m) => text.includes(`[${m}]`)) ?? 'ALT';
   const v = new Array<number>(16).fill(0);
@@ -47,7 +51,7 @@ vi.mock('../embeddings.js', async (original) => {
     EMBED_PROVIDER: 'cachly',
     computeEmbedding: vi.fn(async (t: string, opts?: { modell?: string }) => {
       if (opts?.modell) throw new Error('kein Zweitmodell in dieser Probe');
-      if (t.includes('[LANGSAM]')) await new Promise((r) => setTimeout(r, 2500));
+      if (t.includes('[LANGSAM]')) await new Promise((r) => setTimeout(r, LANGSAM_MS));
       return vektorFuer(t);
     }),
   };
@@ -108,13 +112,14 @@ describe('Doppelung beim Schreiben: vermerken, im Briefing nennen, nie zusammenl
     const antwort = String(await lerne('node1:kc-langsam', '[LANGSAM] KC_HOSTNAME ist seit 03.09. stillgelegt, Keycloak 26 nimmt den Host aus der Anfrage.'));
     const dauer = Date.now() - start;
     expect(dauer).toBeGreaterThanOrEqual(DOPPEL_WARTE_MS - 50);
-    expect(dauer).toBeLessThan(DOPPEL_WARTE_MS + 800);
+    expect(dauer).toBeLessThan(DOPPEL_WARTE_MS + 2000);
+    expect(LANGSAM_MS, 'der Rueckfall muss ueber der Grenze liegen').toBeGreaterThan(DOPPEL_WARTE_MS + 3000);
     expect(antwort).toContain('Lesson stored');
     expect(antwort).not.toContain('Says almost the same');
     await vi.waitFor(async () => {
       expect(Object.keys(await redis.hgetall(DOPPEL_SCHLUESSEL))).toContain('node1:kc-langsam');
-    }, { timeout: 5000 });
-  }, 10_000);
+    }, { timeout: LANGSAM_MS + 3000 });
+  }, LANGSAM_MS + 10_000);
 
   it('GEGENPROBE: bloss verwandt (0,76) -> kein Vermerk, kein Briefing-Abschnitt, 0 Paare', async () => {
     const antwort = String(await lerne('node1:keycloak-realm-export', '[VERWANDT] Der Keycloak-Realm wird als JSON exportiert und im Repo keycloak-deploy gepflegt.'));
