@@ -215,6 +215,10 @@ async function embeddingEinmal(text: string, geduld: EmbedGeduld, modell?: strin
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${embedConfig.jwt}`,
           ...(adminKey ? { 'X-Admin-Key': adminKey } : {}),
+          // Die API laesst Suchen vor Schreibenden zum Dienst (05.11.2026,
+          // api/internal/handler/embed_schlange.go). Ohne diesen Kopf steht
+          // die Anfrage in der Schreib-Zeile.
+          'X-Cachly-Embed-Zweck': geduld === 'kurz' ? 'suche' : 'schreiben',
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(zeitlimit),
@@ -224,8 +228,12 @@ async function embeddingEinmal(text: string, geduld: EmbedGeduld, modell?: strin
         // Status und Wartewunsch mitgeben, damit die Wiederholung oben
         // entscheiden kann: 429 traegt Retry-After als Header (Sekunden),
         // der Circuit-Breaker-Fall (503) traegt retry_after im JSON-Body.
+        // Bis 05.11.2026 machte Number(null) aus einem fehlenden Kopf eine 0 —
+        // der Body wurde nie gelesen, und auf "30 s warten" folgte sofort der
+        // naechste Versuch.
         let retryAfterSek: number | null = null;
-        const header = Number(res.headers.get('retry-after'));
+        const kopf = res.headers.get('retry-after');
+        const header = kopf === null ? NaN : Number(kopf);
         if (Number.isFinite(header) && header >= 0) retryAfterSek = header;
         else {
           try {

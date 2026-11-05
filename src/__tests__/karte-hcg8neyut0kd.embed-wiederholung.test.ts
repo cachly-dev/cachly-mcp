@@ -158,6 +158,34 @@ describe('computeEmbedding — der Wrapper am gestubbten fetch', () => {
     expect(rufe).toBe(2);
   });
 
+  it('offener Schutzschalter (503, retry_after 30 nur im Body): die Suche gibt sofort auf (05.11.2026)', async () => {
+    // Bis 05.11. wurde der fehlende Kopf zu Retry-After 0, und die Suche
+    // schickte drei Anfragen in den offenen Schalter, statt auf Woerter
+    // auszuweichen.
+    let rufe = 0;
+    globalThis.fetch = (async () => {
+      rufe++;
+      return {
+        ok: false, status: 503,
+        headers: { get: () => null },
+        text: async () => '{"error":"embedding provider temporarily unavailable — circuit open","retry_after":30}',
+      } as unknown as Response;
+    }) as typeof fetch;
+    await expect(computeEmbedding('hallo')).rejects.toThrow('503');
+    expect(rufe, '30 s Wartewunsch ist fuer die Suche zu lang: ein Ruf').toBe(1);
+  });
+
+  it('der Kopf X-Cachly-Embed-Zweck sagt der API, ob gesucht oder geschrieben wird (05.11.2026)', async () => {
+    const zwecke: string[] = [];
+    globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
+      zwecke.push(String((init?.headers as Record<string, string>)['X-Cachly-Embed-Zweck']));
+      return ok();
+    }) as typeof fetch;
+    await computeEmbedding('frage');
+    await computeEmbedding('lektion', { geduld: 'lang' });
+    expect(zwecke).toEqual(['suche', 'schreiben']);
+  });
+
   it('KONTROLLE: ein 401 wird NICHT wiederholt — genau ein Ruf, Fehler fliegt', async () => {
     let rufe = 0;
     globalThis.fetch = (async () => {
