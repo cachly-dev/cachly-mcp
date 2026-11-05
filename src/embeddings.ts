@@ -388,6 +388,45 @@ export function wiederholungMs(fehler: unknown, versuch: number, geduld: EmbedGe
   return geduld === 'lang' ? Math.min(1_000 * 2 ** (versuch - 1), 8_000) : 250 * 2 ** (versuch - 1);
 }
 
+// ── Schreibpfad: hoechstens SCHREIB_PARALLEL Einbettungen zugleich (05.11.2026) ──
+//
+// Gemessen beim BEAM-Einlesen auf node-4: 263 Lektionen wurden in einer
+// Sekunde geschrieben, jede schickte sofort ihre Einbettungen los. Die
+// Anfragen standen beim Dienst in der Schlange — und das Zeitlimit lief
+// schon, waehrend sie warteten. Wer laenger als das Limit wartete, gab auf;
+// der Dienst rechnete trotzdem (fuer niemanden), und der Nachtrag schickte
+// denselben Text noch einmal. Nachgestellt mit 150 Lektionen, Dienst mit 2
+// Plaetzen und 0,4 s je Text, Limit 30 s: 747 Anfragen statt 450, davon 305
+// fuer laengst Abgereiste gerechnet, nach 269 s noch immer Luecken. Dieselbe
+// Menge mit einem Limit, das nie reisst: 450 Anfragen, fertig nach 105 s.
+//
+// Darum wartet der Schreibpfad jetzt HIER, beim Absender, ohne laufende Uhr.
+// Das Limit misst nur noch die Zeit beim Dienst. Der Suchpfad ('kurz')
+// wartet nie in dieser Schlange — eine Suche ueberholt jede Schreibwelle.
+// Je Modell eine eigene Schlange: vec und vec2 rechnen oft verschiedene
+// Dienste (TEI und Ollama), der langsamere soll den schnelleren nicht bremsen.
+const SCHREIB_PARALLEL = Math.max(1, Number(process.env.CACHLY_EMBED_SCHREIB_PARALLEL ?? 4) || 4);
+const schreibSchlangen = new Map<string, { laufend: number; warte: Array<() => void> }>();
+
+async function mitSchreibPlatz<T>(modell: string, f: () => Promise<T>): Promise<T> {
+  let s = schreibSchlangen.get(modell);
+  if (!s) { s = { laufend: 0, warte: [] }; schreibSchlangen.set(modell, s); }
+  if (s.laufend < SCHREIB_PARALLEL) s.laufend++;
+  else await new Promise<void>((weiter) => s!.warte.push(weiter));
+  try {
+    return await f();
+  } finally {
+    const naechster = s.warte.shift();
+    if (naechster) naechster(); else s.laufend--;
+  }
+}
+
+/** Nur fuer Tests: wie viele Schreib-Einbettungen gerade beim Dienst sind bzw. warten. */
+export function schreibSchlange(modell = ''): { laufend: number; wartend: number } {
+  const s = schreibSchlangen.get(modell);
+  return { laufend: s?.laufend ?? 0, wartend: s?.warte.length ?? 0 };
+}
+
 /** Siehe embeddingEinmal fuer die Provider; hier sitzt NUR die Wiederholung. */
 /**
  * `modell` fragt gezielt ein anderes Modell an als das konfigurierte —
@@ -445,7 +484,9 @@ async function einbettungMitWiederholung(text: string, opts?: { geduld?: EmbedGe
     versuch++;
     try {
       zeitpunkt(`einbettung: Anfang (${text.length} Zeichen, Versuch ${versuch})`);
-      const v = await embeddingEinmal(text, geduld, opts?.modell);
+      const v = geduld === 'lang'
+        ? await mitSchreibPlatz(opts?.modell ?? '', () => embeddingEinmal(text, geduld, opts?.modell))
+        : await embeddingEinmal(text, geduld, opts?.modell);
       zeitpunkt('einbettung: fertig');
       return v;
     } catch (fehler) {
