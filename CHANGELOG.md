@@ -7,6 +7,24 @@
 
 ---
 
+## [0.10.230] – 2026-11-04 — *"No empty requests on every search."*
+
+**`smart_recall` no longer sends an empty text to the embedding service.**
+After each search the server fills in missing vectors in the background. For
+a lesson whose topic has no words, for example `""` (accepted before 0.10.226)
+or `--`, it sent an empty name text on every search. The service rejected it,
+the pending mark stayed forever, and `brain_doctor` kept reporting "Vector
+backfill pending: 1 topic-name". Now there is nothing to send, so the mark is
+removed. An empty text never leaves the server: it ends with
+`nothing to embed: empty text`.
+
+**One source for the hooks in all three setup paths.** `npm run
+plugin-hooks:write` now also writes the hook script template and the
+`settings.json` template for the VS Code extension and the JetBrains plugin.
+Their tests compare their own code with these templates. The JetBrains plugin
+had kept an old hook version that started `npx` on every prompt. That is fixed
+in JetBrains 0.9.8.
+
 ## [0.10.229] – 2026-11-04 — *"Plain answers to wrong input, honest labels for weak matches."*
 
 Second round of testers who walked real paths against a test Brain: the AI's
