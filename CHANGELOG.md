@@ -7,6 +7,50 @@
 
 ---
 
+## [0.10.231] – 2026-11-05 — *"Bulk writes wait their turn."*
+
+**Bulk writes no longer flood the embedding service.** When many lessons are
+written at once (an import, `brain_from_git`, a benchmark ingest), each lesson
+used to send its embeddings right away. They queued at the service while their
+time limit was already running. A request that waited too long gave up, the
+service computed it anyway, and the backfill sent the same text again.
+Reproduced with 150 lessons against a service with 2 slots and a 30 s limit:
+747 requests instead of 450, 305 of them computed for nobody, and still gaps
+after 269 s. Now the write path keeps at most 4 embeddings per model at the
+service (`CACHLY_EMBED_SCHREIB_PARALLEL`). The rest wait in the client, and
+the clock only starts when a request is sent. Same run: 455–462 requests, none
+wasted, all 150 lessons complete after 106–132 s. Without a bottleneck the
+speed is unchanged (107 s against 105 s). Searches never wait in this queue.
+
+**The backfill skips lessons that are still being embedded.** A lesson is
+marked as "vector missing" before its embedding starts, so that a crash cannot
+lose it. During a bulk write almost every lesson carried that mark, and each
+finished lesson re-embedded up to three of them. With 400 lessons that was 186
+extra requests out of 1,386. Now the backfill skips topics whose own write is
+still running in the same process: 1,200 requests for 1,200 vectors, done
+after 121 s instead of keeping the service busy until 138 s.
+
+**The name vector no longer waits for the second vector.** Each lesson computed
+its full-text vector, then the second vector (`vec2`), then the name vector.
+`vec2` often runs on a different, slower service. In a benchmark ingest the
+count after 11 minutes was 221 full-text vectors, 26 second vectors and 0 name
+vectors, while the fast service sat idle. Now `vec2` runs alongside the name
+vector. A failed `vec2` also leaves its reason for `brain_doctor` now, like
+the other two vectors; in that ingest 75 of 133 were missing without a word.
+
+**Searches tell the API they are searches.** Every embedding request now
+carries `X-Cachly-Embed-Zweck: suche` or `schreiben`. The cachly API lets
+searches go first and throttles a bulk writer with 429, instead of letting the
+queue trip the circuit breaker. The open breaker used to turn semantic search
+off for every customer for 30 s.
+
+**Fix: no immediate retries into an open circuit breaker.** A missing
+`Retry-After` header was read as 0 (`Number(null)`), so the `retry_after`
+field in the response body was never used. With the breaker open, a search
+sent two more requests at once instead of falling back to word search. Now it
+reads the body: 30 s is too long for a search, so it falls back after one
+request.
+
 ## [0.10.230] – 2026-11-04 — *"No empty requests on every search."*
 
 **`smart_recall` no longer sends an empty text to the embedding service.**

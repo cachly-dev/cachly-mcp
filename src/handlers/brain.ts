@@ -1535,8 +1535,14 @@ async function handleBrainToolInner(
         if (EMBED_PROVIDER === 'cachly' || EMBED_PROVIDER === 'ollama') {
           await redis.sadd(ZWEIT_VEKTOR_NACHTRAG, topic).catch(() => { /* still */ });
         }
+        // Solange dieser Block laeuft, ueberspringt der Nachtrag das Thema
+        // (laufendeSchreibungen, am Modulende): der Vermerk steht nur, weil die
+        // eigene Einbettung noch wartet.
+        const laufend = laufendeSchreibungen(redis);
+        laufend.add(topic);
         void (async () => {
           const gelesen = safeJsonParse(lesson, {} as Record<string, unknown>);
+          let zweitFertig: Promise<void> = Promise.resolve();
           try {
             // geduld 'lang': dieser Block ist fire-and-forget — hier darf der
             // Client ein 429-Fenster absitzen und Netz-Blips wiederholen,
@@ -1562,18 +1568,31 @@ async function handleBrainToolInner(
             // allen anderen bleibt vec2 leer, und der Lesepfad laesst das
             // Merkmal wegen ZWEIT_MINDESTDECKUNG von selbst aus. Ein Fehler
             // hier kostet nur das Zweitmerkmal, nie den Erstvektor.
+            //
+            // NEBEN dem Namens-Vektor, nicht davor (05.11.2026): vec2 rechnet
+            // oft ein anderer Dienst (Ollama statt TEI). Beim BEAM-Einlesen
+            // auf node-4 standen nach 11 Minuten 221 vec, 26 vec2 und 0
+            // Namens-Vektoren — jeder Namens-Vektor wartete auf das langsame
+            // vec2 seiner Lektion, waehrend TEI frei war.
             if (EMBED_PROVIDER === 'cachly' || EMBED_PROVIDER === 'ollama') {
-              try {
-                const v2 = await computeEmbedding(textFuerVektor(gelesen), { geduld: 'lang', modell: ZWEIT_MODELL });
-                if (v2?.length) {
-                  await redis.set(`${ZWEIT_VEKTOR_PRAEFIX}${topic}`, packe(v2));
-                  await redis.srem(ZWEIT_VEKTOR_NACHTRAG, topic).catch(() => { /* still */ });
+              zweitFertig = (async () => {
+                try {
+                  const v2 = await computeEmbedding(textFuerVektor(gelesen), { geduld: 'lang', modell: ZWEIT_MODELL });
+                  if (v2?.length) {
+                    await redis.set(`${ZWEIT_VEKTOR_PRAEFIX}${topic}`, packe(v2));
+                    await redis.srem(ZWEIT_VEKTOR_NACHTRAG, topic).catch(() => { /* still */ });
+                  }
+                } catch (e) {
+                  // Selbstheilend: der Vermerk in ZWEIT_VEKTOR_NACHTRAG bleibt
+                  // stehen, heileVektorNachtrag holt den Vektor beim naechsten
+                  // Schreiben oder Lesen nach. Der GRUND wird seit 05.11.2026
+                  // vermerkt: in BEAM-Messung 4 fehlten 75 von 133 vec2, und
+                  // nirgends stand, warum.
+                  await meldeUndVermerke(redis, OHNE_SCHREIBVEKTOR,
+                    `Zweit-Vektor nicht geschrieben (${EMBED_PROVIDER}, ${ZWEIT_MODELL}): ${fehlerText(e)}`
+                    + ' — die Lektion ist gespeichert, der Nachtrag holt ihn spaeter.');
                 }
-              } catch {
-                // Selbstheilend: der Vermerk in ZWEIT_VEKTOR_NACHTRAG bleibt
-                // stehen, heileVektorNachtrag holt den Vektor beim naechsten
-                // Schreiben oder Lesen nach.
-              }
+              })();
             }
           } catch (e) {
             doppelFertig(null);
@@ -1641,10 +1660,13 @@ async function handleBrainToolInner(
 
           // ── Der Nachtrag (Karte hcg8neyut0kd Teil c, seit 02.09.2026 als
           // eigene Funktion, damit auch der LESEpfad heilt) ─────────────────
+          // Erst wenn auch vec2 dieser Lektion fertig ist: solange laeuft der
+          // Block, und der Nachtrag anderer ueberspringt sie.
+          await zweitFertig;
           await heileVektorNachtrag(redis, topic, 3);
           // Ohne Vektor keine Pruefung — die Antwort soll dann nicht bis zur Frist warten.
           doppelFertig(null);
-        })();
+        })().finally(() => laufend.delete(topic));
       }
 
       // Track in decision log for session replay
@@ -6590,8 +6612,9 @@ async function heileVektorNachtrag(redis: Redis, ausnahmeTopic: string | undefin
     // Heilversuche zweier paralleler Aufrufer sind idempotent und billig.
     const nachtrag = await redis.srandmember(VEK_NACHTRAG, max);
     const liste = Array.isArray(nachtrag) ? nachtrag : (nachtrag ? [nachtrag] : []);
+    const laufend = laufendeSchreibungen(redis);
     for (const t of liste) {
-      if (t === ausnahmeTopic) continue;
+      if (t === ausnahmeTopic || laufend.has(t)) continue;
       const inhalt = await redis.get(`cachly:lesson:best:${t}`);
       if (!inhalt) {
         // Die Lektion selbst ist weg — ein ewiger Vermerk heilt niemanden.
@@ -6654,8 +6677,9 @@ async function heileNachtragsart(
 ): Promise<void> {
   const roh = await redis.srandmember(set, max);
   const liste = Array.isArray(roh) ? roh : (roh ? [roh] : []);
+  const laufend = laufendeSchreibungen(redis);
   for (const t of liste) {
-    if (t === ausnahmeTopic) continue;
+    if (t === ausnahmeTopic || laufend.has(t)) continue;
     const inhalt = await redis.get(`cachly:lesson:best:${t}`);
     if (!inhalt) { await redis.srem(set, t); continue; }
     if (await redis.exists(`${praefix}${t}`)) { await redis.srem(set, t); continue; }
@@ -6669,4 +6693,28 @@ async function heileNachtragsart(
       }
     } catch { /* der Vermerk bleibt, der naechste Lauf versucht es wieder */ }
   }
+}
+
+/**
+ * Themen, deren Schreib-Block (die Vektoren nach learn_from_attempts) in
+ * DIESEM Prozess noch laeuft. Der Nachtrag ueberspringt sie: ihr Vermerk
+ * steht nur, weil die eigene Einbettung noch wartet (write-ahead), nicht weil
+ * sie fehlt.
+ *
+ * Gemessen 05.11.2026 in der Nachstellung (Dienst mit 2 Plaetzen, 0,15 s je
+ * Text, Schreib-Schlange aus embeddings.ts): 150 Lektionen 3 % doppelte
+ * Anfragen, 400 Lektionen 186 von 1.386 (15 %). Der Nachtrag bettete Texte
+ * ein, die beim Absender noch in der Schlange standen; der Merker in
+ * computeEmbedding haelt nur 60 s und 200 Eintraege.
+ *
+ * Je Verbindung, weil derselbe Prozess mehrere Instanzen bedienen kann (der
+ * AML-Dienst haelt eine je Datenbank). Stirbt der Prozess, stirbt die Liste
+ * mit — der Vermerk bleibt und heilt spaeter.
+ */
+const schreibtGerade = new WeakMap<Redis, Set<string>>();
+
+function laufendeSchreibungen(redis: Redis): Set<string> {
+  let s = schreibtGerade.get(redis);
+  if (!s) { s = new Set(); schreibtGerade.set(redis, s); }
+  return s;
 }

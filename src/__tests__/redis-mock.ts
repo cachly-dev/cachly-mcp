@@ -146,8 +146,15 @@ export class MockRedis {
    */
   private hashes = new Map<string, Map<string, string | number>>();
 
-  /** Felder setzen, im Wechsel Feld/Wert — wie ioredis. */
-  async hset(key: string, ...felder: string[]): Promise<number> {
+  /**
+   * Felder setzen, im Wechsel Feld/Wert oder als ein Objekt — wie ioredis.
+   * Die Objekt-Form nutzt meldeUndVermerke (aussetzer.ts); bis 05.11.2026
+   * kam hier davon nichts an, und kein Test sah je einen Vermerk.
+   */
+  async hset(key: string, ...roh: (string | Record<string, string | number>)[]): Promise<number> {
+    const felder = roh.length === 1 && typeof roh[0] === 'object'
+      ? Object.entries(roh[0]).flatMap(([f, w]) => [f, String(w)])
+      : roh.map(String);
     const h = this.hashes.get(key) ?? new Map<string, string | number>();
     let neu = 0;
     for (let i = 0; i + 1 < felder.length; i += 2) {
