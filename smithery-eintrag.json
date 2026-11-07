@@ -1,0 +1,7 @@
+{
+  "displayName": "cachly AI Brain",
+  "description": "Solve it once. From then on, your AI knows. cachly is memory for coding assistants over MCP: it stores a lesson after a fix and recalls it when the same problem returns. Hosted on EU servers; works with Claude Code, Cursor, GitHub Copilot, Windsurf, Cline and Zed.\n\n124 tools in total; 27 are listed by default (the rest run through one dispatcher, cachly_tool).\n\nSetup that also writes the rule files your assistant reads: npx @cachly-dev/mcp-server@latest autopilot",
+  "homepage": "https://cachly.dev",
+  "repositoryUrl": "https://github.com/cachly-dev/cachly-mcp",
+  "license": "Apache-2.0"
+}
