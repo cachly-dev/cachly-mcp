@@ -331,6 +331,7 @@ import { vorspannHinweis } from '../vorspann.js';
 import { autorAbzeichen, fremdanteil } from '../autor-abzeichen.js';
 import { cachlyUrl } from '../cachly-url.js';
 import { belegFuer } from '../schreibbeleg.js';
+import { rueckfallHinweis } from '../rueckfall.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
 import { VERDACHT_TAG, mitVerdachtTag, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
 import { fuerEigenenSpeicher, hinweise, istMarkiert, markiert, markierungsWarnung, markierungsWarnungAusRohwert, zaehlHinweise } from '../schreibtor.js';
@@ -1937,6 +1938,9 @@ async function handleBrainToolInner(
         // Hinweis statt Ablehnung: es gibt Lektionen ohne harte Zahl, und eine
         // abgelehnte Lektion ist immer schlechter als eine unscharfe.
         vorspannHinweis(what_worked) ?? '',
+        // Rueckfall-Hinweis (rueckfall.ts): nur nach Erfolg und nur fuer Arten,
+        // deren Wiederkehr an zwei unabhaengigen Datensaetzen belegt ist.
+        rueckfallHinweis({ outcome, topic, what_worked, what_failed, file_paths }),
       ].filter(l => l !== '').join('\n');
     }
 

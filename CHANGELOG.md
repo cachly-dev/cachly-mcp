@@ -7,6 +7,24 @@
 
 ---
 
+## [0.10.232] – 2026-11-08 — *"Some fixes come back."*
+
+**After a successful time/date or file upload/download fix, `learn_from_attempts`
+adds a relapse watch.** Measured on 162 open-source projects (closed issues with
+a merged pull request, with dates): after a fix, another problem of the same
+kind came back in the same files within 90 days more often than a random issue
+in the same project. Only two kinds held on two independent data sets:
+time/date (78 of 427 fixes, 18 %, 3.0× as often) and file upload/download
+(42 of 377, 11 %, 2.8×). The line names these counts, one test worth adding,
+the lesson's first file and one public example. It appears only for
+`outcome: "success"`. No network call: the recognizer is a set of patterns
+(English and German) in `src/rueckfall-daten.ts`, the same file the
+measurement reads. A test fails when a pattern changes without a new
+measurement. The idea "after X usually comes Y" did not hold in the data and
+is not shown.
+
+---
+
 ## [0.10.231] – 2026-11-05 — *"Bulk writes wait their turn."*
 
 **Bulk writes no longer flood the embedding service.** When many lessons are
