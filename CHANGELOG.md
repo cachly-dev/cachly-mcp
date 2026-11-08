@@ -7,6 +7,19 @@
 
 ---
 
+## [0.10.235] – 2026-11-08 — *"The front page says what it does."*
+
+**The npm page is reorganised.** The first screen now shows how to start, what a stored
+lesson looks like when it comes back, why teams use it, and the prices. The long reference
+(all 124 tools, CLI commands, editor matrix, embeddings, environment variables) is still
+complete and opens with a click. The plans carry their current names (Free, Solo, Team,
+Business), and a links table at the end points to the site, pricing, docs, source,
+issues, the MCP Registry entry and the IDE plugins.
+
+**Package metadata:** a clearer description for npm search, keywords for Codex CLI,
+Gemini CLI, JetBrains and agent memory (Redis and Valkey removed), and the homepage
+points to cachly.dev. The server itself is unchanged.
+
 ## [0.10.234] – 2026-11-08 — *"Upload is out, dependencies are in."*
 
 **The relapse watch now rests on 289 projects in three independent datasets, and it

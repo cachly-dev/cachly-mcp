@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { artVon, rueckfallHinweis } from '../rueckfall.js';
 import { RUECKFALL } from '../rueckfall-daten.js';
@@ -96,6 +97,19 @@ describe('Waechter: Muster und Zahlen gehoeren zusammen', () => {
     // beschreiben die Zahlen einen anderen Erkenner als den ausgelieferten.
     const summe = createHash('sha256').update(JSON.stringify(RUECKFALL.arten)).digest('hex').slice(0, 16);
     expect(summe, 'Muster geaendert ohne neue Messung').toBe(RUECKFALL._arten_pruefsumme);
+  });
+});
+
+describe('Waechter: die README nennt dieselben Zahlen wie die Daten', () => {
+  it('Zeit/Datum-Beispiel in der README = rueckfall-daten.ts', () => {
+    // Die npm-Startseite zitiert den Hinweis. Neue Messung -> neue Zahlen in
+    // rueckfall-daten.ts -> dieser Test zeigt, dass die README nachzieht.
+    const readme = readFileSync(new URL('../../README.md', import.meta.url), 'utf8').replace(/\s+/g, ' ');
+    const z = RUECKFALL.zahlen['zeit-datum'];
+    expect(readme).toContain(`${z.projekte} open-source projects`);
+    expect(readme).toContain(`${z.wiederkehr} of ${z.folgen} time/date fixes (${Math.round((100 * z.wiederkehr) / z.folgen)} %)`);
+    expect(readme).toContain(`within ${z.fenster_tage} days`);
+    expect(readme).toContain(`${z.faktor.toFixed(1)}× as often`);
   });
 });
 
