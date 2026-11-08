@@ -53,8 +53,8 @@ async function starteGegenstelle(): Promise<{ url: string; anfragen: Anfrage[]; 
       }
       if (pfad === '/auth/device/token') return json(200, { error: 'authorization_pending' });
       if (pfad === '/api/v1/telemetry/mcp') return json(200, { ok: true });
-      if (pfad.startsWith('/api/invite/')) {
-        return json(200, { instance_id: INSTANZ, instance_name: 'Team-Brain', tier: 'free', expires_at: '2099-01-01T00:00:00Z' });
+      if (req.method === 'POST' && pfad === '/api/v1/orgs/accept-invite') {
+        return json(200, { org_id: 'org-1', instances: [{ id: INSTANZ, name: 'Team-Brain' }] });
       }
       return json(404, { error: 'not found' });
     });
@@ -186,7 +186,7 @@ describe('Der Server findet den Schluessel im Heimordner (echter Prozess)', () =
     writeFileSync(join(projekt, '.mcp.json'), JSON.stringify({ mcpServers: { cachly: { env: { CACHLY_BRAIN_INSTANCE_ID: 'alt' } } } }));
     // JWT kommt aus dem Heimordner (Start ohne CACHLY_JWT), damit join keine Anmeldung startet.
 
-    await rufeBefehl(g.url, heim, projekt, ['join', 'TOKEN123'], 'y\n');
+    await rufeBefehl(g.url, heim, projekt, ['join', 'TOKEN123']);
 
     for (const datei of ['.mcp.json', '.cursor/mcp.json', '.vscode/mcp.json', '.windsurf/mcp.json']) {
       const pfad = join(projekt, datei);

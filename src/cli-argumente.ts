@@ -5,7 +5,7 @@
 export const BEKANNTE_BEFEHLE: readonly string[] = [
   'ambient-auffrischen', 'ambient-credit', 'ambient-recall', 'ambient-stats', 'autopilot', 'autosetup',
   'badge', 'bench', 'claim', 'cls-ingest', 'demo', 'digest', 'doctor', 'export', 'health', 'index', 'init',
-  'invite', 'join', 'learn-git', 'openapi', 'publish', 'setup', 'share', 'startwissen-import', 'status',
+  'invite', 'join', 'learn-git', 'openapi', 'publish', 'refer', 'setup', 'share', 'startwissen-import', 'status',
   'tool-specs', 'uninstall', 'upgrade',
 ];
 

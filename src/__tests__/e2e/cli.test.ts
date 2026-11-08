@@ -212,17 +212,26 @@ describe('cachly share', () => {
   });
 });
 
-describe('cachly invite', () => {
-  it('exits 0 and prints invite link', () => {
+describe('cachly refer', () => {
+  it('exits 0 and prints the referral link', () => {
     if (!cfg.jwt || !cfg.instanceId) return;
-    const { code, stdout } = run(['invite']);
+    const { code, stdout } = run(['refer']);
     expect(code).toBe(0);
-    expect(stdout).toMatch(/invite|join|cachly\.dev/i);
+    expect(stdout).toMatch(/referral|cachly\.dev/i);
   });
 
   it('does NOT mention 30 seconds (1-5 minutes only)', () => {
     if (!cfg.jwt || !cfg.instanceId) return;
-    const { stdout } = run(['invite']);
+    const { stdout } = run(['refer']);
     expect(stdout).not.toContain('30 seconds');
+  });
+});
+
+describe('cachly invite', () => {
+  it('without an email prints the usage and exits 1 (nothing is sent)', () => {
+    if (!cfg.jwt || !cfg.instanceId) return;
+    const { code, stdout } = run(['invite']);
+    expect(code).toBe(1);
+    expect(stdout).toMatch(/invite <email>/);
   });
 });

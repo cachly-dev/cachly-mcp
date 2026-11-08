@@ -2591,7 +2591,8 @@ if (process.argv[2] === 'digest') {
     console.log('  \x1b[36m🐦 Tweet this:\x1b[0m');
     console.log(`  \x1b[4m${tweetUrl.slice(0, 90)}...\x1b[0m`);
     console.log('');
-    console.log('  \x1b[2m💡 Invite your team: npx @cachly-dev/mcp-server@latest invite\x1b[0m');
+    console.log('  \x1b[2m💡 Invite your team: npx @cachly-dev/mcp-server@latest invite <email>\x1b[0m');
+
     console.log('  \x1b[2m   Cron: 0 9 * * 1 npx @cachly-dev/mcp-server@latest digest\x1b[0m');
     console.log('');
   } catch (e) {
@@ -2729,12 +2730,82 @@ if (process.argv[2] === 'export') {
   process.exit(0);
 }
 
-// ── CLI: cachly-mcp invite ────────────────────────────────────────────────────────
-// Usage: npx @cachly-dev/mcp-server@latest invite [email]
-// Invites a teammate to share your Brain. Fastest referral loop.
+// ── CLI: cachly-mcp invite <email> ────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest invite teammate@example.com
+// Shares your Brain with a teammate: the API sends an invitation mail. Access
+// runs through membership in the organisation the Brain belongs to; if the Brain
+// has none yet, the API creates one. (Der Werbelink steht jetzt unter `refer`.)
 
 if (process.argv[2] === 'invite') {
-  // ── invite: fetch the user's unique referral link and show shareable messages ──
+  const apiKey = cliSchluessel();
+  const email = (process.argv[3] ?? '').trim();
+
+  if (!email || email.startsWith('-')) {
+    console.log('\nUsage: npx @cachly-dev/mcp-server@latest invite <email>');
+    console.log('       Example: npx @cachly-dev/mcp-server@latest invite teammate@example.com');
+    console.log('       Your referral link: npx @cachly-dev/mcp-server@latest refer\n');
+    process.exit(1);
+  }
+  if (!apiKey) {
+    console.log('\n⚠️  No cachly key found (environment or ~/.cachly/credentials.json).');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
+    process.exit(1);
+  }
+  const instanceId = cliInstanz();
+  if (!instanceId) {
+    console.log('\n⚠️  No Brain selected. Set CACHLY_BRAIN_INSTANCE_ID or run:');
+    console.log('   npx @cachly-dev/mcp-server@latest setup\n');
+    process.exit(1);
+  }
+
+  try {
+    const res = await fetch(`${API_URL}/api/v1/instances/${encodeURIComponent(instanceId)}/share`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.status === 400) {
+      console.log(`\n❌ "${email}" is not a valid email address.\n`);
+      process.exit(1);
+    }
+    if (res.status === 404) {
+      console.log('\n❌ This Brain was not found in your account. Only the owner of a Brain can invite people.');
+      console.log(`   Brain: ${instanceId}\n`);
+      process.exit(1);
+    }
+    if (res.status === 409) {
+      console.log(`\nℹ️  ${email} already has access to this Brain. Nothing was sent.\n`);
+      process.exit(1);
+    }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json() as { org_id?: string; invite_sent_to?: string; instance?: { id?: string; name?: string } };
+    const wen = data.invite_sent_to ?? email;
+    const brain = data.instance?.name ?? instanceId;
+
+    console.log('');
+    console.log(`  ✅ Invitation sent to \x1b[1m${wen}\x1b[0m`);
+    console.log(`     Brain: \x1b[1m${brain}\x1b[0m`);
+    console.log('');
+    console.log('  They get an email. They accept it in one of two ways:');
+    console.log('    • open the link in the email, or');
+    console.log('    • run the command from the email: npx @cachly-dev/mcp-server@latest join <token>');
+    console.log('');
+    console.log('  Members can read and learn. Deleting the Brain, rotating its password and billing stay with you.');
+    console.log('');
+  } catch (e) {
+    console.log(`\n❌ Could not send the invitation: ${(e as Error).message}\n`);
+    process.exit(1);
+  }
+  process.exit(0);
+}
+
+// ── CLI: cachly-mcp refer ─────────────────────────────────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest refer
+// Shows your personal referral link (new users sign up through it). This is
+// not team sharing; for that use `invite <email>`.
+
+if (process.argv[2] === 'refer') {
   const apiKey = cliSchluessel();
 
   if (!apiKey) {
@@ -2751,7 +2822,7 @@ if (process.argv[2] === 'invite') {
 
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json() as { code?: string; url?: string; referral_count?: number };
-    const referralUrl = data.url ?? cachlyUrl(`/r/${data.code}`, 'invite');
+    const referralUrl = data.url ?? cachlyUrl(`/r/${data.code}`, 'refer');
     const count = data.referral_count ?? 0;
 
     const slackMsg = `Hey, I've been using cachly to give my AI persistent memory across sessions — no more re-explaining my stack every morning.\n\nYou get a free Brain: ${referralUrl}`;
@@ -2759,7 +2830,7 @@ if (process.argv[2] === 'invite') {
 
     console.log('');
     console.log('┌─────────────────────────────────────────────────────────────┐');
-    console.log('│  🧠 Your cachly Brain invite link                            │');
+    console.log('│  🧠 Your cachly referral link                                │');
     console.log('├─────────────────────────────────────────────────────────────┤');
     console.log(`│  ${referralUrl.padEnd(61)}│`);
     console.log('├─────────────────────────────────────────────────────────────┤');
@@ -2778,19 +2849,22 @@ if (process.argv[2] === 'invite') {
     console.log('└─────────────────────────────────────────────────────────────┘');
     console.log('');
     console.log('\x1b[2m  Each developer who signs up via your link earns you 1 month Pro.\x1b[0m');
+    console.log('\x1b[2m  To give someone access to your Brain: npx @cachly-dev/mcp-server@latest invite <email>\x1b[0m');
     console.log('');
   } catch (e) {
-    console.log(`\n❌ Could not fetch invite link: ${(e as Error).message}\n`);
+    console.log(`\n❌ Could not fetch referral link: ${(e as Error).message}\n`);
     process.exit(1);
   }
   process.exit(0);
 }
 
-// ── CLI: cachly-mcp join <token> ──────────────────────────────────────────────────
+// ── CLI: cachly-mcp join <token> | join --brain <instance-id> ─────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest join <token>
-// Accepts a Brain invite link — writes the shared instance ID into all
-// detected editor MCP configs and the global ~/.claude/mcp.json.
-// No account needed if CACHLY_JWT is already set; otherwise prompts for auth.
+//        npx @cachly-dev/mcp-server@latest join --brain <instance-id>
+// <token>: accepts an invitation (POST /orgs/accept-invite), picks the Brain of
+// the organisation and writes its ID into all detected editor MCP configs.
+// --brain: connects a Brain you can already reach (for example after accepting
+// the invitation on the web). Checks GET /instances/:id first.
 
 if (process.argv[2] === 'join') {
   const { writeFile: wfJ, readFile: rfJ, mkdir: mkJ } = await import('node:fs/promises');
@@ -2799,53 +2873,17 @@ if (process.argv[2] === 'join') {
   const { homedir } = await import('node:os');
   const { createInterface: ciJ } = await import('node:readline');
 
-  const token = process.argv[3] ?? '';
-  if (!token) {
-    console.log('\n❌ Usage: npx @cachly-dev/mcp-server@latest join <token>\n');
-    console.log('   Get a token from a teammate: npx @cachly-dev/mcp-server@latest invite\n');
+  const brainFlag = leseFlag(process.argv, 'brain');
+  const token = brainFlag === undefined && process.argv[3] && !process.argv[3].startsWith('-') ? process.argv[3] : '';
+  if (!token && !brainFlag) {
+    console.log('\n❌ Usage: npx @cachly-dev/mcp-server@latest join <token>');
+    console.log('         npx @cachly-dev/mcp-server@latest join --brain <instance-id>\n');
+    console.log('   The token is in the invitation email. A teammate sends one with:');
+    console.log('   npx @cachly-dev/mcp-server@latest invite <email>\n');
     process.exit(1);
   }
 
-  console.log('\n⏳ Looking up invite...');
-
-  // ── Step 1: Fetch invite info (public, no auth) ───────────────────────────
-  let inviteInfo: { instance_id: string; instance_name: string; tier: string; expires_at: string; label?: string };
-  try {
-    const res = await fetch(`${API_URL}/api/invite/${token}`, { signal: AbortSignal.timeout(8000) });
-    if (res.status === 404) { console.log('\n❌ Invite not found — the link may be invalid.\n'); process.exit(1); }
-    if (res.status === 410) { console.log('\n❌ This invite link has expired (7-day limit).\n'); process.exit(1); }
-    if (!res.ok) { console.log(`\n❌ Could not fetch invite: HTTP ${res.status}\n`); process.exit(1); }
-    inviteInfo = await res.json() as typeof inviteInfo;
-  } catch (e) {
-    console.log(`\n❌ Network error: ${(e as Error).message}\n`);
-    process.exit(1);
-  }
-
-  const { instance_id, instance_name, tier, label } = inviteInfo;
-  const expires = new Date(inviteInfo.expires_at).toLocaleDateString();
-
-  console.log('');
-  console.log('  \x1b[35m╔══════════════════════════════════════════════════════╗\x1b[0m');
-  console.log('  \x1b[35m║\x1b[0m  \x1b[1m🧠 Brain Invite\x1b[0m                                  \x1b[35m║\x1b[0m');
-  console.log('  \x1b[35m╚══════════════════════════════════════════════════════╝\x1b[0m');
-  console.log('');
-  console.log(`  Brain   : \x1b[1m${instance_name}\x1b[0m`);
-  console.log(`  Tier    : ${tier}`);
-  if (label) console.log(`  Note    : ${label}`);
-  console.log(`  Expires : ${expires}`);
-  console.log('');
-
-  // ── Step 2: Confirm ───────────────────────────────────────────────────────
-  const rlJ = ciJ({ input: process.stdin, output: process.stdout });
-  const confirmJ = await new Promise<string>((resolve) => {
-    rlJ.question('  Join this Brain? [Y/n] ', (a) => { rlJ.close(); resolve(a.trim().toLowerCase() || 'y'); });
-  });
-  if (confirmJ !== 'y' && confirmJ !== 'yes') {
-    console.log('\n  Cancelled.\n');
-    process.exit(0);
-  }
-
-  // ── Step 3: Ensure JWT ────────────────────────────────────────────────────
+  // ── Step 1: Ensure a key (existing device flow) ───────────────────────────
   let joinJwt = JWT;
   if (!joinJwt) {
     console.log('\n  No API key found — starting sign-in (10 seconds)...\n');
@@ -2884,10 +2922,96 @@ if (process.argv[2] === 'join') {
       process.exit(1);
     }
   }
+  if (!joinJwt) { console.log('\n❌ Sign-in did not return a key. Run the command again.\n'); process.exit(1); }
+  const joinAuth = { Authorization: `Bearer ${joinJwt}` };
+
+  // ── Step 2: Find the Brain ────────────────────────────────────────────────
+  let instance_id = '';
+  let instance_name = '';
+
+  if (brainFlag) {
+    // Brain, auf das man schon Zugriff hat: nur pruefen.
+    console.log(`\n⏳ Checking access to Brain ${brainFlag}...`);
+    try {
+      const res = await fetch(`${API_URL}/api/v1/instances/${encodeURIComponent(brainFlag)}`, { headers: joinAuth, signal: AbortSignal.timeout(10000) });
+      if (res.status === 401) { console.log('\n❌ Your key was not accepted. Sign in again: npx @cachly-dev/mcp-server@latest autopilot\n'); process.exit(1); }
+      if (res.status === 403 || res.status === 404) {
+        console.log('\n❌ You do not have access to this Brain (or it does not exist).');
+        console.log('   Ask the owner for an invitation: invite <your-email>. Accept it, then run this command again.\n');
+        process.exit(1);
+      }
+      if (!res.ok) { console.log(`\n❌ Could not check the Brain: HTTP ${res.status}\n`); process.exit(1); }
+      const inst = await res.json() as { id?: string; name?: string };
+      instance_id = inst.id ?? brainFlag;
+      instance_name = inst.name ?? instance_id;
+    } catch (e) {
+      console.log(`\n❌ Network error: ${(e as Error).message}\n`);
+      process.exit(1);
+    }
+  } else {
+    console.log('\n⏳ Accepting invitation...');
+    type Angenommen = { org_id?: string; instances?: Array<{ id: string; name?: string }> };
+    let accepted = null as Angenommen | null;
+    let fehler = '';
+    try {
+      const res = await fetch(`${API_URL}/api/v1/orgs/accept-invite`, {
+        method: 'POST', headers: { ...joinAuth, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }), signal: AbortSignal.timeout(15000),
+      });
+      if (res.ok) {
+        const body = await res.json() as Record<string, unknown>;
+        accepted = ((body['data'] && typeof body['data'] === 'object') ? body['data'] : body) as Angenommen;
+      } else {
+        fehler = res.status === 401 ? 'your key was not accepted (HTTP 401)' : `HTTP ${res.status}`;
+      }
+    } catch (e) {
+      console.log(`\n❌ Network error: ${(e as Error).message}\n`);
+      process.exit(1);
+    }
+
+    if (!accepted) {
+      // Kennt der alte Weg den Token? Dann ist es ein alter Link-Typ, der nie Zugriff gab.
+      let alt = false;
+      try {
+        const r = await fetch(`${API_URL}/api/invite/${encodeURIComponent(token)}`, { signal: AbortSignal.timeout(8000) });
+        alt = r.ok;
+      } catch { /* kein Netz: dann gilt die allgemeine Meldung */ }
+      if (alt) {
+        console.log('\n❌ This old link type does not give access to the Brain.');
+        console.log('   Ask the owner for a new invitation: npx @cachly-dev/mcp-server@latest invite <your-email>\n');
+      } else {
+        console.log(`\n❌ Could not accept the invitation: ${fehler}.`);
+        console.log('   The token may be wrong, expired or already used. Ask for a new invitation.\n');
+      }
+      process.exit(1);
+    }
+
+    const liste = (accepted.instances ?? []).filter((i) => i && i.id);
+    if (liste.length === 0) {
+      console.log('\n✅ Invitation accepted, but this organisation has no Brain yet.');
+      console.log('   When the owner adds one, connect it with: npx @cachly-dev/mcp-server@latest join --brain <instance-id>\n');
+      process.exit(0);
+    }
+    let gewaehlt = liste[0]!;
+    if (liste.length > 1) {
+      console.log('\n  This organisation has several Brains:');
+      liste.forEach((i, n) => console.log(`    ${n + 1}) ${i.name ?? i.id}  (${i.id})`));
+      const rlJ = ciJ({ input: process.stdin, output: process.stdout });
+      const antwort = await new Promise<string>((resolve) => {
+        rlJ.question('  Which one? [1] ', (a) => { rlJ.close(); resolve(a.trim() || '1'); });
+      });
+      const nr = Number.parseInt(antwort, 10);
+      if (!Number.isInteger(nr) || nr < 1 || nr > liste.length) { console.log('\n  Cancelled.\n'); process.exit(1); }
+      gewaehlt = liste[nr - 1]!;
+    }
+    instance_id = gewaehlt.id;
+    instance_name = gewaehlt.name ?? gewaehlt.id;
+    console.log(`\n  ✅ Invitation accepted. Brain: \x1b[1m${instance_name}\x1b[0m\n`);
+  }
 
   // Eine Anmeldung nur fuer diesen Befehl wuerde sonst nirgends landen, seit der
   // Schluessel nicht mehr in die Projektdateien geschrieben wird.
-  if (joinJwt && joinJwt !== JWT) saveApiKey(joinJwt);
+  if (joinJwt !== JWT) saveApiKey(joinJwt);
 
   // ── Step 4: Write instance ID into all editor MCP configs ────────────────
   const cwd  = process.cwd();
@@ -3505,8 +3629,10 @@ if ((!process.argv[2] && process.stdout.isTTY) || _argumentArt === 'hilfe' || _a
   zeile('index [dir]', 'Index a project into the Brain (CI)');
   zeile('learn-git [repo]', 'Learn lessons from recent commits (CI)');
   console.log('  \x1b[1mTeam & sharing:\x1b[0m');
-  zeile('invite', 'Invite a teammate');
-  zeile('join <token>', 'Accept a Brain invite');
+  zeile('invite <email>', 'Share your Brain with a teammate (sends an email)');
+  zeile('join <token>', 'Accept an invitation to a shared Brain');
+  zeile('join --brain <id>', 'Connect a Brain you already have access to');
+  zeile('refer', 'Your referral link for new users');
   zeile('share', 'Share your Brain stats');
   zeile('publish', 'Publish an importable Brain snapshot');
   zeile('badge', 'README badge for your Brain');
@@ -3812,7 +3938,7 @@ if (process.argv[2] === 'status') {
     if (refUrl) {
       console.log('├─────────────────────────────────────────────────────────────┤');
       const refLine = `${refUrl.slice(0, 44)}${refUrl.length > 44 ? '…' : ''}`;
-      console.log(`│  \x1b[35m🔗 Invite link\x1b[0m · ${refCount > 0 ? `\x1b[32m${refCount} joined\x1b[0m` : 'share to grow your team'}${' '.repeat(Math.max(0, 35 - String(refCount).length))} │`);
+      console.log(`│  \x1b[35m🔗 Referral link\x1b[0m · ${refCount > 0 ? `\x1b[32m${refCount} joined\x1b[0m` : 'share to invite new users'}${' '.repeat(Math.max(0, 35 - String(refCount).length))} │`);
       console.log(`│     \x1b[2m${refLine.padEnd(56)}\x1b[0m │`);
     }
 
@@ -5122,7 +5248,7 @@ if (!JWT) {
 //   • Editor as an MCP stdio server (non-TTY)  → ONE stderr hint, then KEEP RUNNING
 //     so tools/list works and the first tool call starts the browser sign-in.
 // Skip entirely for CLI subcommands that intentionally run without credentials.
-const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'autosetup', 'setup', 'autopilot', 'init', 'digest', 'invite', 'badge', 'join', 'upgrade', 'bench', 'tool-specs', 'openapi', 'ambient-credit', 'ambient-stats', 'doctor', 'uninstall'];
+const _cliNoAuthCommands = ['demo', 'share', 'publish', 'health', 'autosetup', 'setup', 'autopilot', 'init', 'digest', 'invite', 'refer', 'badge', 'join', 'upgrade', 'bench', 'tool-specs', 'openapi', 'ambient-credit', 'ambient-stats', 'doctor', 'uninstall'];
 if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
   const runningInTerminal = !process.argv[2] && process.stdout.isTTY === true && _isMain;
   if (runningInTerminal) {

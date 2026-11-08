@@ -19,9 +19,11 @@ export type UrlQuelle =
   | 'doctor'
   /** `cachly digest` — the weekly git-history summary. */
   | 'digest'
-  /** `cachly invite` — the user's personal referral link. */
+  /** `cachly invite <email>` — sharing a Brain with a teammate. */
   | 'invite'
-  /** `cachly join <token>` — redeeming a team invite. */
+  /** `cachly refer` — the user's personal referral link. */
+  | 'refer'
+  /** `cachly join <token>` — accepting an invitation to a shared Brain. */
   | 'join'
   /** `cachly bench` — the recall-quality benchmark. */
   | 'bench'

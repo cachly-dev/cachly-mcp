@@ -271,8 +271,10 @@ instance come from the environment or from `~/.cachly/credentials.json`, the fil
 
 | Team & sharing | |
 |---|---|
-| `invite [email]` | Invite a teammate to share your Brain |
-| `join <token>` | Accept a Brain invite |
+| `invite <email>` | Share your Brain with a teammate. They get an email; members can read and learn |
+| `join <token>` | Accept an invitation (the command is in the email) and connect that Brain |
+| `join --brain <id>` | Connect a Brain you already have access to (for example after accepting on the web) |
+| `refer` | Show your personal referral link for new users |
 | `share` | Generate a shareable stats card |
 | `publish` | Publish your Brain as an importable link (`--public`) |
 | `badge` | Get a live README badge for your Brain |
@@ -312,8 +314,10 @@ call, the way `brain_from_git` ingests commits.
 No. A session starts on the first tool call and ends when the editor closes.
 
 **Can my whole team share one Brain?**
-Yes. Use `team_learn` and `team_recall`, or
-`npx @cachly-dev/mcp-server@latest invite teammate@example.com`.
+Yes. Use `team_learn` and `team_recall`, and invite people with
+`npx @cachly-dev/mcp-server@latest invite teammate@example.com`. They get an email and accept it
+with the link or with `join <token>`. Members can read and learn; deleting the Brain, rotating
+its password and billing stay with the owner.
 
 **Is my code sent to cachly servers?**
 Only if you call `index_project` yourself. It stores a short excerpt (up to

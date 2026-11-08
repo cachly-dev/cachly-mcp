@@ -7,6 +7,32 @@
 
 ---
 
+## [0.10.233] – 2026-11-08 — *"Invite really invites."*
+
+**`invite <email>` now gives a teammate access to your Brain.** Until now it only
+printed a referral link, and the old `join <token>` link never gave access to anything.
+Now `invite teammate@example.com` asks the API to share the Brain (`POST
+/instances/<id>/share`). The teammate gets an email and accepts it with the link or with
+`npx @cachly-dev/mcp-server@latest join <token>`. Access runs through membership in the
+organisation the Brain belongs to; the API creates one if the Brain has none. Members can
+read and learn. Deleting the Brain, rotating its password and billing stay with the owner.
+A wrong email, a Brain that is not yours and a person who already has access each get
+their own message.
+
+**`join` accepts invitations and connects shared Brains.** `join <token>` signs in if
+needed, accepts the invitation (`POST /orgs/accept-invite`), asks which Brain if the
+organisation has several, and writes its ID into the editor configs as before. The old
+confirmation question is gone. `join --brain <id>` connects a Brain you can already reach,
+for example after accepting on the web; it checks `GET /instances/<id>` first. A token from
+an old Brain link now says so and tells you to ask for a new invitation, instead of
+pretending to work.
+
+**New command `refer`.** The referral link that `invite` used to print lives here now.
+Help, README and the hints in `digest` and `status` are updated to match.
+
+**Needs the matching API release** (`POST /instances/:id/share` and the `instances` list in
+the accept-invite answer). Without it, `invite` and `join` report the API error.
+
 ## [0.10.232] – 2026-11-08 — *"Some fixes come back."*
 
 **After a successful time/date or file upload/download fix, `learn_from_attempts`
