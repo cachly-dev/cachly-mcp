@@ -7,6 +7,29 @@
 
 ---
 
+## [0.10.234] – 2026-11-08 — *"Upload is out, dependencies are in."*
+
+**The relapse watch now rests on 289 projects in three independent datasets, and it
+changed.** A third harvest of 127 new projects tested every kind again under a rule fixed
+before the data came in: a kind needs a factor of at least 2 on two of the three
+datasets, at least 2 overall, and at least 300 follow-ups.
+
+- **Time/date stays**, stronger than measured before: 148 of 791 fixes (19 %) were followed
+  within 90 days by another time/date problem in the same files, 4.4× the rate of a
+  random issue in the same project (was 2.95× on 162 projects).
+- **Dependencies are new:** 223 of 1408 fixes (16 %), 2.3×.
+- **File upload/download is removed.** It held on the first two datasets but reached only
+  1.6× on the new one, 1.73× overall. A hint for it no longer appears.
+
+**The random comparison is now an expected value.** It used to be one random issue per
+fix, which moved factors near 2 by chance. Now it is the share of the same kind among all
+issues of that project in the window.
+
+**The example link is now right.** The time/date example used to point to a follow-up
+issue that was a feature request. Examples are now picked only where both issue titles
+belong to the kind, and they were read by hand: AppFlowy #2408 → #2466 ("Calendar view one
+day off") and apache/rocketmq #7636 → #7680 (two dependency bumps in the same `pom.xml`).
+
 ## [0.10.233] – 2026-11-08 — *"Invite really invites."*
 
 **`invite <email>` now gives a teammate access to your Brain.** Until now it only

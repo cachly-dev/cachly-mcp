@@ -70,13 +70,22 @@ describe('rueckfallHinweis', () => {
     expect(rueckfallHinweis({ ...zeit, outcome: 'partial' })).toBe('');
   });
 
-  it('schweigt bei Arten ohne Beleg (Abhaengigkeiten fiel in der Bestaetigung durch)', () => {
-    expect(rueckfallHinweis({ outcome: 'success', topic: 'deps:bump', what_worked: 'bump dependency, deprecated API removed' })).toBe('');
+  it('schweigt bei Arten ohne Beleg (Upload fiel auf dem dritten Datensatz durch, Anmeldung nie belegt)', () => {
+    expect(rueckfallHinweis({ outcome: 'success', topic: 'upload:grenze', what_worked: 'Upload of large PDF fails with 413, attachment rejected' })).toBe('');
+    expect(rueckfallHinweis({ outcome: 'success', topic: 'upload:grenze', what_worked: 'Hochladen grosser Dateien: Dateigröße vorher pruefen' })).toBe('');
     expect(rueckfallHinweis({ outcome: 'success', topic: 'auth:login', what_worked: 'login token refreshed' })).toBe('');
   });
 
-  it('erkennt Upload auch auf Deutsch', () => {
-    expect(rueckfallHinweis({ outcome: 'success', topic: 'upload:grenze', what_worked: 'Hochladen grosser Dateien: Dateigröße vorher pruefen' })).toContain('file upload/download');
+  it('nennt Abhaengigkeiten mit Zahlen und Beispiel', () => {
+    const z = RUECKFALL.zahlen.abhaengigkeiten;
+    const text = rueckfallHinweis({ outcome: 'success', topic: 'deps:bump', what_worked: 'bump dependency, deprecated API removed' });
+    expect(text).toContain('Relapse watch (dependency)');
+    expect(text).toContain(`${z.wiederkehr} of ${z.folgen}`);
+    expect(text).toContain(`https://github.com/${z.beispiel.repo}/issues/${z.beispiel.folge_issue}`);
+  });
+
+  it('erkennt Abhaengigkeiten auch auf Deutsch', () => {
+    expect(rueckfallHinweis({ outcome: 'success', topic: 'abhaengigkeit:v3', what_worked: 'Abhängigkeit auf v3 gehoben, alte Schnittstelle nicht mehr kompatibel' })).toContain('dependency');
   });
 });
 
@@ -100,6 +109,9 @@ describe('Waechter: nur belegte Arten bekommen einen Hinweis', () => {
       expect(z.folgen, art).toBeGreaterThanOrEqual(300);
       expect(z.wiederkehr / z.folgen, art).toBeGreaterThan(z.zufall_quote);
       expect(z.rat.length, art).toBeGreaterThan(20);
+      // Beispiel = zwei verschiedene Issues, mindestens einen Tag auseinander
+      expect(z.beispiel.folge_issue, art).not.toBe(z.beispiel.issue);
+      expect(z.beispiel.tage, art).toBeGreaterThanOrEqual(1);
     }
   });
 });

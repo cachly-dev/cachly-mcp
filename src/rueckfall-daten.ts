@@ -11,8 +11,12 @@
  *   und Python gleich lesen. Art = meiste Treffer in den ersten 600 Zeichen,
  *   Gleichstand -> frueher genannte Art, ohne Treffer 'sonstiges'.
  * pruef_arten: die Arten, deren Wiederkehr gemessen wird.
- * zahlen: NUR Arten, die auf zwei unabhaengigen Datensaetzen Faktor >= 2
- *   hielten (Regel vorab festgelegt). Nur fuer sie gibt es einen Hinweis.
+ * zahlen: NUR Arten, die auf mindestens zwei von drei unabhaengigen
+ *   Datensaetzen Faktor >= 2 hielten, zusammen >= 2 und >= 300 Folgen (Regel
+ *   vorab festgelegt, forge-foundry rueckfall_drei.py). Nur fuer sie gibt es
+ *   einen Hinweis. zufall_quote = Erwartungswert: Anteil derselben Art unter
+ *   allen Issues desselben Projekts im selben Fenster.
+ * beispiel: beide Issue-Titel gehoeren selbst zur Art, von Hand gelesen.
  */
 export const RUECKFALL = /* JSON-BEGIN */ {
   "_arten_pruefsumme": "60279054dc2fdc4b",
@@ -47,38 +51,38 @@ export const RUECKFALL = /* JSON-BEGIN */ {
   "zahlen": {
     "zeit-datum": {
       "name": "time/date",
-      "projekte": 162,
+      "projekte": 289,
       "fenster_tage": 90,
-      "folgen": 427,
-      "wiederkehr": 78,
-      "zufall_quote": 0.062,
-      "faktor": 2.95,
+      "folgen": 791,
+      "wiederkehr": 148,
+      "zufall_quote": 0.042,
+      "faktor": 4.43,
       "rat": "Worth adding a test with a second time zone and a daylight-saving date.",
       "beispiel": {
         "repo": "AppFlowy-IO/AppFlowy",
-        "issue": 1942,
-        "folge_issue": 1993,
-        "tage": 4,
-        "datei": "frontend/appflowy_flutter/lib/plugins/database_view/calendar/application/calendar_bloc.dart"
+        "issue": 2408,
+        "folge_issue": 2466,
+        "tage": 2,
+        "datei": "frontend/appflowy_flutter/lib/plugins/database_view/calendar/presentation/calendar_page.dart"
       }
     },
-    "dateien-upload": {
-      "name": "file upload/download",
-      "projekte": 162,
+    "abhaengigkeiten": {
+      "name": "dependency",
+      "projekte": 289,
       "fenster_tage": 90,
-      "folgen": 377,
-      "wiederkehr": 42,
-      "zufall_quote": 0.04,
-      "faktor": 2.76,
-      "rat": "Worth adding a test with a large file, an unusual file type and a file name with special characters.",
+      "folgen": 1408,
+      "wiederkehr": 223,
+      "zufall_quote": 0.069,
+      "faktor": 2.31,
+      "rat": "Worth pinning the version and running the tests against the next major version.",
       "beispiel": {
-        "repo": "AppFlowy-IO/AppFlowy",
-        "issue": 4591,
-        "folge_issue": 4790,
-        "tage": 24,
-        "datei": "frontend/appflowy_flutter/lib/shared/appflowy_network_image.dart"
+        "repo": "apache/rocketmq",
+        "issue": 7636,
+        "folge_issue": 7680,
+        "tage": 7,
+        "datei": "pom.xml"
       }
     }
   },
-  "_gemessen": "08.11.2026, 162 Projekte (Folgen-Ernte 40 + 200), Fenster 90 Tage; Abhaengigkeiten fiel weg (Faktor 3,0 und 1,84)."
+  "_gemessen": "08.11.2026, 289 Projekte in drei unabhaengigen Datensaetzen (32 + 130 + 127), Fenster 90 Tage, Zufall als Erwartungswert. Upload fiel weg (zusammen 1,73), Anmeldung/Rechte (1,88) und Zeichenkodierung (nur einmal >= 2 mit Einzelziehung) ebenso."
 } /* JSON-END */ as const;

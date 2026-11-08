@@ -3,12 +3,14 @@
  *
  * ── Woher das Wissen kommt (08.11.2026) ─────────────────────────────────────
  *
- * Gemessen an 162 Open-Source-Projekten (geschlossene Issues mit gemergtem PR,
- * mit Datum): Nach einer Reparatur kam an DENSELBEN Dateien innerhalb von 90
- * Tagen haeufiger wieder dieselbe ART Problem als ein beliebiges Issue
- * desselben Projekts. Belegt auf zwei unabhaengigen Datensaetzen nur fuer
- * Zeit/Datum und Upload/Download (Faktor >= 2 auf beiden). Die Idee "nach X
- * kommt meistens Y" trug dagegen nicht — sie wird hier bewusst nicht gezeigt.
+ * Gemessen an 289 Open-Source-Projekten in drei unabhaengigen Datensaetzen
+ * (geschlossene Issues mit gemergtem PR, mit Datum): Nach einer Reparatur kam
+ * an DENSELBEN Dateien innerhalb von 90 Tagen haeufiger wieder dieselbe ART
+ * Problem als ein beliebiges Issue desselben Projekts. Belegt nur fuer
+ * Zeit/Datum (4,4-fach) und Abhaengigkeiten (2,3-fach). Upload/Download hielt
+ * auf zwei Datensaetzen, fiel auf dem dritten aber auf 1,6 und ist seit
+ * 0.10.234 draussen. Die Idee "nach X kommt meistens Y" trug nicht — sie wird
+ * hier bewusst nicht gezeigt.
  * Befund und Messung: forge-foundry .agent/cachly/BEFUND-was-kam-danach-*.md.
  *
  * ── Was das NICHT ist ───────────────────────────────────────────────────────
