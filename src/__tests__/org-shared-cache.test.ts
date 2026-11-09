@@ -264,12 +264,14 @@ describe('set_cost_per_call', () => {
     expect(captured!.opts.method).toBe('PUT');
     const body = JSON.parse(captured!.opts.body as string);
     expect(body.cost_per_call_usd).toBe(0.015);
-    expect(result).toContain('Cost per call updated');
+    expect(result).toContain('Cost per call stored');
     expect(result).toContain('$0.0150');
-    expect(result).toContain('gpt-5');
   });
 
-  it('includes model hint for known cost values', async () => {
+  // Seit 02.11.2026 zeigt cachly keine Geld-Schaetzung. Die Antwort darf keine
+  // Ersparnis versprechen und keine Modellnamen fuehren, die mit jeder neuen
+  // Modellgeneration veralten.
+  it('promises no savings estimate and names no models', async () => {
     const apiFetch = async <T>(): Promise<T> => ({} as T);
     const r = await handleCacheTool(
       'set_cost_per_call',
@@ -277,7 +279,8 @@ describe('set_cost_per_call', () => {
       async () => { throw new Error('no redis'); },
       apiFetch,
     );
-    expect(r).toContain('claude-haiku');
+    expect(r).toContain('counted cache hits only, no money estimate');
+    expect(r).not.toMatch(/savings|ROI|claude-|gpt-/i);
   });
 });
 

@@ -7,6 +7,31 @@
 
 ---
 
+## [0.10.236] – 2026-11-09 — *"Your key travels in the header."*
+
+**Usage pings no longer carry your API key in the body.** Until 0.10.235 every ping to
+`/api/v1/telemetry/mcp` held the key twice in the JSON body (`jwt`, often also
+`api_key`). Now it travels only in the `Authorization: Bearer` header, like every other
+call to the API, and no ping body contains a key field, even if a caller passes one. The
+API now verifies the key or token before it counts an event for your account, and it
+never creates an account from a ping. `CACHLY_NO_TELEMETRY=1` still turns pings off.
+
+**A security fix may need a second file.** When `learn_from_attempts` stores a successful
+security fix and none of the named files is a manifest or lock file, a one-line hint says
+how often such fixes changed one: across 289 open-source projects, 1127 security fixes did
+so more often than other fixes in the same project, in all three datasets (34 % vs 21 %,
+12 % vs 6 %, 59 % vs 25 %). Without named files the hint stays silent. The rule for it was
+fixed before the data came in.
+
+**`set_cost_per_call` says what it does.** cachly shows counted cache hits only, no
+money estimate, so the tool now stores the value without promising savings figures. It
+stays so existing scripts keep working.
+
+**Registry listing:** `server.json` gains a title, the website, an icon, `npx` as
+runtime hint and the three optional environment variables (`CACHLY_JWT` marked as
+secret). The descriptions in the MCP Registry, the Claude Code plugin, the marketplace
+and Smithery now say the same thing as npm.
+
 ## [0.10.235] – 2026-11-08 — *"The front page says what it does."*
 
 **The npm page is reorganised.** The first screen now shows how to start, what a stored

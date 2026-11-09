@@ -331,7 +331,7 @@ import { vorspannHinweis } from '../vorspann.js';
 import { autorAbzeichen, fremdanteil } from '../autor-abzeichen.js';
 import { cachlyUrl } from '../cachly-url.js';
 import { belegFuer } from '../schreibbeleg.js';
-import { rueckfallHinweis } from '../rueckfall.js';
+import { rueckfallHinweis, dazuHinweis } from '../rueckfall.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
 import { VERDACHT_TAG, mitVerdachtTag, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
 import { fuerEigenenSpeicher, hinweise, istMarkiert, markiert, markierungsWarnung, markierungsWarnungAusRohwert, zaehlHinweise } from '../schreibtor.js';
@@ -1941,6 +1941,9 @@ async function handleBrainToolInner(
         // Rueckfall-Hinweis (rueckfall.ts): nur nach Erfolg und nur fuer Arten,
         // deren Wiederkehr an zwei unabhaengigen Datensaetzen belegt ist.
         rueckfallHinweis({ outcome, topic, what_worked, what_failed, file_paths }),
+        // Was zur Reparatur gehoerte (rueckfall.ts dazuHinweis): nur, wenn
+        // die belegte Dateisorte unter den genannten Dateien fehlt.
+        dazuHinweis({ outcome, topic, what_worked, what_failed, file_paths }),
       ].filter(l => l !== '').join('\n');
     }
 

@@ -134,17 +134,14 @@ export type DashboardMetrics =
 
 /**
  * Raw event payload sent to /api/v1/telemetry/mcp.
- * Fields are stripped / resolved by the cachly API before the event reaches
- * the dashboard ingest queue — consumers will never see api_key or jwt.
+ * The credential is NOT part of it: since 0.10.236 it travels only in the
+ * `Authorization: Bearer` header (melde-weg.ts), and the API verifies it before
+ * it attributes the event to an existing account.
  */
 export interface TelemetryEventRaw {
   event: FunnelEventName;
   ts: string;                          // ISO-8601
   instance_id?: string;
-  /** Long-lived API key or Keycloak access token. Server resolves → {org_id, user_id}. */
-  api_key?: string;
-  /** Anonymous JWT sub fingerprint — SHA-256 first 16 hex chars, no PII. */
-  user_fingerprint?: string;
   /** Structured metrics block — typed per event, queryable without JSON path surgery. */
   metrics?: DashboardMetrics;
   [extra: string]: unknown;

@@ -1,21 +1,53 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cachly-dev/mcp-server",
-  "description": "Solve it once. From then on, your AI knows. Experience for coding agents, hosted in the EU.",
+  "title": "cachly — memory for coding agents",
+  "description": "Memory for coding agents: stores every fix and finds it again when the problem returns. EU-hosted.",
+  "websiteUrl": "https://cachly.dev",
+  "icons": [
+    {
+      "src": "https://cachly.dev/favicon.svg",
+      "mimeType": "image/svg+xml",
+      "sizes": [
+        "any"
+      ]
+    }
+  ],
   "repository": {
     "url": "https://github.com/cachly-dev/cachly-mcp",
     "source": "github"
   },
-  "version": "0.10.235",
+  "version": "0.10.236",
   "packages": [
     {
       "registryType": "npm",
-      "name": "@cachly-dev/mcp-server",
       "identifier": "@cachly-dev/mcp-server",
-      "version": "0.10.235",
+      "version": "0.10.236",
+      "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
-      }
+      },
+      "environmentVariables": [
+        {
+          "name": "CACHLY_JWT",
+          "description": "Optional API key (starts with cky_). Leave it empty and cachly sets up a trial Brain on first use.",
+          "isRequired": false,
+          "isSecret": true,
+          "format": "string"
+        },
+        {
+          "name": "CACHLY_BRAIN_INSTANCE_ID",
+          "description": "Optional Brain id. Leave it empty to use the Brain saved by setup.",
+          "isRequired": false,
+          "format": "string"
+        },
+        {
+          "name": "CACHLY_NO_TELEMETRY",
+          "description": "Set to 1 to turn off usage pings.",
+          "isRequired": false,
+          "format": "string"
+        }
+      ]
     }
   ]
 }

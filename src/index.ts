@@ -177,12 +177,12 @@ function starteStartwissenImHintergrund(instanzId: string, ordner?: string, vomH
     // Wirft bei Anbietern ohne Modellwahl (embeddings.ts) — dann bleibt vec2 leer.
     einbettenZweit: (text) => computeEmbedding(text, { geduld: 'lang', modell: ZWEIT_MODELL }),
     melde: (lektionen) => sendFunnelEvent('brain_from_git', {
-      ...(JWT ? { api_key: JWT } : {}), instance_id: instanzId, total: lektionen, auto: 'startwissen',
+      instance_id: instanzId, total: lektionen, auto: 'startwissen',
     }),
     // Ordner ohne Git: der Startvorrat statt der Geschichte (startwissen.ts).
     startvorrat: (a) => handleShareTool('brain_seed_starter', a, getConnection, apiFetch),
     meldeStartvorrat: (lektionen) => sendFunnelEvent('brain_seed_starter', {
-      ...(JWT ? { api_key: JWT } : {}), instance_id: instanzId, auto: true,
+      instance_id: instanzId, auto: true,
     }, { seeded_count: lektionen, auto: true }),
   });
 }
@@ -1061,6 +1061,7 @@ import { fehlendePflichtfelder } from './pflichtfelder.js';
 import { buildLessonsMarkdown, buildLessonsJsonl, vonRohLektion, type ExportLesson } from './brain-export.js';
 import { detectEditor as detectEditorImpl } from './editor.js';
 import { milestoneSent, markMilestoneSent } from './funnel-milestones.js';
+import { meldeKopf, meldeRumpf } from './melde-weg.js';
 import {
   kostprobeUebrig,
   kostprobeVerbrauchen,
@@ -1092,36 +1093,12 @@ function detectEditor(): string {
   return detectEditorImpl();
 }
 
-/** Derive an anonymous, non-reversible fingerprint from the JWT sub claim. */
-function _jwtUserFingerprint(jwt: string): string | undefined {
-  try {
-    const parts = jwt.split('.');
-    if (parts.length !== 3) return undefined;
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf-8')) as { sub?: string };
-    if (!payload.sub) return undefined;
-    // First 16 hex chars of a deterministic hash — no PII, not reversible.
-    let h = 0x811c9dc5;
-    for (let i = 0; i < payload.sub.length; i++) {
-      h ^= payload.sub.charCodeAt(i);
-      h = (h * 0x01000193) >>> 0;
-    }
-    return h.toString(16).padStart(8, '0') + payload.sub.length.toString(16).padStart(4, '0');
-  } catch { return undefined; }
-}
-
 function sendFunnelEvent(event: FunnelEventName, extra?: Record<string, unknown>, metrics?: DashboardMetrics): void {
   if (process.env.CACHLY_NO_TELEMETRY === '1') return;
-  const fingerprint = JWT ? _jwtUserFingerprint(JWT) : undefined;
   void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      event, version: CURRENT_VERSION, editor: detectEditor(),
-      ...(JWT ? { jwt: JWT } : {}),
-      ...(fingerprint ? { user_fingerprint: fingerprint } : {}),
-      ...(metrics ? { metrics } : {}),
-      ...extra,
-    }),
+    headers: meldeKopf(JWT),
+    body: JSON.stringify(meldeRumpf({ event, version: CURRENT_VERSION, editor: detectEditor() }, extra, metrics)),
     signal: AbortSignal.timeout(3000),
   }).catch(() => {/* fire-and-forget */});
 }
@@ -1518,9 +1495,10 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
       }
     }
     // Per-tool telemetry — fires after every successful brain tool call.
-    // api_key carries the cky_live_... token so the backend can resolve tenant + increment counters.
+    // The key travels in the Authorization header (sendFunnelEvent), never in the body;
+    // the API verifies it before it counts the event for the account.
     const instanceId = (args.instance_id as string | undefined) ?? _defaultInstanceId ?? '';
-    const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
+    const telemetryExtra = { instance_id: instanceId };
     if (name === 'recall_best_solution') {
       // recall_best_solution → increments BrainRecallCount + triggers level-up logic
       sendFunnelEvent('recall_best_solution', telemetryExtra);
@@ -1665,7 +1643,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     // brain_predict is in syndicate handler — track telemetry here.
     if (name === 'brain_predict') {
       const instanceId = (args.instance_id as string | undefined) ?? _defaultInstanceId ?? '';
-      const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
+      const telemetryExtra = { instance_id: instanceId };
       sendFunnelEvent('brain_predict', telemetryExtra);
     }
     return mitHinweis(syndicateResult);
@@ -1681,7 +1659,7 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
   if (fedbrainResult !== null) {
     // brain_from_git and brain_predict_failures are in fedbrain handler.
     const instanceId = (args.instance_id as string | undefined) ?? _defaultInstanceId ?? '';
-    const telemetryExtra = JWT ? { api_key: JWT, instance_id: instanceId } : { instance_id: instanceId };
+    const telemetryExtra = { instance_id: instanceId };
     if (name === 'brain_from_git') {
       const gitCounts = _lastBrainFromGitCounts;
       sendFunnelEvent('brain_from_git', { ...telemetryExtra, ...(gitCounts ?? {}) },
@@ -5011,7 +4989,7 @@ if (process.argv[2] === 'learn-git') {
       limit: maxCommits,
     });
     console.log(result);
-    sendFunnelEvent('brain_from_git', { api_key: JWT, instance_id: instanceId });
+    sendFunnelEvent('brain_from_git', { instance_id: instanceId });
     console.log('\n✅  Brain learned from your commits.\n');
     // Let fire-and-forget telemetry flush before exit.
     await new Promise(r => setTimeout(r, 300));

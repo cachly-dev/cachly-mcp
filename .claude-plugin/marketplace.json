@@ -4,14 +4,14 @@
     "name": "cachly",
     "url": "https://github.com/cachly-dev/cachly-mcp"
   },
-  "description": "Persistent memory for AI coding assistants: lessons, decisions, and the causal graph your team builds up — over MCP, hosted in the EU.",
+  "description": "Memory for coding agents over MCP: the fixes, decisions and lessons your team builds up, hosted in the EU.",
   "plugins": [
     {
       "name": "cachly-brain",
       "source": "./",
       "displayName": "cachly AI Brain",
-      "description": "Your assistant forgets everything each morning. cachly remembers your system: the bug you fixed, why you chose Postgres, the deploy step that always breaks — and which earlier decision a new one contradicts. Every editor reads the same memory, and every lesson carries the name of whoever learned it.",
-      "version": "0.10.235",
+      "description": "Solve it once. From then on, your AI knows. cachly keeps what your assistant learned: the bug you fixed, why you chose Postgres, the deploy step that always breaks. When the problem returns, the matching lesson is back in the session. Every editor reads the same memory, and every lesson carries the name of whoever learned it. Hosted in the EU.",
+      "version": "0.10.236",
       "author": {
         "name": "cachly",
         "url": "https://cachly.dev"
@@ -27,9 +27,12 @@
         "recall",
         "context",
         "lessons",
-        "knowledge-graph"
+        "knowledge-graph",
+        "agent-memory",
+        "claude-code",
+        "coding-agent"
       ],
-      "tags": ["memory", "mcp", "context", "recall"]
+      "tags": ["memory", "mcp", "context", "recall", "agent-memory"]
     }
   ]
 }

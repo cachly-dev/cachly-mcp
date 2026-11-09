@@ -58,6 +58,42 @@ export function artVon(text: string): string {
   return beste;
 }
 
+type Dazu = {
+  name: string;
+  sorte: string;
+  muster: string;
+  projekte: number;
+  fixes: number;
+  datensaetze: ReadonlyArray<{ fixes: number; anteil: number; erwartet: number }>;
+  rat: string;
+};
+const DAZU: Readonly<Record<string, Dazu>> = RUECKFALL.dazu as unknown as Record<string, Dazu>;
+
+/**
+ * Was zur Reparatur gehoerte (Messung M4): eine Zeile, wenn eine Reparatur
+ * dieser Art in fremden Projekten oft eine Dateisorte mitaenderte, die unter
+ * den genannten Dateien FEHLT. Ohne genannte Dateien schweigt der Hinweis —
+ * dann laesst sich nicht sagen, ob etwas fehlt.
+ */
+export function dazuHinweis(l: {
+  outcome: string;
+  topic: string;
+  what_worked: string;
+  what_failed?: string | null;
+  file_paths?: readonly string[];
+}): string {
+  if (l.outcome !== 'success') return '';
+  const pfade = (l.file_paths ?? []).filter((p) => typeof p === 'string' && p.trim() !== '');
+  if (pfade.length === 0) return '';
+  const d = DAZU[artVon([l.topic, l.what_failed ?? '', l.what_worked].join('\n'))];
+  if (!d) return '';
+  const muster = new RegExp(d.muster);
+  if (pfade.some((p) => muster.test(p.replace(/\\/g, '/').toLowerCase()))) return '';
+  const pz = (x: number) => `${Math.round(100 * x)} %`;
+  const je = d.datensaetze.map((s) => `${pz(s.anteil)} vs ${pz(s.erwartet)}`).join(', ');
+  return `🧩 **Belongs to the fix (${d.name}):** across ${d.projekte} open-source projects (${d.fixes} ${d.name} fixes), the fix changed a ${d.sorte} more often than other fixes in the same project: ${je} in three separate datasets. None of the files named here is one. ${d.rat}`;
+}
+
 /** Ein bis zwei Zeilen fuer die Antwort von learn_from_attempts, sonst ''. */
 export function rueckfallHinweis(l: {
   outcome: string;

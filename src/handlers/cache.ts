@@ -821,19 +821,13 @@ export async function handleCacheTool(
         method: 'PUT',
         body: JSON.stringify({ cost_per_call_usd }),
       });
-      const examples: Record<string, string> = {
-        '0.02': 'claude-opus-4.8',
-        '0.015': 'gpt-5.5',
-        '0.009': 'claude-sonnet-4.6',
-        '0.002': 'gpt-5.5-mini',
-        '0.001': 'claude-haiku-4.5',
-      };
-      const modelHint = examples[cost_per_call_usd.toString()] ? ` (${examples[cost_per_call_usd.toString()]})` : '';
+      // Seit 02.11.2026 zeigt cachly keine Geld-Schaetzung mehr; der Wert wird
+      // nur noch gespeichert, damit bestehende Skripte weiterlaufen.
       return [
-        `✅ **Cost per call updated** — $${cost_per_call_usd.toFixed(4)}${modelHint}`,
+        `✅ **Cost per call stored** — $${cost_per_call_usd.toFixed(4)}`,
         ``,
-        `ROI savings in \`cache_stats\` will now use $${cost_per_call_usd.toFixed(4)} per avoided LLM call.`,
-        `Run \`cache_stats\` to see your updated savings estimate.`,
+        `cachly shows counted cache hits only, no money estimate.`,
+        `\`cache_stats\` lists hits, entries and the change against the previous week.`,
       ].join('\n');
     }
 

@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "cachly-brain",
   "displayName": "cachly AI Brain",
-  "version": "0.10.235",
-  "description": "Persistent memory for AI coding assistants over MCP. Your assistant remembers the bug you fixed, why you chose Postgres, and which earlier decision a new one contradicts — across sessions, editors, and models. Hosted in the EU, free tier available.",
+  "version": "0.10.236",
+  "description": "Memory for coding agents over MCP: cachly stores every fix and finds it again when the problem returns, across sessions, editors and models. Hosted in the EU, with a free plan.",
   "author": {
     "name": "cachly",
     "url": "https://cachly.dev"

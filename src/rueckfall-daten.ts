@@ -17,6 +17,14 @@
  *   einen Hinweis. zufall_quote = Erwartungswert: Anteil derselben Art unter
  *   allen Issues desselben Projekts im selben Fenster.
  * beispiel: beide Issue-Titel gehoeren selbst zur Art, von Hand gelesen.
+ * dazu: was zur Reparatur SELBST gehoerte (Messung M4, forge-foundry
+ *   was_gehoerte_dazu.py): eine Dateisorte, die eine Reparatur dieser Art
+ *   oefter aenderte als andere Reparaturen desselben Projekts. Regel vorab:
+ *   >= 1,5-fach und >= 10 Punkte ueber dem Erwartungswert je Projekt, >= 100
+ *   Paare, auf zwei von drei Datensaetzen. Es hielt nur sicherheit ->
+ *   Abhaengigkeitsdatei (A 33,8 % gegen 20,5 %, C 59,1 % gegen 24,8 %; B
+ *   11,9 % gegen 5,9 %, also 2,0-fach, aber nur 6 Punkte). muster ist der
+ *   Ausdruck der Messung; sie verglich den Pfad in Kleinbuchstaben.
  */
 export const RUECKFALL = /* JSON-BEGIN */ {
   "_arten_pruefsumme": "60279054dc2fdc4b",
@@ -82,6 +90,21 @@ export const RUECKFALL = /* JSON-BEGIN */ {
         "tage": 7,
         "datei": "pom.xml"
       }
+    }
+  },
+  "dazu": {
+    "sicherheit": {
+      "name": "security",
+      "sorte": "dependency file (manifest or lock file)",
+      "muster": "(^|/)(package\\.json|package-lock\\.json|yarn\\.lock|pnpm-lock\\.yaml|[^/]*\\.lock|requirements[^/]*\\.txt|pyproject\\.toml|go\\.(mod|sum)|cargo\\.toml|pom\\.xml|gemfile|composer\\.json|build\\.gradle[^/]*|[^/]*\\.csproj)$",
+      "projekte": 289,
+      "fixes": 1127,
+      "datensaetze": [
+        { "fixes": 157, "anteil": 0.338, "erwartet": 0.205 },
+        { "fixes": 412, "anteil": 0.119, "erwartet": 0.059 },
+        { "fixes": 558, "anteil": 0.591, "erwartet": 0.248 }
+      ],
+      "rat": "If this fix also needs a version bump, add that file to the lesson."
     }
   },
   "_gemessen": "08.11.2026, 289 Projekte in drei unabhaengigen Datensaetzen (32 + 130 + 127), Fenster 90 Tage, Zufall als Erwartungswert. Upload fiel weg (zusammen 1,73), Anmeldung/Rechte (1,88) und Zeichenkodierung (nur einmal >= 2 mit Einzelziehung) ebenso."

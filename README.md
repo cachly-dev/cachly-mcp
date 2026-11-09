@@ -117,6 +117,11 @@ a relapse watch with counted numbers from 289 open-source projects. For example:
 the same files, 4.4× as often as a random issue in the same project. Each hint links a
 real pair of issues as an example.
 
+**Some fixes need a second file.** When you store a security fix and none of the files you
+name is a manifest or lock file, `learn_from_attempts` says so: across the same 289
+projects, 1127 security fixes changed a dependency file more often than other fixes in the
+same project, 59 % vs 25 % in the largest dataset.
+
 ## Why developers and teams use it
 
 - **Your AI keeps what it learned.** Lessons outlive the session, the editor and the
@@ -539,7 +544,7 @@ backend on every editor start.
 | `CACHLY_ALLE_WERKZEUGE` | unset | Set to `1` to list all 124 tools instead of 27 |
 | `CACHLY_PROFILE` | unset | `lean` lists 8 tools plus `cachly_tool`, `recall` lists the 3 read-only tools |
 | `CACHLY_UPDATE_CHECK` | on | Set to `false` to stop the version check. npm is asked at most once a day, with a 2-second limit |
-| `CACHLY_NO_TELEMETRY` | unset | Set to `1` to disable usage pings. They include your API token and up to 80 characters of `smart_recall` queries |
+| `CACHLY_NO_TELEMETRY` | unset | Set to `1` to disable usage pings. They carry up to 80 characters of `smart_recall` queries. Your API key travels only in the `Authorization` header; the API verifies it before it counts the event for your account |
 | `CACHLY_LERNEN` | on | Learning from use in the prompt hook. For 5 % of prompts the matching lessons are computed but not shown (control group), up to 10 % try a stricter or shorter setting. At the end of each turn the hook reports which setting ran and whether the agent named a shown lesson; topics are sent hashed, prompts never. Set to `0` (or `CACHLY_NO_TELEMETRY=1`) to turn it off |
 | `CACHLY_KONTROLLE_ANTEIL` | `5%` | Share of prompts in the control group. `0` turns the control group off, at most `50%` |
 | `CACHLY_ERKUNDUNG` | `10%` | Share of prompts that may try another setting. `0` keeps the leading setting, at most `10%` |
