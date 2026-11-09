@@ -2303,14 +2303,31 @@ async function handleBrainToolInner(
         // Banner Name und Thema eines Nachfolgers, dessen Datensatz nur
         // beschaedigt ist — dieselbe Klasse, dieselbe Regel: im Zweifel
         // schliessen.
-        const nachfolgerPrivat = nachfolgerDa
-          ? !darfHeraus(leseOderNull<{ visibility?: string }>(nachfolgerDa))
-          : false;
+        const nachfolgerLd = nachfolgerDa
+          ? leseOderNull<{ visibility?: string; group?: string }>(nachfolgerDa)
+          : null;
+        const nachfolgerPrivat = nachfolgerDa ? !darfHeraus(nachfolgerLd) : false;
+        // 09.11.2026: dieselbe Grenze fuer GRUPPEN. Ein gruppen-beschraenkter
+        // Nachfolger wurde Nicht-Mitgliedern bis hierher beim Namen genannt —
+        // der Inhalt blieb zu, der Name nicht, und der Name ist die Abrufanleitung.
+        // Ohne `author` kein Ausweis, also zu (wie oben beim Lesen der Lektion).
+        let nachfolgerFremdeGruppe = false;
+        if (nachfolgerDa && !nachfolgerPrivat && nachfolgerLd?.group) {
+          const nfScopes = rbsAuthor
+            ? await getScopes(redis, instance_id, rbsAuthor).catch(() => new Set<string>())
+            : new Set<string>();
+          const nfAdmin = rbsAuthor
+            ? (await getRole(redis, instance_id, rbsAuthor).catch(() => null)) === 'admin'
+            : false;
+          nachfolgerFremdeGruppe = !lessonVisibleToScope(nachfolgerLd.group, nfScopes, nfAdmin);
+        }
         const ersetztBanner = ersetztDurch
           ? nachfolgerDa
             ? nachfolgerPrivat
               ? `🚫 **THIS VERSION IS REPLACED**${ersetztAmText} — the successor lesson is private, not visible to the team. The text below stays readable as history; its author knows the current version.`
-              : `🚫 **THIS VERSION IS REPLACED**${ersetztAmText} — the current answer is in \`recall_best_solution(topic="${ersetztDurch}")\`.${ersetztGrundText} The text below stays readable as history.`
+              : nachfolgerFremdeGruppe
+                ? `🚫 **THIS VERSION IS REPLACED**${ersetztAmText} — the successor lesson is not visible to you. The text below stays readable as history.`
+                : `🚫 **THIS VERSION IS REPLACED**${ersetztAmText} — the current answer is in \`recall_best_solution(topic="${ersetztDurch}")\`.${ersetztGrundText} The text below stays readable as history.`
             : `⚠️ **REPLACEMENT POINTS NOWHERE**${ersetztAmText} — the successor \`${ersetztDurch}\` has been deleted. This version applies again as the best EXISTING answer; confirm it when you can (learn_from_attempts with grund).`
           : '';
 
@@ -3219,10 +3236,13 @@ async function handleBrainToolInner(
             // sichtbare Fassung bleibt die beste SICHTBARE Antwort.
             // Unlesbar heisst PRIVAT — sonst nennt die Notiz den Namen
             // einer Fassung, deren Datensatz nur beschaedigt ist.
-            const nf = leseOderNull<{ visibility?: string }>(
+            // 09.11.2026: auch ein Nachfolger aus einer Gruppe, in der der
+            // Fragende nicht ist, wird nicht genannt (dieselbe Grenze wie
+            // bei den Treffern selbst, sichtbareTreffer oben).
+            const nf = leseOderNull<{ visibility?: string; group?: string }>(
               await redis.get(`cachly:lesson:best:${ld.ersetzt_durch}`),
             );
-            if (!darfHeraus(nf)) {
+            if (!darfHeraus(nf) || !lessonVisibleToScope(nf.group, requesterScopes, requesterIsAdmin)) {
               ersetzungsNotizen.push(
                 `↷ \`${altThema}\`: replaced by a version that is not visible to the team — this version stays the best visible answer.`,
               );

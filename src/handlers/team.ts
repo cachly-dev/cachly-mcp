@@ -8,7 +8,7 @@ import type { Redis } from 'ioredis';
 import { calculateConfidence, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_VALUE,
          CONFIDENCE_WARN_DAYS, CONFIDENCE_STALE_DAYS } from '../confidence.js';
 import type { Instance } from './brain.js';
-import { safeJsonParse } from '../utils.js';
+import { safeJsonParse, leseOderNull, darfHeraus } from '../utils.js';
 import { ersparteMinuten, istStarterLektion, fmtStunden } from '../wertbeitrag.js';
 import {
   CURSOR_MDC_FRONTMATTER, buildClaudeMdBlock, setzeAnweisungsblock,
@@ -201,6 +201,33 @@ export function lessonVisibleToScope(
   return requesterScopes.has(lessonGroup.toLowerCase());
 }
 
+/**
+ * Darf diese Lektion in eine Ausgabe, die das GANZE Team sieht?
+ *
+ * ── Karte pguy341m6u7s, dritter Teil (09.11.2026) ─────────────────────────
+ *
+ * `smart_recall` und `recall_best_solution` ziehen die Grenzen zur Lesezeit.
+ * Vier Werkzeuge in dieser Datei taten es nicht: `team_recall`,
+ * `sync_file_changes`, `memory_crystalize` und `team_crystallize` lasen jede
+ * Lektion unter `cachly:lesson:best:*` und gaben `what_worked` aus — private
+ * und gruppen-beschraenkte eingeschlossen. Die Kristalle werden sogar
+ * gespeichert und stehen danach in jedem Briefing.
+ *
+ * Keines dieser Werkzeuge weiss, WER fragt. Deshalb im Zweifel schliessen:
+ *   - unlesbar heisst NEIN (leseOderNull + darfHeraus, wie smart_recall),
+ *   - privat heisst NEIN (die Werkzeugbeschreibung sagt seit jeher "never
+ *     surfaced in smart_recall or team_recall"),
+ *   - gruppen-beschraenkt heisst NEIN — ohne Ausweis des Fragenden kann
+ *     niemand pruefen, ob er Mitglied ist. Mitglieder lesen ihre
+ *     Gruppen-Lektionen ueber smart_recall / recall_best_solution mit `author`.
+ */
+export function teamweitLesbar<T>(raw: string | null | undefined): T | null {
+  const lektion = leseOderNull<T & { visibility?: string; group?: string | null }>(raw);
+  if (!darfHeraus(lektion)) return null;
+  if (lektion.group) return null;
+  return lektion;
+}
+
 export async function handleTeamTool(
   name: string,
   args: Record<string, unknown>,
@@ -246,8 +273,8 @@ export async function handleTeamTool(
       const relevant: string[] = [];
       const sfRaws = lessonKeys.length > 0 ? await redis.mget(...lessonKeys) : [];
       for (const raw of sfRaws) {
-        if (!raw) continue;
-        const lesson = safeJsonParse<Lesson | null>(raw, null);
+        // Privat, gruppen-beschraenkt oder unlesbar bleibt draussen (teamweitLesbar).
+        const lesson = teamweitLesbar<Lesson>(raw);
         if (!lesson) continue;
         // Match by file_paths stored in lesson OR by topic keywords matching file name
         const topicWords = lesson.topic.toLowerCase().split(/[:\-_]/);
@@ -456,7 +483,9 @@ export async function handleTeamTool(
       if (lessonKeys.length > 0) {
         const raws = await redis.mget(...lessonKeys);
         for (const raw of raws) {
-          const l = safeJsonParse<TeamLesson | null>(raw ?? null, null);
+          // Bis 09.11.2026 kam hier JEDE Lektion heraus, private und
+          // gruppen-beschraenkte eingeschlossen (teamweitLesbar erklaert, warum).
+          const l = teamweitLesbar<TeamLesson>(raw);
           if (l) lessons.push(l);
         }
       }
@@ -610,7 +639,9 @@ export async function handleTeamTool(
       if (allLessonKeys.length > 0) {
         const raws = await redis.mget(...allLessonKeys);
         for (const raw of raws) {
-          const roh = safeJsonParse<RawLesson | null>(raw ?? null, null);
+          // Der Kristall steht in jedem kuenftigen Briefing: privat, gruppen-beschraenkt
+          // oder unlesbar darf nicht hinein (teamweitLesbar).
+          const roh = teamweitLesbar<RawLesson>(raw);
           if (!roh) continue;
           const tor = fuerZusammenfassung(roh);
           if (!tor) { ausgelassen++; continue; }
@@ -713,7 +744,8 @@ export async function handleTeamTool(
       if (keys.length > 0) {
         const raws = await redis.mget(...keys);
         for (const raw of raws) {
-          const roh = safeJsonParse<TCLesson | null>(raw ?? null, null);
+          // Wie memory_crystalize: nur, was das ganze Team sehen darf (teamweitLesbar).
+          const roh = teamweitLesbar<TCLesson>(raw);
           if (!roh || roh.outcome !== 'success' || !roh.author) continue;
           const tor = fuerZusammenfassung(roh);
           if (!tor) { ausgelassen++; continue; }
