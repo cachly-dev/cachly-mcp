@@ -7,6 +7,26 @@
 
 ---
 
+## [0.10.237] – 2026-11-10 — *"Team tools show what the whole team may see."*
+
+**Four team tools now respect lesson visibility.** Until 0.10.236, `team_recall`,
+`sync_file_changes`, `memory_crystalize` and `team_crystallize` read every stored lesson
+and printed its text, including lessons marked `private` and lessons scoped to a group
+(`learn_from_attempts(group=...)`). The two crystal tools also stored their summary, so
+that text then appeared in every briefing. None of these four tools knows who is asking,
+so they now show only lessons the whole team may see: private, group-scoped and
+unreadable records stay out. Group members still get their group's lessons through
+`smart_recall` and `recall_best_solution` with `author`, which check membership at read
+time.
+
+**A replaced lesson no longer names a successor you may not see.** The replacement banner
+in `recall_best_solution` and the replacement note in `smart_recall` already kept a
+private successor unnamed. They now do the same for a successor from a group the asker
+is not in, and without `author` they name no group-scoped successor at all.
+
+**Upgrade:** `npx @cachly-dev/mcp-server@latest` picks this up on the next start. If
+you run a pinned install, update it and restart your editor.
+
 ## [0.10.236] – 2026-11-09 — *"Your key travels in the header."*
 
 **Usage pings no longer carry your API key in the body.** Until 0.10.235 every ping to

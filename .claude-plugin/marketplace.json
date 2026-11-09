@@ -11,7 +11,7 @@
       "source": "./",
       "displayName": "cachly AI Brain",
       "description": "Solve it once. From then on, your AI knows. cachly keeps what your assistant learned: the bug you fixed, why you chose Postgres, the deploy step that always breaks. When the problem returns, the matching lesson is back in the session. Every editor reads the same memory, and every lesson carries the name of whoever learned it. Hosted in the EU.",
-      "version": "0.10.236",
+      "version": "0.10.237",
       "author": {
         "name": "cachly",
         "url": "https://cachly.dev"
