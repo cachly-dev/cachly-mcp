@@ -432,7 +432,8 @@ describe('Cursor-Lauf — das echte Buendel mit Cursor-Beispiel-Eingaben', () =>
     // Genau einmal je Generation.
     const wieder = await lauf(skript, ['postToolUse'], nachWerkzeug());
     expect(JSON.parse(wieder.stdout)).toEqual({});
-    expect(wieder.ms, `postToolUse: ${wieder.ms} ms`).toBeLessThan(3000);
+    // Kein Netz im Spiel; die Grenze bewacht nur ein Haengen, nicht den Prozessstart (CI-Last).
+    expect(wieder.ms, `postToolUse: ${wieder.ms} ms`).toBeLessThan(15_000);
   });
 
   it('haengt der Server, endet beforeSubmitPrompt an der Frist mit {"continue":true}, Exit 0', async () => {

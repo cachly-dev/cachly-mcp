@@ -364,7 +364,8 @@ describe('Plugin-Lauf — das echte Buendel', () => {
 
   it('haengt der Server, endet der Lauf an der Gesamtfrist — still, Exit 0', async () => {
     // Ein Server, der die Verbindung annimmt und nie antwortet.
-    const stumm = createServer(() => { /* nie antworten */ });
+    let ersteAnfrage: number | null = null;
+    const stumm = createServer(() => { ersteAnfrage ??= Date.now(); /* nie antworten */ });
     await new Promise<void>((r) => stumm.listen(0, '127.0.0.1', () => r()));
     try {
       schreibeJson(join(heim, '.cachly', 'credentials.json'), { apiKey: 'cky_k', instanceId: instanz });
@@ -374,8 +375,12 @@ describe('Plugin-Lauf — das echte Buendel', () => {
       });
       expect(r.status).toBe(0);
       expect(r.stdout).toBe('');
-      // Ohne Frist endete der Lauf erst am Abruflimit (5 s).
-      expect(r.ms, `${r.ms} ms`).toBeLessThan(4000);
+      // Ohne Frist endete der Lauf erst am Abruflimit (5 s), mit Frist nach 1,5 s. Gemessen
+      // wird ab der ersten Anfrage am Server, nicht ab dem Prozessstart: Der Start dauert auf
+      // geteilten CI-Rechnern zufaellig mehrere Sekunden (main-Lauf 11.10.2026).
+      expect(ersteAnfrage, 'der Hook hat den Server gefragt').not.toBeNull();
+      const wartezeit = Date.now() - ersteAnfrage!;
+      expect(wartezeit, `${wartezeit} ms nach der Anfrage`).toBeLessThan(3500);
     } finally {
       stumm.closeAllConnections();
       await new Promise<void>((r) => stumm.close(() => r()));

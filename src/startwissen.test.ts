@@ -86,7 +86,18 @@ function repoMitCommits(betreffe: string[]): string {
   git(dir, ['config', 'user.email', 'startwissen-test@example.invalid']);
   git(dir, ['config', 'user.name', 'Startwissen Test']);
   git(dir, ['config', 'commit.gpgsign', 'false']);
-  for (const b of betreffe) git(dir, ['commit', '--quiet', '--allow-empty', '-m', b]);
+  // Alle Commits in EINEM git-Aufruf (fast-import) statt einem Prozess je Commit: 35 Prozesse
+  // brauchten auf Windows 11 s und rissen unter Last die 20-s-Grenze des Tests. Die Zeitstempel
+  // steigen je Commit, damit "neueste zuerst" eindeutig bleibt.
+  git(dir, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  const strom = betreffe
+    .map((b, i) => `commit refs/heads/main
+committer Startwissen Test <startwissen-test@example.invalid> ${1_700_000_000 + i * 60} +0000
+data ${Buffer.byteLength(b)}
+${b}
+`)
+    .join('');
+  execFileSync('git', ['fast-import', '--quiet'], { cwd: dir, input: strom, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
   return dir;
 }
 

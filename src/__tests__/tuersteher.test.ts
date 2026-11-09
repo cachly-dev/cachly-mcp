@@ -224,15 +224,38 @@ describe('Tuersteher im Schreibweg', () => {
 describe('lange Eingaben', () => {
   // Gemessen vor der Begrenzung der Wiederholungen: 22 s fuer 100.000 Bindestriche,
   // 11 s fuer 7.000 mal "curl http://a". Danach je unter 0,3 s.
-  it.each([
-    ['Bindestriche', '-'.repeat(100_000)],
-    ['curl mit Adresse', 'curl http://a '.repeat(7_000)],
-    ['Kommentaranfaenge', '<!--'.repeat(25_000)],
-    ['wget mit Adresse', 'wget http://a '.repeat(7_000)],
-  ])('%s: unter 2 Sekunden', (_name, text) => {
-    const t0 = performance.now();
+  // Geschuetzt wird vor dem Zeit-Aufwachsen (quadratisch oder schlimmer), nicht vor
+  // einer Uhrzeit: Ein fester Wert wie "unter 2 s" fiel auf geteilten CI-Rechnern
+  // zufaellig durch (09.11.2026: 2,68 s). Darum wird die Laufzeit bei vierfacher
+  // Eingabe mit der bei einfacher verglichen. Linear gibt etwa 4, quadratisch 16;
+  // die Grenze 10 liegt dazwischen. Beide Eingaben bleiben unter MAX_PRUEFLAENGE,
+  // denn darueber wird ohnehin gekappt (Test unten). Je Messung zaehlt der beste
+  // von fuenf Laeufen nach einem Aufwaermlauf, damit ein einzelner Ausreisser
+  // durch fremde Last nichts verfaelscht; fehlerverdeckend ist das nicht, weil ein
+  // echtes Aufwachsen in jedem Lauf auftritt.
+  const beste = (text: string): number => {
     pruefeVerdacht(text);
-    expect(performance.now() - t0).toBeLessThan(2000);
+    let best = Infinity;
+    for (let i = 0; i < 5; i++) {
+      const t0 = performance.now();
+      pruefeVerdacht(text);
+      best = Math.min(best, performance.now() - t0);
+    }
+    return best;
+  };
+  it.each([
+    ['Bindestriche', (n: number) => '-'.repeat(n * 12_000)],
+    ['curl mit Adresse', (n: number) => 'curl http://a '.repeat(n * 800)],
+    ['Kommentaranfaenge', (n: number) => '<!--'.repeat(n * 3_000)],
+    ['wget mit Adresse', (n: number) => 'wget http://a '.repeat(n * 800)],
+  ])('%s: vierfache Eingabe braucht weniger als das 10-fache an Zeit', (_name, bau) => {
+    const klein = bau(1);
+    const gross = bau(4);
+    expect(gross.length).toBeLessThanOrEqual(MAX_PRUEFLAENGE);
+    // Untergrenze 2 ms: unter einer Millisekunde misst die Uhr nur Rauschen.
+    const tKlein = Math.max(beste(klein), 2);
+    const tGross = beste(gross);
+    expect(tGross / tKlein, `${tKlein.toFixed(1)} ms -> ${tGross.toFixed(1)} ms`).toBeLessThan(10);
   });
 });
 

@@ -591,11 +591,18 @@ function schreibeJson(pfad: string, inhalt: unknown) {
 const schluessel = () => schreibeJson(join(heim, '.cachly', 'credentials.json'), { apiKey: 'cky_k' });
 
 /** Haengender Server: nimmt an, antwortet nie. */
-async function mitStummemServer(fn: (url: string) => Promise<void>) {
-  const stumm = createServer(() => { /* nie antworten */ });
+/**
+ * Ein Server, der Verbindungen annimmt und nie antwortet. `ersteAnfrage()` nennt,
+ * wann die erste Anfrage ankam: Die Frist-Tests messen ab dort, nicht ab dem
+ * Prozessstart, denn der Start eines Node-Prozesses dauert auf geteilten
+ * CI-Rechnern zufaellig bis zu mehrere Sekunden (main-Laeufe 11.10. und 14.10.2026).
+ */
+async function mitStummemServer(fn: (url: string, ersteAnfrage: () => number | null) => Promise<void>) {
+  let erste: number | null = null;
+  const stumm = createServer(() => { erste ??= Date.now(); /* nie antworten */ });
   await new Promise<void>((r) => stumm.listen(0, '127.0.0.1', () => r()));
   try {
-    await fn(`http://127.0.0.1:${(stumm.address() as AddressInfo).port}`);
+    await fn(`http://127.0.0.1:${(stumm.address() as AddressInfo).port}`, () => erste);
   } finally {
     stumm.closeAllConnections();
     await new Promise<void>((r) => stumm.close(() => r()));
@@ -640,7 +647,8 @@ describe('VS Code / Copilot — das echte Buendel mit Doku-Eingaben', () => {
     const nach = await befehl(kommando('postToolUse'), vsNachWerkzeug(projekt));
     expect(nach.status).toBe(0);
     expect(JSON.parse(nach.stdout)).toEqual({});
-    expect(nach.ms, `postToolUse: ${nach.ms} ms`).toBeLessThan(3000);
+    // Kein Netz im Spiel; die Grenze bewacht nur ein Haengen, nicht den Prozessstart (CI-Last).
+    expect(nach.ms, `postToolUse: ${nach.ms} ms`).toBeLessThan(15_000);
   });
 
   it('Copilot CLI, installiert: flaches Briefing; Lektionen beim ersten postToolUse, einmal', async () => {
@@ -660,7 +668,7 @@ describe('VS Code / Copilot — das echte Buendel mit Doku-Eingaben', () => {
   });
 
   it('haengt der Server, endet userPromptSubmitted an der Frist mit {}, Exit 0', async () => {
-    await mitStummemServer(async (url) => {
+    await mitStummemServer(async (url, ersteAnfrage) => {
       schreibeJson(join(heim, '.cachly', 'credentials.json'), { apiKey: 'cky_k', instanceId: instanz });
       const r = await lauf(BUENDEL, ['userPromptSubmitted', '--copilot'], vsPrompt(projekt), {
         CACHLY_API_URL: url,
@@ -668,7 +676,10 @@ describe('VS Code / Copilot — das echte Buendel mit Doku-Eingaben', () => {
       });
       expect(r.status).toBe(0);
       expect(JSON.parse(r.stdout)).toEqual({});
-      expect(r.ms, `${r.ms} ms`).toBeLessThan(4000);
+      // Frist 1500 ms, Abruflimit ohne Frist 5000 ms: dazwischen liegt die Grenze.
+      expect(ersteAnfrage(), 'der Hook hat den Server gefragt').not.toBeNull();
+      const wartezeit = Date.now() - ersteAnfrage()!;
+      expect(wartezeit, `${wartezeit} ms nach der Anfrage`).toBeLessThan(3500);
     });
   });
 });
@@ -714,12 +725,15 @@ describe('Codex — das echte Buendel mit Doku-Eingaben', () => {
   });
 
   it('haengt der Server, endet UserPromptSubmit an der Frist ohne Ausgabe, Exit 0', async () => {
-    await mitStummemServer(async (url) => {
+    await mitStummemServer(async (url, ersteAnfrage) => {
       schreibeJson(join(heim, '.cachly', 'credentials.json'), { apiKey: 'cky_k', instanceId: instanz });
       const r = await lauf(BUENDEL, ['UserPromptSubmit', '--codex'], codexPrompt(), { CACHLY_API_URL: url, CACHLY_HOOK_FRIST_MS: '1500' });
       expect(r.status).toBe(0);
       expect(r.stdout).toBe('');
-      expect(r.ms, `${r.ms} ms`).toBeLessThan(4000);
+      // Frist 1500 ms, Abruflimit ohne Frist 5000 ms: dazwischen liegt die Grenze.
+      expect(ersteAnfrage(), 'der Hook hat den Server gefragt').not.toBeNull();
+      const wartezeit = Date.now() - ersteAnfrage()!;
+      expect(wartezeit, `${wartezeit} ms nach der Anfrage`).toBeLessThan(3500);
     });
   });
 });
@@ -752,12 +766,15 @@ describe('Gemini — das echte Buendel mit Doku-Eingaben', () => {
   });
 
   it('haengt der Server, endet BeforeAgent an der Frist mit {}, Exit 0', async () => {
-    await mitStummemServer(async (url) => {
+    await mitStummemServer(async (url, ersteAnfrage) => {
       schreibeJson(join(heim, '.cachly', 'credentials.json'), { apiKey: 'cky_k', instanceId: instanz });
       const r = await lauf(BUENDEL, ['BeforeAgent', '--gemini'], geminiPrompt(), { ...geminiEnv(), CACHLY_API_URL: url, CACHLY_HOOK_FRIST_MS: '1500' });
       expect(r.status).toBe(0);
       expect(r.stdout).toBe('{}');
-      expect(r.ms, `${r.ms} ms`).toBeLessThan(4000);
+      // Frist 1500 ms, Abruflimit ohne Frist 5000 ms: dazwischen liegt die Grenze.
+      expect(ersteAnfrage(), 'der Hook hat den Server gefragt').not.toBeNull();
+      const wartezeit = Date.now() - ersteAnfrage()!;
+      expect(wartezeit, `${wartezeit} ms nach der Anfrage`).toBeLessThan(3500);
     });
   });
 });

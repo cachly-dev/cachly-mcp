@@ -112,7 +112,10 @@ describe('Doppelung beim Schreiben: vermerken, im Briefing nennen, nie zusammenl
     const antwort = String(await lerne('node1:kc-langsam', '[LANGSAM] KC_HOSTNAME ist seit 03.09. stillgelegt, Keycloak 26 nimmt den Host aus der Anfrage.'));
     const dauer = Date.now() - start;
     expect(dauer).toBeGreaterThanOrEqual(DOPPEL_WARTE_MS - 50);
-    expect(dauer).toBeLessThan(DOPPEL_WARTE_MS + 2000);
+    // Obergrenze: knapp unter LANGSAM_MS. Wartete die Antwort auf den langsamen Dienst, dauerte sie
+    // mindestens so lange; alles darunter hat vorher aufgegeben. Eine feste Grenze nahe an
+    // DOPPEL_WARTE_MS (+800, +2000) riss unter CI-Last (04.11.2026: 2.410 ms beim richtigen Weg).
+    expect(dauer).toBeLessThan(LANGSAM_MS - 250);
     expect(LANGSAM_MS, 'der Rueckfall muss ueber der Grenze liegen').toBeGreaterThan(DOPPEL_WARTE_MS + 3000);
     expect(antwort).toContain('Lesson stored');
     expect(antwort).not.toContain('Says almost the same');
