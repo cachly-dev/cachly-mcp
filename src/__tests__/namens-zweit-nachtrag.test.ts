@@ -99,6 +99,28 @@ describe('Nachtrag fuer Namens- und Zweit-Vektoren', () => {
     const doc = String(await handleTeamTool('brain_doctor', { instance_id: 'i1' }, getConn, noopApiFetch));
     expect(doc).toContain('Vector backfill pending');
     expect(doc).toMatch(/0 full-text, 1 topic-name, 1 second-model/);
+    expect(doc).toContain('Topic-name coverage: 0%');
+    expect(doc).toContain('1 of 1 embedded lessons lack a topic-name vector (1 queued');
+    expect(doc).not.toContain('not queued');
+  });
+
+  it('brain_doctor nennt Namens-Luecken ohne Vermerk (Altbestand) gesondert', async () => {
+    scheitertBei(() => false);
+    await lerne('deploy:alt');
+    await ausstehen();
+    await redis.del(`${NAME_VEKTOR_PRAEFIX}deploy:alt`);
+    const doc = String(await handleTeamTool('brain_doctor', { instance_id: 'i1' }, getConn, noopApiFetch));
+    expect(doc).toContain('1 of 1 embedded lessons lack a topic-name vector (0 queued');
+    expect(doc).toContain('1 older ones not queued and not healed automatically');
+  });
+
+  it('brain_doctor meldet vollstaendige Namens-Deckung', async () => {
+    scheitertBei(() => false);
+    await lerne('deploy:gesund');
+    await ausstehen();
+    const doc = String(await handleTeamTool('brain_doctor', { instance_id: 'i1' }, getConn, noopApiFetch));
+    expect(doc).toContain('Topic-name coverage: 100%');
+    expect(doc).not.toContain('Vector backfill pending');
   });
 
   // 04.11.2026: Eine Lektion mit topic "" (vor 0.10.226 noch angenommen) liess

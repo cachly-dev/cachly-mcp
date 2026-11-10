@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.10.238",
+  "version": "0.10.239",
   "mcpName": "io.github.cachly-dev/mcp-server",
   "description": "Memory for coding agents: your AI stores every fix and finds it again when the problem returns. MCP server for Claude Code, Cursor, Copilot, Windsurf, Codex and Gemini CLI, hosted in the EU.",
   "type": "module",

@@ -1014,6 +1014,21 @@ export async function handleTeamTool(
         checks.push(`🟡 **Vector backfill pending:** ${offen[0]} full-text, ${offen[1]} topic-name, `
           + `${offen[2]} second-model — retried on the next write or recall`);
       }
+      // Die Zahl, die sagt, ob das Brain vollstaendig ist: Lektionen mit
+      // Volltext-Vektor, aber OHNE Namens-Vektor. Davon sind `offen[1]` vorgemerkt
+      // und heilen von selbst; der Rest stammt aus der Zeit vor dem Nachtrag
+      // (0.10.214) und hat keinen Vermerk — ihn holt nichts nach.
+      if (vektorZahl > 0) {
+        const namenFehlt = Math.max(0, vektorZahl - namensZahl);
+        const ohneVermerk = Math.max(0, namenFehlt - offen[1]);
+        if (namenFehlt === 0) {
+          checks.push(`✅ **Topic-name coverage: 100%** — all ${vektorZahl} embedded lessons carry a topic-name vector`);
+        } else {
+          checks.push(`🟡 **Topic-name coverage: ${Math.round((namensZahl / vektorZahl) * 100)}%** — ${namenFehlt} of ${vektorZahl} embedded lessons lack a topic-name vector `
+            + `(${Math.min(namenFehlt, offen[1])} queued and healed on the next write or recall`
+            + (ohneVermerk > 0 ? `, ${ohneVermerk} older ones not queued and not healed automatically` : '') + ')');
+        }
+      }
       const deckung = lessonKeys.length > 0
         ? Math.round((vektorZahl / lessonKeys.length) * 100)
         : 100;
