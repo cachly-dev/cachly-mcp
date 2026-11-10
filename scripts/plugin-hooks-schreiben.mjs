@@ -50,10 +50,24 @@ const KOPF = `#!/usr/bin/env node
 //         node cachly-ambient-einblendung.mjs <SessionStart|UserPromptSubmit> --codex
 //         node cachly-ambient-einblendung.mjs <SessionStart|BeforeAgent> --gemini`;
 
+/**
+ * Der Server-Starter des Plugins (10.11.2026): laedt die Kopie aus
+ * ~/.cachly/server statt bei jedem Start npx zu fragen. Quelle und Gruende:
+ * src/plugin-server-start.ts. plugin.json ruft ihn mit `node`.
+ */
+export const SERVER_START = 'cachly-server-start.mjs';
+const START_EINSTIEG = join(WURZEL, 'src', 'plugin-server-start.ts');
+const START_KOPF = `#!/usr/bin/env node
+// ERZEUGT — NICHT VON HAND AENDERN.
+// cachly Server-Starter des Claude-Code-Plugins: laedt die Kopie aus ~/.cachly/server, sonst npx.
+// Quelle: sdk/mcp/src/plugin-server-start.ts. Erzeugen: cd sdk/mcp && npm run plugin-hooks:write
+// Aufruf: node cachly-server-start.mjs                 startet den MCP-Server (stdio)
+//         node cachly-server-start.mjs --auffrischen   der Nebenlauf: neue Fassung holen`;
+
 /** Das Buendel als Text. */
-export async function erzeugeBuendel() {
+export async function erzeugeBuendel(einstieg = EINSTIEG, kopf = KOPF) {
   const ergebnis = await build({
-    entryPoints: [EINSTIEG],
+    entryPoints: [einstieg],
     bundle: true,
     format: 'esm',
     platform: 'node',
@@ -63,7 +77,7 @@ export async function erzeugeBuendel() {
     // nicht in Lesefassung im Paket.
     minify: true,
     legalComments: 'none',
-    banner: { js: KOPF },
+    banner: { js: kopf },
     write: false,
   });
   // Zeilenenden festnageln: sonst meldet der Waechter auf Windows eine Abweichung, die keine ist.
@@ -75,6 +89,7 @@ export async function erzeugeDateien() {
   return {
     [`${PLUGIN_HOOK_DIR}/${HOOK_BUENDEL}`]: await erzeugeBuendel(),
     [`${PLUGIN_HOOK_DIR}/hooks.json`]: buildPluginHooksJson(),
+    [`${PLUGIN_HOOK_DIR}/${SERVER_START}`]: await erzeugeBuendel(START_EINSTIEG, START_KOPF),
   };
 }
 

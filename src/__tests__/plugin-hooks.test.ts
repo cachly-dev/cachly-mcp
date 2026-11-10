@@ -358,6 +358,24 @@ describe('Plugin-Lauf — das echte Buendel', () => {
     expect(anfragen).toEqual([]);
   });
 
+  it('nie doppelt: die Repo-Fassung (tools/ambient-recall/*.mjs) zaehlt als Projekt-Hook', async () => {
+    // Genau so steht es am 10.11.2026 im Arbeitsbereich, in dem cachly gebaut wird.
+    schreibeJson(join(heim, '.cachly', 'credentials.json'), { apiKey: 'cky_k', instanceId: instanz });
+    const repo = 'C:/Users/x/cachly/tools/ambient-recall';
+    schreibeJson(join(projekt, '.claude', 'settings.local.json'), {
+      hooks: {
+        SessionStart: [{ hooks: [{ type: 'command', command: `node "${repo}/session-start.mjs"` }] }],
+        UserPromptSubmit: [{ hooks: [{ type: 'command', command: `node "${repo}/user-prompt-submit.mjs"` }] }],
+        Stop: [{ hooks: [{ type: 'command', command: `node "${repo}/stop.mjs"` }] }],
+      },
+    });
+    for (const e of PLUGIN_HOOK_EVENTS) {
+      const r = await lauf(BUENDEL, [e, '--plugin'], prompt(e));
+      expect(r.stdout, `${e}: Plugin lief trotz Repo-Hook`).toBe('');
+    }
+    expect(anfragen).toEqual([]);
+  });
+
   it('je Ereignis: verdrahtet das Projekt nur SessionStart, laeuft UserPromptSubmit aus dem Plugin', async () => {
     schreibeJson(join(heim, '.cachly', 'credentials.json'), { apiKey: 'cky_k', instanceId: instanz });
     schreibeJson(join(projekt, '.claude', 'settings.json'), {

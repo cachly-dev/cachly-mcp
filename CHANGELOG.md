@@ -7,6 +7,32 @@
 
 ---
 
+## [0.10.241] – 2026-11-10 — *"The Claude Code plugin starts its server in under a second."*
+
+**The plugin no longer asks npm on every start.** Until 0.10.238 the `cachly-brain`
+plugin started the server with `npx -y @cachly-dev/mcp-server`. For a package name
+without a version, npx looks up the newest release on every start. Measured on Windows
+until the first answer: 4.4 s on a good start, 14 s and once 34 s on others. The server
+itself needs 0.9 s. Claude Code gives a server 30 s to connect. When several sessions
+started at once, the plugin missed that limit and was gone for the whole session.
+
+Now the plugin runs `hooks/cachly-server-start.mjs`. It loads a ready copy of the server
+from `~/.cachly/server`, without npm and without network: 0.7 s alone, 0.9 to 1.1 s
+with three sessions starting together. A background run checks npm at most once an
+hour. It installs a new release next to the current one and switches over only once
+the install is complete, so the next start uses it. On the very first start there is no
+copy yet: the plugin starts through npx as before, and the background run prepares the
+copy. If the copy fails to load, the plugin falls back to npx.
+
+**No double hooks next to the repository hooks.** The plugin's hooks step aside when
+the project already runs the cachly hooks for the same event. That check now also
+recognises the repository version of the hooks (`tools/ambient-recall/*.mjs`). Before,
+a workspace with those hooks would have received every briefing and every recall block
+twice once the plugin brought its own hooks.
+
+**Upgrade:** Update the plugin (`/plugin`, or `claude plugin update cachly-brain@cachly`)
+and restart Claude Code. To keep the old way, set `CACHLY_PLUGIN_NPX=1`.
+
 ## [0.10.238] – 2026-11-10 — *"Health reports name only what the team may see."*
 
 **`brain_doctor` and `brain_hygiene` name only team-wide lessons.** Both tools read every

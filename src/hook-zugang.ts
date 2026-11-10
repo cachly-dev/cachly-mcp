@@ -153,6 +153,20 @@ export function projektHatHook(ereignis: string, u: HookUmfeld): boolean {
     const gruppen = (lies(datei) as { hooks?: Record<string, unknown> } | null)?.hooks?.[ereignis];
     return Array.isArray(gruppen) && gruppen.some((g: { hooks?: unknown }) =>
       Array.isArray(g?.hooks)
-      && g.hooks.some((h: { command?: unknown }) => String(h?.command ?? '').includes(PROJEKT_HOOK_MARKE)));
+      && g.hooks.some((h: { command?: unknown }) => istEinblendungsHook(String(h?.command ?? ''))));
   });
+}
+
+/**
+ * Die Repo-Fassung derselben Hooks: `tools/ambient-recall/*.mjs` im cachly-Repo
+ * (README dort, settings.hooks.example.json). Sie nutzt denselben Kern
+ * (einblendung.ts), traegt aber PROJEKT_HOOK_MARKE nicht im Befehl. Gefunden am
+ * 10.11.2026: ein Arbeitsbereich mit diesen Hooks haette mit dem Plugin ab
+ * 0.10.241 (das erste mit Hooks seit 0.10.138 bei diesem Nutzer) jede
+ * Einblendung, jedes Briefing und jedes Zugende doppelt bekommen.
+ */
+const REPO_HOOK_PFAD = /tools[\\/]+ambient-recall[\\/]+(session-start|user-prompt-submit|stop)\.mjs/;
+
+function istEinblendungsHook(befehl: string): boolean {
+  return befehl.includes(PROJEKT_HOOK_MARKE) || REPO_HOOK_PFAD.test(befehl);
 }
