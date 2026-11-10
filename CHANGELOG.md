@@ -33,6 +33,40 @@ twice once the plugin brought its own hooks.
 **Upgrade:** Update the plugin (`/plugin`, or `claude plugin update cachly-brain@cachly`)
 and restart Claude Code. To keep the old way, set `CACHLY_PLUGIN_NPX=1`.
 
+## [0.10.240] – 2026-11-10 — *"The same question gives the same answer."*
+
+**`smart_recall` returns the same lessons in the same order for the same question when it
+runs in measuring mode** (`CACHLY_RECALL_NUR_LESEN=1`). Two causes made repeated runs
+differ:
+
+- Five sort steps had no fixed tie-breaker. When two lessons scored the same, the order in
+  which the store returned its keys decided.
+- The age factor read the clock on every call, so lessons with nearly equal scores could
+  swap places from one day to the next.
+
+Ties are now broken by key or topic. In measuring mode, age is counted from the newest
+timestamp in the store instead of the clock. A new test asks 50 questions twice. It found
+2 of 50 identical answers when the store returned keys in a different order, and 3 of 50
+when the clock moved 40 days between runs. Both cases now give 50 of 50.
+
+Outside measuring mode, age still follows the clock, as intended. The only change you can
+notice there is that equal scores now always come out in the same order.
+
+**Upgrade:** `npx @cachly-dev/mcp-server@latest` picks this up on the next start. If
+you run a pinned install, update it and restart your editor.
+
+## [0.10.239] – 2026-11-10 — *"The health check says whether every lesson can be found by name."*
+
+**`brain_doctor` reports topic-name coverage.** A new line shows how many embedded lessons
+carry a topic-name vector, for example
+`✅ Topic-name coverage: 100% — all 42 embedded lessons carry a topic-name vector`. When
+some are missing, it says how many are queued and healed on the next write or recall,
+and how many older ones are not queued and are not healed automatically. Before, gaps from
+before 0.10.214 were not visible anywhere.
+
+**Upgrade:** `npx @cachly-dev/mcp-server@latest` picks this up on the next start. If
+you run a pinned install, update it and restart your editor.
+
 ## [0.10.238] – 2026-11-10 — *"Health reports name only what the team may see."*
 
 **`brain_doctor` and `brain_hygiene` name only team-wide lessons.** Both tools read every
