@@ -7,6 +7,21 @@
 
 ---
 
+## [0.10.238] – 2026-11-10 — *"Health reports name only what the team may see."*
+
+**`brain_doctor` and `brain_hygiene` name only team-wide lessons.** Both tools read every
+stored lesson, because counting and maintenance need the whole store. Until 0.10.237
+their lists (open failures, stale and aging lessons, provisional, archived, resolved
+contradictions) also printed the topic names of lessons marked `private` or scoped to a
+group. A name alone tells others such a lesson exists. The lists now name only lessons
+the whole team may see and add a count instead, for example
+`3 unresolved failures: deploy:api, 2 private or group-only, not named`. Totals and
+maintenance still cover every lesson; a private lesson keeps its visibility when
+`brain_hygiene` archives it.
+
+**Upgrade:** `npx @cachly-dev/mcp-server@latest` picks this up on the next start. If
+you run a pinned install, update it and restart your editor.
+
 ## [0.10.237] – 2026-11-10 — *"Team tools show what the whole team may see."*
 
 **Four team tools now respect lesson visibility.** Until 0.10.236, `team_recall`,
