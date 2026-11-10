@@ -7,6 +7,27 @@
 
 ---
 
+## [0.10.242] – 2026-11-10 — *"Old gaps in topic-name vectors heal by themselves."*
+
+**Lessons without a topic-name vector are now found and filled in.** Since 0.10.239
+`brain_doctor` shows the line "Topic-name coverage". It separates gaps that are queued
+(healed on the next write or recall) from older gaps with no queue entry, left over from
+before 0.10.214. Nothing filled the older ones. Now every recall and every write also
+looks for lessons that have a full-text vector but no topic-name vector, queues up to
+2 per recall (3 per write), and heals them through the existing backfill. It reads only
+key names, never the vectors. The list of gaps is kept in memory per connection, and an
+empty list is searched again at most every 5 minutes. There is no bulk run at start.
+Topics without any name text (only separators) are never queued.
+
+**Cost:** at most 2 extra embedding calls per recall and 3 per write, the same limit as
+the existing backfill. A store with 200 old gaps is complete after about 100 recalls.
+
+**Not solved:** the second-model vector for old lessons keeps its own path
+(`heileZweitVektoren`).
+
+**Upgrade:** `npx -y @cachly-dev/mcp-server@latest`. No setting needed. The
+"older ones not queued" part of the `brain_doctor` line shrinks with each recall.
+
 ## [0.10.241] – 2026-11-10 — *"The Claude Code plugin starts its server in under a second."*
 
 **The plugin no longer asks npm on every start.** Until 0.10.238 the `cachly-brain`

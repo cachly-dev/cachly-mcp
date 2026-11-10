@@ -22,7 +22,7 @@ import { handleTeamTool } from '../handlers/team.js';
 import { computeEmbedding } from '../embeddings.js';
 import {
   NAME_VEKTOR_NACHTRAG, ZWEIT_VEKTOR_NACHTRAG, NAME_VEKTOR_PRAEFIX, ZWEIT_VEKTOR_PRAEFIX,
-  VEKTOR_PRAEFIX, textFuerNamensVektor,
+  VEKTOR_PRAEFIX, textFuerNamensVektor, packe,
 } from '../bedeutung.js';
 import type { Redis } from 'ioredis';
 import { MockRedis } from './redis-mock.js';
@@ -159,5 +159,51 @@ describe('Nachtrag fuer Namens- und Zweit-Vektoren', () => {
     await ausstehen();
     expect(await redis.smembers(NAME_VEKTOR_NACHTRAG)).not.toContain('deploy:weg');
     expect(await redis.get(`${NAME_VEKTOR_PRAEFIX}deploy:weg`)).toBeNull();
+  });
+
+  // 0.10.242: Luecken OHNE Vermerk (Bestand von vor 0.10.214) werden erkannt,
+  // vorgemerkt und gedrosselt geheilt. GEGENPROBE: ohne vermerkeNamensLuecken
+  // in brain.ts bleibt jede Probe hier rot.
+  async function altbestand(n: number): Promise<string[]> {
+    const themen = Array.from({ length: n }, (_, i) => `alt:thema-${i}`);
+    for (const t of themen) {
+      await redis.set(`cachly:lesson:best:${t}`, JSON.stringify({ topic: t, outcome: 'success', what_worked: `Weg ${t}` }));
+      await redis.set(`${VEKTOR_PRAEFIX}${t}`, packe([0.3, 0.2, 0.1]));
+    }
+    return themen;
+  }
+  const rufe = () => handleBrainTool('smart_recall', { instance_id: 'i1', query: 'Weg' }, getConn, noopApiFetch);
+  const namenEmbeds = (themen: string[]) =>
+    embedMock.mock.calls.filter(([text, o]) => !(o as { modell?: string } | undefined)?.modell
+      && themen.some((t) => text === textFuerNamensVektor(t))).length;
+
+  it('Altlücken ohne Vermerk werden nach einigen Abrufen geheilt, je Abruf hoechstens 2 Namens-Einbettungen', async () => {
+    scheitertBei(() => false);
+    const themen = await altbestand(7);
+    let letzter = 0;
+    for (let n = 1; n <= 5; n++) {
+      await rufe();
+      await ausstehen();
+      const gesamt = namenEmbeds(themen);
+      expect(gesamt - letzter).toBeLessThanOrEqual(2);
+      letzter = gesamt;
+    }
+    for (const t of themen) {
+      expect(await redis.get(`${NAME_VEKTOR_PRAEFIX}${t}`)).not.toBeNull();
+    }
+    expect(await redis.smembers(NAME_VEKTOR_NACHTRAG)).toEqual([]);
+    expect(letzter).toBe(7);
+    const doc = String(await handleTeamTool('brain_doctor', { instance_id: 'i1' }, getConn, noopApiFetch));
+    expect(doc).toContain('Topic-name coverage: 100%');
+  });
+
+  it('ein Thema ohne Namenstext wird nie vorgemerkt', async () => {
+    scheitertBei(() => false);
+    await altbestand(1);
+    await redis.set('cachly:lesson:best:--', JSON.stringify({ topic: '--', outcome: 'success', what_worked: 'x' }));
+    await redis.set(`${VEKTOR_PRAEFIX}--`, packe([0.3, 0.2, 0.1]));
+    for (let n = 0; n < 3; n++) { await rufe(); await ausstehen(); }
+    expect(await redis.smembers(NAME_VEKTOR_NACHTRAG)).not.toContain('--');
+    expect(leerEingebettet()).toEqual([]);
   });
 });

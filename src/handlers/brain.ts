@@ -6677,6 +6677,7 @@ async function heileVektorNachtrag(redis: Redis, ausnahmeTopic: string | undefin
     // Suche eine Einbettung mit 0 Zeichen an die API (Ablehnung, Vermerk blieb,
     // brain_doctor meldete die Luecke fuer immer). Anlass: eine Lektion mit
     // topic "" aus der Zeit vor 0.10.226, die leere Themen noch annahm.
+    await vermerkeNamensLuecken(redis, max);
     await heileNachtragsart(redis, NAME_VEKTOR_NACHTRAG, NAME_VEKTOR_PRAEFIX, ausnahmeTopic, max,
       (t) => {
         const namensText = textFuerNamensVektor(t);
@@ -6687,6 +6688,47 @@ async function heileVektorNachtrag(redis: Redis, ausnahmeTopic: string | undefin
         (_t, gel) => computeEmbedding(textFuerVektor(gel), { geduld: 'lang', modell: ZWEIT_MODELL }));
     }
   } catch { /* der Nachtrag stoert nie */ }
+}
+
+/**
+ * Luecken im Namens-Vektor ERKENNEN und vormerken (0.10.242).
+ *
+ * Lektionen aus der Zeit vor 0.10.214 haben einen Volltext-Vektor, aber
+ * keinen Namens-Vektor und keinen Vermerk; brain_doctor zaehlt sie, aber
+ * nichts holte sie nach. Hier werden sie vorgemerkt, hoechstens `max` je
+ * Aufruf. Danach arbeitet heileNachtragsart sie wie jeden Vermerk ab -
+ * ebenfalls hoechstens `max` Einbettungen je Aufruf. Es gibt keine
+ * Sammelaktion: der Bestand wird in Schluesselnamen gelesen (ohne Vektoren
+ * zu laden) und die Liste der Luecken je Verbindung im Speicher gehalten.
+ * Ist sie leer, wird hoechstens alle 5 Minuten neu gesucht.
+ * Themen ohne Namenstext (nur Trennzeichen) werden nie vorgemerkt.
+ */
+const NAMENS_SUCHPAUSE_MS = 5 * 60_000;
+const namensLuecken = new WeakMap<object, { liste: string[]; geprueft: number }>();
+
+async function vermerkeNamensLuecken(redis: Redis, max: number): Promise<void> {
+  const stand = namensLuecken.get(redis) ?? { liste: [], geprueft: 0 };
+  namensLuecken.set(redis, stand);
+  if (stand.liste.length === 0) {
+    if (Date.now() - stand.geprueft < NAMENS_SUCHPAUSE_MS) return;
+    stand.geprueft = Date.now();
+    const sammle = async (praefix: string): Promise<Set<string>> => {
+      const menge = new Set<string>();
+      let cursor = '0';
+      do {
+        const [next, gefunden] = await redis.scan(cursor, 'MATCH', `${praefix}*`, 'COUNT', 500);
+        cursor = next;
+        for (const k of gefunden) menge.add(k.slice(praefix.length));
+      } while (cursor !== '0');
+      return menge;
+    };
+    const mitVolltext = await sammle(VEKTOR_PRAEFIX);
+    const mitName = await sammle(NAME_VEKTOR_PRAEFIX);
+    stand.liste = [...mitVolltext].filter((t) => !mitName.has(t) && textFuerNamensVektor(t));
+  }
+  for (const t of stand.liste.splice(0, max)) {
+    await redis.sadd(NAME_VEKTOR_NACHTRAG, t).catch(() => { /* still */ });
+  }
 }
 
 /**
