@@ -228,6 +228,37 @@ export function teamweitLesbar<T>(raw: string | null | undefined): T | null {
   return lektion;
 }
 
+/**
+ * Welche Themen darf eine Liste in `brain_doctor` / `brain_hygiene` beim
+ * Namen nennen?
+ *
+ * ── Karte pguy341m6u7s, vierter Teil (10.11.2026) ─────────────────────────
+ *
+ * Beide Werkzeuge muessen JEDE Lektion lesen: Zaehlen und Pflegen geht nur
+ * ueber den ganzen Bestand. Sie nannten dabei aber Themen beim Namen —
+ * offene Fehlschlaege, veraltete, vorlaeufige, archivierte —, private und
+ * gruppen-beschraenkte eingeschlossen. `recall_best_solution` verschweigt
+ * sogar, OB es eine solche Lektion gibt (Absage wortgleich mit "not found");
+ * ein Name in dieser Liste hob das wieder auf.
+ *
+ * Deshalb: zaehlen ja, nennen nur, was `teamweitLesbar` ist. `davonVerborgen`
+ * sagt, wie viele der Liste nicht genannt werden — die Zahl steht ohnehin in
+ * der Gesamtzaehlung, ein fehlender Name ohne Erklaerung wuerde nur verwirren.
+ */
+export function teamweiteNamen(
+  themen: readonly string[],
+  nichtTeamweit: ReadonlySet<string>,
+  hoechstens: number,
+): { namen: string[]; rest: number; davonVerborgen: number } {
+  const nennbar = themen.filter((t) => !nichtTeamweit.has(t));
+  const namen = nennbar.slice(0, hoechstens);
+  return {
+    namen,
+    rest: themen.length - namen.length,
+    davonVerborgen: themen.length - nennbar.length,
+  };
+}
+
 export async function handleTeamTool(
   name: string,
   args: Record<string, unknown>,
@@ -898,13 +929,24 @@ export async function handleTeamTool(
         verified_at?: string; severity?: string; audit_trail?: unknown[];
       };
       const lessons: DrLesson[] = [];
+      // Gezaehlt wird alles, genannt nur, was das ganze Team sehen darf (teamweiteNamen).
+      const nichtTeamweit = new Set<string>();
       if (lessonKeys.length > 0) {
         const raws = await redis.mget(...lessonKeys);
         for (const raw of raws) {
           const l = safeJsonParse<DrLesson | null>(raw ?? null, null);
-          if (l) lessons.push(l);
+          if (l) {
+            lessons.push(l);
+            if (!teamweitLesbar(raw)) nichtTeamweit.add(l.topic);
+          }
         }
       }
+      const nenne = (liste: DrLesson[]): string => {
+        const { namen, davonVerborgen } = teamweiteNamen(liste.map((l) => l.topic), nichtTeamweit, 3);
+        const teile = namen.map((t) => `\`${t}\``);
+        if (davonVerborgen > 0) teile.push(`${davonVerborgen} private or group-only, not named`);
+        return teile.join(', ');
+      };
 
       // Last session
       const lastSessionRaw = await redis.get('cachly:session:last');
@@ -1193,16 +1235,16 @@ export async function handleTeamTool(
       }
 
       if (openFailures.length > 0) {
-        issues.push(`⚠️ ${openFailures.length} unresolved failure${openFailures.length > 1 ? 's' : ''}: ${openFailures.slice(0, 3).map(l => `\`${l.topic}\``).join(', ')}`);
+        issues.push(`⚠️ ${openFailures.length} unresolved failure${openFailures.length > 1 ? 's' : ''}: ${nenne(openFailures)}`);
       }
 
       if (staleLessons.length > 0) {
-        issues.push(`🔴 ${staleLessons.length} STALE lesson${staleLessons.length > 1 ? 's' : ''} (>${CONFIDENCE_STALE_DAYS}d, confidence <${CONFIDENCE_STALE_VALUE * 100}%): ${staleLessons.slice(0, 3).map(l => `\`${l.topic}\``).join(', ')}`);
+        issues.push(`🔴 ${staleLessons.length} STALE lesson${staleLessons.length > 1 ? 's' : ''} (>${CONFIDENCE_STALE_DAYS}d, confidence <${CONFIDENCE_STALE_VALUE * 100}%): ${nenne(staleLessons)}`);
         issues.push(`   → Re-verify with \`recall_best_solution\` to reset confidence clock`);
       }
 
       if (warnLessons.length > 0) {
-        issues.push(`⚠️ ${warnLessons.length} lesson${warnLessons.length > 1 ? 's' : ''} aging (>${CONFIDENCE_WARN_DAYS}d): ${warnLessons.slice(0, 3).map(l => `\`${l.topic}\``).join(', ')}`);
+        issues.push(`⚠️ ${warnLessons.length} lesson${warnLessons.length > 1 ? 's' : ''} aging (>${CONFIDENCE_WARN_DAYS}d): ${nenne(warnLessons)}`);
       }
 
       if (unusedRatio > 0.7 && lessons.length > 5) {
@@ -1295,16 +1337,21 @@ export async function handleTeamTool(
 
       const rawValues = await redis.mget(...lessonKeys);
       const lessons: (HygieneLesson & { _key: string })[] = [];
+      // Gepflegt wird alles, genannt nur, was das ganze Team sehen darf (teamweiteNamen).
+      const nichtTeamweit = new Set<string>();
       for (let i = 0; i < lessonKeys.length; i++) {
         const raw = rawValues[i];
         const l = safeJsonParse<HygieneLesson | null>(raw ?? null, null);
-        if (l) lessons.push({ ...l, _key: lessonKeys[i] });
+        if (l) {
+          lessons.push({ ...l, _key: lessonKeys[i] });
+          if (!teamweitLesbar(raw)) nichtTeamweit.add(l.topic);
+        }
       }
 
       const nowMs = Date.now();
       const provisionalKeys: string[] = [];
       const archivedKeys: string[] = [];
-      const conflictResolutions: string[] = [];
+      const conflictResolutions: { topic: string; text: string }[] = [];
       const updates = new Map<string, HygieneLesson>(); // key → updated lesson
 
       // ── Rule 1 + 2: decay flagging + archival ─────────────────────────────
@@ -1374,7 +1421,10 @@ export async function handleTeamTool(
         const provIdx = provisionalKeys.indexOf(lesson.topic);
         if (provIdx !== -1) provisionalKeys.splice(provIdx, 1);
 
-        conflictResolutions.push(`${lesson.topic} (failure, never recalled, ${Math.round(ageDays)}d old)`);
+        conflictResolutions.push({
+          topic: lesson.topic,
+          text: `${lesson.topic} (failure, never recalled, ${Math.round(ageDays)}d old)`,
+        });
         if (!dry_run) {
           const base = updates.get(lesson._key) ?? lesson;
           const updated: HygieneLesson = {
@@ -1477,21 +1527,29 @@ export async function handleTeamTool(
         );
       }
 
+      // Nennt hoechstens `max` Themen, die das ganze Team sehen darf; der Rest wird gezaehlt.
+      const liste = (themen: string[], max: number, zeile: (thema: string) => string) => {
+        const { namen, rest, davonVerborgen } = teamweiteNamen(themen, nichtTeamweit, max);
+        namen.forEach((t) => lines.push(`  - ${zeile(t)}`));
+        if (rest > 0) {
+          const hinweis = davonVerborgen > 0 ? ` (${davonVerborgen} of them private or group-only, not named)` : '';
+          lines.push(`  - _…and ${rest} more${hinweis}_`);
+        }
+      };
       if (provisionalKeys.length > 0) {
         lines.push(`**⚠️ Provisional (verify or re-learn):**`);
-        provisionalKeys.slice(0, 10).forEach(t => lines.push(`  - \`${t}\``));
-        if (provisionalKeys.length > 10) lines.push(`  - _…and ${provisionalKeys.length - 10} more_`);
+        liste(provisionalKeys, 10, (t) => `\`${t}\``);
         lines.push('');
       }
       if (archivedKeys.length > 0) {
         lines.push(`**📦 Archived (excluded from recall):**`);
-        archivedKeys.slice(0, 5).forEach(t => lines.push(`  - \`${t}\``));
-        if (archivedKeys.length > 5) lines.push(`  - _…and ${archivedKeys.length - 5} more_`);
+        liste(archivedKeys, 5, (t) => `\`${t}\``);
         lines.push('');
       }
       if (conflictResolutions.length > 0) {
         lines.push(`**⚔️ Contradictions resolved (failure archived, success kept):**`);
-        conflictResolutions.slice(0, 5).forEach(r => lines.push(`  - ${r}`));
+        const grund = new Map(conflictResolutions.map((r) => [r.topic, r.text]));
+        liste(conflictResolutions.map((r) => r.topic), 5, (t) => grund.get(t) ?? `\`${t}\``);
         lines.push('');
       }
 
