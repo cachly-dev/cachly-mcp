@@ -29,6 +29,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { HOOK_BUENDEL, PLUGIN_HOOK_DIR } from '../ambient-hooks.js';
+import { grenzeNachLeerlauf } from './helfer/startgrenze.js';
 import { bestandPfad } from '../einblendung.js';
 import { STARTER_CORPUS } from '../starter-corpus.js';
 
@@ -185,6 +186,13 @@ const sitzungsStart = (extra: Record<string, string> = {}) => {
   return lauf('SessionStart', { source: 'startup' }, extra);
 };
 const prompt = (extra: Record<string, string> = {}) => lauf('UserPromptSubmit', { prompt: FRAGE }, extra);
+/** Leerlauf desselben Buendels: Prompt ohne Schluessel (leeres Heim), keine Ausgabe, keine Anfrage. */
+const leerlauf = async (): Promise<number> => {
+  const leer = join(tmp, 'leer-heim');
+  const r = await lauf('UserPromptSubmit', { prompt: FRAGE }, { HOME: leer, USERPROFILE: leer });
+  expect(r.stdout, 'Leerlauf ohne Ausgabe').toBe('');
+  return r.ms;
+};
 const sofortTests = () => g.anfragen.filter((a) => a.pfad === '/auth/instant-trial');
 const credentials = () => join(heim, '.cachly', 'credentials.json');
 const auftrag = () => join(heim, '.cachly', 'startwissen-auftrag.json');
@@ -211,6 +219,7 @@ function gitProjekt(betreffs: string[]): void {
 
 describe('SessionStart legt das Konto an — ohne dass ein Werkzeug gerufen wird', () => {
   it('ohne Schluessel: genau ein Konto, Schluessel + Instanz abgelegt, Hinweis fuer den Assistenten, schnell', async () => {
+    const leer = await leerlauf();
     const r = await sitzungsStart();
 
     expect(r.status).toBe(0);
@@ -228,8 +237,9 @@ describe('SessionStart legt das Konto an — ohne dass ein Werkzeug gerufen wird
     expect(kontext.match(/test Brain was created/g)?.length).toBe(1);
     expect(JSON.parse(r.stdout).hookSpecificOutput.hookEventName).toBe('SessionStart');
 
-    // Der Hook hat das Zeitbudget nicht angerührt: Sofort-Test + Bestand in unter 5 s.
-    expect(r.ms, `${r.ms} ms`).toBeLessThan(5000);
+    // Der Hook hat das Zeitbudget nicht angerührt: Sofort-Test + Bestand in unter 4 s
+    // ueber dem Leerlauf (die Konto-Frist liegt bei 5 s).
+    expect(r.ms, `${r.ms} ms, Leerlauf ${leer} ms`).toBeLessThan(grenzeNachLeerlauf(leer, 4000, 5000));
 
     // Der Start-Import laeuft in einem Nebenlauf des Hooks (seit 14.10.): der
     // Projektordner hat kein Git, also kommt der Startvorrat ueber /learn. Danach
@@ -316,15 +326,16 @@ describe('SessionStart legt das Konto an — ohne dass ein Werkzeug gerufen wird
 
   it('haengende Gegenstelle: der Hook endet nach hoechstens ~5 s Kontoarbeit, still, Exit 0', async () => {
     g.sofortTest = 'haengt';
+    const leer = await leerlauf();
     const r = await sitzungsStart();
 
     expect(r.status).toBe(0);
     expect(r.stdout).toBe('');
     // Frist fuer das Konto: 5 s. Dazu Start des Prozesses; weit unter den 30 s des Hooks.
-    expect(r.ms, `${r.ms} ms`).toBeLessThan(8000);
+    expect(r.ms, `${r.ms} ms, Leerlauf ${leer} ms`).toBeLessThan(grenzeNachLeerlauf(leer, 7000, 8000));
     expect(r.ms, `${r.ms} ms`).toBeGreaterThan(4500);
     expect(existsSync(join(heim, '.cachly', 'anlegen.lock'))).toBe(false);
-  }, 20_000);
+  }, 30_000);
 });
 
 describe('Der erste Prompt nach der Installation', () => {
@@ -335,6 +346,7 @@ describe('Der erste Prompt nach der Installation', () => {
       'Add project skeleton',
       'Fix deploy connection refused on node-1: fail2ban banned the deploy channel, ignoreip 10.8.0.0/24',
     ]);
+    const leer = await leerlauf();
     const start = Date.now();
     await sitzungsStart();
     const a = await warteAufAuftrag();
@@ -345,7 +357,7 @@ describe('Der erste Prompt nach der Installation', () => {
     expect(g.gelernt.map((l) => l.source)).toEqual(['brain_from_git', 'brain_from_git']);
     expect(g.gelernt.every((l) => (l.tags as string[]).includes('brain_from_git'))).toBe(true);
     // Konto, Import und Bestand in wenigen Sekunden statt ~58 s.
-    expect(dauer, `${dauer} ms`).toBeLessThan(10_000);
+    expect(dauer, `${dauer} ms, Leerlauf ${leer} ms`).toBeLessThan(grenzeNachLeerlauf(leer, 9000, 10_000));
 
     // Der Nebenlauf hat den Bestand auf der Platte schon neu geschrieben: der
     // erste Prompt liest ihn dort und blendet ein.
@@ -371,9 +383,11 @@ describe('Der erste Prompt nach der Installation', () => {
     // Der Nebenlauf legt die selbst gebauten Lektionen sofort auf die Platte.
     const bestand = bestandPfad(g.instanz);
     const anzahl = () => { try { return JSON.parse(readFileSync(bestand, 'utf8')).lessons.length as number; } catch { return 0; } };
-    while (anzahl() === 0 && Date.now() - start < 5000) await new Promise((r) => setTimeout(r, 50));
+    // Nur Warten, keine Tempo-Aussage: unter CI-Last braucht schon der Start des Nebenlaufs Sekunden.
+    while (anzahl() === 0 && Date.now() - start < 10_000) await new Promise((r) => setTimeout(r, 50));
     expect(anzahl()).toBe(2);
 
+    const leer = await leerlauf();
     const r = await prompt();
     expect(r.status).toBe(0);
     expect(JSON.parse(r.stdout).hookSpecificOutput.additionalContext).toContain('fail2ban');
@@ -381,7 +395,7 @@ describe('Der erste Prompt nach der Installation', () => {
     // warten (live 14.10.: 11 s). Bis 04.11. lief die Uhr ab SessionStart und
     // zaehlte zwei Prozessstarts plus Kontoanlage mit; unter CI-Last waren das
     // 5.784 ms, ohne dass der Prompt-Hook gewartet haette.
-    expect(r.ms, `${r.ms} ms`).toBeLessThan(5000);
+    expect(r.ms, `${r.ms} ms, Leerlauf ${leer} ms`).toBeLessThan(grenzeNachLeerlauf(leer, 4000, 5000));
     expect(g.gelernt, 'die Instanz laeuft noch nicht').toEqual([]);
 
     // Die Instanz laeuft: der Import geht durch, der Server bekommt vomHook.

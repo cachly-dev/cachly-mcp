@@ -40,6 +40,7 @@ import {
 import { bestandPfad } from '../einblendung.js';
 import { stopLernanfrage, stopObservation } from '../ambient-cli.js';
 import { ckgSlug, extractProblemConcept } from '../ckg.js';
+import { grenzeNachLeerlauf } from './helfer/startgrenze.js';
 
 const SDK = resolve(__dirname, '..', '..');
 const REPO = resolve(SDK, '..', '..');
@@ -289,11 +290,15 @@ const prompt = (e = 'UserPromptSubmit') => ({ hook_event_name: e, prompt: FRAGE,
 
 describe('Plugin-Lauf — das echte Buendel', () => {
   it('ohne Schluessel: Exit 0, keine Ausgabe — und schnell; nur SessionStart fragt (den Sofort-Test, hier abgelehnt)', async () => {
+    // Leerlauf: der Prompt ohne Schluessel tut nichts (helfer/startgrenze.ts).
+    const leer = await lauf(BUENDEL, ['UserPromptSubmit', '--plugin'], prompt());
+    expect(leer.stdout).toBe('');
+    const grenze = grenzeNachLeerlauf(leer.ms, 4000, 5000);
     for (const e of PLUGIN_HOOK_EVENTS) {
       const r = await lauf(BUENDEL, [e, '--plugin'], prompt(e));
       expect(r.status, e).toBe(0);
       expect(r.stdout, e).toBe('');
-      expect(r.ms, `${e}: ${r.ms} ms`).toBeLessThan(5000);
+      expect(r.ms, `${e}: ${r.ms} ms, Leerlauf ${leer.ms} ms`).toBeLessThan(grenze);
     }
     // Seit dem 12.10.2026 legt SessionStart das Konto an (erster-prompt.test.ts).
     // Die Gegenstelle dieses Tests lehnt ab; sonst fragt kein Ereignis etwas.

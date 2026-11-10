@@ -45,6 +45,7 @@ import {
 } from '../ambient-hooks.js';
 import { hookAntwort } from '../ambient-hook.js';
 import { hookUmfeld } from '../hook-zugang.js';
+import { grenzeNachLeerlauf } from './helfer/startgrenze.js';
 
 const SDK = resolve(__dirname, '..', '..');
 const BUENDEL = join(SDK, PLUGIN_HOOK_DIR, HOOK_BUENDEL);
@@ -385,14 +386,10 @@ describe('Cursor-Lauf — das echte Buendel mit Cursor-Beispiel-Eingaben', () =>
   it('ohne Schluessel: Exit 0, gueltiges JSON nach Cursors Schema, keine Anfrage, schnell', async () => {
     const erwartet: Record<string, unknown> = { sessionStart: {}, beforeSubmitPrompt: { continue: true }, postToolUse: {} };
     const nutzlast: Record<string, object> = { sessionStart: sitzung(), beforeSubmitPrompt: vorPrompt(), postToolUse: nachWerkzeug() };
-    // Leerlauf zum Vergleich: postToolUse ohne Schluessel liest nur die Ablage.
-    // Fest 5000 ms fiel unter Last durch (10.11.2026: beforeSubmitPrompt 5564 ms bei
-    // Last 74 auf 12 Kernen); gemessen war der Start des Buendels, nicht der Hook.
-    // Darum waechst die Grenze mit dem Leerlauf. 4 s darueber fangen weiter jedes
-    // Warten auf eine Netz-Frist (ABRUF_TIMEOUT_MS, 8 s).
+    // Leerlauf: postToolUse ohne Schluessel liest nur die Ablage (helfer/startgrenze.ts).
     const leer = await lauf(BUENDEL, ['postToolUse', '--cursor'], nachWerkzeug());
     expect(JSON.parse(leer.stdout)).toEqual({});
-    const grenze = Math.max(5000, leer.ms + 4000);
+    const grenze = grenzeNachLeerlauf(leer.ms, 4000, 5000);
     for (const e of CURSOR_HOOK_EVENTS) {
       const r = await lauf(BUENDEL, [e, '--cursor'], nutzlast[e]);
       expect(r.status, e).toBe(0);
