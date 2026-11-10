@@ -229,17 +229,39 @@ describe('lange Eingaben', () => {
   // zufaellig durch (09.11.2026: 2,68 s). Darum wird die Laufzeit bei vierfacher
   // Eingabe mit der bei einfacher verglichen. Linear gibt etwa 4, quadratisch 16;
   // die Grenze 10 liegt dazwischen. Beide Eingaben bleiben unter MAX_PRUEFLAENGE,
-  // denn darueber wird ohnehin gekappt (Test unten). Je Messung zaehlt der beste
-  // von fuenf Laeufen nach einem Aufwaermlauf, damit ein einzelner Ausreisser
-  // durch fremde Last nichts verfaelscht; fehlerverdeckend ist das nicht, weil ein
-  // echtes Aufwachsen in jedem Lauf auftritt.
-  const beste = (text: string): number => {
-    pruefeVerdacht(text);
+  // denn darueber wird ohnehin gekappt (Test unten).
+  // Gemessen wird die Rechenzeit des Prozesses (process.cpuUsage), nicht die Wanduhr.
+  // Befund 10.11.2026 bei Last 74 auf 12 Kernen: Wanduhr 2,0 ms -> 26,8 ms, also
+  // Verhaeltnis 13,4 ohne jedes Aufwachsen. Ein kurzer Lauf passt in einen
+  // Zeitschlitz des Rechenkerns, ein laengerer wird unterbrochen und wartet auf
+  // fremde Prozesse. "Bester von fuenf" half dagegen nicht, weil jeder laengere
+  // Lauf wartet. Rechenzeit zaehlt das Warten nicht mit.
+  // Einzelne Ausreisser gibt es auch in der Rechenzeit (Speicherbereinigung,
+  // Uebersetzen in Maschinencode). Befund PR #1015 auf node-4: 1,72 ms -> 80,74 ms
+  // im Mittel ueber zwei Laeufe, die drei anderen Faelle im selben Lauf bei Faktor 4;
+  // in Linux-Containern mit Node 22 und 24 nicht nachstellbar (Faktor 3,6 bis 4,3).
+  // Darum: 20 ms aufwaermen, dann fuenf Runden zu mindestens 50 ms Rechenzeit, und
+  // die schnellste Runde zaehlt. Ein Ausreisser trifft nur eine Runde; ein echtes
+  // Aufwachsen steckt in jeder. 50 ms je Runde, weil Windows die Rechenzeit nur in
+  // 15,6-ms-Schritten zaehlt. Nach 1 s ist Schluss, damit ein echter Rueckfall
+  // rot wird statt an der Testfrist zu haengen.
+  const seit = (start: NodeJS.CpuUsage): number => {
+    const d = process.cpuUsage(start);
+    return (d.user + d.system) / 1000;
+  };
+  const rechenzeit = (text: string): number => {
+    let start = process.cpuUsage();
+    while (seit(start) < 20) pruefeVerdacht(text);
+    const gesamt = process.cpuUsage();
     let best = Infinity;
-    for (let i = 0; i < 5; i++) {
-      const t0 = performance.now();
-      pruefeVerdacht(text);
-      best = Math.min(best, performance.now() - t0);
+    for (let runde = 0; runde < 5 && seit(gesamt) < 1_000; runde++) {
+      start = process.cpuUsage();
+      let laeufe = 0;
+      do {
+        pruefeVerdacht(text);
+        laeufe++;
+      } while (seit(start) < 50);
+      best = Math.min(best, seit(start) / laeufe);
     }
     return best;
   };
@@ -252,10 +274,9 @@ describe('lange Eingaben', () => {
     const klein = bau(1);
     const gross = bau(4);
     expect(gross.length).toBeLessThanOrEqual(MAX_PRUEFLAENGE);
-    // Untergrenze 2 ms: unter einer Millisekunde misst die Uhr nur Rauschen.
-    const tKlein = Math.max(beste(klein), 2);
-    const tGross = beste(gross);
-    expect(tGross / tKlein, `${tKlein.toFixed(1)} ms -> ${tGross.toFixed(1)} ms`).toBeLessThan(10);
+    const tKlein = rechenzeit(klein);
+    const tGross = rechenzeit(gross);
+    expect(tGross / tKlein, `${tKlein.toFixed(2)} ms -> ${tGross.toFixed(2)} ms Rechenzeit`).toBeLessThan(10);
   });
 });
 
