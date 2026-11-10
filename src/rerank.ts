@@ -186,6 +186,6 @@ export function rerankByQuality(matches: KeywordMatch[]): RerankedMatch[] {
     return { ...m, finalScore, qualityBoost: boost };
   });
 
-  reranked.sort((a, b) => (b.finalScore - a.finalScore) || (b.score - a.score));
+  reranked.sort((a, b) => (b.finalScore - a.finalScore) || (b.score - a.score) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   return reranked;
 }

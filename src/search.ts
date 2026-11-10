@@ -1716,9 +1716,9 @@ function extractTimestamp(content: string): number | undefined {
  * Ein Fehler, der erst ab einer gewissen Menge auftritt, ist auf einem kleinen
  * Pruefstand unsichtbar. Nicht schwer zu finden. Unsichtbar.
  */
-function recencyBoost(timestampMs: number | undefined): number {
+function recencyBoost(timestampMs: number | undefined, jetzt: number = Date.now()): number {
   if (!timestampMs) return 1.0;
-  const ageDays = (Date.now() - timestampMs) / (1000 * 60 * 60 * 24);
+  const ageDays = (jetzt - timestampMs) / (1000 * 60 * 60 * 24);
   const frisch = ageDays <= 0 ? 1 : Math.pow(0.5, ageDays / RECENCY_HALF_LIFE_DAYS);
   return 1 - RECENCY_SPANNE + 2 * RECENCY_SPANNE * frisch;
 }
@@ -2047,6 +2047,15 @@ function keywordSearchMitBestand(
   const { docs, avgDL, docFreq } = bestand;
   const N = docs.length;
 
+  // Bezugszeitpunkt fuer das Alter. Im Produkt ist es die Uhr. Im Messmodus
+  // (CACHLY_RECALL_NUR_LESEN=1) ist es der juengste Zeitstempel im Bestand:
+  // die Uhr laeuft zwischen zwei Abrufen weiter, der Faktor aendert sich, und
+  // fast gleiche Punktzahlen rutschen durch das Runden zusammen oder
+  // auseinander. Ein Datenstand gibt jedes Mal denselben Bezug.
+  const bezug = process.env.CACHLY_RECALL_NUR_LESEN === '1'
+    ? docs.reduce((m, d) => (d.timestamp && d.timestamp > m ? d.timestamp : m), 0)
+    : Date.now();
+
   function idf(term: string): number {
     const df = docFreq.get(term) ?? 0;
     return Math.log((N - df + 0.5) / (df + 0.5) + 1);
@@ -2232,7 +2241,7 @@ function keywordSearchMitBestand(
       }
 
       // Recency boost
-      score *= recencyBoost(doc.timestamp);
+      score *= recencyBoost(doc.timestamp, bezug);
 
       if (score > 0) {
         const existing = allMatches.get(doc.key);
@@ -2274,7 +2283,10 @@ function keywordSearchMitBestand(
   }
 
   // ── Step 4: Sort by score, return top-K ──
-  const sorted = [...allMatches.values()].sort((a, b) => b.score - a.score);
+  // Bei gleicher Punktzahl entscheidet der Schluessel, nicht die Lesereihenfolge
+  // des Speichers (gleiche Frage, gleicher Bestand, andere
+  // Treffer, sobald der Wortbestand neu gebaut wurde und SCAN anders lieferte).
+  const sorted = [...allMatches.values()].sort((a, b) => (b.score - a.score) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
   const topResults = sorted.slice(0, topK);
 
   // ── Step 5: Zero-results logging + Did-You-Mean ───────────────────────────

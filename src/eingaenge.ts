@@ -257,7 +257,7 @@ export class Eingangsbestand {
     for (const topic of this.eingaenge.keys()) {
       aus.push({ topic, naehe: this.besteNaehe(frage, topic) });
     }
-    aus.sort((a, b) => b.naehe - a.naehe);
+    aus.sort((a, b) => (b.naehe - a.naehe) || (a.topic < b.topic ? -1 : a.topic > b.topic ? 1 : 0));
     return aus.slice(0, anzahl);
   }
 }

@@ -312,7 +312,7 @@ export class Vektorbestand {
     for (const [k, v] of this.vektoren) {
       aus.push({ topic: k.slice(this.praefix.length), naehe: kosinus(frage, v) });
     }
-    aus.sort((a, b) => b.naehe - a.naehe);
+    aus.sort((a, b) => (b.naehe - a.naehe) || (a.topic < b.topic ? -1 : a.topic > b.topic ? 1 : 0));
     return aus.slice(0, anzahl);
   }
 }

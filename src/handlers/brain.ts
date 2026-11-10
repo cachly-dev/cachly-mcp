@@ -2634,7 +2634,7 @@ async function handleBrainToolInner(
             ? alleThemen
             : vektorbestand.aehnlichste(frageVektor, 500).map((x) => x.topic))
             .map((t) => ({ t, n: naeheBesteTuer(t) }))
-            .sort((a, b) => b.n - a.n)
+            .sort((a, b) => (b.n - a.n) || (a.t < b.t ? -1 : a.t > b.t ? 1 : 0))
             .slice(0, SINN_TOPF)
             .map((x) => x.t);
 
