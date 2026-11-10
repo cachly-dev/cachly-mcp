@@ -22,6 +22,9 @@ import type { Redis } from 'ioredis';
 import { wortindexEntwerten } from '../search.js';
 import { MockRedis } from './redis-mock.js';
 
+// 100 Abrufe je Test; auf einem ausgelasteten CI-Lauf reichen 20 s nicht (gemessen: Zeitueberschreitung).
+const ZEITGRENZE = 180_000;
+
 const noopApiFetch = (async () => null) as unknown as Parameters<typeof handleBrainTool>[3];
 
 const AREAS = ['deploy', 'cache', 'login', 'backup', 'queue'];
@@ -102,7 +105,7 @@ describe.each([
       await redis.set(k, JSON.stringify(o));
     }
     wortindexEntwerten();
-  });
+  }, ZEITGRENZE);
   afterAll(() => {
     vi.useRealTimers();
     if (alt === undefined) delete process.env.CACHLY_RECALL_NUR_LESEN; else process.env.CACHLY_RECALL_NUR_LESEN = alt;
@@ -130,7 +133,7 @@ describe.each([
     console.log(`WIEDERHOLBAR [${_name}] (gleiche Reihenfolge): ${gleich} von 50`);
     expect(a.every((x) => x.length > 0)).toBe(true);
     expect(gleich).toBe(50);
-  });
+  }, ZEITGRENZE);
 
   it(`${_name}: 50 Fragen, je zweimal, Lesereihenfolge des Speichers gedreht: alle 50 gleich`, async () => {
     redis.umkehren = false;
@@ -145,5 +148,5 @@ describe.each([
     const gleich = a.filter((x, i) => JSON.stringify(x) === JSON.stringify(b[i])).length;
     console.log(`WIEDERHOLBAR [${_name}] (gedrehte Reihenfolge): ${gleich} von 50`);
     expect(gleich).toBe(50);
-  });
+  }, ZEITGRENZE);
 });
