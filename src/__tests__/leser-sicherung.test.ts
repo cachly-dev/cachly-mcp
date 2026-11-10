@@ -30,12 +30,18 @@ import {
 import { selectRelevantMitLeser, sicherungsPfad, bestandPfad, type EinblendLektion } from '../einblendung.js';
 
 /**
- * Obergrenze fuer "der Leser wurde uebersprungen". Bewiesen werden soll: kein
- * Warten auf die 2.500-ms-Frist. 50 ms rissen unter Last (volle Suite parallel
- * zu Builds, 11.10.2026: einzeln 3 von 3 gruen, in der Suite rot). 500 ms
- * trennen weiter klar von 2.500 ms.
+ * Frist des Aufrufs, der uebersprungen werden muss. Bewiesen werden soll: er
+ * wartet nicht auf die Frist. Die Grenze der Messung ist diese Frist selbst.
+ *
+ * Bis 10.11.2026 lief auch dieser Aufruf mit 30 ms Frist, gemessen gegen eine
+ * feste Grenze von 500 ms. Ein Fehler, der die Frist abwartet, kostete dann nur
+ * 30 ms und blieb gruen (Gegenprobe: Warten vor 'uebersprungen' eingebaut,
+ * 18 von 18 gruen). Rot wurde die Probe nur auf einem ausgelasteten Runner
+ * (831 ms fuer die lokale Ordnung, CI 10.11.2026; davor 11.10.: 50 ms zu knapp).
+ * Mit 10 s Frist liegt "gewartet" bei >= 10.000 ms, "uebersprungen" bei der
+ * Rechenzeit der lokalen Ordnung. Beides kann sich nicht mehr ueberschneiden.
  */
-const UEBERSPRUNGEN_MAX_MS = 500;
+const UEBERSPRUNGEN_FRIST_MS = 10_000;
 import { leserAktiv, leserPunkte, leserSperreLoeschen } from '../leser.js';
 import { embedConfig } from '../embeddings.js';
 
@@ -182,24 +188,24 @@ afterAll(() => {
 });
 
 /** Ein Prompt durch den Hook-Kern, wie ein Prozess je Prompt ihn faehrt. */
-async function prompt(c: ReturnType<typeof cfg>, fetchFn: typeof fetch) {
+async function prompt(c: ReturnType<typeof cfg>, fetchFn: typeof fetch, zeitlimitMs = 30) {
   const start = performance.now();
-  const a = await selectRelevantMitLeser(FRAGE, BESTAND, c, { zeitlimitMs: 30, fetchFn });
+  const a = await selectRelevantMitLeser(FRAGE, BESTAND, c, { zeitlimitMs, fetchFn });
   return { leser: a.leser, ms: performance.now() - start, oben: a.lessons[0]?.topic };
 }
 
 describe('Hook-Weg — Sicherung in der Datei je Instanz', () => {
   afterEach(() => { vi.useRealTimers(); delete process.env.CACHLY_LESER_SICHERUNG; });
 
-  it('3 Fehlschlaege -> der 4. Prompt ruft den Leser nicht und kostet < 50 ms', async () => {
+  it('3 Fehlschlaege -> der 4. Prompt ruft den Leser nicht und wartet nicht auf die Frist', async () => {
     const c = cfg('springt');
     const netz = haengender();
     for (let i = 0; i < 3; i++) expect((await prompt(c, netz.fetchFn)).leser).toBe('aus');
     expect(netz.anrufe()).toBe(3);
 
-    const vierter = await prompt(c, netz.fetchFn);
+    const vierter = await prompt(c, netz.fetchFn, UEBERSPRUNGEN_FRIST_MS);
     expect(netz.anrufe()).toBe(3);
-    expect(vierter.ms).toBeLessThan(UEBERSPRUNGEN_MAX_MS);
+    expect(vierter.ms).toBeLessThan(UEBERSPRUNGEN_FRIST_MS);
     // Die Messung kann "uebersprungen" von "nicht da" ('aus') unterscheiden.
     expect(vierter.leser).toBe('uebersprungen');
     // Die lokale Ordnung bleibt: es wird trotzdem eingeblendet.
@@ -278,15 +284,15 @@ describe('MCP-Weg (leserPunkte) — dieselbe Sicherung im Speicher', () => {
   beforeEach(() => { embedConfig.jwt = 'test-jwt'; delete process.env.CACHLY_LESER; delete process.env.CACHLY_LESER_SICHERUNG; leserSperreLoeschen(); });
   afterEach(() => { embedConfig.jwt = jwtVorher; vi.useRealTimers(); delete process.env.CACHLY_LESER_SICHERUNG; leserSperreLoeschen(); });
 
-  it('3 Fehlschlaege -> der 4. Aufruf ruft den Leser nicht und kostet < 50 ms', async () => {
+  it('3 Fehlschlaege -> der 4. Aufruf ruft den Leser nicht und wartet nicht auf die Frist', async () => {
     const netz = haengender();
     for (let i = 0; i < 3; i++) {
       expect(await leserPunkte('f', ['a', 'b'], { fetchFn: netz.fetchFn, zeitlimitMs: 30, instanceId: 'i1' })).toBeNull();
     }
     expect(leserAktiv('i1')).toBe(false);
     const start = performance.now();
-    expect(await leserPunkte('f', ['a', 'b'], { fetchFn: netz.fetchFn, zeitlimitMs: 30, instanceId: 'i1' })).toBeNull();
-    expect(performance.now() - start).toBeLessThan(UEBERSPRUNGEN_MAX_MS);
+    expect(await leserPunkte('f', ['a', 'b'], { fetchFn: netz.fetchFn, zeitlimitMs: UEBERSPRUNGEN_FRIST_MS, instanceId: 'i1' })).toBeNull();
+    expect(performance.now() - start).toBeLessThan(UEBERSPRUNGEN_FRIST_MS);
     expect(netz.anrufe()).toBe(3);
     // Andere Instanz im selben Prozess: eigener Leser, eigene Sicherung.
     expect(leserAktiv('i2')).toBe(true);
