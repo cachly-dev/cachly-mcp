@@ -219,14 +219,74 @@ describe('Vektorbestand', () => {
     expect(r.scans).toBe(1);
   });
 
-  it('holt nach Ablauf der Frist neue Lektionen dazu', async () => {
+  it('holt nach Ablauf der Frist neue Lektionen dazu — im Hintergrund, die Frage wartet nicht', async () => {
+    // Seit 11.11.2026 (bestand-frische.ts): der abgelaufene Bestand antwortet
+    // sofort, das Nachladen laeuft daneben. Vorher wartete jede Frage nach
+    // Ablauf der Minute auf das ganze Nachladen — 77 bis 142 s ueber ein
+    // entferntes Netz.
     const r = new RedisAttrappe();
     r.store.set(`${VEKTOR_PRAEFIX}a:eins`, packe(v1));
     const b = new Vektorbestand(60_000);
     await b.aktualisiere(r as never, 1000);
     r.store.set(`${VEKTOR_PRAEFIX}b:zwei`, packe(v2));
     await b.aktualisiere(r as never, 1000 + 61_000);
+    expect(b.groesse).toBe(1);
+    // Ein Aufruf waehrend des Nachladens wartet auf dasselbe Laden, statt ein zweites zu starten.
+    await new Promise((fertig) => setTimeout(fertig, 0));
     expect(b.groesse).toBe(2);
+    expect(r.scans).toBe(2);
+  });
+
+  it('holt nach Ablauf der Frist neue Lektionen dazu — im Messmodus wartet die Frage', async () => {
+    const alt = process.env.CACHLY_RECALL_NUR_LESEN;
+    process.env.CACHLY_RECALL_NUR_LESEN = '1';
+    try {
+      const r = new RedisAttrappe();
+      r.store.set(`${VEKTOR_PRAEFIX}a:eins`, packe(v1));
+      const b = new Vektorbestand(60_000);
+      await b.aktualisiere(r as never, 1000);
+      r.store.set(`${VEKTOR_PRAEFIX}b:zwei`, packe(v2));
+      await b.aktualisiere(r as never, 1000 + 61_000);
+      expect(b.groesse).toBe(2);
+    } finally {
+      if (alt === undefined) delete process.env.CACHLY_RECALL_NUR_LESEN; else process.env.CACHLY_RECALL_NUR_LESEN = alt;
+    }
+  });
+
+  it('ein zweiter Aufruf waehrend des ERSTEN Ladens wartet auf den vollen Bestand', async () => {
+    // Gemessen 11.11.2026: das Vorladen hatte 600 von 1.247 Vektoren geholt,
+    // als die Frage kam — und sie suchte mit dem halben Bestand.
+    const r = new RedisAttrappe();
+    for (let i = 0; i < 250; i++) r.store.set(`${VEKTOR_PRAEFIX}t:${i}`, packe(i % 2 ? v1 : v2));
+    let bloecke = 0;
+    const langsam = { ...r, scan: r.scan.bind(r), mget: async (...k: string[]) => {
+      bloecke++;
+      await new Promise((fertig) => setTimeout(fertig, 5));
+      return r.mget(...k);
+    } };
+    const b = new Vektorbestand(60_000);
+    const erstes = b.aktualisiere(langsam as never);
+    while (bloecke < 2) await new Promise((fertig) => setTimeout(fertig, 1));
+    await b.aktualisiere(langsam as never);
+    expect(b.groesse).toBe(250);
+    await erstes;
+  });
+
+  it('frisch ab dem ENDE des Ladens: ein langes Laden laeuft nicht sofort wieder ab', async () => {
+    // Bis 11.11.2026 galt der Startzeitpunkt. Dauerte das Laden laenger als
+    // die Frist, war der Bestand beim Fertigwerden schon abgelaufen, und jede
+    // Frage lud alles neu (gemessen: 5 Fragen hintereinander, jede 77-142 s).
+    const r = new RedisAttrappe();
+    r.store.set(`${VEKTOR_PRAEFIX}a:eins`, packe(v1));
+    const langsam = { ...r, scan: r.scan.bind(r), mget: async (...k: string[]) => {
+      await new Promise((fertig) => setTimeout(fertig, 60));
+      return r.mget(...k);
+    } };
+    const b = new Vektorbestand(50);
+    const start = Date.now();
+    await b.aktualisiere(langsam as never, start);
+    await b.aktualisiere(langsam as never, Date.now());
+    expect(r.scans).toBe(1);
   });
 
   it('vergisst gelöschte Lektionen', async () => {

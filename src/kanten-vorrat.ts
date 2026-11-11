@@ -44,13 +44,29 @@ function parse(roh: string | null): CKGEdge | null {
  * Holt alle Kanten, die die alte Schleife betrachtet haette, gleichzeitig.
  * Wirft, wenn ein SCAN scheitert — der Aufrufer faengt das wie bisher ab.
  */
+/**
+ * Schrittweite des SCAN ueber den ganzen Speicher.
+ *
+ * Bis 11.11.2026 waren es 20 Schluessel je Schritt. Ein Brain mit rund 1.250
+ * Lektionen hat aber zehntausende Schluessel (Kontexte, Spuren, Graph): je
+ * Fragewort tausende Wege zum Speicher und zurueck. Ueber ein entferntes Netz
+ * kostete dieser Block 53 bis 55 s JE smart_recall — mehr als alles andere
+ * zusammen. Bei 1.000 je Schritt sind es rund 50 Wege.
+ *
+ * Mit dem groesseren Schritt entfaellt die Grenze "5 je Stapel": bei 20
+ * Schluesseln je Stapel griff sie praktisch nie, bei 1.000 wuerde sie Treffer
+ * abschneiden, die vorher mitkamen. Gezaehlt wird jetzt jeder Treffer in
+ * SCAN-Reihenfolge; die Grenze von 12 Knoten weiter unten bleibt.
+ */
+export const SPEICHER_SCAN_SCHRITT = 1000;
+
 export async function holeKantenVorrat(redis: KantenRedis, fragewoerter: string[]): Promise<KantenFund[]> {
   // 1. Je Wort ein SCAN — alle gleichzeitig, jedes Ergebnis in Stapelreihenfolge.
   const jeWort = await Promise.all(fragewoerter.map((wort) => new Promise<string[]>((fertig, fehler) => {
     const ids: string[] = [];
-    const strom = redis.scanStream({ match: `cachly:ckg:node:*${wort}*`, count: 20 });
+    const strom = redis.scanStream({ match: `cachly:ckg:node:*${wort}*`, count: SPEICHER_SCAN_SCHRITT });
     strom.on('data', (stapel: string[]) => {
-      for (const k of stapel.slice(0, 5)) ids.push(k.replace('cachly:ckg:node:', ''));
+      for (const k of stapel) ids.push(k.replace('cachly:ckg:node:', ''));
     });
     strom.on('end', () => fertig(ids));
     strom.on('error', fehler);

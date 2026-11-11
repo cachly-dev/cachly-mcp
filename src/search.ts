@@ -1,4 +1,5 @@
 import { Redis } from 'ioredis';
+import { wartetAufFrischenBestand } from './bestand-frische.js';
 
 // ── Search Engine (BM25+ with enhancements, works without embedding) ──────────
 //
@@ -1828,12 +1829,49 @@ async function bestandHolen(
   const bestandsSchluessel = patterns.slice().sort().join('|');
   const jeVerbindung = _wortbestand.get(redis as unknown as object);
   const stehend = jeVerbindung?.get(bestandsSchluessel);
-  if (stehend
-    && stehend.gebaut > _entwertetAb
-    && Date.now() - stehend.gebaut < WORTBESTAND_FRISCHE_MS) {
+  const gueltig = stehend !== undefined && stehend.gebaut > _entwertetAb;
+  if (gueltig && Date.now() - stehend.gebaut < WORTBESTAND_FRISCHE_MS) {
     return stehend;
   }
 
+  // Nur abgelaufen, nicht entwertet: der stehende Bestand antwortet sofort,
+  // das Nachbauen laeuft im Hintergrund (bestand-frische.ts, 11.11.2026).
+  // Nach eigenem Schreiben (entwertet) und im Messmodus wird gewartet.
+  const fertig = bestandBauenGeteilt(redis, patterns, bestandsSchluessel);
+  if (gueltig && !wartetAufFrischenBestand()) {
+    fertig.catch(() => { /* scheitert das Nachbauen, bleibt der alte Bestand stehen */ });
+    return stehend;
+  }
+  return fertig;
+}
+
+/** Laufende Neubauten je Verbindung und Muster — ein zweiter Aufruf wartet auf denselben. */
+const _wortbestandLaufend = new WeakMap<object, Map<string, { begonnen: number; fertig: Promise<Wortbestand | null> }>>();
+
+function bestandBauenGeteilt(
+  redis: Redis,
+  patterns: string[],
+  bestandsSchluessel: string,
+): Promise<Wortbestand | null> {
+  const fach = _wortbestandLaufend.get(redis as unknown as object) ?? new Map();
+  _wortbestandLaufend.set(redis as unknown as object, fach);
+  const laeuft = fach.get(bestandsSchluessel);
+  // Ein Neubau, der VOR dem letzten Entwerten begann, kennt das gerade
+  // Geschriebene nicht — auf ihn zu warten hiesse, es zu uebersehen.
+  if (laeuft && laeuft.begonnen > _entwertetAb) return laeuft.fertig;
+  const begonnen = Date.now();
+  const fertig = bestandNeuBauen(redis, patterns, bestandsSchluessel, begonnen)
+    .finally(() => { if (fach.get(bestandsSchluessel)?.fertig === fertig) fach.delete(bestandsSchluessel); });
+  fach.set(bestandsSchluessel, { begonnen, fertig });
+  return fertig;
+}
+
+async function bestandNeuBauen(
+  redis: Redis,
+  patterns: string[],
+  bestandsSchluessel: string,
+  begonnen: number,
+): Promise<Wortbestand | null> {
   // ── Step 1: Collect all matching keys — patterns scanned in parallel ──
   const keyBatches = await Promise.all(patterns.map(pattern => {
     const keys: string[] = [];
@@ -1866,6 +1904,9 @@ async function bestandHolen(
   }
   const gebauter = bestandAusDokumenten(paare);
   if (!gebauter) return null;
+  // Waehrend des Bauens entwertet: dieser Bestand darf die jetzt Wartenden
+  // bedienen, gilt danach aber nicht als gueltig — der naechste Aufruf baut neu.
+  if (begonnen <= _entwertetAb) gebauter.gebaut = Math.min(gebauter.gebaut, _entwertetAb);
 
   const fach = _wortbestand.get(redis as unknown as object) ?? new Map<string, Wortbestand>();
   if (!fach.has(bestandsSchluessel)) _wortbestandZaehler++;

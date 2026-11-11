@@ -112,6 +112,37 @@ describe('holeKantenVorrat', () => {
     }
   });
 
+  it('fragt den Speicher in grossen Schritten ab, nicht in 20er-Schritten (11.11.2026)', async () => {
+    // 20 je Schritt kostete bei einem echten Brain 53-55 s je smart_recall.
+    const b = bestand();
+    const schritte: number[] = [];
+    const scan = b.scanStream.bind(b);
+    b.scanStream = (o) => { schritte.push(o.count); return scan(o); };
+    await holeKantenVorrat(b, ['deadlock', 'postgres']);
+    expect(schritte).toEqual([1000, 1000]);
+  });
+
+  it('nimmt aus einem grossen Stapel jeden Treffer in Reihenfolge, nicht nur die ersten 5', async () => {
+    // Mit 1.000 je Schritt koennen in EINEM Stapel mehr als 5 Knoten passen;
+    // die alte Grenze "5 je Stapel" haette dann Treffer abgeschnitten, die bei
+    // 20 je Schritt mitgekommen waeren.
+    const b = new Bestand();
+    for (let i = 0; i < 8; i++) {
+      b.werte.set(`cachly:ckg:node:deadlock-${i}`, '{}');
+      b.werte.set(`cachly:ckg:edge:${i}`, JSON.stringify({ from: `fix:l-${i}`, to: `deadlock-${i}`, edgeType: 'fixes', confidence: 0.9 }));
+      b.mengen.set(`cachly:ckg:idx:to:deadlock-${i}`, [`cachly:ckg:edge:${i}`]);
+    }
+    b.scanStream = (o) => {
+      const alle = [...b.werte.keys()].filter((k) => k.startsWith('cachly:ckg:node:') && k.includes(o.match.split('*')[1]));
+      const h: Record<string, (x?: unknown) => void> = {};
+      const strom = { on: (e: string, f: (x?: unknown) => void) => { h[e] = f; return strom; } };
+      setTimeout(() => { h.data?.(alle); h.end?.(); }, 0);
+      return strom as unknown as ReturnType<KantenRedis['scanStream']>;
+    };
+    const vorrat = await holeKantenVorrat(b, ['deadlock']);
+    expect(vorrat.map((f) => f.kante.from)).toEqual([0, 1, 2, 3, 4, 5, 6, 7].map((i) => `fix:l-${i}`));
+  });
+
   it('fragt gleichzeitig statt nacheinander', async () => {
     const b = bestand();
     await holeKantenVorrat(b, ['deadlock', 'postgres']);

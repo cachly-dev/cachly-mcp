@@ -7,6 +7,51 @@
 
 ---
 
+## [0.10.243] – 2026-11-11 — *"smart_recall answers in seconds, not minutes."*
+
+**A recall no longer waits minutes for the in-memory stores.** Measured against a real
+Brain with 1,257 lessons over a remote connection (laptop to the Brain's store), five
+recalls in a row:
+
+| | first recall | right after | after a 75 s pause |
+|---|---|---|---|
+| 0.10.242 | 142 s | 77–132 s | 77–132 s |
+| 0.10.243 | 28 s | 7–8 s | 9–28 s |
+
+Five causes, five fixes:
+
+- **Freshness counted from the start of a load.** A store was fresh for 60 s from the
+  moment loading began. A load that took longer than 60 s was stale when it finished,
+  so every recall loaded everything again. Freshness now counts from the end.
+- **One round trip per key.** The entrance store read about 2,500 hashes one after the
+  other. It now reads them in blocks of 100.
+- **Stores loaded one after another.** Words, vectors, names, entrances, rarity and the
+  second model now start loading together at the beginning of a recall.
+- **The graph search scanned the whole store 20 keys at a time.** A Brain with ~1,250
+  lessons has tens of thousands of keys; this block alone took 53–55 s per recall. It
+  now scans 1,000 keys per step. The same applies to the partial-topic path of
+  `recall_best_solution` and the related-lesson lookup after a failed
+  `learn_from_attempts`.
+- **Lessons found only by meaning were fetched one by one.** They now come in one
+  request. On the remote connection the loop cost 2 to 15 s per recall.
+
+**An expired store answers at once.** After the 60 s, a store that was loaded completely
+once answers immediately and reloads in the background. Your own writes still make the
+next recall wait for a fresh word index, so a lesson you just stored is found at once.
+In measurement mode (`CACHLY_RECALL_NUR_LESEN=1`) every recall still waits for fresh
+stores, so the same question keeps giving the same answer.
+
+**Not solved:** the first recall of a new process still needs about 28 s on this
+connection; about 7 s of that pass in server start before the recall begins. The
+reader (about 2.5 s), the graph block (1.5 to 5 s) and the recall-limit check (about
+1.3 s) still add up per recall. The table above was measured before the one-request
+fetch; that step is covered by tests, not yet by a new measurement. Closer to the store
+all of this should be shorter; that was not measured.
+
+**Upgrade:** `npx -y @cachly-dev/mcp-server@latest`. No setting needed.
+
+---
+
 ## [0.10.242] – 2026-11-10 — *"Old gaps in topic-name vectors heal by themselves."*
 
 **Lessons without a topic-name vector are now found and filled in.** Since 0.10.239

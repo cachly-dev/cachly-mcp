@@ -49,6 +49,7 @@
  */
 
 import type { Redis } from 'ioredis';
+import { wartetAufFrischenBestand } from './bestand-frische.js';
 
 /** Wo ein Lektionsvektor liegt. Ein Schlüssel je Lektion, neben der Lektion. */
 export const VEKTOR_PRAEFIX = 'cachly:lesson:vec:';
@@ -270,10 +271,36 @@ export class Vektorbestand {
     return [...this.vektoren.keys()].map((k) => k.slice(this.praefix.length));
   }
 
-  /** Lädt fehlende Vektoren nach. Tut nichts, wenn kürzlich geladen wurde. */
+  /**
+   * Lädt fehlende Vektoren nach. Tut nichts, wenn kürzlich geladen wurde.
+   *
+   * Läuft schon ein Laden, wartet ein zweiter Aufruf darauf, statt ein zweites
+   * zu starten. Frisch ist der Bestand ab dem ENDE des Ladens, nicht ab seinem
+   * Anfang: bis zum 11.11.2026 stand hier der Startzeitpunkt. Ein Laden über
+   * ein langsames Netz dauerte 142 s — der Bestand war beim Fertigwerden schon
+   * 82 s abgelaufen, und jeder folgende Aufruf lud alles wieder.
+   *
+   * Ist ein Bestand da, aber abgelaufen, antwortet er sofort und lädt im
+   * Hintergrund nach — ausser im Messmodus (`bestand-frische.ts`). "Da" heisst:
+   * EINMAL VOLLSTÄNDIG geladen. Das Laden füllt die Karte Block für Block; ein
+   * halb gefüllter erster Bestand (gemessen: 600 von 1.247) ist kein Bestand,
+   * auf den eine Frage antworten darf.
+   */
   async aktualisiere(redis: Redis, jetzt = Date.now()): Promise<void> {
     if (this.vektoren.size > 0 && jetzt - this.geladen < this.frischeMs) return;
+    const vorhanden = this.geladen > 0;
+    if (!this.laufend) this.laufend = this.lade(redis, jetzt).finally(() => { this.laufend = null; });
+    if (vorhanden && !wartetAufFrischenBestand()) {
+      this.laufend.catch(() => { /* scheitert das Nachladen, bleibt der alte Bestand stehen */ });
+      return;
+    }
+    return this.laufend;
+  }
 
+  private laufend: Promise<void> | null = null;
+
+  private async lade(redis: Redis, jetzt: number): Promise<void> {
+    const start = Date.now();
     const schluessel: string[] = [];
     let cursor = '0';
     do {
@@ -298,7 +325,8 @@ export class Vektorbestand {
       const da = new Set(schluessel);
       for (const k of [...this.vektoren.keys()]) if (!da.has(k)) this.vektoren.delete(k);
     }
-    this.geladen = jetzt;
+    // `jetzt` plus die Ladedauer: das Ende des Ladens, auch unter einer Test-Uhr.
+    this.geladen = jetzt + (Date.now() - start);
   }
 
   /**

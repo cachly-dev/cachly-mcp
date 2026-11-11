@@ -35,6 +35,7 @@
 
 import type { Redis } from 'ioredis';
 import { kosinus, packe, entpacke } from './bedeutung.js';
+import { wartetAufFrischenBestand } from './bestand-frische.js';
 
 /** Wo die Eingänge einer Lektion liegen: EIN Hash je Lektion, neben ihr. */
 export const EINGANG_PRAEFIX = 'cachly:lesson:eing:';
@@ -169,14 +170,33 @@ export class Eingangsbestand {
    * seinen Hash vor jedem Schreiben loescht — laegen die gelernten Fragen
    * dort, wuerde jedes erneute Lernen die gesammelte Erfahrung wegwerfen.
    * Fuer die SUCHE sind sie dasselbe: Tueren zu derselben Lektion.
+   *
+   * Die Hashes kommen in Bloecken zu 100 gleichzeitig, nicht einer nach dem
+   * anderen: bis zum 11.11.2026 kostete jeder Schluessel einen eigenen Weg zum
+   * Speicher und zurueck. Bei rund 2.500 Schluesseln und einem entfernten
+   * Speicher war das der groesste Teil von 142 s Kaltstart. Frisch ist der
+   * Bestand ab dem Ende des Ladens; ein abgelaufener antwortet sofort und laedt
+   * im Hintergrund nach (siehe `Vektorbestand.aktualisiere`).
    */
   async aktualisiere(
     redis: Redis,
     jetzt = Date.now(),
     praefixe: readonly string[] = [EINGANG_PRAEFIX, 'cachly:lesson:pfad:'],
   ): Promise<void> {
-    if (this.eingaenge.size > 0 && jetzt - this.geladen < this.frischeMs) return;
+    const vorhanden = this.eingaenge.size > 0;
+    if (vorhanden && jetzt - this.geladen < this.frischeMs) return;
+    if (!this.laufend) this.laufend = this.lade(redis, jetzt, praefixe).finally(() => { this.laufend = null; });
+    if (vorhanden && !wartetAufFrischenBestand()) {
+      this.laufend.catch(() => { /* scheitert das Nachladen, bleibt der alte Bestand stehen */ });
+      return;
+    }
+    return this.laufend;
+  }
 
+  private laufend: Promise<void> | null = null;
+
+  private async lade(redis: Redis, jetzt: number, praefixe: readonly string[]): Promise<void> {
+    const start = Date.now();
     const frisch = new Map<string, number[][]>();
     for (const praefix of praefixe) {
       const schluessel: string[] = [];
@@ -187,19 +207,22 @@ export class Eingangsbestand {
         schluessel.push(...gefunden);
       } while (cursor !== '0');
 
-      for (const k of schluessel) {
-        const hash = await redis.hgetall(k);
-        const topic = k.slice(praefix.length);
-        const vs = frisch.get(topic) ?? [];
-        for (const roh of Object.values(hash)) {
-          const v = entpacke(roh);
-          if (v) vs.push(v);
+      for (let i = 0; i < schluessel.length; i += 100) {
+        const block = schluessel.slice(i, i + 100);
+        const hashes = await Promise.all(block.map((k) => redis.hgetall(k)));
+        for (const [j, hash] of hashes.entries()) {
+          const topic = block[j].slice(praefix.length);
+          const vs = frisch.get(topic) ?? [];
+          for (const roh of Object.values(hash ?? {})) {
+            const v = entpacke(roh);
+            if (v) vs.push(v);
+          }
+          if (vs.length) frisch.set(topic, vs);
         }
-        if (vs.length) frisch.set(topic, vs);
       }
     }
     this.eingaenge = frisch;
-    this.geladen = jetzt;
+    this.geladen = jetzt + (Date.now() - start);
   }
 
   /**

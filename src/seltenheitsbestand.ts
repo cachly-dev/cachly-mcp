@@ -26,6 +26,7 @@
 
 import type { Redis } from 'ioredis';
 import { Seltenheit } from './rangfolge.js';
+import { wartetAufFrischenBestand } from './bestand-frische.js';
 
 const LEKTION_PRAEFIX = 'cachly:lesson:best:';
 
@@ -77,9 +78,26 @@ export class Seltenheitsbestand {
   /** Die Statistik selbst. `null`, solange nie geladen wurde. */
   get statistik(): Seltenheit | null { return this.seltenheit; }
 
+  /**
+   * Frisch ab dem Ende des Ladens; ein zweiter Aufruf wartet auf das laufende,
+   * ein abgelaufener Bestand antwortet sofort und laedt im Hintergrund nach
+   * (siehe `Vektorbestand.aktualisiere`).
+   */
   async aktualisiere(redis: Redis, jetzt = Date.now()): Promise<void> {
-    if (this.seltenheit && jetzt - this.geladen < this.frischeMs) return;
+    const vorhanden = this.seltenheit !== null;
+    if (vorhanden && jetzt - this.geladen < this.frischeMs) return;
+    if (!this.laufend) this.laufend = this.lade(redis, jetzt).finally(() => { this.laufend = null; });
+    if (vorhanden && !wartetAufFrischenBestand()) {
+      this.laufend.catch(() => { /* scheitert das Nachladen, bleibt der alte Bestand stehen */ });
+      return;
+    }
+    return this.laufend;
+  }
 
+  private laufend: Promise<void> | null = null;
+
+  private async lade(redis: Redis, jetzt: number): Promise<void> {
+    const start = Date.now();
     const schluessel: string[] = [];
     let cursor = '0';
     do {
@@ -113,6 +131,6 @@ export class Seltenheitsbestand {
     this.texte = texte;
     this.leserTexte = leserTexte;
     this.seltenheit = new Seltenheit([...texte.values()]);
-    this.geladen = jetzt;
+    this.geladen = jetzt + (Date.now() - start);
   }
 }

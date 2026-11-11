@@ -87,7 +87,7 @@ export function recallNurLesen(): boolean {
   return process.env.CACHLY_RECALL_NUR_LESEN === '1';
 }
 import type { CKGEdge, PersonNode, ServiceNode } from '../ckg.js';
-import { gemerkterTarif, holeKantenVorrat, type KantenRedis } from '../kanten-vorrat.js';
+import { gemerkterTarif, holeKantenVorrat, SPEICHER_SCAN_SCHRITT, type KantenRedis } from '../kanten-vorrat.js';
 import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal } from './team.js';
 import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
@@ -1263,7 +1263,7 @@ async function handleBrainToolInner(
       if (outcome === 'failure') {
         // Search for related success lessons that might have prevented this failure
         const scanKeys: string[] = [];
-        const scanStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 100 });
+        const scanStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: SPEICHER_SCAN_SCHRITT });
         await new Promise<void>((res, rej) => {
           scanStream.on('data', (b: string[]) => scanKeys.push(...b));
           scanStream.on('end', res);
@@ -2373,7 +2373,7 @@ async function handleBrainToolInner(
 
       // Partial match: scan all lesson keys for topic substring
       const allKeys: string[] = [];
-      const scanStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: 100 });
+      const scanStream = redis.scanStream({ match: 'cachly:lesson:best:*', count: SPEICHER_SCAN_SCHRITT });
       await new Promise<void>((resolve, reject) => {
         scanStream.on('data', (batch: string[]) => allKeys.push(...batch));
         scanStream.on('end', resolve);
@@ -2464,6 +2464,22 @@ async function handleBrainToolInner(
         eingang: eingangsbestand, seltenheit: seltenheitsbestand,
       } = bestaendeFuer(redis);
 
+      // Alle Bestaende GLEICHZEITIG anstossen (11.11.2026). Sie wurden weiter
+      // unten einer nach dem anderen geladen; kalt summierte sich das ueber ein
+      // entferntes Netz auf 142 s. Die Aufrufe unten bleiben, wo sie sind, und
+      // warten nur noch auf das schon laufende Laden (aktualisiere teilt es).
+      // allSettled: ein Fehler hier faellt unten im try/catch auf, nicht als
+      // unbehandelte Ablehnung.
+      if (hasEmbedProvider()) {
+        void Promise.allSettled([
+          vektorbestand.aktualisiere(redis),
+          namensbestand.aktualisiere(redis),
+          eingangsbestand.aktualisiere(redis),
+          seltenheitsbestand.aktualisiere(redis),
+          zweitbestand.aktualisiere(redis),
+        ]);
+      }
+
       // Lesend heilen (Karte 8jnckd2stesi): eine Instanz, in die niemand mehr
       // schreibt, blieb bis zum 02.09.2026 dauerhaft blind — der Nachtrag
       // wurde nur im Schreibpfad abgearbeitet. Fire-and-forget und begrenzt;
@@ -2490,6 +2506,7 @@ async function handleBrainToolInner(
       // Inhalt kostet diese Pruefung keinen zusaetzlichen Abruf.
       const suchMuster = ['cachly:ctx:*', 'cachly:lesson:best:*', 'cachly:idx:*'];
       const wortbestand = await bestandHolen(redis, suchMuster);
+      zeitpunkt(`smart_recall: Wortbestand da (${wortbestand?.docs.length ?? 0} Eintraege)`);
       if (!wortbestand) {
         vermerkeLeereSuche(redis, instance_id, String(query ?? ''), Date.now() - suchStart);
         zeitpunkt('smart_recall: Brain leer — sofort geantwortet');
@@ -2578,6 +2595,8 @@ async function handleBrainToolInner(
           // Topf-Bau weiter unten; ein Fehler des Zweitmodells kostet nur
           // das Merkmal, nie den Recall (.catch -> null).
           await zweitbestand.aktualisiere(redis);
+          zeitpunkt(`smart_recall: Bestaende geladen (Namen ${namensbestand.groesse}, Eingaenge ${eingangsbestand.groesse}, `
+            + `Seltenheit ${seltenheitsbestand.groesse}, Zweit ${zweitbestand.groesse})`);
           const zweitDeckung = vektorbestand.groesse > 0 ? zweitbestand.groesse / vektorbestand.groesse : 0;
           // Karte cgf6kcyrg02s, Schritt 'Bestand nachrechnen': Lektionen aus
           // der Zeit VOR dem Zweitmodell haben einen Erstvektor, aber keinen
@@ -2760,12 +2779,23 @@ async function handleBrainToolInner(
 
           // Lektionen, die NUR der Bedeutungsabgleich gefunden hat, muessen
           // nachgeladen werden — der Wortabgleich hat sie nie angefasst.
+          // In EINEM Abruf, nicht einer je Lektion (11.11.2026): ueber ein
+          // entferntes Netz kostete die Schleife mit einem GET je Thema 2 bis
+          // 15 s je smart_recall. Reihenfolge und Ergebnis bleiben gleich.
+          const nachzuladen = reihenfolge
+            .map((thema) => `cachly:lesson:best:${thema}`)
+            .filter((key) => !bekannt.has(key));
+          const nachgeladen = new Map<string, string | null>();
+          if (nachzuladen.length > 0) {
+            const werte = await redis.mget(...nachzuladen).catch(() => [] as Array<string | null>);
+            nachzuladen.forEach((key, i) => nachgeladen.set(key, werte[i] ?? null));
+          }
           const sortiert: typeof kwMatches = [];
           for (const thema of reihenfolge) {
             const key = `cachly:lesson:best:${thema}`;
             const da = bekannt.get(key);
             if (da) { sortiert.push(da); bekannt.delete(key); continue; }
-            const inhalt = await redis.get(key).catch(() => null);
+            const inhalt = nachgeladen.get(key) ?? null;
             if (inhalt) {
               // Nur der Bedeutungsabgleich hat sie gefunden: kein gemeinsames
             // Wort, also Deckung 0. Der Beleg kommt dann aus `semScore`.
