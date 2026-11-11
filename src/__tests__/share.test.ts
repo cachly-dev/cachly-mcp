@@ -134,6 +134,38 @@ describe('brain_share', () => {
     expect(result).not.toContain('deploy:docker-build');
   });
 
+  // ── Nur teamweite Lektionen verlassen das Team (11.11.2026) ──────────────
+  // Bis 0.10.245 ging jede Lektion in den Share, auch private und
+  // Gruppen-Lektionen. Positiv- und Negativkontrolle im selben Lauf: die
+  // teamweite MUSS drin sein, sonst beweist das Fehlen der anderen nichts.
+  it('private und Gruppen-Lektionen gehen nicht in den Share, teamweite schon', async () => {
+    redis['store'].set('cachly:lesson:best:team:offen', makeLesson('team:offen'));
+    redis['store'].set('cachly:lesson:best:geheim:privat', JSON.stringify({
+      topic: 'geheim:privat', outcome: 'success', what_worked: 'nur fuer mich', visibility: 'private',
+    }));
+    redis['store'].set('cachly:lesson:best:geheim:gruppe', JSON.stringify({
+      topic: 'geheim:gruppe', outcome: 'success', what_worked: 'nur fuer backend', group: 'backend',
+    }));
+    redis['store'].set('cachly:lesson:best:team:gruppe-null', JSON.stringify({
+      topic: 'team:gruppe-null', outcome: 'success', what_worked: 'ohne Gruppe', group: null, visibility: 'team',
+    }));
+    let gesendet = '';
+    const apiFetch = async <T>(_p: string, opts?: RequestInit) => {
+      gesendet = String(opts?.body ?? '');
+      return { share_id: 'x1' } as T;
+    };
+    const vorschau = await handleShareTool('brain_share', { instance_id: 'inst-1', dry_run: true }, getConn, apiFetch);
+    expect(vorschau).toContain('team:offen');
+    expect(vorschau).toContain('team:gruppe-null');
+    expect(vorschau).not.toContain('geheim:privat');
+    expect(vorschau).not.toContain('geheim:gruppe');
+
+    await handleShareTool('brain_share', { instance_id: 'inst-1', title: 'T' }, getConn, apiFetch);
+    expect(gesendet).toContain('team:offen');
+    expect(gesendet).not.toContain('nur fuer mich');
+    expect(gesendet).not.toContain('nur fuer backend');
+  });
+
   it('returns share URL on successful API response', async () => {
     seedLessons(redis, [{ topic: 'auth:jwt-expiry' }]);
     const apiFetch = async <T>() => ({ share_id: 'abc123' } as T);

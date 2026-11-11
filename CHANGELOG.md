@@ -7,6 +7,38 @@
 
 ---
 
+## [0.10.246] – 2026-11-11 — *"Private and group lessons stay in the team."*
+
+**Two ways out of the team now carry only team-wide lessons.** `brain_share` and the
+organisation's knowledge view both read every lesson of a Brain. Until now they did
+not look at a lesson's visibility. A lesson marked `private`, or written for one
+`group`, could end up in a share or on the organisation's public knowledge link. The
+gate in front of both only removed secrets and suspicious text.
+
+Both now use the rule the team tools follow since 0.10.237: a lesson goes out only if
+it is not private, belongs to no group, and can be read at all. Anything unreadable
+stays in.
+
+| Path | Before | Now |
+|---|---|---|
+| `brain_share` (MCP) | every lesson | team-wide lessons only |
+| organisation lessons view and public knowledge link (API) | every lesson | team-wide lessons only |
+
+**If you created a share or a public knowledge link before this release** and your
+Brain holds private or group lessons: the snapshot you created keeps its old content.
+Remove a share with `brain_unshare`. A knowledge link gets a new snapshot when you
+create it again; the link itself stays the same.
+
+**Not solved yet:** other read paths inside the team (session briefing, the prompt
+hook, `brain_search`, partial name matches in `recall_best_solution`, several API
+views) still do not check visibility for the person asking. They stay inside the
+team, and they are next.
+
+**Upgrade:** `npx -y @cachly-dev/mcp-server@latest`. The API part is live with the
+next deploy.
+
+---
+
 ## [0.10.245] – 2026-11-11 — *"The graph and meaning search run beside the reader."*
 
 **About one second less per recall.** The graph search, the plan lookup and the

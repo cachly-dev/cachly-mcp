@@ -1,5 +1,5 @@
 name: cachly AI Brain
-version: 0.10.245
+version: 0.10.246
 description: >
   Solve it once. From then on, your AI knows. Memory for coding agents over
   MCP: cachly stores every fix and finds it again when the problem returns.

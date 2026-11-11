@@ -5,6 +5,7 @@ import { cachlyUrl } from '../cachly-url.js';
 import { VEKTOR_NACHTRAG } from '../bedeutung.js';
 import { schwaerze } from '../geheimnis-filter.js';
 import { fuerEigenenSpeicher, fuerWeitergabe, hinweise, istMarkiert, markiert, weitergabeHinweis, zaehlHinweise } from '../schreibtor.js';
+import { teamweitLesbar } from './team.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -51,7 +52,15 @@ async function scanAllLessons(redis: Redis, topicFilter?: string[]): Promise<Sto
   for (const key of keys.slice(0, 500)) {
     const raw = await redis.get(key);
     if (!raw) continue;
-    const lesson = safeJsonParse<StoredLesson | null>(raw, null);
+    // ── Nur teamweite Lektionen verlassen das Team (11.11.2026) ──────────
+    // brain_share legt eine Kopie auf eine Seite unter cachly.dev, mit
+    // visibility 'public' sogar auffindbar. Bis 0.10.245 las diese Schleife
+    // JEDE Lektion, auch private und Gruppen-Lektionen; das Tor danach
+    // prueft nur Geheimnisse und Verdacht. Jetzt dieselbe Regel wie die
+    // Team-Werkzeuge (teamweitLesbar, #1011): nicht privat, keine Gruppe,
+    // unlesbar bleibt drin. Gefunden bei der Inventur aller Lesepfade
+    // (Karte pguy341m6u7s).
+    const lesson = teamweitLesbar<StoredLesson>(raw);
     if (!lesson || !lesson.topic) continue;
     if (topicFilter && topicFilter.length > 0) {
       const matches = topicFilter.some(f => lesson.topic.includes(f));

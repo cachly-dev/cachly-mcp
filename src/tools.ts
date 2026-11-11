@@ -2538,6 +2538,7 @@ const TOOLS = [
       'Export a Brain snapshot and create a publicly shareable link that anyone can import. ' +
       'Optionally filter by topic prefix (e.g. only "auth:" or "deploy:" lessons). ' +
       'Visibility can be "public" (discoverable) or "unlisted" (link-only). ' +
+      'Only team-wide lessons go into a share; private and group-only lessons stay in the team. ' +
       'Returns a share URL and the import command to give to teammates or the community. ' +
       'Example: brain_share(instance_id="...", title="My Auth Patterns", topic_filter=["auth"])',
     inputSchema: {
