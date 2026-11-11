@@ -7,6 +7,36 @@
 
 ---
 
+## [0.10.248] – 2026-11-11 — *"Writing a lesson asks whether it replaces an older one."*
+
+**`learn_from_attempts` now names older lessons on the same subject and asks.** A
+correction rarely knows what it corrects. The agent writing it seldom has the old
+lesson in front of it, and the two rarely share words. Until now the write path asked
+in two narrow cases: when the new text sounded like a correction, and when it said
+almost the same thing as an older lesson. It now also names up to three older lessons
+that are close in meaning, just below the duplicate level, and asks whether the new
+one replaces any of them. Nothing gets linked on its own; the writer decides.
+
+Measured on the bench corpus (498 lessons, each against all older ones): the question
+comes up on 5.4 % of writes, mostly with a single name. The idea came from Edward
+Izgorodin in the comments under *"I ranked my AI's memories by age"*.
+
+**Hints name team-wide lessons only.** The duplicate hint, and the briefing note
+behind it, could name private and group lessons. A name is a pointer: whoever knows
+it can fetch the lesson by name. Both hints now name team-wide lessons only, and a
+new private or group lesson no longer appears in the briefing note.
+
+**The contradiction warning reaches the writer.** Storing `failure` over an existing
+`success` of the same topic computed a warning and then dropped it, although the tool
+description promised it. It now appears in the answer.
+
+**Not solved:** the new question, like the duplicate hint, needs an embedding provider
+that answers within 1.5 seconds. Without one, both stay silent.
+
+**Upgrade:** `npx -y @cachly-dev/mcp-server@latest`. No setting needed.
+
+---
+
 ## [0.10.247] – 2026-11-11 — *"A failed check says why it failed."*
 
 **A check that fails on the environment no longer flags a valid lesson.**

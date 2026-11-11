@@ -143,6 +143,41 @@ export const NAHDUPLIKAT_SCHWELLE = 0.9;
 export const DOPPEL_SCHWELLE = 0.8;
 
 /**
+ * Ab welcher Naehe `learn_from_attempts` eine aeltere Lektion als Nachbarn
+ * "zum selben Thema" nennt und fragt, ob die neue sie ersetzt
+ * (doppel-kandidat.ts, nahHinweis). Darunter DOPPEL_SCHWELLE: dort zaehlt es
+ * als Doppelung.
+ *
+ * Anlass (11.11.2026): Edward Izgorodin schlug unter dem Artikel zum
+ * Alters-Ranking vor, dem Schreiber bei jedem Schreiben die naechsten
+ * aelteren Lektionen zu zeigen und zu fragen. Der Ersetzungs-Vorschlag
+ * (ersetzung-vorschlag.ts) fragt nur bei einem Korrektur-Signalwort; echte
+ * Ueberholungspaare teilen aber kaum Woerter (Wortueberlappung 0,086).
+ *
+ * Gemessen 11.11.2026 am Bench-Korpus (498 Lektionen mit Vektor und Text,
+ * je Lektion alle AELTEREN mit anderem Thema):
+ *
+ *   Untergrenze   Schreibvorgaenge mit Nachbar(n)   Nachbarn je Hinweis
+ *   0,80 (heute)  1,0 %                              —
+ *   0,74          5,4 %  (27 von 497)                24 x 1, 3 x 2
+ *   0,77          1,2 %                              darunter Unsinn (0,79:
+ *                                                    forge-gang-trial-lock ->
+ *                                                    laptop:ram-100)
+ *
+ * 0,74 ist die Grenze, unter der DOPPEL_SCHWELLE "meist nur dasselbe
+ * Gebiet" misst — genau dort stehen Korrekturen mit anderen Worten. Bei
+ * 0,74 fragt rund jeder 18. Schreibvorgang, meist mit einem Namen.
+ */
+export const NAH_UNTERGRENZE = 0.74;
+
+/**
+ * Hoechstens so viele Nachbarn nennt der Hinweis: 3. Im Bench-Korpus lagen
+ * nie mehr als 2 im Band (11.11.2026); die Grenze haelt die Zeile kurz,
+ * falls ein Bestand dichter ist.
+ */
+export const NAH_ANZAHL = 3;
+
+/**
  * Wie viele getippte Woerter im Treffer stehen muessen, damit er als Beleg gilt.
  *
  * 1 — ein einziges exakt getroffenes Wort genuegt. Bewusst eine ANZAHL und

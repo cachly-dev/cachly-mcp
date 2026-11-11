@@ -8,7 +8,7 @@ import type { Redis } from 'ioredis';
 import { calculateConfidence, CONFIDENCE_STALE_VALUE, CONFIDENCE_WARN_VALUE,
          CONFIDENCE_WARN_DAYS, CONFIDENCE_STALE_DAYS } from '../confidence.js';
 import type { Instance } from './brain.js';
-import { safeJsonParse, leseOderNull, darfHeraus } from '../utils.js';
+import { safeJsonParse, leseOderNull, darfHeraus, teamweitLesbar } from '../utils.js';
 import { ersparteMinuten, istStarterLektion, fmtStunden } from '../wertbeitrag.js';
 import {
   CURSOR_MDC_FRONTMATTER, buildClaudeMdBlock, setzeAnweisungsblock,
@@ -220,13 +220,11 @@ export function lessonVisibleToScope(
  *   - gruppen-beschraenkt heisst NEIN — ohne Ausweis des Fragenden kann
  *     niemand pruefen, ob er Mitglied ist. Mitglieder lesen ihre
  *     Gruppen-Lektionen ueber smart_recall / recall_best_solution mit `author`.
+ *
+ * Die Regel selbst steht seit 11.11.2026 in utils.ts (istTeamweit /
+ * teamweitLesbar); hier nur weitergereicht, damit bestehende Importe bleiben.
  */
-export function teamweitLesbar<T>(raw: string | null | undefined): T | null {
-  const lektion = leseOderNull<T & { visibility?: string; group?: string | null }>(raw);
-  if (!darfHeraus(lektion)) return null;
-  if (lektion.group) return null;
-  return lektion;
-}
+export { teamweitLesbar };
 
 /**
  * Welche Themen darf eine Liste in `brain_doctor` / `brain_hygiene` beim

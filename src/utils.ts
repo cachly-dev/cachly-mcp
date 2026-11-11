@@ -141,3 +141,36 @@ export function darfHeraus<T extends { visibility?: string }>(
   if (lektion === null) return false;
   return lektion.visibility !== 'private';
 }
+
+/**
+ * Darf diese Lektion in eine Ausgabe, die das GANZE Team sieht?
+ *
+ * ── Karte pguy341m6u7s, dritter Teil (09.11.2026) ─────────────────────────
+ *
+ * `smart_recall` und `recall_best_solution` ziehen die Grenzen zur Lesezeit.
+ * Vier Team-Werkzeuge taten es nicht: `team_recall`, `sync_file_changes`,
+ * `memory_crystalize` und `team_crystallize` lasen jede Lektion unter
+ * `cachly:lesson:best:*` und gaben `what_worked` aus — private und
+ * gruppen-beschraenkte eingeschlossen.
+ *
+ * Keines dieser Werkzeuge weiss, WER fragt. Deshalb im Zweifel schliessen:
+ *   - unlesbar heisst NEIN (leseOderNull + darfHeraus, wie smart_recall),
+ *   - privat heisst NEIN,
+ *   - gruppen-beschraenkt heisst NEIN — ohne Ausweis des Fragenden kann
+ *     niemand pruefen, ob er Mitglied ist.
+ *
+ * Seit 11.11.2026 hier statt in handlers/team.ts: auch brain_share und die
+ * Hinweise beim Schreiben (doppel-kandidat.ts) nennen nur, was diese Regel
+ * durchlaesst. Eine Regel, eine Stelle.
+ */
+export function istTeamweit<T extends { visibility?: string; group?: unknown }>(
+  lektion: T | null,
+): lektion is T {
+  return darfHeraus(lektion) && !lektion.group;
+}
+
+/** Wie istTeamweit, aber fuer den gespeicherten Text. Gibt die Lektion zurueck oder null. */
+export function teamweitLesbar<T>(raw: string | null | undefined): T | null {
+  const lektion = leseOderNull<T & { visibility?: string; group?: string | null }>(raw);
+  return istTeamweit(lektion) ? lektion : null;
+}

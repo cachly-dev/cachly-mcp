@@ -149,7 +149,7 @@ import {
   LESER_TIEFE,
 } from '../rangfolge-stellschrauben.js';
 import { ermittleQuelle, quelleZeile, type LektionsQuelle } from '../herkunft.js';
-import { doppelHinweis, leseDoppelKandidaten, mitFrist, pruefeDoppelung, type DoppelKandidat } from '../doppel-kandidat.js';
+import { doppelHinweis, KEINE_NACHBARN, leseDoppelKandidaten, mitFrist, nahHinweis, pruefeNachbarn, type NachbarErgebnis } from '../doppel-kandidat.js';
 import { merkeRecall, sitzungsKosten, vergissSitzungsKosten, kostenZeilen } from '../sitzungs-kosten.js';
 
 /**
@@ -1226,6 +1226,12 @@ async function handleBrainToolInner(
           `and that is the line someone reads two months from now (audit_trail, recall_best_solution).`,
         ].filter(Boolean).join('\n');
       }
+      // ── Die Widerspruchswarnung erreicht den Schreiber (11.11.2026) ────────
+      // Bis 0.10.247 lag diese Liste im try-Block unten und kam nie in die
+      // Antwort, obwohl die Werkzeugbeschreibung sie verspricht ("A conflicting
+      // outcome triggers a contradiction warning"). Gefunden beim Faktencheck
+      // fuer eine oeffentliche Antwort.
+      const contradictionWarning: string[] = [];
       if (existingRaw) {
         try {
           const prev = JSON.parse(existingRaw) as {
@@ -1244,7 +1250,6 @@ async function handleBrainToolInner(
           isUpdate = true;
 
           // ── Contradiction detection ─────────────────────────────────────────
-          const contradictionWarning: string[] = [];
           if (prev.outcome === 'success' && outcome === 'failure') {
             contradictionWarning.push(
               `⚠️ **Contradiction detected!** Existing lesson has outcome: \`success\`, but you're storing \`failure\`.`,
@@ -1543,10 +1548,10 @@ async function handleBrainToolInner(
       // Eine Ausnahme mit Frist (14.10.2026, Abhakliste 4.4 Weg a): die
       // Antwort wartet hoechstens DOPPEL_WARTE_MS auf die Doppelungs-Pruefung,
       // die direkt hinter dem Volltext-Vektor laeuft. Faellt der Dienst aus,
-      // kommt die Antwort sofort (doppelFertig(null) im Fehlerpfad).
-      let doppelFertig: (k: DoppelKandidat | null) => void = () => { /* ohne Pruefung */ };
-      const doppelPruefung = new Promise<DoppelKandidat | null>((fertig) => { doppelFertig = fertig; });
-      if (!(bestGeschrieben && hasEmbedProvider())) doppelFertig(null);
+      // kommt die Antwort sofort (doppelFertig(KEINE_NACHBARN) im Fehlerpfad).
+      let doppelFertig: (k: NachbarErgebnis) => void = () => { /* ohne Pruefung */ };
+      const doppelPruefung = new Promise<NachbarErgebnis>((fertig) => { doppelFertig = fertig; });
+      if (!(bestGeschrieben && hasEmbedProvider())) doppelFertig(KEINE_NACHBARN);
       if (bestGeschrieben && hasEmbedProvider()) {
         // Der Vermerk entsteht SYNCHRON, vor dem fire-and-forget-Block
         // (0.10.149, Standalone-Beweis 02.09.2026): Die Heilung von
@@ -1585,9 +1590,9 @@ async function handleBrainToolInner(
               // Moegliche Doppelung einer aelteren Lektion (doppel-kandidat.ts,
               // Abhakliste 4.4): gleich hier, denn die Antwort wartet mit
               // Frist darauf (DOPPEL_WARTE_MS). Vermerkt wird in jedem Fall.
-              doppelFertig(await pruefeDoppelung(redis, { ...gelesen, topic }, v, bestaendeFuer(redis).vektor));
+              doppelFertig(await pruefeNachbarn(redis, { ...gelesen, topic }, v, bestaendeFuer(redis).vektor));
             } else {
-              doppelFertig(null);
+              doppelFertig(KEINE_NACHBARN);
             }
             // Das Zweitmerkmal (rangfolge-stellschrauben.ts): derselbe Text
             // durch ZWEIT_MODELL, eigener Schluesselraum. Nur die Anbieter
@@ -1622,7 +1627,7 @@ async function handleBrainToolInner(
               })();
             }
           } catch (e) {
-            doppelFertig(null);
+            doppelFertig(KEINE_NACHBARN);
             // Kein Vektor ist besser als keine Lektion — aber der GRUND darf
             // nicht verlorengehen. Vor dem 22.08.2026 stand hier ein leeres
             // catch, und drei Kundeninstanzen hatten Lektionen ohne Vektoren,
@@ -1692,7 +1697,7 @@ async function handleBrainToolInner(
           await zweitFertig;
           await heileVektorNachtrag(redis, topic, 3);
           // Ohne Vektor keine Pruefung — die Antwort soll dann nicht bis zur Frist warten.
-          doppelFertig(null);
+          doppelFertig(KEINE_NACHBARN);
         })().finally(() => laufend.delete(topic));
       }
 
@@ -1912,7 +1917,8 @@ async function handleBrainToolInner(
       const sevEmoji = severity === 'critical' ? '🔴' : severity === 'major' ? '🟡' : '🟢';
       const action = isUpdate ? 'updated' : 'stored';
       // Weg a (4.4): hoechstens DOPPEL_WARTE_MS auf die Pruefung im Hintergrund.
-      const doppelung = await mitFrist(doppelPruefung);
+      const nachbarErgebnis = (await mitFrist(doppelPruefung)) ?? KEINE_NACHBARN;
+      const doppelung = nachbarErgebnis.doppel;
       return [
         `${emoji} **Lesson ${action}:** \`${topic}\` (${outcome}) ${sevEmoji} ${severity} · receipt: \`${beleg}\``,
         geschwaerzt.funde.length
@@ -1940,6 +1946,7 @@ async function handleBrainToolInner(
           : '',
         ersetzungsVorschlag,
         doppelHinweis(doppelung, ersetzungsVorschlag),
+        ersetztZiel ? '' : nahHinweis(nachbarErgebnis.nahe, ersetzungsVorschlag + doppelHinweis(doppelung, ersetzungsVorschlag)),
         giltFuer.angaben.length
           ? `📦 Applies to ${giltFuer.angaben.map((a) => `\`${a}\``).join(', ')}${giltFuer.uebernommen ? ' (carried over from the previous version)' : ''} — if the project does not match, the lesson ranks last in recall and is marked.`
           : '',
@@ -1950,6 +1957,7 @@ async function handleBrainToolInner(
             : `↷ Replaces \`${ersetztZiel}\` — recall hides the old version and names its successor. Without \`grund\` it says 'No reason recorded' — one line (why the old one was wrong) makes the link checkable.`
           : ersetztHinweis,
         ...templateWarnings,
+        ...contradictionWarning,
         ...iWasWrongWarning,
         // Karte 2bfm7dyvjmeh: sichtbar machen, dass hier etwas am Text
         // ergaenzt wurde. Eine stille Aenderung an fremden Worten waere

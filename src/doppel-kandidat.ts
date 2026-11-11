@@ -30,7 +30,8 @@
 
 import type { Redis } from 'ioredis';
 import { kosinus, type Vektorbestand } from './bedeutung.js';
-import { DOPPEL_SCHWELLE } from './rangfolge-stellschrauben.js';
+import { DOPPEL_SCHWELLE, NAH_ANZAHL, NAH_UNTERGRENZE } from './rangfolge-stellschrauben.js';
+import { istTeamweit, teamweitLesbar } from './utils.js';
 
 /** Hash: Feld = neues Thema, Wert = {alt, naehe, am}. */
 export const DOPPEL_SCHLUESSEL = 'cachly:doppel:kandidaten';
@@ -69,7 +70,25 @@ export interface DoppelLektion {
   ersetzt?: unknown;
   ersetzt_durch?: unknown;
   ts?: unknown;
+  visibility?: string;
+  group?: unknown;
 }
+
+/** Eine aeltere Lektion zum selben Thema, die der Hinweis beim Schreiben nennt. */
+export interface NaheLektion {
+  topic: string;
+  naehe: number;
+}
+
+/** Was die Nachbarsuche nach dem Schreiben liefert. */
+export interface NachbarErgebnis {
+  /** Die Doppelung ab DOPPEL_SCHWELLE, oder null. */
+  doppel: DoppelKandidat | null;
+  /** Bis zu NAH_ANZAHL weitere Nachbarn ab NAH_UNTERGRENZE, ohne die Doppelung. */
+  nahe: NaheLektion[];
+}
+
+export const KEINE_NACHBARN: NachbarErgebnis = { doppel: null, nahe: [] };
 
 export interface DoppelKandidat {
   neu: string;
@@ -117,29 +136,59 @@ function lies(roh: string | null | undefined): Record<string, unknown> | null {
 const runde = (x: number): number => Math.round(x * 1000) / 1000;
 
 /**
- * Nach dem Schreiben des Volltext-Vektors einer Lektion: Kandidat suchen und
- * vermerken. Ohne Kandidat verschwindet ein alter Vermerk dieses Themas (das
- * Update hat ihn vielleicht mit `ersetzt` erledigt). Wirft nie.
+ * Die Nachbarn fuer die Frage "ersetzt die neue eine davon?": ab
+ * NAH_UNTERGRENZE, ohne die Doppelung (die nennt doppelHinweis), mit denselben
+ * Bedingungen wie eine Doppelung — Text auf beiden Seiten, noch nicht
+ * verknuepft. Die naechsten zuerst, hoechstens NAH_ANZAHL.
  */
-export async function pruefeDoppelung(
+export function waehleNahe(
+  neu: DoppelLektion,
+  nachbarn: ReadonlyArray<{ lektion: DoppelLektion; naehe: number }>,
+  ohne?: string,
+): NaheLektion[] {
+  return nachbarn
+    .filter((n) => n.lektion.topic !== ohne && zaehltAlsDoppelung(neu, n.lektion, n.naehe, NAH_UNTERGRENZE))
+    .sort((a, b) => b.naehe - a.naehe)
+    .slice(0, NAH_ANZAHL)
+    .map((n) => ({ topic: n.lektion.topic, naehe: runde(n.naehe) }));
+}
+
+/**
+ * Nach dem Schreiben des Volltext-Vektors einer Lektion: die naechsten
+ * aelteren Lektionen suchen. Liefert die Doppelung (ab DOPPEL_SCHWELLE) und
+ * die Nachbarn zum selben Thema (ab NAH_UNTERGRENZE). Vermerkt wird nur die
+ * Doppelung; ohne sie verschwindet ein alter Vermerk dieses Themas (das
+ * Update hat ihn vielleicht mit `ersetzt` erledigt). Wirft nie.
+ *
+ * ── Nur teamweite Namen (11.11.2026) ───────────────────────────────────────
+ * Beide Hinweise nennen Themennamen, und der Vermerk landet im Briefing, das
+ * jeder im Team sieht. Ein Name ist ein Wegweiser: wer ihn kennt, kann die
+ * Lektion beim Namen abrufen. Bis 0.10.247 kamen private und
+ * Gruppen-Lektionen hier ungeprueft durch. Jetzt gilt istTeamweit (utils.ts)
+ * fuer jeden genannten Nachbarn — und fuer die NEUE Lektion, bevor ihr Name
+ * ins Briefing geht.
+ */
+export async function pruefeNachbarn(
   redis: Redis,
   neu: DoppelLektion,
   vektor: number[],
   bestand: Vektorbestand,
   jetzt: Date = new Date(),
-): Promise<DoppelKandidat | null> {
+): Promise<NachbarErgebnis> {
   try {
     await bestand.aktualisiere(redis);
     const nachbarn = bestand.aehnlichste(vektor, NACHBARN + 1)
-      .filter((n) => n.topic !== neu.topic && n.naehe >= DOPPEL_SCHWELLE);
+      .filter((n) => n.topic !== neu.topic && n.naehe >= NAH_UNTERGRENZE);
     let kandidat: { topic: string; naehe: number } | null = null;
+    let nahe: NaheLektion[] = [];
     if (nachbarn.length > 0) {
       const roh = await redis.mget(...nachbarn.map((n) => `cachly:lesson:best:${n.topic}`));
       const mitLektion = nachbarn.flatMap((n, i) => {
-        const l = lies(roh[i]);
+        const l = teamweitLesbar<Record<string, unknown>>(roh[i]);
         return l ? [{ lektion: { ...l, topic: n.topic } as DoppelLektion, naehe: n.naehe }] : [];
       });
       kandidat = waehleDoppelKandidat(neu, mitLektion);
+      nahe = waehleNahe(neu, mitLektion, kandidat?.topic);
     }
 
     // Alte Vermerke wegraeumen; der Hash bleibt klein.
@@ -151,14 +200,27 @@ export async function pruefeDoppelung(
       .map(([feld]) => feld);
     if (weg.length > 0) await redis.hdel(DOPPEL_SCHLUESSEL, ...weg);
 
-    if (!kandidat) return null;
+    if (!kandidat) return { doppel: null, nahe };
     const eintrag: DoppelKandidat = { neu: neu.topic, alt: kandidat.topic, naehe: runde(kandidat.naehe), am: jetzt.toISOString() };
-    await redis.hset(DOPPEL_SCHLUESSEL, neu.topic, JSON.stringify({ alt: eintrag.alt, naehe: eintrag.naehe, am: eintrag.am }));
-    await redis.expire(DOPPEL_SCHLUESSEL, DOPPEL_TTL_S);
-    return eintrag;
+    if (istTeamweit(neu)) {
+      await redis.hset(DOPPEL_SCHLUESSEL, neu.topic, JSON.stringify({ alt: eintrag.alt, naehe: eintrag.naehe, am: eintrag.am }));
+      await redis.expire(DOPPEL_SCHLUESSEL, DOPPEL_TTL_S);
+    }
+    return { doppel: eintrag, nahe };
   } catch {
-    return null;
+    return KEINE_NACHBARN;
   }
+}
+
+/** Nur die Doppelung (fuer bestehende Aufrufer und Tests). */
+export async function pruefeDoppelung(
+  redis: Redis,
+  neu: DoppelLektion,
+  vektor: number[],
+  bestand: Vektorbestand,
+  jetzt: Date = new Date(),
+): Promise<DoppelKandidat | null> {
+  return (await pruefeNachbarn(redis, neu, vektor, bestand, jetzt)).doppel;
 }
 
 /**
@@ -185,6 +247,22 @@ export function doppelHinweis(k: DoppelKandidat | null, schonGenannt = ''): stri
   return `♻️ Says almost the same as \`${k.alt}\` (similarity ${k.naehe.toFixed(2)}). `
     + `If this is the newer version: write the same lesson again with \`ersetzt="${k.alt}"\` and \`grund\`. `
     + 'If it is a separate matter: nothing to do.';
+}
+
+/**
+ * Die Frage nach dem Ersetzen fuer Nachbarn zum selben Thema (NAH_UNTERGRENZE
+ * bis DOPPEL_SCHWELLE). Anlass: Edward Izgorodin, 11.11.2026 — wer eine
+ * Korrektur schreibt, hat die alte Lektion selten vor sich; der Schreibweg
+ * kann sie ihm zeigen. Fragen statt raten: gesetzt wird nichts. Leer, wenn
+ * die anderen Hinweise dieselben Namen schon nennen.
+ */
+export function nahHinweis(nahe: ReadonlyArray<NaheLektion>, schonGenannt = ''): string {
+  const rest = nahe.filter((n) => !schonGenannt.includes(`\`${n.topic}\``));
+  if (rest.length === 0) return '';
+  const liste = rest.map((n) => `\`${n.topic}\` (${n.naehe.toFixed(2)})`).join(', ');
+  return `🔎 Older lessons on the same subject: ${liste}. Does this one replace one of them? `
+    + 'If so: write it again with `ersetzt="<topic>"` and `grund` — recall then shows this one as current. '
+    + 'If not: nothing to do.';
 }
 
 /**

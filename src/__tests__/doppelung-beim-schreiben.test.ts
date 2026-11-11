@@ -33,10 +33,12 @@ const vektorFuer = (text: string): number[] => {
 const { geprueft } = vi.hoisted(() => ({ geprueft: [] as string[] }));
 vi.mock('../doppel-kandidat.js', async (original) => {
   const echt = await original<typeof import('../doppel-kandidat.js')>();
+  // Seit 11.11.2026 ruft der Schreibweg pruefeNachbarn (Doppelung plus
+  // Nachbarn zum selben Thema); pruefeDoppelung ist nur noch eine Huelle.
   return {
     ...echt,
-    pruefeDoppelung: async (...a: Parameters<typeof echt.pruefeDoppelung>) => {
-      const k = await echt.pruefeDoppelung(...a);
+    pruefeNachbarn: async (...a: Parameters<typeof echt.pruefeNachbarn>) => {
+      const k = await echt.pruefeNachbarn(...a);
       geprueft.push(a[1].topic);
       return k;
     },
