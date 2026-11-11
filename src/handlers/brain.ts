@@ -337,6 +337,7 @@ import { VERDACHT_TAG, mitVerdachtTag, pruefeFelder, verdachtsWarnung } from '..
 import { fuerEigenenSpeicher, hinweise, istMarkiert, markiert, markierungsWarnung, markierungsWarnungAusRohwert, zaehlHinweise } from '../schreibtor.js';
 import { istBlossesThema } from '../blosses-thema.js';
 import { zeitpunkt } from '../zeitmessung.js';
+import { wartetAufFrischenBestand } from '../bestand-frische.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
 // Resolve the package version at runtime from package.json so the session briefing
@@ -926,9 +927,34 @@ async function merkeSitzungsbeginn(redis: Redis, focus: string, provider: string
   }), 'EX', 86400); // auto-expire after 24h if session_end never called
 }
 
-async function getRecallGate(instanceId: string, apiFetch: ApiFetch): Promise<RecallGate> {
+/** Laufende Abfragen der Abruf-Grenze je Instanz — ein zweiter Aufruf teilt die erste. */
+const _recallGateLaufend = new Map<string, Promise<RecallGate>>();
+
+/**
+ * Die Abruf-Grenze der Instanz, eine Minute gemerkt.
+ *
+ * Seit 11.11.2026 (bestand-frische.ts): nach Ablauf der Minute antwortet der
+ * gemerkte Wert sofort, die API wird im Hintergrund gefragt. Vorher wartete
+ * jeder smart_recall, der mehr als eine Minute nach dem letzten kam, auf diese
+ * Abfrage — gemessen rund 1,3 s ueber ein entferntes Netz. Ein Konto an seiner
+ * Grenze bekommt dadurch hoechstens einen Abruf mehr, bevor sie greift; das
+ * passt zur Regel darunter (fail open: Nutzen vor Abrechnung). Im Messmodus
+ * wird weiter gewartet.
+ */
+export async function getRecallGate(instanceId: string, apiFetch: ApiFetch): Promise<RecallGate> {
   const cached = _recallGateCache.get(instanceId);
   if (cached && cached.expiresAt > Date.now()) return cached.gate;
+  let laufend = _recallGateLaufend.get(instanceId);
+  if (!laufend) {
+    laufend = frageRecallGate(instanceId, apiFetch)
+      .finally(() => { _recallGateLaufend.delete(instanceId); });
+    _recallGateLaufend.set(instanceId, laufend);
+  }
+  if (cached && !wartetAufFrischenBestand()) return cached.gate;
+  return laufend;
+}
+
+async function frageRecallGate(instanceId: string, apiFetch: ApiFetch): Promise<RecallGate> {
   try {
     const mem = await apiFetch<{
       total_recall_count?: number;

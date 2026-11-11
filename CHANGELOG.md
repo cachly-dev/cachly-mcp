@@ -7,6 +7,39 @@
 
 ---
 
+## [0.10.244] – 2026-11-11 — *"One session start, not two."*
+
+**An explicit `session_start` now counts as the start of the session.** The server
+starts a session on its own at the first tool call of a process. Until now it ignored a
+`session_start` the agent had already called itself — which most agents do first,
+because the instructions ask for it. The first `smart_recall` after it then ran a second,
+hidden `session_start` and waited for it, for a briefing nobody saw.
+
+Measured against a Brain with 1,257 lessons over a remote connection, `session_start`
+first, then two recalls:
+
+| | session_start | first recall | second recall |
+|---|---|---|---|
+| 0.10.243 | 7.2 s | 25.7 s | 6.1 s |
+| 0.10.244 | 6.5 s | 16.8 s | 4.8 s |
+
+The project index that used to follow the automatic start now runs in the background
+after the explicit one, as before at most once a day.
+
+**The recall-limit check no longer blocks after a minute.** Every recall more than a
+minute after the last one waited for the API (about 1.3 s over a remote connection).
+The remembered value now answers at once and the API is asked in the background. An
+account at its limit gets at most one more recall before the limit applies. In
+measurement mode the recall still waits.
+
+**Not solved:** a client that never calls `session_start` still waits for the automatic
+one on its first tool call. For a new Brain that is wanted: the start can import the
+git history, so the first recall already finds something.
+
+**Upgrade:** `npx -y @cachly-dev/mcp-server@latest`. No setting needed.
+
+---
+
 ## [0.10.243] – 2026-11-11 — *"smart_recall answers in seconds, not minutes."*
 
 **A recall no longer waits minutes for the in-memory stores.** Measured against a real

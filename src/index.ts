@@ -1047,6 +1047,7 @@ import {
 } from './konto-anlegen.js';
 import { sichereZugang, echterWert } from './zugang.js';
 import { zeitpunkt } from './zeitmessung.js';
+import { autoSitzungsSchritt, SITZUNGS_WERKZEUGE } from './auto-sitzung.js';
 import { warteAufLaufendeInstanz, gemeinsamerAufbau } from './instanz-warten.js';
 import { merkeNeuesBrain, startetLautLetztemBlick, setzeCommitQuelle } from './leeres-brain.js';
 import {
@@ -2007,7 +2008,20 @@ async function autoStartSession(instanceId: string): Promise<void> {
     }
   })();
   await _autoSessionStarting;
+  starteAutoIndex(instanceId);
+}
 
+/**
+ * Ein ausdrueckliches session_start zaehlt als Start der Sitzung (auto-sitzung.ts).
+ * Der Auto-Index, der sonst nach dem automatischen Start kaeme, laeuft dann
+ * nach diesem Aufruf im Hintergrund.
+ */
+function merkeAusdruecklichenStart(instanceId: string): void {
+  _autoSessionStarted = true;
+  _autoSessionInstanceId = instanceId;
+}
+
+function starteAutoIndex(instanceId: string): void {
   // Auto-index the project if it hasn't been indexed in the last 24h.
   // This is the main lever for growing token savings: more indexed code →
   // more semantic cache hits → fewer LLM calls for repeated questions.
@@ -2103,26 +2117,32 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
   }
 
   // Auto-start brain session on first tool call that has an instance_id.
-  // Skip session management tools to avoid recursion.
-  const sessionTools = new Set(['session_start', 'session_start_summary', 'session_end', 'auto_learn_session']);
-  if (!sessionTools.has(name) && !_autoSessionStarted && !_autoSessionStarting) {
-    const instanceId = echterWert((args as Record<string, unknown>)?.instance_id)
-      || _defaultInstanceId
-      || echterWert(process.env.CACHLY_BRAIN_INSTANCE_ID);
-    if (instanceId) {
-      await autoStartSession(instanceId).catch(() => undefined);
-    }
-  } else if (_autoSessionStarting) {
+  // Skip session management tools to avoid recursion. An explicit
+  // session_start counts as the start (auto-sitzung.ts) — before 11.11.2026
+  // the first recall after it ran a second, hidden session_start (~6 s).
+  const sitzungsInstanz = echterWert((args as Record<string, unknown>)?.instance_id)
+    || _defaultInstanceId
+    || echterWert(process.env.CACHLY_BRAIN_INSTANCE_ID)
+    || '';
+  const sitzungsSchritt = autoSitzungsSchritt(name, {
+    gestartet: _autoSessionStarted, startetGerade: _autoSessionStarting !== null, instanz: sitzungsInstanz,
+  });
+  if (sitzungsSchritt === 'starten') {
+    await autoStartSession(sitzungsInstanz).catch(() => undefined);
+  } else if (sitzungsSchritt === 'abwarten') {
     // Another concurrent call is mid-start — wait for it before proceeding.
-    await _autoSessionStarting.catch(() => undefined);
+    await _autoSessionStarting?.catch(() => undefined);
+  } else if (sitzungsSchritt === 'als-gestartet-merken') {
+    merkeAusdruecklichenStart(sitzungsInstanz);
   }
-  if (!sessionTools.has(name)) _autoSessionToolCount++;
+  if (!SITZUNGS_WERKZEUGE.has(name)) _autoSessionToolCount++;
 
   try {
     merkeWerkzeugAufruf();
     zeitpunkt(`werkzeug ${name}: Anfang`);
     const text = await handleTool(name, (args ?? {}) as Record<string, unknown>);
     zeitpunkt(`werkzeug ${name}: Antwort fertig`);
+    if (sitzungsSchritt === 'als-gestartet-merken') starteAutoIndex(sitzungsInstanz);
     // Hat der Hintergrund-Import aus der Git-Geschichte gerade Lektionen
     // angelegt, steht die Zahl EINMAL an dieser Antwort — ausserhalb des
     // Rahmens, denn sie ist eine Meldung des Servers und kein gespeicherter Text.
