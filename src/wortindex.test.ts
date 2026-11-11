@@ -70,6 +70,48 @@ describe('stehender Wortindex', () => {
     expect(r.gets, 'die zweite Frage hat den Bestand erneut gelesen').toBe(nachErsterFrage);
   });
 
+  it('GLEICHSTAND: Entwerten und Bauen in derselben Millisekunde — der Bestand steht trotzdem', async () => {
+    // Der Test oben fiel am 11.11.2026 in der CI rot aus (expected 4 to be 2),
+    // lokal gruen. Ursache: das Entwerten merkte sich eine Uhrzeit. Begann der
+    // Neubau in derselben Millisekunde, galt er als vor dem Entwerten begonnen
+    // und damit als veraltet — die naechste Frage baute ein zweites Mal.
+    // Hier wird die Uhr angehalten, damit der Gleichstand jedes Mal eintritt.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+    try {
+      wortindexEntwerten();
+      const r = new ZaehlenderRedis();
+      r.set('cachly:lesson:best:ci:platte', lektion('ci:platte', 'Die Platte war voll beim Ausrollen'));
+      r.set('cachly:lesson:best:auth:token', lektion('auth:token', 'Das Token war abgelaufen'));
+
+      await keywordSearch(r as never, ['cachly:lesson:best:*'], 'platte voll', 5);
+      const nachErsterFrage = r.gets;
+      await keywordSearch(r as never, ['cachly:lesson:best:*'], 'token abgelaufen', 5);
+      expect(r.gets, 'bei gleicher Millisekunde wurde der Bestand erneut gelesen').toBe(nachErsterFrage);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('GEGENPROBE GLEICHSTAND: Entwerten in derselben Millisekunde laesst trotzdem los', async () => {
+    // Die andere Richtung derselben Millisekunde: wer nach dem Bauen lernt und
+    // entwertet, muss die neue Lektion sofort finden — auch ohne dass die Uhr
+    // weitergelaufen ist.
+    vi.useFakeTimers({ toFake: ['Date'], now: Date.now() });
+    try {
+      const r = new ZaehlenderRedis();
+      r.set('cachly:lesson:best:ci:platte', lektion('ci:platte', 'Die Platte war voll'));
+      await keywordSearch(r as never, ['cachly:lesson:best:*'], 'platte', 5);
+
+      r.set('cachly:lesson:best:neu:fail2ban', lektion('neu:fail2ban', 'fail2ban hat den Deploy-Kanal gebannt'));
+      wortindexEntwerten();
+      const treffer = await keywordSearch(r as never, ['cachly:lesson:best:*'], 'fail2ban gebannt', 5);
+      expect(treffer.map((m) => m.key), 'die frisch gelernte Lektion fehlt')
+        .toContain('cachly:lesson:best:neu:fail2ban');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('liefert beim zweiten Mal dasselbe Ergebnis wie beim ersten', async () => {
     // Schneller ist wertlos, wenn es dabei etwas anderes findet.
     const r = new ZaehlenderRedis();

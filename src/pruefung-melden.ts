@@ -29,7 +29,25 @@
  * Er loescht nichts. Eine Lektion, deren Pruefung fehlschlaegt, ist nicht
  * automatisch falsch — vielleicht war der Dienst nur gerade aus. Sie wird
  * MARKIERT, der Abruf warnt, und ein Mensch entscheidet, was sie ersetzt.
+ *
+ * ── Woran sie gescheitert ist (`ursache`, 11.11.2026) ─────────────────────
+ *
+ * Reid Marlow auf dev.to: eine Pruefung, die an der Umgebung scheitert
+ * (Staging laeuft in die Zeitgrenze, das Lockfile hinkt), stellt eine
+ * gueltige Regel unter Verdacht. Wer "FEHLGESCHLAGEN" liest, ueberspringt sie.
+ * Heinrichs Antwort: "'Assertion failed' is news about the note. 'Staging
+ * timed out' is news about the day."
+ *
+ * Darum die Fehlerart:
+ *   - `aussage` (oder keine Angabe): die Pruefung lief und die Behauptung
+ *     haelt nicht. Markiert wie bisher.
+ *   - `umgebung`: die Pruefung kam gar nicht bis zur Behauptung. Die Lektion
+ *     wird NICHT markiert; der Abruf zeigt nur einen leisen Hinweis.
+ * Eine bestandene Pruefung hebt beides auf.
  */
+
+/** Woran eine Pruefung gescheitert ist. */
+export type Ursache = 'aussage' | 'umgebung';
 
 /** Wie die Meldung hereinkommt. */
 export interface Pruefmeldung {
@@ -40,6 +58,8 @@ export interface Pruefmeldung {
   geprueft_mit?: unknown;
   /** Was stattdessen gefunden wurde, wenn es nicht haelt. */
   befund?: unknown;
+  /** Nur bei haelt=false: lag es an der Aussage oder an der Umgebung? */
+  ursache?: unknown;
 }
 
 /** Was in der Lektion landet. */
@@ -49,6 +69,7 @@ export interface Pruefeintrag {
   ts: string;
   geprueft_mit?: string;
   befund?: string;
+  ursache?: Ursache;
 }
 
 export interface Geprueft {
@@ -135,9 +156,29 @@ export function pruefeMeldung(
     };
   }
 
+  // Auch die Fehlerart wird nicht geraten. Ein unbekannter Wert ist eine
+  // Absage, kein stilles `aussage`: wer "env" schreibt, meint `umgebung`,
+  // und ihn trotzdem als gefallen zu markieren waere genau der Fehler, gegen
+  // den das Feld angetreten ist.
+  const rohUrsache = eingabe.ursache;
+  let ursache: Ursache | undefined;
+  if (rohUrsache !== undefined && rohUrsache !== null && rohUrsache !== '') {
+    if (rohUrsache !== 'aussage' && rohUrsache !== 'umgebung') {
+      return {
+        ok: false,
+        grund: '`ursache` ist "aussage" (die Pruefung lief, die Behauptung haelt nicht) '
+          + 'oder "umgebung" (die Pruefung kam nicht bis zur Behauptung: Zeitgrenze, '
+          + 'Dienst aus, Lockfile hinkt).',
+      };
+    }
+    // Bei einer bestandenen Pruefung gibt es keine Fehlerart.
+    if (!haelt) ursache = rohUrsache;
+  }
+
   const eintrag: Pruefeintrag = { topic, haelt, ts: jetzt };
   if (befehl) eintrag.geprueft_mit = befehl;
   if (befund) eintrag.befund = befund;
+  if (ursache) eintrag.ursache = ursache;
   return { ok: true, eintrag };
 }
 
@@ -158,12 +199,25 @@ export function wendeAn(
     neu.verified_at = eintrag.ts;
     neu.confidence = 1.0;
     // Eine bestandene Pruefung hebt eine fruehere gefallene auf. Sonst
-    // warnte der Abruf ewig weiter, obwohl jemand nachgesehen hat.
+    // warnte der Abruf ewig weiter, obwohl jemand nachgesehen hat. Dasselbe
+    // gilt fuer den Hinweis auf eine gestoerte Umgebung.
     delete neu.pruefung_gefallen_am;
     delete neu.pruefung_befund;
+    delete neu.pruefung_umgebung_am;
+    delete neu.pruefung_umgebung_befund;
+  } else if (eintrag.ursache === 'umgebung') {
+    // Nachricht ueber den Tag, nicht ueber die Lektion. Nichts wird markiert,
+    // und eine fruehere gefallene Pruefung bleibt, wie sie war: die gestoerte
+    // Umgebung hat sie weder bestaetigt noch widerlegt.
+    neu.pruefung_umgebung_am = eintrag.ts;
+    neu.pruefung_umgebung_befund = eintrag.befund;
   } else {
     neu.pruefung_gefallen_am = eintrag.ts;
     neu.pruefung_befund = eintrag.befund;
+    // Diese Pruefung kam bis zur Behauptung; der Hinweis auf eine gestoerte
+    // Umgebung ist damit ueberholt.
+    delete neu.pruefung_umgebung_am;
+    delete neu.pruefung_umgebung_befund;
     // `verified_at` bleibt, wie es war. Ein Fehlschlag macht die Lektion
     // nicht juenger und nicht aelter — er macht sie fraglich.
   }

@@ -7,6 +7,37 @@
 
 ---
 
+## [0.10.247] – 2026-11-11 — *"A failed check says why it failed."*
+
+**A check that fails on the environment no longer flags a valid lesson.**
+`lesson_verified` takes a new optional field `ursache`:
+
+- `"aussage"` or no value: the check ran and the claim no longer holds. The lesson is
+  flagged, and recall shows `❌ CHECK FAILED` as before.
+- `"umgebung"`: the check never reached the claim, for example because staging timed
+  out or a lockfile was behind. The lesson is **not** flagged. `verified_at` and
+  confidence stay as they were. Recall shows only a quiet note: "failed on the
+  environment, not on this lesson".
+- A passing check clears both.
+- An unknown value is rejected instead of being read as `"aussage"`.
+
+"Assertion failed" is news about the note. "Staging timed out" is news about the day.
+Prompted by a reader comment on dev.to.
+
+**Not solved:** the agent has to say which kind it was. Nothing tells the two apart
+automatically.
+
+**Also fixed: the word index sometimes built itself twice.** Clearing the index
+stored a time in milliseconds. A rebuild that started in the same millisecond
+counted as older than the clearing, so the next recall built the index again. On
+fast CI machines this made one test fail from time to time (`expected 4 to be 2`).
+The clearing now counts up instead of storing a time, so there is no tie. A new
+test stops the clock to force the tie every time: red before, green after.
+
+**Upgrade:** `npx -y @cachly-dev/mcp-server@latest`. No setting needed.
+
+---
+
 ## [0.10.246] – 2026-11-11 — *"Private and group lessons stay in the team."*
 
 **Two ways out of the team now carry only team-wide lessons.** `brain_share` and the

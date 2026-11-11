@@ -2037,6 +2037,16 @@ async function handleBrainToolInner(
       await redis.set(schluessel, JSON.stringify(tor.verdacht.length ? { ...neu, tags: markiert(neu.tags, tor.verdacht) } : neu));
       wortindexEntwerten();
 
+      if (!eintrag.haelt && eintrag.ursache === 'umgebung') {
+        return [
+          `ℹ️ \`${eintrag.topic}\`: Pruefung an der Umgebung gescheitert — die Lektion bleibt, wie sie war.`,
+          `   Befund: ${eintrag.befund}`,
+          '',
+          'Nicht als fraglich markiert, `verified_at` unveraendert. Das sagt etwas ueber',
+          'den Tag, nicht ueber die Lektion. Pruefe noch einmal, wenn die Umgebung wieder steht.',
+          ...hinweise(tor),
+        ].join('\n');
+      }
       if (eintrag.haelt) {
         return [
           `✅ \`${eintrag.topic}\` ist wieder frisch — geprueft am ${jetzt.slice(0, 10)}.`,
@@ -2167,6 +2177,8 @@ async function handleBrainToolInner(
           // Der Lesepfad zu lesson_verified(haelt=false). Ohne diese beiden
           // Felder waere die Markierung geschrieben und unsichtbar.
           pruefung_gefallen_am?: string; pruefung_befund?: string;
+          // ... und zu ursache="umgebung": nur ein leiser Zusatz am Badge.
+          pruefung_umgebung_am?: string; pruefung_umgebung_befund?: string;
         });
         if (!lesson) return `⚠️ Lesson data for \`${topic}\` is corrupted. Re-store it with \`learn_from_attempts\`.`;
 
@@ -2220,6 +2232,9 @@ async function handleBrainToolInner(
           Array.isArray(probe) && typeof probe[0] === 'string' ? probe[0] : undefined,
           lesson.pruefung_gefallen_am
             ? { am: lesson.pruefung_gefallen_am, befund: lesson.pruefung_befund }
+            : undefined,
+          lesson.pruefung_umgebung_am
+            ? { am: lesson.pruefung_umgebung_am, befund: lesson.pruefung_umgebung_befund }
             : undefined,
         );
 
@@ -3275,6 +3290,7 @@ async function handleBrainToolInner(
         // genau die Bauform, gegen die das Feld angetreten ist.
         const gefallen = safeJsonParse<{
           pruefung_gefallen_am?: string; pruefung_befund?: string;
+          pruefung_umgebung_am?: string; pruefung_umgebung_befund?: string;
         }>(r.content, {});
         if (gefallen.pruefung_gefallen_am) {
           const thema = r.key.replace('cachly:lesson:best:', '');
@@ -3283,6 +3299,16 @@ async function handleBrainToolInner(
           ersetzungsNotizen.push(
             `❌ \`${thema}\` — Pruefung am ${wann} FEHLGESCHLAGEN`
             + (was ? `: ${was}` : ''),
+          );
+        } else if (gefallen.pruefung_umgebung_am) {
+          // ursache="umgebung": die Pruefung kam nicht bis zur Behauptung.
+          // Kein ❌ — wer das liest, soll die Lektion nicht ueberspringen.
+          const thema = r.key.replace('cachly:lesson:best:', '');
+          const wann = String(gefallen.pruefung_umgebung_am).slice(0, 10);
+          const was = String(gefallen.pruefung_umgebung_befund ?? '').trim().slice(0, 120);
+          ersetzungsNotizen.push(
+            `ℹ️ \`${thema}\` — Pruefung am ${wann} an der Umgebung gescheitert, `
+            + 'sagt nichts ueber die Lektion' + (was ? `: ${was}` : ''),
           );
         }
       }

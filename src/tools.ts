@@ -697,6 +697,8 @@ const TOOLS = [
       'holds=true refreshes verified_at and clears any earlier failed check. ' +
       'holds=false marks the lesson as questionable and REQUIRES `befund` — it deletes nothing, ' +
       'because a check can fail for reasons that have nothing to do with the lesson. ' +
+      'If the check never reached the claim (staging timed out, service down, lockfile behind), add ursache="umgebung": ' +
+      'then nothing is flagged and recall only shows a quiet note. ' +
       'Example: lesson_verified(topic="deploy:web", holds=true, geprueft_mit="curl -s http://127.0.0.1:3220/bereit")',
     inputSchema: {
       type: 'object',
@@ -714,6 +716,13 @@ const TOOLS = [
         befund: {
           type: 'string',
           description: 'What you saw instead. REQUIRED when haelt=false — a warning without content is noise.',
+        },
+        ursache: {
+          type: 'string',
+          enum: ['aussage', 'umgebung'],
+          description: 'Only with haelt=false: why it failed. "aussage" (default) = the check ran and the claim no longer holds; the lesson is flagged. '
+            + '"umgebung" = the check never reached the claim (timeout, service down, lockfile behind); the lesson is NOT flagged — '
+            + '"assertion failed" is news about the note, "staging timed out" is news about the day.',
         },
         author: { type: 'string', description: 'Optional: your handle.' },
       },

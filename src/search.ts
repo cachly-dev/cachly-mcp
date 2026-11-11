@@ -1771,6 +1771,8 @@ export interface Wortbestand {
   avgDL: number;
   docFreq: Map<string, number>;
   gebaut: number;
+  /** Entwertungsstand, unter dem das Bauen BEGANN (siehe `_entwertungen`). */
+  stand: number;
 }
 
 const WORTBESTAND_FRISCHE_MS = 60_000;
@@ -1802,11 +1804,21 @@ let _wortbestandZaehler = 0;
  * Minute Unsichtbarkeit.
  */
 export function wortindexEntwerten(): void {
-  _entwertetAb = Date.now();
+  _entwertungen++;
   _wortbestandZaehler = 0;
 }
-/** Alles, was vor diesem Zeitpunkt gebaut wurde, gilt als veraltet. */
-let _entwertetAb = 0;
+/**
+ * Wie oft entwertet wurde. Gueltig ist nur ein Bestand, dessen Bauen unter
+ * dem aktuellen Stand begann.
+ *
+ * Ein Zaehler, keine Uhrzeit (11.11.2026). Vorher stand hier der Zeitpunkt
+ * des Entwertens, und ein Neubau, der in DERSELBEN Millisekunde begann, galt
+ * als davor begonnen — also als veraltet. Die naechste Frage baute ein zweites
+ * Mal. Auf schnellen CI-Rechnern traf das `wortindex.test.ts` ab und zu
+ * (expected 4 to be 2); im Betrieb kostete es einen ueberfluessigen Neubau.
+ * Ein Zaehler kennt keinen Gleichstand.
+ */
+let _entwertungen = 0;
 
 /** Nur fuer Tests: wie viele Bestaende seit dem letzten Entwerten stehen. */
 export function wortindexStand(): number {
@@ -1829,7 +1841,7 @@ async function bestandHolen(
   const bestandsSchluessel = patterns.slice().sort().join('|');
   const jeVerbindung = _wortbestand.get(redis as unknown as object);
   const stehend = jeVerbindung?.get(bestandsSchluessel);
-  const gueltig = stehend !== undefined && stehend.gebaut > _entwertetAb;
+  const gueltig = stehend !== undefined && stehend.stand === _entwertungen;
   if (gueltig && Date.now() - stehend.gebaut < WORTBESTAND_FRISCHE_MS) {
     return stehend;
   }
@@ -1846,7 +1858,7 @@ async function bestandHolen(
 }
 
 /** Laufende Neubauten je Verbindung und Muster — ein zweiter Aufruf wartet auf denselben. */
-const _wortbestandLaufend = new WeakMap<object, Map<string, { begonnen: number; fertig: Promise<Wortbestand | null> }>>();
+const _wortbestandLaufend = new WeakMap<object, Map<string, { stand: number; fertig: Promise<Wortbestand | null> }>>();
 
 function bestandBauenGeteilt(
   redis: Redis,
@@ -1858,11 +1870,11 @@ function bestandBauenGeteilt(
   const laeuft = fach.get(bestandsSchluessel);
   // Ein Neubau, der VOR dem letzten Entwerten begann, kennt das gerade
   // Geschriebene nicht — auf ihn zu warten hiesse, es zu uebersehen.
-  if (laeuft && laeuft.begonnen > _entwertetAb) return laeuft.fertig;
-  const begonnen = Date.now();
-  const fertig = bestandNeuBauen(redis, patterns, bestandsSchluessel, begonnen)
+  if (laeuft && laeuft.stand === _entwertungen) return laeuft.fertig;
+  const stand = _entwertungen;
+  const fertig = bestandNeuBauen(redis, patterns, bestandsSchluessel, stand)
     .finally(() => { if (fach.get(bestandsSchluessel)?.fertig === fertig) fach.delete(bestandsSchluessel); });
-  fach.set(bestandsSchluessel, { begonnen, fertig });
+  fach.set(bestandsSchluessel, { stand, fertig });
   return fertig;
 }
 
@@ -1870,7 +1882,7 @@ async function bestandNeuBauen(
   redis: Redis,
   patterns: string[],
   bestandsSchluessel: string,
-  begonnen: number,
+  stand: number,
 ): Promise<Wortbestand | null> {
   // ── Step 1: Collect all matching keys — patterns scanned in parallel ──
   const keyBatches = await Promise.all(patterns.map(pattern => {
@@ -1906,7 +1918,9 @@ async function bestandNeuBauen(
   if (!gebauter) return null;
   // Waehrend des Bauens entwertet: dieser Bestand darf die jetzt Wartenden
   // bedienen, gilt danach aber nicht als gueltig — der naechste Aufruf baut neu.
-  if (begonnen <= _entwertetAb) gebauter.gebaut = Math.min(gebauter.gebaut, _entwertetAb);
+  // Der Stand vom BEGINN zaehlt: wurde unterwegs entwertet, weicht er vom
+  // aktuellen ab, und der naechste Aufruf baut neu.
+  gebauter.stand = stand;
 
   const fach = _wortbestand.get(redis as unknown as object) ?? new Map<string, Wortbestand>();
   if (!fach.has(bestandsSchluessel)) _wortbestandZaehler++;
@@ -1995,7 +2009,7 @@ export function bestandAusDokumenten(
       }
     }
   }
-  return { docs, avgDL, docFreq, gebaut: Date.now() };
+  return { docs, avgDL, docFreq, gebaut: Date.now(), stand: _entwertungen };
 }
 
 async function keywordSearch(

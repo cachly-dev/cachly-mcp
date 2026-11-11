@@ -56,6 +56,37 @@ export function confidenceBadge(
   ageDays: number,
   probe?: string,
   gefallen?: { am?: string; befund?: string },
+  umgebung?: { am?: string; befund?: string },
+): string {
+  return grundBadge(confidence, ageDays, probe, gefallen) + umgebungsHinweis(gefallen, umgebung);
+}
+
+/**
+ * Leiser Zusatz: eine Pruefung scheiterte an der Umgebung, nicht an der
+ * Lektion (`lesson_verified(haelt=false, ursache="umgebung")`).
+ *
+ * Er aendert den Badge nicht, sondern haengt sich an. Ein gruenes Haekchen
+ * bleibt gruen: "Staging timed out" ist eine Nachricht ueber den Tag, nicht
+ * ueber die Lektion. Ist die Lektion ohnehin als gefallen markiert, schweigt
+ * er — dort hat eine Pruefung die Behauptung erreicht, und das wiegt mehr.
+ */
+function umgebungsHinweis(
+  gefallen?: { am?: string },
+  umgebung?: { am?: string; befund?: string },
+): string {
+  if ((gefallen?.am ?? '').slice(0, 10)) return '';
+  const am = (umgebung?.am ?? '').slice(0, 10);
+  if (!am) return '';
+  const was = (umgebung?.befund ?? '').trim();
+  const dazu = was ? `: ${was.slice(0, 120)}` : '';
+  return ` · ℹ️ check on ${am} failed on the environment, not on this lesson${dazu}`;
+}
+
+function grundBadge(
+  confidence: number,
+  ageDays: number,
+  probe?: string,
+  gefallen?: { am?: string; befund?: string },
 ): string {
   /*
    * Eine gefallene Pruefung schlaegt ALLES andere.
