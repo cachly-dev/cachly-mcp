@@ -2541,6 +2541,53 @@ async function handleBrainToolInner(
       const lektionenImBestand = wortbestand.docs
         .reduce((n, d) => n + (d.key.startsWith('cachly:lesson:best:') ? 1 : 0), 0);
 
+      // ── Kanten-Suche, Tarif und Sinn-Dienst: jetzt starten ─────────────────
+      //
+      // Alle drei brauchen nur die Frage. Seit 04.11.2026 liefen sie
+      // gleichzeitig miteinander, aber erst NACH Bedeutungspfad und Leser:
+      // gemessen am 11.11.2026 noch 1,2 bis 1,4 s je Aufruf, obendrauf. Jetzt
+      // starten sie hier und laufen neben Wortsuche, Bedeutungspfad und Leser.
+      // Angewendet wird unten an derselben Stelle und in derselben Reihenfolge
+      // wie vorher — das Ergebnis bleibt gleich. Erst hinter der Pruefung auf
+      // ein leeres Brain: dort steht die Antwort ohne sie fest.
+      const kantenVorrat = holeKantenVorrat(
+        redis as unknown as KantenRedis,
+        tokenize(query).filter(t => t.length >= 4).slice(0, 4),
+      ).catch(() => null);
+      type SemHit = { key: string; similarity: number; content: string };
+      const sinnUndTarif = (async (): Promise<{ inst: Instance | null; semHits: SemHit[] }> => {
+        const inst = await gemerkterTarif(instance_id, () => apiFetch<Instance | null>(`/api/v1/instances/${instance_id}`));
+        const semHits: SemHit[] = [];
+        const tierIsFree = !inst?.tier || inst.tier.toLowerCase() === 'free';
+        if (!tierIsFree && inst?.vector_token && hasEmbedProvider()) {
+          try {
+            const embedding = await computeEmbedding(query);
+            const vectorUrl = `https://api.cachly.dev/v1/sem/${inst.vector_token}`;
+            const searchRes = await fetch(`${vectorUrl}/search`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ embedding, namespace: 'cachly:ctx', threshold, top_k: 5 }),
+              signal: AbortSignal.timeout(8000),
+            });
+            if (searchRes.ok) {
+              const results = (await searchRes.json()) as SemanticSearchResponse[];
+              // Die Inhalte gleichzeitig holen, in der Reihenfolge der Treffer (04.11.2026).
+              const treffer = results.filter(r => r.found && r.id).map((hit) => {
+                const parts = hit.id!.replace('ctx:', '').split(':');
+                return { hit, redisKey: `cachly:ctx:${parts[0]}:${parts.slice(1).join(':')}` };
+              });
+              const inhalte = await Promise.all(treffer.map((t) => redis.get(t.redisKey).catch(() => null)));
+              treffer.forEach((t, i) => {
+                semHits.push({ key: t.redisKey, similarity: t.hit.similarity ?? 0, content: inhalte[i] ?? '(evicted)' });
+              });
+            }
+          } catch {
+            // Semantic search failed silently — keyword results are enough
+          }
+        }
+        return { inst, semHits };
+      })().catch(() => ({ inst: null, semHits: [] as SemHit[] }));
+
       // ── Layer 1: Keyword search across ALL brain data (always works, no embedding) ──
       // Wider candidate pool (25) lets the quality reranker rescue relevant lessons that
       // BM25 alone would rank 11–25 due to vocabulary mismatch. Final slice to 5 happens below.
@@ -3023,44 +3070,11 @@ async function handleBrainToolInner(
       // Semantic recall is a Premium depth layer: free tier keeps full keyword +
       // CKG recall (the magic moment), paid tiers add embedding-based retrieval.
       zeitpunkt('smart_recall: Treffer gezaehlt');
-      // Kanten-Suche, Tarif und Sinn-Dienst laufen gleichzeitig (04.11.2026,
-      // kanten-vorrat.ts). Vorher nacheinander: ~2,2-2,5 s je Suche. Angewendet
-      // wird unten in der alten Reihenfolge — das Ergebnis bleibt gleich.
-      const kantenVorrat = holeKantenVorrat(
-        redis as unknown as KantenRedis,
-        tokenize(query).filter(t => t.length >= 4).slice(0, 4),
-      ).catch(() => null);
-      const inst = await gemerkterTarif(instance_id, () => apiFetch<Instance | null>(`/api/v1/instances/${instance_id}`));
+      // Kanten-Suche, Tarif und Sinn-Dienst sind oben gestartet und laufen
+      // seitdem neben Wortsuche, Bedeutungspfad und Leser (siehe dort).
+      const { inst, semHits } = await sinnUndTarif;
       zeitpunkt('smart_recall: Tarif abgefragt');
       const tierIsFree = !inst?.tier || inst.tier.toLowerCase() === 'free';
-      type SemHit = { key: string; similarity: number; content: string };
-      const semHits: SemHit[] = [];
-      if (!tierIsFree && inst?.vector_token && hasEmbedProvider()) {
-        try {
-          const embedding = await computeEmbedding(query);
-          const vectorUrl = `https://api.cachly.dev/v1/sem/${inst!.vector_token}`;
-          const searchRes = await fetch(`${vectorUrl}/search`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ embedding, namespace: 'cachly:ctx', threshold, top_k: 5 }),
-            signal: AbortSignal.timeout(8000),
-          });
-          if (searchRes.ok) {
-            const results = (await searchRes.json()) as SemanticSearchResponse[];
-            // Die Inhalte gleichzeitig holen, in der Reihenfolge der Treffer (04.11.2026).
-            const treffer = results.filter(r => r.found && r.id).map((hit) => {
-              const parts = hit.id!.replace('ctx:', '').split(':');
-              return { hit, redisKey: `cachly:ctx:${parts[0]}:${parts.slice(1).join(':')}` };
-            });
-            const inhalte = await Promise.all(treffer.map((t) => redis.get(t.redisKey).catch(() => null)));
-            treffer.forEach((t, i) => {
-              semHits.push({ key: t.redisKey, similarity: t.hit.similarity ?? 0, content: inhalte[i] ?? '(evicted)' });
-            });
-          }
-        } catch {
-          // Semantic search failed silently — keyword results are enough
-        }
-      }
 
       // ── Layer 3: Hybrid merge — one unified ranked list ──────────────────────
       // BM25 quality scores (already reranked) are re-normalized to [0,1] for merging.

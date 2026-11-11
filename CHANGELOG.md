@@ -7,6 +7,29 @@
 
 ---
 
+## [0.10.245] – 2026-11-11 — *"The graph and meaning search run beside the reader."*
+
+**About one second less per recall.** The graph search, the plan lookup and the
+semantic search only need the question. Since 0.10.229 they ran together, but only
+after the meaning path and the reader. They now start right after the check for an
+empty Brain and run beside word search, meaning path and reader. They are applied at
+the same place and in the same order as before, so the result does not change.
+
+Measured against a Brain with 1,257 lessons over a remote connection, four warm recalls:
+
+| | per recall | graph + meaning block |
+|---|---|---|
+| 0.10.244 | 4.2–5.8 s | 1.2–1.4 s |
+| 0.10.245 | 3.6–4.7 s | 0 s (hidden behind the reader) |
+
+**Not solved:** the reader now sets the pace. It took 1.6 to 2.5 s for 25 texts on
+its own service, and twice in four recalls it missed its 2.5 s deadline; the recall
+then sorts without it.
+
+**Upgrade:** `npx -y @cachly-dev/mcp-server@latest`. No setting needed.
+
+---
+
 ## [0.10.244] – 2026-11-11 — *"One session start, not two."*
 
 **An explicit `session_start` now counts as the start of the session.** The server
