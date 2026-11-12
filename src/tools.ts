@@ -2324,7 +2324,8 @@ const TOOLS = [
       'FedBrain (Layer 6): Contribute a lesson to the global Knowledge Commons with a cryptographic ' +
       'knowledge certificate. Certificate includes: domain fingerprint, confidence, outcome chain hash. ' +
       'Lessons with 10+ independent confirmations become Gold Standard. Context-weighted: ' +
-      'other brains with similar tech stacks see your lesson ranked higher in fedbrain_search.',
+      'other brains with similar tech stacks see your lesson ranked higher in fedbrain_search. ' +
+      'Only team-wide lessons can be contributed; private and group-only lessons count as not found.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -2408,6 +2409,7 @@ const TOOLS = [
       'The new hire use case: one command gives you the senior engineer\'s 5 years of typed, confidence-weighted ' +
       'knowledge in your domain. Unlike syndicate_search (global, anonymous), brain_federate is org-private — ' +
       'both brains must be in the same Cachly org, or the source instance_id must be explicitly shared. ' +
+      'Only team-wide lessons are copied; private and group-only ones stay in the source brain, with their nodes and every edge naming them. ' +
       'Example: brain_federate(source="prod-brain-id", domain="billing", min_confidence=0.6)',
     inputSchema: {
       type: 'object',

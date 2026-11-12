@@ -7,6 +7,31 @@
 
 ---
 
+## [0.10.249] – 2026-11-12 — *"Private lessons stay out of the Commons."*
+
+**Two more ways out of the team now carry only team-wide lessons.**
+
+| Tool | Until 0.10.248 | Now |
+|---|---|---|
+| `fedbrain_contribute` | sent any lesson whose name you knew to the global Commons, private and group-only ones included, a colleague's too | only team-wide lessons go; a private or group-only one gets the same answer as a name that does not exist |
+| `brain_federate` | copied every lesson of the domain, with its node and edges, into another brain | copies only team-wide lessons; a private or group-only lesson stays in the source brain together with its node and every edge that names it, and the summary counts how many stayed |
+
+The rule is the one `brain_share` uses since 0.10.246: not private, no group, readable.
+An unreadable record counts as not team-wide.
+
+**What "private" means.** The `visibility` description already says it: only via exact
+`recall_best_solution`. So a private lesson is never listed, searched, briefed or
+shared, and its exact name is the only way in. It is a screen between colleagues, not a
+lock: whoever holds the Brain's key can read the store. For real separation, use a
+separate Brain.
+
+**Not solved:** lessons contributed to the Commons before this release stay there.
+Several read paths inside the team still list private lessons; they are next.
+
+**Upgrade:** `npx -y @cachly-dev/mcp-server@latest`. No setting needed.
+
+---
+
 ## [0.10.248] – 2026-11-11 — *"Writing a lesson asks whether it replaces an older one."*
 
 **`learn_from_attempts` now names older lessons on the same subject and asks.** A

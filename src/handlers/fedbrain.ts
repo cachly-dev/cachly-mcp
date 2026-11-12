@@ -3,7 +3,7 @@ import type { Redis } from 'ioredis';
 import { ckgSlug, commitThema, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
-import { safeJsonParse } from '../utils.js';
+import { istTeamweit, safeJsonParse, teamweitLesbar } from '../utils.js';
 import { buildClsPostCommitHook } from '../cls-hook.js';
 import { alsShellWort, beginntMitBindestrich, gitLesen, instanzIdFuerSkript, istCommitHash, pruefeOrdner } from '../git-ohne-shell.js';
 import { installBrainWatchHook } from '../brain-watch-hook.js';
@@ -412,11 +412,22 @@ export async function handleFedbrainTool(
       };
       const redis = await getConnection(instance_id);
 
+      // Nur teamweite Lektionen gehen in die Commons (12.11.2026). Bis 0.10.248
+      // nahm dieses Werkzeug jede Lektion, deren Namen man kannte, und schickte
+      // sie an die globalen Commons, die jedes Brain durchsucht: private und
+      // Gruppen-Lektionen eingeschlossen, auch die eines Kollegen. Die Absage
+      // ist wortgleich mit "nicht gefunden", sonst verriete sie, dass es eine
+      // private Lektion dieses Namens gibt. Der Hinweis auf die Regel steht
+      // deshalb in JEDER Absage, nicht nur in dieser.
+      const nichtGefunden =
+        `❌ Lesson \`${lesson_key}\` not found. Store it first with \`learn_from_attempts\`.\n` +
+        `Only team-wide lessons can go to the Commons; private and group-only lessons count as not found here.`;
       const raw = await redis.get(`cachly:lesson:best:${lesson_key}`);
-      if (!raw) return `❌ Lesson \`${lesson_key}\` not found. Store it first with \`learn_from_attempts\`.`;
+      if (!raw) return nichtGefunden;
 
-      const gespeichert = safeJsonParse(raw, null as null | { topic: string; outcome: string; what_worked: string; what_failed?: string; tags?: string[]; commands?: string[]; severity?: string; ts?: string });
+      const gespeichert = safeJsonParse(raw, null as null | { topic: string; outcome: string; what_worked: string; what_failed?: string; tags?: string[]; commands?: string[]; severity?: string; ts?: string; visibility?: string; group?: unknown });
       if (!gespeichert) return `❌ Lesson \`${lesson_key}\` data is corrupted. Re-store with \`learn_from_attempts\`.`;
+      if (!istTeamweit(gespeichert)) return nichtGefunden;
 
       // Tor zu den Fremden (schreibtor.ts): alles, was in die Commons geht, laeuft vorher durch den
       // Geheimnis-Filter und den Tuersteher. Aeltere Lektionen sind nie gefiltert worden; eine beim
@@ -717,11 +728,30 @@ export async function handleFedbrainTool(
       let markiertAnzahl = 0;
       const transferLog: string[] = [];
 
+      // Nur Teamweites wandert in ein anderes Brain (12.11.2026). Bis 0.10.248
+      // kopierte dieses Werkzeug jede Lektion samt Knoten und Kanten — auch
+      // private und Gruppen-Lektionen, die im Ziel-Brain dann Leute lesen, die
+      // sie nie sehen sollten. Ein Knoten heisst wie seine Lektion; ist die nicht
+      // teamweit, bleiben Knoten, Lektion und JEDE Kante, die ihn nennt, im
+      // Quell-Brain. Ein Knoten ohne Lektion verraet nichts und geht mit.
+      // Unlesbar zaehlt als nicht teamweit (im Zweifel zu, wie teamweitLesbar).
+      let nichtTeamweit = 0;
+      const teamweitCache = new Map<string, boolean>();
+      const knotenTeamweit = async (id: string): Promise<boolean> => {
+        const bekannt = teamweitCache.get(id);
+        if (bekannt !== undefined) return bekannt;
+        const roh = await srcRedis.get(`cachly:lesson:best:${id}`);
+        const ok = roh === null || teamweitLesbar(roh) !== null;
+        teamweitCache.set(id, ok);
+        return ok;
+      };
+
       for (const nk of nodeKeys) {
         const nodeRaw = await srcRedis.get(nk);
         if (!nodeRaw) continue;
         let node: CKGNode;
         try { node = JSON.parse(nodeRaw); } catch { continue; }
+        if (!(await knotenTeamweit(node.id))) { nichtTeamweit++; continue; }
 
         if (!dry_run) await destRedis.set(nk, nodeRaw);
         nodesTransferred++;
@@ -734,6 +764,7 @@ export async function handleFedbrainTool(
           let edge: CKGEdge;
           try { edge = JSON.parse(edgeRaw); } catch { continue; }
           if (edge.confidence < (min_confidence as number)) { skippedLowConf++; continue; }
+          if (!(await knotenTeamweit(edge.to))) continue;
           if (!dry_run) {
             await destRedis.set(ek, edgeRaw);
             await destRedis.sadd(`cachly:ckg:idx:from:${edge.from}`, ek);
@@ -784,6 +815,9 @@ export async function handleFedbrainTool(
         `  🕸️ CKG nodes:  ${nodesTransferred}`,
         `  🔗 CKG edges:  ${edgesTransferred}  (${skippedLowConf} skipped, confidence < ${min_confidence})`,
         `  📚 Lessons:    ${lessonsTransferred}`,
+        ...(nichtTeamweit > 0
+          ? [`  🔒 ${nichtTeamweit} not team-wide (private, group-only or unreadable) stayed in the source brain: lesson, node and every edge naming it.`]
+          : []),
         ...zaehlHinweise(geschwaerztAnzahl, markiertAnzahl, `${lessonsTransferred} copied lessons`),
         '',
       ];
