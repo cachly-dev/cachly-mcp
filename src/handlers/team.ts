@@ -202,6 +202,68 @@ export function lessonVisibleToScope(
 }
 
 /**
+ * Wer fragt — so weit das Brain es weiss (12.11.2026).
+ *
+ * `author` ist freier Text und kein gepruefter Ausweis. Er reicht trotzdem fuer
+ * die Gruppen-Frage, denn die Mitgliedschaft liegt im selben Brain: wer sich als
+ * jemand anderes ausgibt, koennte den Speicher auch direkt lesen. Ohne `author`
+ * ist der Fragende NIEMAND: keine Gruppe, kein Admin.
+ */
+export interface Fragender { scopes: Set<string>; isAdmin: boolean }
+export const NIEMAND: Fragender = Object.freeze({ scopes: new Set<string>(), isAdmin: false }) as Fragender;
+
+export async function fragenderAusweis(
+  redis: import('ioredis').Redis,
+  instanceId: string,
+  author: string | undefined | null,
+): Promise<Fragender> {
+  const wer = (author ?? '').trim();
+  if (!wer) return NIEMAND;
+  const scopes = await getScopes(redis, instanceId, wer).catch(() => new Set<string>());
+  const isAdmin = (await getRole(redis, instanceId, wer).catch(() => null)) === 'admin';
+  return { scopes, isAdmin };
+}
+
+/**
+ * Darf diese Lektion in eine Liste, Suche, Zusammenfassung oder Vorhersage fuer
+ * DIESEN Fragenden? Die eine Regel aller Lesepfade ausser dem exakten Namen:
+ *   - unlesbar: nein (im Zweifel zu),
+ *   - privat: nie — "private" heisst laut Werkzeugbeschreibung "only via exact
+ *     recall_best_solution", also nirgends gelistet,
+ *   - Gruppe: nur fuer Mitglieder und Admins.
+ * Fuer NIEMAND ist das genau istTeamweit (utils.ts).
+ */
+export function sichtbarFuer<T extends { visibility?: string; group?: unknown }>(
+  lektion: T | null,
+  fragender: Fragender,
+): lektion is T {
+  if (!darfHeraus(lektion)) return false;
+  const gruppe = typeof lektion.group === 'string' ? lektion.group.trim() : lektion.group ? String(lektion.group) : '';
+  return lessonVisibleToScope(gruppe || null, fragender.scopes, fragender.isAdmin);
+}
+
+/**
+ * Darf der NAME dieses Themas in einer Ausgabe stehen? Fuer Knoten, Kanten,
+ * Konflikte und Vorhersagen, die nur ein Thema nennen (12.11.2026). Gibt es
+ * keine Lektion dieses Namens, verraet der Name nichts: ja. Gibt es eine, gilt
+ * sichtbarFuer. Ein Pruefer je Anfrage, mit eigenem Zwischenspeicher.
+ */
+export function namensPruefer(
+  redis: Pick<import('ioredis').Redis, 'get'>,
+  fragender: Fragender = NIEMAND,
+): (thema: string) => Promise<boolean> {
+  const gemerkt = new Map<string, boolean>();
+  return async (thema: string) => {
+    const bekannt = gemerkt.get(thema);
+    if (bekannt !== undefined) return bekannt;
+    const roh = await redis.get(`cachly:lesson:best:${thema}`).catch(() => null);
+    const ok = roh === null || sichtbarFuer(leseOderNull<{ visibility?: string; group?: unknown }>(roh), fragender);
+    gemerkt.set(thema, ok);
+    return ok;
+  };
+}
+
+/**
  * Darf diese Lektion in eine Ausgabe, die das GANZE Team sieht?
  *
  * ── Karte pguy341m6u7s, dritter Teil (09.11.2026) ─────────────────────────
@@ -577,9 +639,12 @@ export async function handleTeamTool(
       const { instance_id, topic } = args as { instance_id: string; topic: string };
       const redis = await getConnection(instance_id);
 
-      // Load history list for this topic (all authors' contributions)
+      // Load history list for this topic (all authors' contributions).
+      // Nur teamweite Beitraege (12.11.2026): die Synthese ist fuer das ganze
+      // Team und soll als kanonische Fassung gespeichert werden — ein privater
+      // Beitrag eines Kollegen gehoert nicht hinein.
       const listKey = `cachly:lessons:${topic}`;
-      const all = await redis.lrange(listKey, 0, -1);
+      const all = (await redis.lrange(listKey, 0, -1)).filter((r) => teamweitLesbar(r) !== null);
       if (all.length < 2) {
         return `📭 Need at least 2 entries for topic \`${topic}\` to synthesize.\n\nCurrently: ${all.length} entr${all.length === 1 ? 'y' : 'ies'}.\n\nHave team members store lessons via \`learn_from_attempts(topic="${topic}", ...)\`.`;
       }
@@ -1584,8 +1649,13 @@ export async function handleTeamTool(
       const cutoff = new Date(date).getTime();
       if (isNaN(cutoff)) return `❌ Invalid date "${date}". Use ISO format: "2026-01-15"`;
 
+      // Haengt am exakten Namen wie recall_best_solution: Privates darf hier
+      // stehen, die Gruppen-Grenze gilt (12.11.2026). Ohne Ausweis: keine Gruppe.
       const listKey = `cachly:lessons:${topic}`;
-      const all = await redis.lrange(listKey, 0, -1);
+      const all = (await redis.lrange(listKey, 0, -1)).filter((r) => {
+        const e = leseOderNull<{ group?: string }>(r);
+        return e !== null && lessonVisibleToScope(e.group, NIEMAND.scopes, NIEMAND.isAdmin);
+      });
       if (all.length === 0) return `📭 No history found for \`${topic}\`. Lessons are stored via \`learn_from_attempts\`.`;
 
       const before = all
@@ -1630,11 +1700,19 @@ export async function handleTeamTool(
         '',
       ];
 
+      // Nicht teamweite Namen werden nicht genannt (12.11.2026). Zur Pruefung
+      // vorgemerkt werden sie trotzdem — das hilft ihrem Autor und verraet nichts.
+      let ungenannt = 0;
       for (const t of topics) {
         const lessonRaw = await redis.get(`cachly:lesson:best:${t}`);
         if (!lessonRaw) { lines.push(`  • \`${t}\` _(lesson deleted)_`); continue; }
         const lesson = safeJsonParse(lessonRaw, null as null | { outcome?: string; severity?: string; needs_review?: boolean });
         if (!lesson) { lines.push(`  • \`${t}\` _(lesson corrupted)_`); continue; }
+        if (teamweitLesbar(lessonRaw) === null) {
+          ungenannt++;
+          if (mark_review) await redis.set(`cachly:lesson:best:${t}`, JSON.stringify({ ...lesson, needs_review: true }));
+          continue;
+        }
         const emoji = lesson.outcome === 'success' ? '✅' : lesson.outcome === 'partial' ? '⚠️' : '❌';
         const reviewBadge = lesson.needs_review ? ' 🔍 **needs_review**' : '';
         lines.push(`  ${emoji} \`${t}\` (${lesson.severity ?? 'major'})${reviewBadge}`);
@@ -1644,6 +1722,7 @@ export async function handleTeamTool(
           await redis.set(`cachly:lesson:best:${t}`, JSON.stringify(updated));
         }
       }
+      if (ungenannt > 0) lines.push(`  🔒 ${ungenannt} private or group-only, not named.`);
 
       if (mark_review) {
         lines.push('', `🔍 All ${topics.length} lessons marked as **needs_review** — verify they still work with the changed dependency.`);

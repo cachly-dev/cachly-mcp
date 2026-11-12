@@ -48,6 +48,7 @@ import { lektionsText } from './seltenheitsbestand.js';
 import { bestandAusDokumenten, keywordSearchMitBestand, type Wortbestand } from './search.js';
 import { SINN_TOPF, EINBLENDUNG_DECKUNG, EINBLENDUNG_ZEUGE } from './rangfolge-stellschrauben.js';
 import { istMarkiert } from './verdacht-marke.js';
+import { istTeamweit } from './utils.js';
 
 // Der Rahmen reist mit dem Kern in den Hook — eine Quelle fuer beide Wege.
 export { rahmeEin, entschaerfe, RAHMEN_ETIKETT, RAHMEN_HINWEIS } from './einblendung-rahmen.js';
@@ -225,7 +226,11 @@ export class Einblendbestand<L extends EinblendLektion> {
   private readonly lektionen: L[];
 
   constructor(alle: L[], { topf = WORT_TOPF }: { topf?: number } = {}) {
-    const lektionen = alle.filter((l) => !istMarkiert(l));
+    // Nur Teamweites kommt von selbst in den Prompt (12.11.2026). Der Bestand
+    // kommt roh aus `/export`, also mit privaten und Gruppen-Lektionen ALLER
+    // im Team; bis 0.10.249 landeten sie in fremden Prompts. Der Hook weiss
+    // nicht, wer fragt, darum die strenge Fassung (istTeamweit, utils.ts).
+    const lektionen = alle.filter((l) => !istMarkiert(l) && istTeamweit(l as { visibility?: string; group?: unknown }));
     this.lektionen = lektionen;
     this.topf = topf;
     // Derselbe Text wie im Messstand und in `Seltenheitsbestand`:

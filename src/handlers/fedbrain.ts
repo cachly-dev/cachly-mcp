@@ -4,6 +4,7 @@ import { ckgSlug, commitThema, extractProblemConcept, ckgUpsertNode, ckgUpdateEd
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { istTeamweit, safeJsonParse, teamweitLesbar } from '../utils.js';
+import { namensPruefer } from './team.js';
 import { buildClsPostCommitHook } from '../cls-hook.js';
 import { alsShellWort, beginntMitBindestrich, gitLesen, instanzIdFuerSkript, istCommitHash, pruefeOrdner } from '../git-ohne-shell.js';
 import { installBrainWatchHook } from '../brain-watch-hook.js';
@@ -533,6 +534,8 @@ export async function handleFedbrainTool(
         for (const k of lessonKeys.slice(0, 60)) {
           const r = await redis.get(k);
           if (!r) continue;
+          // Der Ersatzweg zeigt eigene Lektionen: nur Teamweites (12.11.2026).
+          if (teamweitLesbar(r) === null) continue;
           try {
             const l = JSON.parse(r) as { topic: string; outcome: string; what_worked?: string; what_failed?: string; severity?: string; ts?: string };
             const haystack = `${l.topic} ${l.what_worked ?? ''} ${l.what_failed ?? ''}`.toLowerCase();
@@ -989,6 +992,8 @@ export async function handleFedbrainTool(
         for (const k of lessonKeys) {
           const r = await redis.get(k);
           if (!r) continue;
+          // Wiederherstellung nach dem Verdichten: nur Teamweites (12.11.2026).
+          if (teamweitLesbar(r) === null) continue;
           try {
             const l = JSON.parse(r) as { topic: string; what_worked?: string };
             if (l.topic.toLowerCase().includes(focus.toLowerCase()) && l.what_worked) {
@@ -1329,6 +1334,8 @@ export async function handleFedbrainTool(
 
       type FailurePred = { concept: string; failure: string; probability: number; fix?: string; topic?: string; source: 'ckg' | 'lesson' };
       const failures: FailurePred[] = [];
+      // Jeder Name in einer Vorhersage muss teamweit sein (12.11.2026), wie brain_predict.
+      const ausfallNameOk = namensPruefer(redis);
 
       // Step 1: CKG — find 'causes' and 'degrades_under' edges from context tokens
       for (const token of ctxTokens.slice(0, 8)) {
@@ -1341,6 +1348,7 @@ export async function handleFedbrainTool(
           if (!nodeRaw) continue;
           const node = safeJsonParse<CKGNode | null>(nodeRaw, null);
           if (!node) continue;
+          if (!(await ausfallNameOk(node.id))) continue;
           const edgeKeys = await redis.smembers(`cachly:ckg:idx:from:${node.id}`);
           for (const ek of edgeKeys.slice(0, 20)) {
             const edgeRaw = await redis.get(ek);
@@ -1348,6 +1356,7 @@ export async function handleFedbrainTool(
             const edge = safeJsonParse<CKGEdge | null>(edgeRaw, null);
             if (!edge) continue;
             if (edge.edgeType !== 'causes' && edge.edgeType !== 'degrades_under') continue;
+            if (!(await ausfallNameOk(edge.to))) continue;
 
             // Look up fix for this failure from CKG 'fixes' edges
             const fixEdgeKeys = await redis.smembers(`cachly:ckg:idx:from:${edge.to}`);
@@ -1359,7 +1368,7 @@ export async function handleFedbrainTool(
               if (!fe) continue;
               if (fe.edgeType === 'fixes') {
                 const lessonRaw = await redis.get(`cachly:lesson:best:${fe.from}`);
-                if (lessonRaw) {
+                if (lessonRaw && teamweitLesbar(lessonRaw) !== null) {
                   const lesson = safeJsonParse(lessonRaw, null as null | { what_worked?: string });
                   fix = lesson?.what_worked?.slice(0, 120);
                   break;
@@ -1386,6 +1395,7 @@ export async function handleFedbrainTool(
       for (const k of lessonKeys.slice(0, 100)) {
         const r = await redis.get(k);
         if (!r) continue;
+        if (teamweitLesbar(r) === null) continue;
         try {
           const l = JSON.parse(r) as { topic: string; outcome: string; what_failed?: string; what_worked?: string; confidence?: number; severity?: string };
           if (l.outcome !== 'failure' && l.outcome !== 'partial') continue;

@@ -47,6 +47,7 @@ import { spawn } from 'node:child_process';
 import { Einblendbestand, torWoerter, type EinblendLektion } from './einblendung-kern.js';
 import { rahmeEin, RAHMEN_HINWEIS } from './einblendung-rahmen.js';
 import { istMarkiert } from './verdacht-marke.js';
+import { istTeamweit } from './utils.js';
 import { istBlossesThema } from './blosses-thema.js';
 import { leserText as leserTextZuschnitt } from './seltenheitsbestand.js';
 import { mischeMitLeser } from './leser.js';
@@ -677,8 +678,9 @@ export const SITZUNG_TOP_N = 5;
  */
 export function sitzungsKontext(alle: EinblendLektion[]): string {
   // Eine beim Speichern als verdaechtig markierte Lektion kommt nicht von selbst in den
-  // Kontext (verdacht-marke.ts). Dieselbe Regel wie in Einblendbestand, hier fuers Briefing.
-  const lessons = alle.filter((l) => !istMarkiert(l));
+  // Kontext (verdacht-marke.ts). Dieselbe Regel wie in Einblendbestand, hier fuers Briefing:
+  // auch nur Teamweites (12.11.2026), der Hook weiss nicht, wer fragt.
+  const lessons = alle.filter((l) => !istMarkiert(l) && istTeamweit(l as { visibility?: string; group?: unknown }));
   if (!lessons.length) return '';
   const sinnvoll = lessons.filter((l) => {
     const topic = String(l.topic ?? '');

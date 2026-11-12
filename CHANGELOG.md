@@ -7,6 +7,44 @@
 
 ---
 
+## [0.10.250] – 2026-11-12 — *"Private means private in every list, not just in search."*
+
+**Every read path inside the team now follows the rule `smart_recall` already had.**
+The `visibility` description says it: `"private"` = only via exact
+`recall_best_solution`. Until 0.10.249 more than twenty other paths did not check, so
+a teammate could see your private lessons in the briefing, in the prompt injection, in
+`brain_search` and elsewhere. Group-only lessons leaked the same way.
+
+| Where | Until 0.10.249 | Now |
+|---|---|---|
+| `session_start`, `session_start_summary` | text, topic and author of every lesson | private never; group-only for members (`author` names the asker) |
+| Prompt injection hook (start of session and per prompt) | every lesson from `/export`, other people's private ones included | team-wide only; the hook does not know who asks |
+| `recall_best_solution`, partial matches | any lesson whose name contained the word, 400 characters each | private never; group-only for members; same "not found" answer if nothing is left |
+| `brain_search`, `brain_predict`, `brain_plan`, `brain_predict_failures` | lessons, graph nodes and edges named after private lessons | team-wide only, nodes and edges included |
+| `brain_changelog`, `brain_diff`, `knowledge_decay`, `compact_recover`, `fedbrain_search` fallback | every lesson | team-wide only |
+| `memory_consolidate`, `brain_conflicts`, `trace_dependency` | named private and group-only topics | still counted (and still maintained), not named |
+| `team_synthesize` | merged a colleague's private entries into the team synthesis | team-wide entries only |
+| `recall_at` | history of a topic incl. other groups | exact name, so private stays readable; foreign groups closed |
+| `skill_gaps` | said "private lessons excluded" and counted them anyway | excludes them, group-only too |
+| `brain_file_map`, `brain_service_map` | left out private lessons, showed group-only ones to everyone | team-wide only |
+
+One rule in one place: `sichtbarFuer(lesson, asker)` and `namensPruefer` in
+`handlers/team.ts`; without a known asker it is exactly `istTeamweit` (`utils.ts`).
+New test `lesepfade-im-team.test.ts` calls all of these paths with the same store and
+checks each one twice: the team-wide lesson arrives, the private and group-only ones
+do not. With the rule switched to "always yes", 22 of its 24 cases turn red.
+
+**What you will notice:** your own private lessons no longer appear in your briefing or
+prompt injection either. That is what "private" promised. Their exact name still
+brings them back.
+
+**Not solved:** the API views (dashboard, `/recall`, briefing endpoint) follow in a
+separate API release. `GET /export` stays complete on purpose: it is the backup.
+
+**Upgrade:** `npx -y @cachly-dev/mcp-server@latest`. No setting needed.
+
+---
+
 ## [0.10.249] – 2026-11-12 — *"Private lessons stay out of the Commons."*
 
 **Two more ways out of the team now carry only team-wide lessons.**

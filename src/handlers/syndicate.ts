@@ -4,7 +4,8 @@ import { calculateConfidence } from '../confidence.js';
 import { ckgSlug } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
 import { keywordSearch } from '../search.js';
-import { safeJsonParse } from '../utils.js';
+import { istTeamweit, safeJsonParse, teamweitLesbar } from '../utils.js';
+import { namensPruefer } from './team.js';
 import type { Instance } from './brain.js';
 import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
 import { fuerEigenenSpeicher, fuerWeitergabe, markiert, weitergabeHinweis, zaehlHinweise } from '../schreibtor.js';
@@ -369,7 +370,7 @@ export async function handleSyndicateTool(
       const redis = await getConnection(instance_id);
 
       // BM25+ over ALL brain key namespaces
-      const allMatches = await keywordSearch(
+      const roheTreffer = await keywordSearch(
         redis,
         [
           'cachly:lesson:best:*',
@@ -381,8 +382,20 @@ export async function handleSyndicateTool(
           'cachly:ckg:node:*',
         ],
         query,
-        limit,
+        limit * 3,
       );
+      // Nur Teamweites (12.11.2026). Bis 0.10.249 fand brain_search jede Lektion
+      // mit 280 Zeichen Text, private und Gruppen-Lektionen eingeschlossen, und
+      // jeden Graph-Knoten — der heisst wie seine Lektion. Wer fragt, weiss
+      // dieses Werkzeug nicht, also die strenge Fassung.
+      const nameOk = namensPruefer(redis);
+      const allMatches: typeof roheTreffer = [];
+      for (const m of roheTreffer) {
+        if (allMatches.length >= limit) break;
+        if (m.key.startsWith('cachly:lesson:best:') && teamweitLesbar(m.content) === null) continue;
+        if (m.key.startsWith('cachly:ckg:node:') && !(await nameOk(m.key.slice('cachly:ckg:node:'.length)))) continue;
+        allMatches.push(m);
+      }
 
       if (allMatches.length === 0) {
         return [`🔎 **Brain Search: "${query}"**`, '', `No results found across all brain data.`, '', `💡 Try \`smart_recall\` or check \`list_remembered\`.`].join('\n');
@@ -510,6 +523,7 @@ export async function handleSyndicateTool(
       // Step 1: Find CKG nodes matching context tokens
       type Prediction = { concept: string; edgeType: string; target: string; confidence: number; lesson?: { what_worked?: string; topic: string } };
       const predictions: Prediction[] = [];
+      const vorhersageNameOk = namensPruefer(redis);
 
       for (const token of ctxTokens.slice(0, 6)) {
         const nodeKeys: string[] = [];
@@ -529,6 +543,9 @@ export async function handleSyndicateTool(
             if (!edge) continue;
             // Only interested in fixes and co-occurs for prediction
             if (edge.edgeType !== 'fixes' && edge.edgeType !== 'co-occurs' && edge.edgeType !== 'causes') continue;
+            // Jeder Name in einer Vorhersage muss teamweit sein (12.11.2026):
+            // der Knoten, das Ziel, die Lektion dahinter.
+            if (!(await vorhersageNameOk(node.id)) || !(await vorhersageNameOk(edge.to)) || !(await vorhersageNameOk(edge.from))) continue;
             const lessonRaw = await redis.get(`cachly:lesson:best:${edge.from}`);
             const lesson = lessonRaw ? safeJsonParse<{ what_worked?: string; topic: string } | null>(lessonRaw, null) ?? undefined : undefined;
             predictions.push({ concept: node.id, edgeType: edge.edgeType, target: edge.to, confidence: edge.confidence, lesson });
@@ -545,9 +562,9 @@ export async function handleSyndicateTool(
         const raw = await redis.get(k);
         if (!raw) continue;
         {
-          type PredLesson = { topic: string; what_worked?: string; what_failed?: string; outcome: string; severity?: string; ts: string; verified_at?: string; recall_count?: number };
+          type PredLesson = { topic: string; what_worked?: string; what_failed?: string; outcome: string; severity?: string; ts: string; verified_at?: string; recall_count?: number; visibility?: string; group?: unknown };
           const l = safeJsonParse<PredLesson | null>(raw, null);
-          if (!l) continue;
+          if (!istTeamweit(l)) continue;
           const haystack = [l.topic, l.what_failed ?? '', l.what_worked ?? ''].join(' ').toLowerCase();
           const score = ctxTokens.reduce((s, t) => s + (haystack.includes(t) ? 1 : 0), 0);
           if (score >= 1 && l.outcome !== 'failure') {
@@ -618,6 +635,7 @@ export async function handleSyndicateTool(
         topic: string; outcome: string; what_worked?: string; what_failed?: string;
         severity?: string; ts: string; verified_at?: string; recall_count?: number;
         commands?: string[]; file_paths?: string[]; depends_on?: string[]; confidence?: number;
+        visibility?: string; group?: unknown;
       };
 
       // Scan every best-lesson once and score by token overlap against the task.
@@ -630,7 +648,8 @@ export async function handleSyndicateTool(
         const raw = await redis.get(k);
         if (!raw) continue;
         const l = safeJsonParse<PlanLesson | null>(raw, null);
-        if (!l) continue;
+        // Nur Teamweites in einen Plan (12.11.2026), wie brain_search.
+        if (!istTeamweit(l)) continue;
         const haystack = [l.topic, l.what_worked ?? '', l.what_failed ?? ''].join(' ').toLowerCase();
         const score = taskTokens.reduce((s, t) => s + (haystack.includes(t) ? 1 : 0), 0);
         if (score >= 1) scored.push({ l, score, confidence: calculateConfidence(l) });
@@ -692,12 +711,16 @@ export async function handleSyndicateTool(
         for (const s of selected) place(s, 0);
 
         lines.push(`### 🔧 Recommended steps (proven fixes, in order)`);
-        ordered.forEach(({ l, confidence }, i) => {
+        // Auch ein Abhaengigkeits-Name kann eine private Lektion nennen.
+        const planNameOk = namensPruefer(redis);
+        for (const [i, { l, confidence }] of ordered.entries()) {
           lines.push(`${i + 1}. **${Math.round(confidence * 100)}%** \`${l.topic}\` — ${(l.what_worked ?? '').slice(0, 140)}`);
           const cmds = (l.commands ?? []).slice(0, 2);
           if (cmds.length > 0) lines.push(`   \`\`\`\n   ${cmds.join('\n   ')}\n   \`\`\``);
-          if ((l.depends_on ?? []).length > 0) lines.push(`   ↳ depends on: ${(l.depends_on ?? []).map(d => `\`${d}\``).join(', ')}`);
-        });
+          const deps: string[] = [];
+          for (const d of l.depends_on ?? []) if (await planNameOk(d)) deps.push(d);
+          if (deps.length > 0) lines.push(`   ↳ depends on: ${deps.map(d => `\`${d}\``).join(', ')}`);
+        }
         lines.push('');
       }
 
@@ -929,12 +952,15 @@ export async function handleSyndicateTool(
       }
 
       const lines: string[] = [`## ⚔️ Brain Conflicts & Live Agents`, ``];
+      // Themen-Namen nur, wenn ihre Lektion teamweit ist (12.11.2026).
+      const konfliktNameOk = namensPruefer(redis);
 
       lines.push(`**🤖 Active agents (last 1h):** ${agents.length}`);
       if (agents.length > 0) {
         for (const a of agents.sort((x, y) => y.ts.localeCompare(x.ts)).slice(0, 10)) {
           const ago = Math.round((Date.now() - new Date(a.ts).getTime()) / 60000);
-          lines.push(`  - **${a.author}** — last: \`${a.last_topic ?? '?'}\` (${a.last_outcome ?? '?'}, ${ago}m ago)`);
+          const letztes = a.last_topic && (await konfliktNameOk(a.last_topic)) ? a.last_topic : '?';
+          lines.push(`  - **${a.author}** — last: \`${letztes}\` (${a.last_outcome ?? '?'}, ${ago}m ago)`);
         }
       }
       lines.push('');
@@ -948,10 +974,13 @@ export async function handleSyndicateTool(
       lines.push('');
       lines.push(`| Topic | Confirmed fix | Contradicted by | Detected |`);
       lines.push(`|---|---|---|---|`);
+      let konfliktVerborgen = 0;
       for (const c of conflicts.sort((x, y) => y.detected_at.localeCompare(x.detected_at)).slice(0, 20)) {
         const ago = Math.round((Date.now() - new Date(c.detected_at).getTime()) / 3600000);
+        if (!(await konfliktNameOk(c.topic))) { konfliktVerborgen++; continue; }
         lines.push(`| \`${c.topic}\` | ${(c.fix_confidence * 100).toFixed(0)}% (n=${c.fix_trials}) | ${c.reported_by ?? 'unknown'} | ${ago}h ago |`);
       }
+      if (konfliktVerborgen > 0) lines.push('', `🔒 ${konfliktVerborgen} private or group-only, counted, not named.`);
       lines.push('');
       lines.push(`_Arbitrate with \`brain_resolve_conflict(instance_id="${instance_id}", topic="<topic>", winner="success"|"failure")\`._`);
 

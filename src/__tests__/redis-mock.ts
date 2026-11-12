@@ -62,6 +62,10 @@ export class MockRedis {
     return list.length;
   }
 
+  async llen(key: string): Promise<number> {
+    return (this.lists.get(key) ?? []).length;
+  }
+
   async lrange(key: string, start: number, stop: number): Promise<string[]> {
     const list = this.lists.get(key) ?? [];
     const end = stop < 0 ? list.length + stop + 1 : stop + 1;

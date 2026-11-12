@@ -89,7 +89,7 @@ export function recallNurLesen(): boolean {
 import type { CKGEdge, PersonNode, ServiceNode } from '../ckg.js';
 import { gemerkterTarif, holeKantenVorrat, SPEICHER_SCAN_SCHRITT, type KantenRedis } from '../kanten-vorrat.js';
 import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
-         reviewModeEnabled, storeLessonProposal } from './team.js';
+         reviewModeEnabled, storeLessonProposal, fragenderAusweis, sichtbarFuer, NIEMAND } from './team.js';
 import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
          splitMultiQuery, levenshtein, indexVocab as _indexVocab, bestandHolen } from '../search.js';
 import { startetNochLeer, leeresBrainAntwort, startLageMitCommits, sofortAntwortNeuesBrain,
@@ -2429,13 +2429,24 @@ async function handleBrainToolInner(
         scanStream.on('error', reject);
       });
 
+      // Teiltreffer sind kein exakter Name (12.11.2026): hier gilt die Regel aller
+      // Listen — privat nie, Gruppe nur fuer Mitglieder. Bis 0.10.249 fand
+      // "deploy" jede Lektion, deren Name "deploy" enthielt, private und
+      // fremde Gruppen eingeschlossen, und zeigte 400 Zeichen Text. Die
+      // Absage bleibt wortgleich mit "nichts gefunden".
+      const rbsFragender = await fragenderAusweis(redis, instance_id, rbsAuthor);
       const matching = allKeys.filter(k => k.toLowerCase().includes(topic.toLowerCase()));
       if (matching.length === 0) {
-        // Check attempt history as fallback
+        // Check attempt history as fallback. Er haengt am EXAKTEN Namen, also
+        // darf Privates hier stehen (wie oben); die Gruppen-Grenze gilt trotzdem.
         const histKey = `cachly:lessons:${topic}`;
         const all = await redis.lrange(histKey, -3, -1);
         if (all.length > 0) {
-          const parsed = all.map(e => safeJsonParse(e, null as null | { outcome: string; what_worked: string; ts: string })).filter(Boolean) as Array<{ outcome: string; what_worked: string; ts: string }>;
+          const parsed = all
+            .map(e => safeJsonParse(e, null as null | { outcome: string; what_worked: string; ts: string; group?: string }))
+            .filter((p): p is { outcome: string; what_worked: string; ts: string; group?: string } =>
+              !!p && lessonVisibleToScope(p.group, rbsFragender.scopes, rbsFragender.isAdmin));
+          if (parsed.length === 0) return `📭 No lessons found for \`${topic}\`. Use \`learn_from_attempts\` after solving it.`;
           const lines = parsed.map(p => `- ${p.outcome === 'success' ? '✅' : '❌'} ${p.what_worked.slice(0, 120)} (${new Date(p.ts).toLocaleDateString('de-DE')})`);
           return `⚠️ No successful solution for \`${topic}\` yet. Last attempts:\n\n${lines.join('\n')}`;
         }
@@ -2447,14 +2458,16 @@ async function handleBrainToolInner(
       // im Satz, das Modell verwarf den halben Hinweis. Dieselbe Klasse wie
       // die 220-Kappung im Kompakt-Modus (0.10.157).
       const results: string[] = [];
-      for (const k of matching.slice(0, 5)) {
+      for (const k of matching.slice(0, 50)) {
+        if (results.length >= 5) break;
         const raw = await redis.get(k);
         if (!raw) continue;
-        const lesson = safeJsonParse(raw, null as null | { topic: string; what_worked: string; context?: string; ts: string; tags?: string[] });
-        if (!lesson) continue;
+        const lesson = safeJsonParse(raw, null as null | { topic: string; what_worked: string; context?: string; ts: string; tags?: string[]; visibility?: string; group?: unknown });
+        if (!sichtbarFuer(lesson, rbsFragender)) continue;
         const markierung = markierungsWarnung(lesson);
         results.push(`${markierung ? `${markierung}\n` : ''}**\`${lesson.topic}\`** — ${lesson.what_worked.slice(0, 400)}${lesson.what_worked.length > 400 ? ' …' : ''}`);
       }
+      if (results.length === 0) return `📭 No lessons found for \`${topic}\`. Use \`learn_from_attempts\` after solving it.`;
       return `🔍 **Partial matches for \`${topic}\`:**\n\n${results.join('\n\n')}`;
     }
 
@@ -3940,11 +3953,21 @@ async function handleBrainToolInner(
       // Briefing: das Briefing schiebt Lektionstext von selbst in den Kontext. Ausdruecklich
       // abrufen laesst sich eine solche Lektion weiter (recall_best_solution, mit Warnzeile).
       let markierteAusgelassen = 0;
+      // Private Lektionen stehen in keinem Briefing, Gruppen-Lektionen nur fuer
+      // Mitglieder (12.11.2026). Bis 0.10.249 las das Briefing jede Lektion und
+      // zeigte Text, Thema und Autor auch privater Lektionen anderer — der
+      // haeufigste Lesepfad ueberhaupt. "private" heisst laut Beschreibung
+      // "only via exact recall_best_solution". Alles darunter (Fokus, Neues,
+      // Fehlschlaege, Zaehlungen) liest aus dieser einen Liste.
+      const briefingFragender = await fragenderAusweis(redis, instance_id, author);
+      const briefingSichtbar = new Set<string>();
       if (lessonKeys.length > 0) {
         const raws = await redis.mget(...lessonKeys);
         for (const raw of raws) {
-          const l = safeJsonParse<Lesson | null>(raw ?? null, null);
+          const l = safeJsonParse<Lesson & { visibility?: string; group?: unknown } | null>(raw ?? null, null);
           if (!l) continue;
+          if (!sichtbarFuer(l, briefingFragender)) continue;
+          briefingSichtbar.add(l.topic);
           if (istMarkiert(l)) { markierteAusgelassen++; continue; }
           // Blosse Kategorie-Themen ("code:", "deploy:") sind ueberschriebene Reste, kein
           // Wissen — dieselbe Regel wie die Prompt-Einblendung (blosses-thema.ts).
@@ -4329,6 +4352,8 @@ async function handleBrainToolInner(
             if (!cr) continue;
             const cf = safeJsonParse<{ topic: string; fix_confidence: number; fix_trials: number } | null>(cr, null);
             if (!cf) continue;
+            // Der Name einer nicht sichtbaren Lektion steht auch hier nicht.
+            if (!briefingSichtbar.has(cf.topic) && (await redis.exists(`cachly:lesson:best:${cf.topic}`))) continue;
             lines.push(`  ⚠️ \`${cf.topic}\` — previously confirmed fix (${(cf.fix_confidence * 100).toFixed(0)}%, n=${cf.fix_trials}) now contradicted. Use \`ckg_inspect(concept="${ckgSlug(cf.topic)}")\``);
           }
           lines.push('');
@@ -4700,13 +4725,16 @@ async function handleBrainToolInner(
         tags?: string[]; confidence?: number;
       };
       const lessons: SummaryLesson[] = [];
+      // Wie session_start (12.11.2026): privat nie, Gruppe nur fuer Mitglieder.
+      const zusammenfassungFragender = await fragenderAusweis(redis, instance_id, author);
       if (lessonKeys.length > 0) {
         const raws = await redis.mget(...lessonKeys);
         for (const raw of raws) {
-          const l = safeJsonParse<SummaryLesson | null>(raw ?? null, null);
+          const l = safeJsonParse<SummaryLesson & { visibility?: string; group?: unknown } | null>(raw ?? null, null);
+          if (!sichtbarFuer(l, zusammenfassungFragender)) continue;
           // Markierte Lektionen (tuersteher:verdacht) und blosse Kategorie-Themen kommen nicht
           // von selbst in den Kontext.
-          if (l && !istMarkiert(l) && !istBlossesThema(l.topic)) lessons.push(l);
+          if (!istMarkiert(l) && !istBlossesThema(l.topic)) lessons.push(l);
         }
       }
 
@@ -5504,7 +5532,7 @@ async function handleBrainToolInner(
                 topic?: string; outcome?: string; what_worked?: string;
                 severity?: string; author?: string; visibility?: string;
               }>(h.content);
-              if (!darfHeraus(ld)) continue;
+              if (!sichtbarFuer(ld, NIEMAND)) continue; // privat UND Gruppe (12.11.2026)
               const emoji = ld.outcome === 'success' ? '✅' : ld.outcome === 'partial' ? '⚠️' : '❌';
               const sev = ld.severity === 'critical' ? ' 🔴' : ld.severity === 'major' ? ' 🟡' : '';
               const by = ld.author ? ` · 👤 ${ld.author}` : '';
@@ -5524,7 +5552,7 @@ async function handleBrainToolInner(
               topic?: string; outcome?: string; what_worked?: string;
               severity?: string; author?: string; visibility?: string; file_paths?: string[];
             }>(raw);
-            if (!darfHeraus(ld)) continue;
+            if (!sichtbarFuer(ld, NIEMAND)) continue; // privat UND Gruppe (12.11.2026)
             if (!(ld.file_paths ?? []).includes(fp)) continue;
             const topic = k.replace('cachly:lesson:best:', '');
             if (relatedLessons.some(l => l.includes(`\`${topic}\``))) continue;
@@ -5656,12 +5684,14 @@ async function handleBrainToolInner(
           topic?: string; outcome?: string; author?: string; visibility?: string;
         }>(raw);
         if (l === null) continue;
+        // Der Text unten sagt "excluded" — bis 0.10.249 zaehlte die Schleife
+        // private Lektionen trotzdem mit und listete ihre Themen (12.11.2026).
+        if (!sichtbarFuer(l, NIEMAND)) { totalPrivate++; continue; }
         const domain = (l.topic ?? '').split(':')[0] ?? 'unknown';
         const s = domainMap.get(domain) ?? { successes: 0, failures: 0, attributed: 0, topics: [] };
         if (l.outcome === 'success' || l.outcome === 'partial') s.successes++;
         else s.failures++;
         if (l.author) { s.attributed++; totalAttributed++; }
-        if (l.visibility === 'private') totalPrivate++;
         s.topics.push(l.topic ?? '');
         domainMap.set(domain, s);
       }
@@ -5691,7 +5721,7 @@ async function handleBrainToolInner(
         `## 🔍 Skill Gaps — Knowledge Blind Spots`,
         ``,
         `**${lessonKeys.length}** lessons scanned · **${totalAttributed}** attributed · **${gaps.length}** gap${gaps.length !== 1 ? 's' : ''} found`,
-        totalPrivate > 0 ? `_(${totalPrivate} private lessons excluded from gap analysis)_` : '',
+        totalPrivate > 0 ? `_(${totalPrivate} private or group-only lessons excluded from gap analysis)_` : '',
         ``,
       ].filter(Boolean);
 
@@ -6154,7 +6184,7 @@ async function handleBrainToolInner(
         if (!raw) continue;
         // Unlesbar heisst NEIN — siehe leseOderNull.
         const ld = leseOderNull<SvcLesson & { service?: string }>(raw);
-        if (!darfHeraus(ld)) continue;
+        if (!sichtbarFuer(ld, NIEMAND)) continue; // privat UND Gruppe (12.11.2026)
         if ((ld.service ?? '').toLowerCase() !== svcLower) continue;
         lessons.push({ ...ld, topic: k.replace('cachly:lesson:best:', '') });
       }
@@ -6559,7 +6589,12 @@ async function handleBrainToolInner(
       for (const k of keys) {
         const raw = await redis.get(k).catch(() => null);
         if (!raw) continue;
-        const lesson = safeJsonParse<RawLesson>(raw, {});
+        // Nur Teamweites ins Changelog (12.11.2026): es wird geteilt und
+        // gespeichert, und dieses Werkzeug weiss nicht, wer fragt.
+        const lesson = sichtbarFuer(leseOderNull<RawLesson & { visibility?: string; group?: unknown }>(raw), NIEMAND)
+          ? safeJsonParse<RawLesson>(raw, {})
+          : null;
+        if (!lesson) continue;
         const ts = lesson.ts ? new Date(lesson.ts).getTime() : 0;
         if (ts < cutoff) continue;
         if (!include_failures && lesson.outcome === 'failure') continue;

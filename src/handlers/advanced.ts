@@ -1,7 +1,7 @@
 import type { Redis } from 'ioredis';
 import { ckgSlug } from '../ckg.js';
 import type { CKGEdge, CKGNode } from '../ckg.js';
-import { safeJsonParse, darfHeraus } from '../utils.js';
+import { safeJsonParse, darfHeraus, istTeamweit } from '../utils.js';
 import { ersparteMinuten, zaehltAlsErsparnis } from '../wertbeitrag.js';
 import { findePaare } from '../zulassung-und-urteil.js';
 import { Vektorbestand } from '../bedeutung.js';
@@ -10,6 +10,7 @@ import { DOPPEL_SCHWELLE } from '../rangfolge-stellschrauben.js';
 import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
 import { fuerWeitergabe } from '../schreibtor.js';
 import { kappeAnfrage, trefferIstStark } from '../pflichtfelder.js';
+import { namensPruefer } from './team.js';
 
 /**
  * Der dritte Lesepfad (Karte lr9c9h26kmb5). `causal_trace` kennt den Fragenden
@@ -59,14 +60,22 @@ export async function handleAdvancedTool(
         return '🧠 **Brain is empty** — no lessons to consolidate yet. Use `learn_from_attempts` after your next bug fix.';
       }
 
-      type Lesson = { topic: string; outcome: string; what_worked?: string; what_failed?: string; ts: string; recall_count?: number; severity?: string; tags?: string[] };
+      type Lesson = { topic: string; outcome: string; what_worked?: string; what_failed?: string; ts: string; recall_count?: number; severity?: string; tags?: string[]; visibility?: string; group?: unknown };
       const lessons: Map<string, Lesson> = new Map();
+      // Zaehlen und Pflegen sehen alles, GENANNT wird nur Teamweites (12.11.2026,
+      // dieselbe Regel wie brain_doctor/brain_hygiene seit #1017).
+      const nichtTeamweit = new Set<string>();
       for (const k of lessonKeys) {
         const raw = await redis.get(k);
         if (!raw) continue;
         const lesson = safeJsonParse<Lesson | null>(raw, null);
-        if (lesson) lessons.set(k, lesson);
+        if (lesson) {
+          lessons.set(k, lesson);
+          const thema = lesson.topic;
+          if (!istTeamweit(lesson)) nichtTeamweit.add(thema);
+        }
       }
+      const nennbar = (...themen: string[]) => themen.every((t) => !nichtTeamweit.has(t));
 
       // Moegliche Doppelungen nach Bedeutung (doppel-kandidat.ts, 14.10.2026).
       //
@@ -148,6 +157,12 @@ export async function handleAdvancedTool(
           await redis.expire(k, 86400 * 30);
         }
       }
+      const widerspruecheNennbar = widersprueche.filter(p => nennbar(p.a.topic, p.b.topic));
+      const ersetzungenNennbar = ersetzungen.filter(p => nennbar(p.a.topic, p.b.topic));
+      const contradictionsNennbar = contradictions.filter(c => nennbar(c.topic));
+      const doppelungenNennbar = doppelungen.filter(d => nennbar(d.neu, d.alt));
+      const verborgen = (widersprueche.length - widerspruecheNennbar.length) + (ersetzungen.length - ersetzungenNennbar.length)
+        + (contradictions.length - contradictionsNennbar.length) + (doppelungen.length - doppelungenNennbar.length);
 
       const lines = [
         `🔬 **Memory Consolidation Report** ${dry_run ? '(dry run — no changes made)' : '✅ Applied'}`,
@@ -159,21 +174,22 @@ export async function handleAdvancedTool(
         // Auskunft: die alte Regel fand am 29.08.2026 auf 499 Lektionen null.
         `🔎 **Same subject, admitted for judgement:** ${paare.length}` +
           ` → contradiction ${widersprueche.length} · supersession ${ersetzungen.length}`,
-        ...widersprueche.slice(0, 5).map(p =>
+        ...widerspruecheNennbar.slice(0, 5).map(p =>
           `  → \`${p.a.topic}\` vs \`${p.b.topic}\` (${p.naehe.toFixed(2)}): ${p.grund}`),
-        widersprueche.length > 5 ? `  … and ${widersprueche.length - 5} more` : '',
+        widerspruecheNennbar.length > 5 ? `  … and ${widerspruecheNennbar.length - 5} more` : '',
         // Eine Ersetzung ist KEIN Streit. Wer beides in einen Topf wirft,
         // macht aus jeder Weiterentwicklung einen Widerspruch.
-        ...ersetzungen.slice(0, 3).map(p =>
+        ...ersetzungenNennbar.slice(0, 3).map(p =>
           `  ↻ \`${p.a.topic}\` → \`${p.b.topic}\`: ${p.grund}`),
-        ...contradictions.slice(0, 5).map(c => `  → \`${c.topic}\`: ${c.keys.length} conflicting entries (kept: success)`),
-        contradictions.length > 5 ? `  … and ${contradictions.length - 5} more` : '',
+        ...contradictionsNennbar.slice(0, 5).map(c => `  → \`${c.topic}\`: ${c.keys.length} conflicting entries (kept: success)`),
+        contradictionsNennbar.length > 5 ? `  … and ${contradictionsNennbar.length - 5} more` : '',
         ``,
         `♻️ **Possible duplicates — same meaning, different topic (cosine ≥ ${DOPPEL_SCHWELLE.toFixed(2)}, never merged):** ${doppelungen.length}` +
           (vektoren.groesse === 0 ? ' (no vectors in this Brain, so nothing could be compared)' : ''),
-        ...doppelungen.slice(0, 5).map(d => `  → \`${d.neu}\` ≈ \`${d.alt}\` (${d.naehe.toFixed(2)})`),
-        doppelungen.length > 5 ? `  … and ${doppelungen.length - 5} more` : '',
-        doppelungen.length > 0 ? `  If the newer one replaces the older, pass \`ersetzt="<older topic>"\` on its next \`learn_from_attempts\`.` : '',
+        ...doppelungenNennbar.slice(0, 5).map(d => `  → \`${d.neu}\` ≈ \`${d.alt}\` (${d.naehe.toFixed(2)})`),
+        doppelungenNennbar.length > 5 ? `  … and ${doppelungenNennbar.length - 5} more` : '',
+        doppelungenNennbar.length > 0 ? `  If the newer one replaces the older, pass \`ersetzt="<older topic>"\` on its next \`learn_from_attempts\`.` : '',
+        verborgen > 0 ? `🔒 ${verborgen} of the pairs above involve a private or group-only lesson and are counted, not named.` : '',
         ``,
         `🕰️ **Stale entries (${stale_days}d, 0 recalls):** ${stale.length}` +
           (stale.length > 0 && !dry_run ? ` → set to expire in 30 days` : ''),
@@ -215,7 +231,7 @@ export async function handleAdvancedTool(
         lessonKeys.push(...keys);
       } while (cursor !== 0);
 
-      type Lesson = { topic: string; outcome: string; what_worked?: string; ts: string; recall_count?: number; severity?: string };
+      type Lesson = { topic: string; outcome: string; what_worked?: string; ts: string; recall_count?: number; severity?: string; visibility?: string; group?: unknown };
       const added: Lesson[] = [];
       const updated: Lesson[] = [];
       const recalled: Lesson[] = [];
@@ -226,7 +242,8 @@ export async function handleAdvancedTool(
         if (!raw) continue;
         {
           const l = safeJsonParse<Lesson | null>(raw, null);
-          if (!l) continue;
+          // Der Bericht nennt Themen und Text: nur Teamweites (12.11.2026).
+          if (!istTeamweit(l)) continue;
           const ts = new Date(l.ts).getTime();
           if (ts >= sinceMs) {
             // Check history to determine add vs update
@@ -271,12 +288,13 @@ export async function handleAdvancedTool(
       const rsStream = redis.scanStream({ match: 'cachly:ckg:node:resolution-*', count: 100 });
       await new Promise<void>((res, rej) => { rsStream.on('data', (b: string[]) => resolutionKeys.push(...b)); rsStream.on('end', res); rsStream.on('error', rej); });
       const recentResolutions: Array<{ topic: string; resolution: string; ts: string }> = [];
+      const diffNameOk = namensPruefer(redis);
       for (const rk of resolutionKeys) {
         const rr = await redis.get(rk);
         if (!rr) continue;
         {
           const rn = safeJsonParse<{ topic?: string; resolution?: string; ts?: string } | null>(rr, null);
-          if (rn?.ts && new Date(rn.ts).getTime() >= sinceMs) recentResolutions.push({ topic: rn.topic ?? rk, resolution: rn.resolution ?? 'unknown', ts: rn.ts });
+          if (rn?.ts && new Date(rn.ts).getTime() >= sinceMs && (!rn.topic || (await diffNameOk(rn.topic)))) recentResolutions.push({ topic: rn.topic ?? rk, resolution: rn.resolution ?? 'unknown', ts: rn.ts });
         }
       }
       if (recentResolutions.length > 0) {
@@ -538,7 +556,7 @@ export async function handleAdvancedTool(
         lessonKeys.push(...keys);
       } while (cursor !== 0);
 
-      type Lesson = { topic: string; outcome: string; ts: string; recall_count?: number; severity?: string };
+      type Lesson = { topic: string; outcome: string; ts: string; recall_count?: number; severity?: string; visibility?: string; group?: unknown };
       type Scored = { topic: string; confidence: number; age_days: number; recalls: number; outcome: string };
 
       const scores: Scored[] = [];
@@ -547,7 +565,8 @@ export async function handleAdvancedTool(
         if (!raw) continue;
         {
           const l = safeJsonParse<Lesson | null>(raw, null);
-          if (!l) continue;
+          // Nennt Themen mit Wert: nur Teamweites (12.11.2026).
+          if (!istTeamweit(l)) continue;
           const ageMs = now - new Date(l.ts).getTime();
           if (ageMs < minAgeMs) continue;
           const age_days = Math.floor(ageMs / 86400000);
