@@ -30,7 +30,7 @@
       "environmentVariables": [
         {
           "name": "CACHLY_JWT",
-          "description": "Optional API key (starts with cky_). Leave it empty and cachly sets up a trial Brain on first use.",
+          "description": "Optional API key (starts with cky_). Leave it empty and cachly opens a browser sign-in on first use; the free plan needs no card.",
           "isRequired": false,
           "isSecret": true,
           "format": "string"
