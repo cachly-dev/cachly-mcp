@@ -2,7 +2,8 @@
 //   GET /health   POST /v1/memory/add   POST /v1/memory/search   POST /v1/memory/delete {user_id}
 // Start (aus sdk/mcp):  AML_MEMORY_KEY=... node_modules/.bin/tsx aml-service/dienst.mjs
 // Umgebung: AML_MEMORY_KEY (Pflicht), AML_PORT (8780), AML_REDIS_URL (redis://127.0.0.1:6391), AML_MAX_ADD (16),
-//   AML_AUFFUELLEN (aus), AML_ADD_ZEIT_MS (1500000), AML_VEKTOR_STILL_MS (300000), AML_MAX_DB (16384), AML_INSTANZ_ID
+//   AML_AUFFUELLEN (aus), AML_ADD_ZEIT_MS (1500000), AML_VEKTOR_STILL_MS (300000), AML_MAX_DB (16384), AML_INSTANZ_ID,
+//   AML_ZEITORDNUNG (an)
 import http from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { Redis, ladeBrain, keinApi, stuecke, vektorenAbwarten, lektionsText } from './kern.mjs';
@@ -13,6 +14,8 @@ const REDIS_URL = process.env.AML_REDIS_URL ?? 'redis://127.0.0.1:6391';
 const KEY = process.env.AML_MEMORY_KEY ?? '';
 const MAX_ADD = Number(process.env.AML_MAX_ADD ?? 16);
 const AUFFUELLEN = /^(1|an|ja|true)$/i.test(process.env.AML_AUFFUELLEN ?? '');
+// Treffer aelteste zuerst (Standard). AML_ZEITORDNUNG=aus liefert sie in Rangfolge wie vor dem 14.11.2026.
+const ZEITORDNUNG = !/^(0|aus|nein|false|off)$/i.test(process.env.AML_ZEITORDNUNG ?? 'an');
 const ADD_ZEIT_MS = Number(process.env.AML_ADD_ZEIT_MS ?? 1_500_000);
 const STILL_MS = Number(process.env.AML_VEKTOR_STILL_MS ?? 300_000);
 const MAX_DB = Number(process.env.AML_MAX_DB ?? 16384);
@@ -125,6 +128,9 @@ async function schreibe(req) {
     if (await redis.exists(doneKey)) return { wiederholt: true, stuecke: 0 };
     const liste = stuecke(req.messages);
     const frist = Date.now() + ADD_ZEIT_MS - 10_000;
+    // Einlese-Reihenfolge je Nutzer: laufende Nummer je Stueck. Adds eines Nutzers kommen nacheinander
+    // (Sitzung fuer Sitzung), also ist die Nummer die Reihenfolge im Gespraech, auch innerhalb eines Tages.
+    const basis = ZEITORDNUNG ? (await redis.incrby('aml:folge:n', liste.length)) - liste.length : 0;
     await Promise.all(liste.map(async (s, i) => {
       const topic = `aml:${sha(`${req.request_id}\n${i}\n${s.text}`).slice(0, 24)}`;
       const marke = `aml:chunk:${topic}`;
@@ -137,6 +143,7 @@ async function schreibe(req) {
             tags: ['aml'], ...(s.giltAb ? { gilt_ab: s.giltAb } : {}),
           }, async () => redis, keinApi);
           await redis.zadd('aml:index', s.zeitMs || 0, topic);
+          if (ZEITORDNUNG) await redis.zadd('aml:folge', basis + i, topic);
           await redis.set(marke, '1');
           return;
         } catch (e) { letzter = e; await new Promise((r) => setTimeout(r, 500 * v)); }
@@ -189,10 +196,22 @@ async function search(req) {
       const schon = new Set(treffer);
       for (const t of alle) { if (treffer.length >= req.top_k) break; if (!schon.has(t)) treffer.push(t); }
     }
+    // Zeitordnung: dieselben Treffer, aelteste zuerst (Sitzungszeit, dann Einlese-Nummer, dann Rang).
+    // Gemessen 13.11.2026 (BEAM, gleiche Suchergebnisse): Gesamt +1,84 gegen Kontrolle, Wissensstand +6..8.
+    if (ZEITORDNUNG && treffer.length > 1) {
+      const p = redis.pipeline();
+      for (const t of treffer) { p.zscore('aml:index', t); p.zscore('aml:folge', t); }
+      const r = await p.exec();
+      const zahl = (x) => (x === null || x === undefined ? Infinity : Number(x));
+      treffer = treffer
+        .map((t, i) => ({ t, i, zeit: zahl(r[2 * i][1]), folge: zahl(r[2 * i + 1][1]) }))
+        .sort((a, b) => a.zeit - b.zeit || a.folge - b.folge || a.i - b.i)
+        .map((x) => x.t);
+    }
     const roh = treffer.length ? await redis.mget(treffer.map((t) => `cachly:lesson:best:${t}`)) : [];
     const data = [];
     treffer.forEach((t, i) => { const c = lektionsText(roh[i]); if (c && c.trim()) data.push({ id: t, content: c }); });
-    return { data };
+    return ZEITORDNUNG ? { data, ordnung: 'zeit' } : { data };
   });
 }
 

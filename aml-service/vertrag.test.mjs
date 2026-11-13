@@ -198,3 +198,16 @@ test('10 Delete: A ist weg, B bleibt; unbekannt -> deleted:false; ohne Schluesse
   const sa = (await ruf('/v1/memory/search', { query: 'Codewort Kormoran', user_id: a, top_k: 10 })).json.data;
   assert.ok(sa.some((d) => d.content.includes('Kormoran')), 'nach dem Loeschen neu einlesen');
 });
+
+test('11 Zeitordnung: Treffer aelteste zuerst (Sitzungszeit, dann Einlese-Reihenfolge), Antwort sagt ordnung:zeit', async () => {
+  // Eingelesen in der Reihenfolge Mai, Januar, Mai. Erwartet: Januar vor Mai; die beiden Mai-Stuecke so,
+  // wie sie eingelesen wurden (rot vor gruen). Die Rangfolge der Suche spielt fuer die Ausgabe keine Rolle.
+  const u = uid('z11');
+  await ruf('/v1/memory/add', addBody(u, 'zo1', [nachr('Die Laterne im Garten ist rot.', { timestamp: Date.UTC(2023, 4, 7, 12) })], 's1'));
+  await ruf('/v1/memory/add', addBody(u, 'zo2', [nachr('Die Laterne im Garten ist blau.', { timestamp: Date.UTC(2023, 0, 9, 12) })], 's0'));
+  await ruf('/v1/memory/add', addBody(u, 'zo3', [nachr('Die Laterne im Garten ist jetzt gruen.', { timestamp: Date.UTC(2023, 4, 7, 12) })], 's2'));
+  const s = (await ruf('/v1/memory/search', { query: 'Welche Farbe hat die Laterne im Garten?', user_id: u, top_k: 10 })).json;
+  assert.equal(s.ordnung, 'zeit');
+  const farben = s.data.map((d) => ['blau', 'rot', 'gruen'].find((f) => d.content.includes(`ist ${f}`) || d.content.includes(`jetzt ${f}`)));
+  assert.deepEqual(farben, ['blau', 'rot', 'gruen'], JSON.stringify(s.data.map((d) => d.content)));
+});

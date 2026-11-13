@@ -23,7 +23,12 @@ All `POST` routes need `Authorization: Bearer <AML_MEMORY_KEY>`.
   A repeated add with the same `request_id` stores nothing new.
 - `search` calls `smart_recall` with `limit = top_k`. cachly caps one search at
   20 records, so `top_k` above 20 returns at most 20. Each record comes back as
-  full text, in ranking order.
+  full text. The records are the top `top_k` by ranking, returned oldest first:
+  by session time, then by the order in which `add` stored them. The response
+  says so with `"ordnung": "zeit"`; a client can tell its reader that later
+  records describe the current state. `AML_ZEITORDNUNG=aus` returns ranking
+  order instead. Measured 13.11.2026 on the same records: BEAM 100K 70.28 →
+  73.04 (knowledge update 52.5 → 62.5), LoCoMo unchanged (+0.46 on 431 questions).
 - When `CACHLY_JWT` is set, `smart_recall` also asks the API's cross-encoder
   reranker (`POST /api/v1/rerank`) to reorder the top 25 candidates. If it does
   not answer within `CACHLY_LESER_ZEITLIMIT_MS`, the order without it stands.
@@ -56,6 +61,7 @@ node_modules/.bin/tsx aml-service/dienst.mjs
 | `AML_MAX_ADD` | `16` | Adds running at the same time; the rest wait in line. |
 | `AML_ADD_ZEIT_MS` | `1500000` | Time limit of one add. |
 | `AML_MAX_DB` | `16384` | Highest database number handed out. |
+| `AML_ZEITORDNUNG` | `an` | `an`: search results oldest first, response carries `"ordnung": "zeit"`. `aus`: ranking order. |
 | `CACHLY_EMBED_TIMEOUT_MS` | `30000` | Time limit of one embedding call; raise it on a slow CPU host. |
 | `CACHLY_LESER` | on | `off` (or `0`, `false`) switches the reranker off. |
 | `CACHLY_LESER_ZEITLIMIT_MS` | `2500` | Time limit of one reranker call (1 to 120000). |
