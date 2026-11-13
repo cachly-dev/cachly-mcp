@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Redis } from 'ioredis';
 import { MockRedis } from './__tests__/redis-mock.js';
 import { Vektorbestand, packe, VEKTOR_PRAEFIX } from './bedeutung.js';
@@ -149,10 +149,23 @@ describe('Weg a: Satz in der Antwort und Frist', () => {
 
   it('mitFrist: Ergebnis vor der Frist, null danach', async () => {
     expect(await mitFrist(Promise.resolve(k), 50)).toBe(k);
-    const spaet = new Promise<typeof k>((r) => setTimeout(() => r(k), 200));
-    const start = Date.now();
-    expect(await mitFrist(spaet, 50)).toBeNull();
-    expect(Date.now() - start).toBeLessThan(180);
+    // Simulierte Zeitgeber statt Wanduhr (13.11.2026): Unter Last auf node-4
+    // feuerte die 50-ms-Frist erst nach 201 ms, "< 180 ms" kippte und
+    // blockierte die Auslieferung von main. Geprueft wird dasselbe Verhalten:
+    // Nach 50 ms gewinnt die Frist, auf das 200-ms-Ergebnis wird nicht gewartet.
+    vi.useFakeTimers();
+    try {
+      const spaet = new Promise<typeof k>((r) => setTimeout(() => r(k), 200));
+      let fertig = false;
+      const ergebnis = mitFrist(spaet, 50).then((e) => { fertig = true; return e; });
+      await vi.advanceTimersByTimeAsync(49);
+      expect(fertig).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(fertig).toBe(true);
+      expect(await ergebnis).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
