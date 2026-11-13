@@ -306,6 +306,44 @@ describe('writeInstructions', () => {
     expect((await writeInstructions(mit, instanceId))[regel]).toBe('unchanged');
     expect(readFileSync(regel, 'utf-8').split(CLAUDE_MD_MARKER_START).length).toBe(2);
   });
+
+  // Kundenweg-Test 12.11.2026: der erste init-Lauf legte rund 10 Dateien an.
+  // Mit Editor entsteht nur dessen Anweisungsdatei.
+  const sechs = [
+    'CLAUDE.md', 'AGENTS.md', '.github/copilot-instructions.md',
+    '.cursor/rules/cachly.mdc', '.windsurfrules', '.clinerules',
+  ];
+  const leerHeim = resolve(tmp, 'leer-heim');
+  const neueDateien = (p: string) => sechs.filter((f) => existsSync(resolve(p, f)));
+
+  it('init --editor claude: in einem leeren Projekt nur CLAUDE.md', async () => {
+    mkdirSync(leerHeim, { recursive: true });
+    const p = resolve(tmp, 'nur-claude');
+    await writeInstructions(p, instanceId, leerHeim, 'claude');
+    expect(neueDateien(p)).toEqual(['CLAUDE.md']);
+  });
+
+  it('init --editor cursor: nur die Cursor-Regel', async () => {
+    const p = resolve(tmp, 'nur-cursor');
+    await writeInstructions(p, instanceId, leerHeim, 'cursor');
+    expect(neueDateien(p)).toEqual(['.cursor/rules/cachly.mdc']);
+  });
+
+  it('init haelt vorhandene Dateien anderer Editoren aktuell und folgt deren Ordnern', async () => {
+    const p = resolve(tmp, 'gemischt');
+    mkdirSync(resolve(p, '.cursor'), { recursive: true });
+    writeFileSync(resolve(p, 'AGENTS.md'), '# Eigene Regeln\n');
+    const r = await writeInstructions(p, instanceId, leerHeim, 'claude');
+    expect(neueDateien(p).sort()).toEqual(['.cursor/rules/cachly.mdc', 'AGENTS.md', 'CLAUDE.md']);
+    expect(r[resolve(p, 'AGENTS.md')]).toBe('appended');
+    expect(readFileSync(resolve(p, 'AGENTS.md'), 'utf-8')).toContain('# Eigene Regeln');
+  });
+
+  it('ohne Editor (setup, autopilot, --all-editors) bleibt es bei allen sechs', async () => {
+    const p = resolve(tmp, 'alle');
+    await writeInstructions(p, instanceId, leerHeim);
+    expect(neueDateien(p)).toEqual(sechs);
+  });
 });
 
 // Befund 19.10.2026: kein fremdes Konto rief je smart_recall. Die Regel muss dort

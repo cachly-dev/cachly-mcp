@@ -65,6 +65,15 @@ export interface AnweisungsDatei {
    * GEMINI.md, nur eines, in dem Gemini CLI benutzt wird.
    */
   nurMit?: { projekt?: readonly string[]; heim?: readonly string[] };
+  /**
+   * Fuer welche Editoren die Datei gedacht ist. Nennt `init` einen Editor,
+   * entsteht die Datei nur fuer diese Editoren — ausser sie liegt schon im
+   * Projekt oder einer der `ordner` ist da (dann wird sie aktuell gehalten).
+   * Ohne Editor (setup, autopilot, setup_ai_memory) gilt das nicht.
+   */
+  editoren?: readonly string[];
+  /** Ordner im Projekt, die zeigen, dass der Editor dort benutzt wird. */
+  ordner?: readonly string[];
 }
 
 export type BlockErgebnis = 'written' | 'updated' | 'appended' | 'unchanged';
@@ -73,12 +82,20 @@ export type BlockErgebnis = 'written' | 'updated' | 'appended' | 'unchanged';
 export type SchreibErgebnis = BlockErgebnis | `failed:${string}`;
 
 /** Soll diese Anweisungsdatei in diesem Projekt entstehen? */
-export function sollSchreiben(d: AnweisungsDatei, projekt: string, heim: string, gibtEs: (pfad: string) => boolean, verbinde: (...teile: string[]) => string): boolean {
+export function sollSchreiben(d: AnweisungsDatei, projekt: string, heim: string, gibtEs: (pfad: string) => boolean, verbinde: (...teile: string[]) => string, editor?: string): boolean {
   if (d.nurMitIdea && !gibtEs(verbinde(projekt, '.idea'))) return false;
   if (d.nurMit) {
     const imProjekt = (d.nurMit.projekt ?? []).some((o) => gibtEs(verbinde(projekt, o)));
     const imHeim = (d.nurMit.heim ?? []).some((o) => gibtEs(verbinde(heim, o)));
     if (!imProjekt && !imHeim) return false;
+  }
+  // Kundenweg-Test 12.11.2026: der erste init-Lauf legte rund 10 Dateien ins
+  // Projekt, fuer Editoren, die der Nutzer nie benutzt. Mit Editor nur noch
+  // dessen Datei — und jede, die schon da ist oder deren Ordner da ist.
+  if (editor && d.editoren && !d.editoren.includes(editor)) {
+    const schonDa = gibtEs(verbinde(projekt, ...d.pfad));
+    const ordnerDa = (d.ordner ?? []).some((o) => gibtEs(verbinde(projekt, o)));
+    if (!schonDa && !ordnerDa) return false;
   }
   return true;
 }
@@ -117,12 +134,13 @@ export async function setzeAnweisungsblock(datei: string, block: string, prefix?
 
 /** Alle Dateien, in die der Anweisungsblock geschrieben wird. */
 export const ANWEISUNGS_DATEIEN: readonly AnweisungsDatei[] = [
-  { pfad: ['CLAUDE.md'] },
-  { pfad: ['AGENTS.md'] },
-  { pfad: ['.github', 'copilot-instructions.md'] },
-  { pfad: ['.cursor', 'rules', 'cachly.mdc'], prefix: CURSOR_MDC_FRONTMATTER },
-  { pfad: ['.windsurfrules'] },
-  { pfad: ['.clinerules'] },
+  { pfad: ['CLAUDE.md'], editoren: ['claude'], ordner: ['.claude'] },
+  // AGENTS.md lesen Codex und Zed (Zed als Rueckfall, siehe unten).
+  { pfad: ['AGENTS.md'], editoren: ['codex', 'zed'], ordner: ['.codex'] },
+  { pfad: ['.github', 'copilot-instructions.md'], editoren: ['copilot'] },
+  { pfad: ['.cursor', 'rules', 'cachly.mdc'], prefix: CURSOR_MDC_FRONTMATTER, editoren: ['cursor'], ordner: ['.cursor'] },
+  { pfad: ['.windsurfrules'], editoren: ['windsurf'], ordner: ['.windsurf'] },
+  { pfad: ['.clinerules'], editoren: ['cline'] },
   { pfad: ['.aiassistant', 'rules', 'cachly.md'], nurMitIdea: true },
   // Gemini CLI liest GEMINI.md (nicht AGENTS.md); nur dort, wo Gemini benutzt wird.
   { pfad: ['GEMINI.md'], nurMit: { projekt: ['.gemini'], heim: ['.gemini'] } },

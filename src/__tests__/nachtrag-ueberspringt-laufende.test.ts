@@ -92,7 +92,7 @@ describe('Nachtrag und laufende Schreibungen', () => {
     await lerne('deploy:delta', 'Delta-Weg: Port freigegeben.');
     await ausstehen();
     const vermerk = await redis.hgetall(`${AUSSETZER_VORSATZ}${OHNE_SCHREIBVEKTOR}`);
-    expect(vermerk.text ?? '').toContain('Zweit-Vektor nicht geschrieben');
+    expect(vermerk.text ?? '').toContain('second vector not written');
     expect(vermerk.text ?? '').toContain('ollama API 500');
   });
 

@@ -325,7 +325,7 @@ import { upgradeNudge } from '../upgrade-nudge.js';
 import { recallTiefe, verlangteTiefe, TIEFE_VOLL, TIEFE_VOLL_MEHRTHEMIG } from '../recall-tiefe.js';
 import { nutzungInWorten, nutzungsSchluessel, verdichte } from '../werkzeug-nutzung.js';
 import { inWorten as lieferungInWorten, lieferBild, lieferSchluessel, trefferSchluessel } from '../geliefert.js';
-import { COAUTHOR_PREF_KEY, autorHinweis, coautorAus, echterGitLeser, ermittleAutor, mitCoautor, nurMensch } from '../autor.js';
+import { COAUTHOR_PREF_KEY, autorHinweisEinmal, coautorAus, echterGitLeser, ermittleAutor, mitCoautor, nurMensch } from '../autor.js';
 import { TOOLS } from '../tools.js';
 import { vorspannHinweis } from '../vorspann.js';
 import { autorAbzeichen, fremdanteil } from '../autor-abzeichen.js';
@@ -1158,7 +1158,7 @@ async function handleBrainToolInner(
         coautor = coautorAus(await redis.get(`cachly:prefs:${COAUTHOR_PREF_KEY}:${instance_id}`));
       } catch { /* eine Einstellung darf das Speichern nie stoppen */ }
       const autorFeld = mitCoautor(herkunft.autor, coautor);
-      const autorTipp = autorHinweis(herkunft);
+      const autorTipp = autorHinweisEinmal(herkunft);
 
 
       // ── Lessons-Review workflow (P1-1) ─────────────────────────────────────
@@ -1621,8 +1621,8 @@ async function handleBrainToolInner(
                   // vermerkt: in BEAM-Messung 4 fehlten 75 von 133 vec2, und
                   // nirgends stand, warum.
                   await meldeUndVermerke(redis, OHNE_SCHREIBVEKTOR,
-                    `Zweit-Vektor nicht geschrieben (${EMBED_PROVIDER}, ${ZWEIT_MODELL}): ${fehlerText(e)}`
-                    + ' — die Lektion ist gespeichert, der Nachtrag holt ihn spaeter.');
+                    `second vector not written (${EMBED_PROVIDER}, ${ZWEIT_MODELL}): ${fehlerText(e)}`
+                    + ' - the lesson is saved, the backfill adds it later.');
                 }
               })();
             }
@@ -1642,8 +1642,8 @@ async function handleBrainToolInner(
             // fuer immer (drei Kundeninstanzen, monatelang).
             await redis.sadd(VEK_NACHTRAG, topic).catch(() => { /* still */ });
             await meldeUndVermerke(redis, OHNE_SCHREIBVEKTOR,
-              `Volltext-Vektor nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
-              + ' — die Lektion ist gespeichert, der Bedeutungsabgleich uebergeht sie.');
+              `lesson vector not written (${EMBED_PROVIDER}): ${fehlerText(e)}`
+              + ' - the lesson is saved; search by meaning skips it until the backfill adds the vector.');
           }
 
           // Der Themenname als eigene Sicht.
@@ -1668,8 +1668,8 @@ async function handleBrainToolInner(
             }
           } catch (e) {
             await meldeUndVermerke(redis, OHNE_SCHREIBVEKTOR,
-              `Namens-Vektor nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
-              + ' — siehe oben, die Lektion selbst ist gespeichert.');
+              `topic-name vector not written (${EMBED_PROVIDER}): ${fehlerText(e)}`
+              + ' - the lesson itself is saved.');
           }
 
           // Die zweite Tuer: woertliche Fehlertexte als eigene Eingaenge.
@@ -1686,8 +1686,8 @@ async function handleBrainToolInner(
             await schreibeEingaenge(redis, topic, gelesen, (t) => computeEmbedding(t, { geduld: 'lang' }));
           } catch (e) {
             await meldeUndVermerke(redis, OHNE_SCHREIBVEKTOR,
-              `Eingaenge nicht geschrieben (${EMBED_PROVIDER}): ${fehlerText(e)}`
-              + ' — siehe oben, die Lektion selbst ist gespeichert.');
+              `entry points not written (${EMBED_PROVIDER}): ${fehlerText(e)}`
+              + ' - the lesson itself is saved.');
           }
 
           // ── Der Nachtrag (Karte hcg8neyut0kd Teil c, seit 02.09.2026 als
@@ -2665,8 +2665,11 @@ async function handleBrainToolInner(
       let spitzenAbstand: number | null = null;
       const kwGemischt = await (async () => {
         if (!hasEmbedProvider()) {
+          // Texte auf Englisch seit 13.11.2026: stderr landet im Protokoll
+          // des Editors beim KUNDEN (Kundenweg-Test 12.11.: "[aussetzer]
+          // bedeutung-ohne-vektoren" auf Deutsch). Die Schluessel bleiben.
           meldeEinmal(OHNE_DIENST,
-            'kein Einbettungsdienst eingerichtet — die Suche laeuft nur ueber Woerter');
+            'no embedding service configured, so search uses words only');
           return kwMatches;
         }
         try {
@@ -2679,8 +2682,15 @@ async function handleBrainToolInner(
             // gebaut ist — Lektionen da, Vektoren nicht.
             if (lektionenImBestand > 0) {
               meldeEinmal(OHNE_VEKTOREN,
-                'keine einzige Lektion hat eine Einbettung — die Suche laeuft nur ueber '
-                + 'Woerter. Nachruesten mit eingaenge-nachruesten, pruefen mit brain_doctor');
+                'no lesson has an embedding yet, so search uses words only. A new brain '
+                + 'fills them in the background; if this stays, run brain_doctor');
+              // Frisch gesaetes Brain (Startwissen, 17 Lektionen ohne Vektor):
+              // mit 2 je Aufruf dauerte die Heilung rund 9 Suchen. Ohne einen
+              // einzigen Vektor ist die Wortsuche alles, was es gibt — also
+              // hier kraeftiger nachholen. Fire-and-forget wie oben; 6 je
+              // Nachtragsart bleiben unter der Grenze von 60 Einbettungen je
+              // Minute (api brain_vector_backfill_handler.go).
+              void heileVektorNachtrag(redis, undefined, 6);
             }
             return kwMatches;
           }
@@ -2689,7 +2699,7 @@ async function handleBrainToolInner(
           zeitpunkt('smart_recall: Frage eingebettet');
           if (!frageVektor?.length) {
             meldeEinmal(OHNE_FRAGEVEKTOR,
-              'die Frage liess sich nicht einbetten — diese Suche laeuft nur ueber Woerter');
+              'the question could not be embedded, so this search uses words only');
             return kwMatches;
           }
 
@@ -2948,8 +2958,8 @@ async function handleBrainToolInner(
           // gefaehrlichste von allen, weil er das UNERWARTETE faengt: die drei
           // anderen sind Luecken, das hier ist ein Fehler.
           await meldeUndVermerke(redis, SINNPFAD_ABBRUCH,
-            `der Bedeutungspfad brach ab (${e instanceof Error ? e.message : String(e)}) `
-            + '— diese Suche lief nur ueber Woerter');
+            `search by meaning stopped (${e instanceof Error ? e.message : String(e)}) `
+            + '- this search used words only');
           return kwMatches;
         }
       })();

@@ -7,6 +7,19 @@
 
 ---
 
+## [0.10.251] – 2026-11-13 — *"A first run that writes what your editor needs, and talks to you in English."*
+
+Found in a walk-through with a brand-new account on production (12.11.2026).
+
+| Where | Until 0.10.250 | Now |
+|---|---|---|
+| `init --editor X` (the command on the dashboard) | wrote six instruction files for every editor: `CLAUDE.md`, `AGENTS.md`, Copilot, Cursor, Windsurf, Cline | writes the file of the chosen editor, plus every instruction file that already exists or whose editor folder (`.cursor/`, `.windsurf/`, `.claude/`, `.codex/`) is there. `--all-editors` keeps the old behaviour. `setup`, `autopilot` and `setup_ai_memory` are unchanged |
+| stderr of the MCP server (`[aussetzer] …`) | German sentences in the customer's editor log, e.g. `bedeutung-ohne-vektoren` on every new brain | English sentences; the keys stay the same |
+| first `smart_recall` of a freshly seeded brain | healed 2 lessons per call, so about 9 searches until search by meaning worked | heals up to 6 per kind while no vector exists yet |
+| `learn_from_attempts` without a git name | "No author found" under every lesson | a calm tip, once per process |
+
+---
+
 ## [0.10.250] – 2026-11-12 — *"Private means private in every list, not just in search."*
 
 **Every read path inside the team now follows the rule `smart_recall` already had.**

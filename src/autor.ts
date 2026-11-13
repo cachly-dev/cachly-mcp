@@ -187,10 +187,32 @@ export function autorHinweis(h: AutorHerkunft): string | null {
   if (h.autor) return null;
   // Wer ausdruecklich anonym speichert, bekommt keine Belehrung.
   if (h.quelle === 'anonym') return null;
+  // Ruhiger Ton seit 13.11.2026: im Kundenweg-Test las sich "No author found"
+  // wie ein Fehler, obwohl die Lektion gespeichert war.
   return (
-    `👤 **No author found** — neither \`author\`, nor \`CACHLY_AUTHOR\`, nor \`git config user.name\`. ` +
-    `Without an author this lesson does not count as team knowledge: \`brain_who_knows\` finds nobody and ` +
-    `reuse across people stays uncounted. A \`git config user.name "Your Name"\` ` +
-    `in the project is enough for all future lessons.`
+    `👤 **Tip:** saved without an author name. Set \`git config user.name "Your Name"\` ` +
+    `(or \`CACHLY_AUTHOR\`) once, and \`brain_who_knows\` can tell teammates who knows this.`
   );
+}
+
+/** Ob der Hinweis in diesem Prozess schon kam. */
+let autorHinweisGezeigt = false;
+
+/**
+ * Wie autorHinweis, aber nur EINMAL je Prozess.
+ *
+ * Bis 13.11.2026 stand der Hinweis unter JEDER Lektion. Ein neues Konto ohne
+ * git-Namen bekam ihn also bei jedem learn_from_attempts. Einmal reicht, um
+ * es zu erfahren; jedes weitere Mal ist Laerm.
+ */
+export function autorHinweisEinmal(h: AutorHerkunft): string | null {
+  const t = autorHinweis(h);
+  if (!t || autorHinweisGezeigt) return null;
+  autorHinweisGezeigt = true;
+  return t;
+}
+
+/** Nur fuer Tests. */
+export function setzeAutorHinweisZurueck(): void {
+  autorHinweisGezeigt = false;
 }

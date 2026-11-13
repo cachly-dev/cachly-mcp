@@ -2460,7 +2460,7 @@ export async function mergeMcpConfig(
  * also ohne Klick. Nur in Projekten mit .idea/, damit nicht jedes Projekt
  * einen weiteren Ordner bekommt.
  */
-export async function writeInstructions(projectDir: string, instanceId: string, heimDir?: string): Promise<Record<string, SchreibErgebnis>> {
+export async function writeInstructions(projectDir: string, instanceId: string, heimDir?: string, editor?: string): Promise<Record<string, SchreibErgebnis>> {
   const { existsSync } = await import('node:fs');
   const { resolve } = await import('node:path');
   const { homedir } = await import('node:os');
@@ -2468,8 +2468,9 @@ export async function writeInstructions(projectDir: string, instanceId: string, 
 
   // `prefix` is written only when the file is created fresh (Cursor .mdc needs it);
   // on marker-update/append the prefix is left untouched (setzeAnweisungsblock).
+  // `editor` (nur init): dann nur die Dateien dieses Editors, siehe sollSchreiben.
   const files: Array<{ path: string; prefix?: string }> = ANWEISUNGS_DATEIEN
-    .filter((d) => sollSchreiben(d, projectDir, heim, existsSync, resolve))
+    .filter((d) => sollSchreiben(d, projectDir, heim, existsSync, resolve, editor))
     .map((d) => ({ path: resolve(projectDir, ...d.pfad), prefix: d.prefix }));
   const block = buildClaudeMdBlock(instanceId);
   const results: Record<string, SchreibErgebnis> = {};
@@ -3757,7 +3758,7 @@ if (process.argv[2] === 'init') {
   }
 
   if (!instanceId || !apiKey) {
-    console.error('\nUsage: npx @cachly-dev/mcp-server@latest init --instance-id <uuid> --api-key <cky_live_...> [--editor claude|cursor|windsurf|copilot|continue|cline|zed|codex|gemini] [--project-dir /path] [--api-url https://your-self-hosted-backend]\n');
+    console.error('\nUsage: npx @cachly-dev/mcp-server@latest init --instance-id <uuid> --api-key <cky_live_...> [--editor claude|cursor|windsurf|copilot|continue|cline|zed|codex|gemini] [--all-editors] [--project-dir /path] [--api-url https://your-self-hosted-backend]\n');
     console.error('First time? Run the zero-config wizard (signs you in, auto-provisions): npx @cachly-dev/mcp-server@latest autopilot\n');
     console.error(`Get your credentials from: ${cachlyUrl('/setup-ai', 'init')}\n`);
     process.exit(1);
@@ -3813,10 +3814,13 @@ if (process.argv[2] === 'init') {
     }
   }
 
-  // Always write the brain protocol to all instruction files (idempotent —
-  // safe to run multiple times). Covers CLAUDE.md, AGENTS.md and Copilot so any
-  // agent the user runs arrives pre-briefed.
-  const results = await writeInstructions(projectDir, instanceId);
+  // The brain protocol goes into the instruction file of THIS editor, plus
+  // every instruction file that already exists (idempotent). Until 13.11.2026
+  // the first run wrote six of them for every editor (CLAUDE.md, AGENTS.md,
+  // Copilot, Cursor, Windsurf, Cline) — about ten new files with the hooks.
+  // `--all-editors` keeps the old behaviour for teams that mix editors.
+  const alleEditoren = argv.includes('--all-editors');
+  const results = await writeInstructions(projectDir, instanceId, undefined, alleEditoren ? undefined : editor);
   for (const [path, action] of Object.entries(results)) {
     console.log(anweisungsZeile(path.split(/[\\/]/).pop() ?? path, action));
   }

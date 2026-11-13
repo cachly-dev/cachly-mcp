@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 import {
   COAUTHOR_PREF_KEY,
   autorHinweis,
+  autorHinweisEinmal,
+  setzeAutorHinweisZurueck,
   coautorAus,
   ermittleAutor,
   mitCoautor,
@@ -135,6 +137,17 @@ describe('GROW-049 - Abnahme 5: kein erfundener Name', () => {
     expect(t).toBeTruthy();
     expect(t).toContain('git config user.name');
     expect(t).toContain('brain_who_knows');
+  });
+
+  it('aber nur einmal je Prozess, nicht unter jeder Lektion (Kundenweg 12.11.2026)', () => {
+    setzeAutorHinweisZurueck();
+    const h = { autor: '', quelle: 'unbekannt' } as const;
+    expect(autorHinweisEinmal(h)).toContain('git config user.name');
+    expect(autorHinweisEinmal(h)).toBeNull();
+    // Ein ermittelter Autor verbraucht den einen Hinweis nicht.
+    setzeAutorHinweisZurueck();
+    expect(autorHinweisEinmal({ autor: 'heinrich', quelle: 'git' })).toBeNull();
+    expect(autorHinweisEinmal(h)).toBeTruthy();
   });
 
   it('Namen werden vergleichbar gemacht, sonst sind es zwei Menschen', () => {
