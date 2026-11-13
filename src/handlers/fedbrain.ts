@@ -55,8 +55,20 @@ export async function handleFedbrainTool(
       const { instance_id, topic } = args as { instance_id: string; topic: string };
       const redis = await getConnection(instance_id);
 
-      const historyRaw = await redis.lrange(`cachly:lessons:${topic}`, 0, -1);
-      const history = historyRaw.map(r => { try { return JSON.parse(r) as { outcome: string; what_worked?: string; what_failed?: string; ts?: string }; } catch { return null; } }).filter(Boolean) as Array<{ outcome: string; what_worked?: string; what_failed?: string; ts?: string }>;
+      // ── Sichtbarkeit (13.11.2026, Befund Sitzung cachly-e4) ─────────────
+      // madc zeigt what_worked aus dem Verlauf. Bis 0.10.252 ungeprueft: wer
+      // den Themennamen kannte, las den Inhalt einer privaten Lektion. Privat
+      // heisst "nur ueber den exakten recall_best_solution" (team.ts,
+      // sichtbarFuer) — madc ist eine andere Ausgabe. Ist die Hauptlektion
+      // privat oder an eine Gruppe gebunden, gibt es keine Beratung; die Absage
+      // ist wortgleich mit "kein Verlauf" und verraet so nichts. Damit fallen
+      // auch alte Team-Kopien privater Lektionen (bis 0.10.251, ohne
+      // visibility) mit. Einzelne Eintraege filtert istTeamweit.
+      const themaSichtbar = await namensPruefer(redis)(topic);
+      const historyRaw = themaSichtbar ? await redis.lrange(`cachly:lessons:${topic}`, 0, -1) : [];
+      const history = historyRaw
+        .map(r => { try { return JSON.parse(r) as { outcome: string; what_worked?: string; what_failed?: string; ts?: string; visibility?: string; group?: unknown }; } catch { return null; } })
+        .filter(l => istTeamweit(l)) as Array<{ outcome: string; what_worked?: string; what_failed?: string; ts?: string }>;
 
       if (history.length < 2) {
         return [

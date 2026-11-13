@@ -7,6 +7,20 @@
 
 ---
 
+## [0.10.252] – 2026-11-13 — *"Private stays private, also after an update."*
+
+| Where | Until 0.10.251 | Now |
+|---|---|---|
+| `learn_from_attempts` with `visibility: "private"` | answered "👥 Auto-shared with team — visible in `team_recall`" and added a team copy to the topic history | answers "🔒 Private"; no team copy |
+| `learn_from_attempts` with a `group` | the same "Auto-shared with team" line | names the group; no team copy |
+| update of a private lesson **without** `visibility` | stored the default `team` — the lesson became visible to the team | keeps the stored visibility; opening it up takes an explicit `visibility: "team"` |
+| update of a group lesson **without** `group` | dropped the group | keeps the stored group |
+| `madc_deliberate` on the topic of a private or group lesson | showed `what_worked` from its history to anyone who knew the topic name | answers as if there were no history; old team copies (up to 0.10.251) are covered too |
+
+`team_recall` already skipped private lessons; the wrong line, the silent widening on update and the `madc_deliberate` history are what changed.
+
+---
+
 ## [0.10.251] – 2026-11-13 — *"A first run that writes what your editor needs, and talks to you in English."*
 
 Found in a walk-through with a brand-new account on production (12.11.2026).

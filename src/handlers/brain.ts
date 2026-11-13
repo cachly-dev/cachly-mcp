@@ -1040,10 +1040,10 @@ async function handleBrainToolInner(
         tags = [],
         depends_on = [],
         author = '',
-        visibility = 'team',
+        visibility: sichtEingabe,
         service = '',
         service_kind = 'service',
-        group = '',
+        group: gruppeEingabe,
         grund = '',
         ersetzt = '',
         gilt_ab = '',
@@ -1160,6 +1160,28 @@ async function handleBrainToolInner(
       const autorFeld = mitCoautor(herkunft.autor, coautor);
       const autorTipp = autorHinweisEinmal(herkunft);
 
+
+      // ── Sichtbarkeit und Gruppe bleiben beim Update (13.11.2026) ───────────
+      // Bis 0.10.251 galt beim Update ohne Angabe der Standard 'team' und keine
+      // Gruppe: eine private Lektion wurde durch ein Update ohne `visibility`
+      // still teamweit, eine Gruppen-Grenze fiel weg. Jetzt gilt ohne Angabe
+      // die gespeicherte Fassung; wer weiter oeffnen will, sagt es ausdruecklich.
+      let visibility: 'public' | 'team' | 'private' = sichtEingabe ?? 'team';
+      let group = gruppeEingabe ?? '';
+      if (sichtEingabe === undefined || gruppeEingabe === undefined) {
+        const bisher = leseOderNull<{ visibility?: string; group?: string }>(
+          await redis.get(`cachly:lesson:best:${topic}`),
+        );
+        if (bisher) {
+          if (sichtEingabe === undefined && (bisher.visibility === 'public' || bisher.visibility === 'private')) {
+            visibility = bisher.visibility;
+          }
+          if (gruppeEingabe === undefined && bisher.group) group = bisher.group;
+        }
+      }
+      // Team-Kopie und die Zeile "Auto-shared with team" nur, wenn die
+      // Lektion wirklich das ganze Team erreicht (Befund Sitzung cachly-e4).
+      const teamweit = visibility !== 'private' && !group;
 
       // ── Lessons-Review workflow (P1-1) ─────────────────────────────────────
       // When the org enabled pending-mode on this (shared) brain, team-visible
@@ -1895,7 +1917,7 @@ async function handleBrainToolInner(
       // auto-store as a team lesson so knowledge is shared without a separate
       // team_learn call. Tags gain 'team'; the lesson is attributed to the author.
       // This makes team knowledge sharing the default, not the opt-in.
-      if (autorFeld && (outcome === 'success' || outcome === 'partial')) {
+      if (teamweit && autorFeld && (outcome === 'success' || outcome === 'partial')) {
         const teamLesson = {
           topic, outcome, what_worked,
           what_failed: what_failed ?? '',
@@ -1937,9 +1959,13 @@ async function handleBrainToolInner(
         isUpdate
           ? `♻️ Updated (recall count: ${recallCount} · audit entries: ${auditTrail.length})`
           : `💡 Recall later with \`recall_best_solution(topic="${topic}")\``,
-        (autorFeld && (outcome === 'success' || outcome === 'partial'))
-          ? `👥 Auto-shared with team (by _${autorFeld}_${herkunft.quelle !== 'uebergeben' ? ` · from ${herkunft.quelle}` : ''}) — visible in \`team_recall\``
-          : '',
+        visibility === 'private'
+          ? `🔒 Private — kept out of \`team_recall\` and out of teammates' recall`
+          : group
+            ? `👥 Group \`${group}\` only — teammates outside the group don't see it`
+            : (autorFeld && (outcome === 'success' || outcome === 'partial'))
+              ? `👥 Auto-shared with team (by _${autorFeld}_${herkunft.quelle !== 'uebergeben' ? ` · from ${herkunft.quelle}` : ''}) — visible in \`team_recall\``
+              : '',
         autorTipp ?? '',
         depends_on.length > 0
           ? `🔗 Depends on: ${depends_on.map(d => `\`${d}\``).join(', ')} → trace with \`trace_dependency\``
