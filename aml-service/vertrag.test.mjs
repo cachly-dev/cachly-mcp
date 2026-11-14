@@ -50,7 +50,8 @@ before(async () => {
   attrappe = await starteAttrappe({ verzoegerungMs: 60 });
   dienst = spawn(join(MCP, 'node_modules', '.bin', process.platform === 'win32' ? 'tsx.cmd' : 'tsx'), [join(HIER, 'dienst.mjs')], {
     cwd: MCP, shell: process.platform === 'win32',
-    env: { ...process.env, AML_MEMORY_KEY: SCHLUESSEL, AML_PORT: String(PORT), AML_REDIS_URL: REDIS_URL,
+    // TZ=Asia/Tokyo (UTC+9, ohne Sommerzeit): Test 12 prueft, dass die Ortszeit des Rechners nichts aendert.
+    env: { ...process.env, TZ: 'Asia/Tokyo', AML_MEMORY_KEY: SCHLUESSEL, AML_PORT: String(PORT), AML_REDIS_URL: REDIS_URL,
       CACHLY_API_URL: `http://127.0.0.1:${attrappe.port}`, CACHLY_JWT: 'attrappe-kein-geheimnis', CACHLY_ADMIN_KEY: '', AML_VEKTOR_STILL_MS: '60000' },
   });
   dienst.stdout.on('data', (d) => log.push(String(d))); dienst.stderr.on('data', (d) => log.push(String(d)));
@@ -210,4 +211,17 @@ test('11 Zeitordnung: Treffer aelteste zuerst (Sitzungszeit, dann Einlese-Reihen
   assert.equal(s.ordnung, 'zeit');
   const farben = s.data.map((d) => ['blau', 'rot', 'gruen'].find((f) => d.content.includes(`ist ${f}`) || d.content.includes(`jetzt ${f}`)));
   assert.deepEqual(farben, ['blau', 'rot', 'gruen'], JSON.stringify(s.data.map((d) => d.content)));
+});
+
+test('12 Weltzeit: "today"/"yesterday" rechnen vom selben Tag wie die Sitzungsmarke, egal welche Ortszeit der Rechner hat', async () => {
+  // 20:00 UTC ist in Tokio schon 05:00 am Folgetag. Vor dem 14.11.2026 stand hier "today (2023-04-12)" unter
+  // "[session of 11 April 2023]": die Marke rechnete in UTC, die Ergaenzung in Ortszeit. LongMemEval-Lauf
+  // 13./14.11.2026 auf einem Rechner in Berlin: 7,4 % der Sitzungen einen Tag zu spaet.
+  const u = uid('w12');
+  await ruf('/v1/memory/add', addBody(u, 'w1', [nachr('I had lunch with Emma today. Yesterday I planted tomatoes.', { timestamp: Date.UTC(2023, 3, 11, 20, 0) })]));
+  const d = (await ruf('/v1/memory/search', { query: 'lunch with Emma tomatoes', user_id: u, top_k: 10 })).json.data;
+  const text = d.map((x) => x.content).join('\n');
+  assert.ok(text.includes('[session of 11 April 2023]'), text);
+  assert.ok(text.includes('today (2023-04-11)'), text);
+  assert.ok(/yesterday \(2023-04-10\)/i.test(text), text);
 });

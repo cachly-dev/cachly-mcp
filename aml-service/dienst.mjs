@@ -8,6 +8,12 @@ import http from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { Redis, ladeBrain, keinApi, stuecke, vektorenAbwarten, lektionsText } from './kern.mjs';
 
+// Der ganze Dienst rechnet in UTC. Die Sitzungsmarke ("[session of 11 April 2023]") liest den Zeitstempel in
+// UTC; die Ergaenzung hinter "today"/"yesterday" (zeit-normalisieren.ts) las ihn in der Ortszeit des Rechners.
+// Auf einem Rechner in Berlin bekam so jede Sitzung nach 22/23 Uhr UTC "today (Folgetag)" — LongMemEval
+// 13./14.11.2026: 7,4 % der Sitzungen, Zeitfragen mit solchem Beleg 7 von 14 richtig. Vertragstest 12.
+process.env.TZ = 'UTC';
+
 const PORT = Number(process.env.AML_PORT ?? 8780);
 const HOST = process.env.AML_HOST ?? '127.0.0.1'; // im Container 0.0.0.0; nach aussen oeffnet nur compose.yml und nur auf 127.0.0.1
 const REDIS_URL = process.env.AML_REDIS_URL ?? 'redis://127.0.0.1:6391';

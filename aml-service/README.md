@@ -21,6 +21,11 @@ All `POST` routes need `Authorization: Bearer <AML_MEMORY_KEY>`.
 - `add` groups the messages by timestamp, splits them into pieces of bounded length, stores each piece as one
   record with the session date in front, and waits until all vectors are written.
   A repeated add with the same `request_id` stores nothing new.
+- The service reads every timestamp in UTC, whatever the time zone of the host.
+  The session date and the dates written after relative words ("today
+  (2023-04-11)", "yesterday (2023-04-10)") come from the same UTC day. Before
+  14.11.2026 the relative words used the host's local time, so on a host ahead
+  of UTC a session late in the UTC day got the next day after "today".
 - `search` calls `smart_recall` with `limit = top_k`. cachly caps one search at
   20 records, so `top_k` above 20 returns at most 20. Each record comes back as
   full text. The records are the top `top_k` by ranking, returned oldest first:
