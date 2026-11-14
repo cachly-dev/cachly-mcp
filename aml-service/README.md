@@ -21,6 +21,14 @@ All `POST` routes need `Authorization: Bearer <AML_MEMORY_KEY>`.
 - `add` groups the messages by timestamp, splits them into pieces of bounded length, stores each piece as one
   record with the session date in front, and waits until all vectors are written.
   A repeated add with the same `request_id` stores nothing new.
+- `AML_STUECKE=nachricht` stores one record per message instead, with the role
+  after the session date (`[session of 11 April 2023] User: ...`). A message
+  longer than 1,500 characters is split the same way, and each part keeps the
+  date and the role. The default `zeit` keeps the grouping above, so earlier
+  runs stay reproducible. Why the switch exists: with `zeit`, a short user
+  statement shares a record with a long assistant reply. On BEAM 100K
+  event-ordering questions (14.11.2026), 12.8 % of our context text came from
+  the user, against 30.4 % for a service that stores one record per message.
 - The service reads every timestamp in UTC, whatever the time zone of the host.
   The session date and the dates written after relative words ("today
   (2023-04-11)", "yesterday (2023-04-10)") come from the same UTC day. Before
@@ -67,6 +75,7 @@ node_modules/.bin/tsx aml-service/dienst.mjs
 | `AML_ADD_ZEIT_MS` | `1500000` | Time limit of one add. |
 | `AML_MAX_DB` | `16384` | Highest database number handed out. |
 | `AML_ZEITORDNUNG` | `an` | `an`: search results oldest first, response carries `"ordnung": "zeit"`. `aus`: ranking order. |
+| `AML_STUECKE` | `zeit` | `zeit`: messages with the same timestamp packed into records of up to 1,500 characters, no role. `nachricht`: one record per message, role in front. Any other value stops the service at start. |
 | `CACHLY_EMBED_TIMEOUT_MS` | `30000` | Time limit of one embedding call; raise it on a slow CPU host. |
 | `CACHLY_LESER` | on | `off` (or `0`, `false`) switches the reranker off. |
 | `CACHLY_LESER_ZEITLIMIT_MS` | `2500` | Time limit of one reranker call (1 to 120000). |
@@ -82,3 +91,10 @@ node --test aml-service/vertrag.test.mjs
 
 The suite starts Valkey (container `aml-valkey`), an embedding stub and the
 service itself. It needs no network and no account.
+
+```bash
+node --test aml-service/stuecke.test.mjs
+```
+
+Checks both chunking modes and the start check of `AML_STUECKE`. It needs
+neither Docker nor network.

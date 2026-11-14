@@ -65,8 +65,17 @@ export function teileText(text, max = CHUNK_MAX) {
  * Angaben "vom Zeitstempel der Erinnerung". Stand das Datum am Ende eines 1.500-Zeichen-Stuecks,
  * las gpt-4.1-mini oft die erste Klammer ("yesterday (2022-12-21)") als Zeitstempel und zog
  * noch einen Tag ab. Mit Datum vorn und aufgeloesten Wochentagen: Zeitfragen 75,1 -> 81,9 %.
+ *
+ * art 'nachricht' (AML_STUECKE=nachricht): ein Eintrag je Nachricht, die Rolle steht hinter der
+ * Sitzungsmarke ("[session of 11 April 2023] User: ..."). Laengere Nachrichten werden wie sonst an
+ * CHUNK_MAX geteilt; jedes Teil traegt Marke und Rolle. Anlass (14.11.2026): Bei 'zeit' landet eine
+ * kurze Nutzeraussage im selben Stueck wie eine lange Assistenten-Antwort. Bei BEAM 100K stammten in
+ * den Reihenfolge-Fragen 12,8 % des Kontexts vom Nutzer, bei einem Dienst mit einem Eintrag je
+ * Nachricht 30,4 %; bei LongMemEval fehlten 55 von 832 Nutzer-Belegen im Kontext, dort 38.
  */
-export function stuecke(messages) {
+export function stuecke(messages, { art = 'zeit' } = {}) {
+  if (art === 'nachricht') return stueckeJeNachricht(messages);
+  if (art !== 'zeit') throw new Error(`unbekannte Stueckelung: ${art}`);
   const nach = new Map();
   for (const m of messages) {
     const ts = m.timestamp ?? '';
@@ -88,6 +97,24 @@ export function stuecke(messages) {
       akt.push(z); len += z.length + 1;
     }
     schliesse();
+  }
+  return aus;
+}
+
+const ROLLE = { user: 'User', assistant: 'Assistant' };
+
+function stueckeJeNachricht(messages) {
+  const aus = [];
+  for (const m of messages) {
+    const text = String(m.content ?? '').trim();
+    if (!text) continue;
+    const ts = m.timestamp ?? '';
+    const datum = lesbaresDatum(ts);
+    const marke = datum ? `[session of ${datum}] ` : '';
+    const giltAb = datum ? new Date(ts).toISOString() : '';
+    const zeitMs = datum ? new Date(ts).getTime() : 0;
+    const kopf = `${marke}${ROLLE[m.role] ? `${ROLLE[m.role]}: ` : ''}`;
+    for (const teil of teileText(text)) aus.push({ text: `${kopf}${teil}`, giltAb, zeitMs });
   }
   return aus;
 }

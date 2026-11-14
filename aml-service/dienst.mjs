@@ -3,7 +3,7 @@
 // Start (aus sdk/mcp):  AML_MEMORY_KEY=... node_modules/.bin/tsx aml-service/dienst.mjs
 // Umgebung: AML_MEMORY_KEY (Pflicht), AML_PORT (8780), AML_REDIS_URL (redis://127.0.0.1:6391), AML_MAX_ADD (16),
 //   AML_AUFFUELLEN (aus), AML_ADD_ZEIT_MS (1500000), AML_VEKTOR_STILL_MS (300000), AML_MAX_DB (16384), AML_INSTANZ_ID,
-//   AML_ZEITORDNUNG (an)
+//   AML_ZEITORDNUNG (an), AML_STUECKE (zeit)
 import http from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { Redis, ladeBrain, keinApi, stuecke, vektorenAbwarten, lektionsText } from './kern.mjs';
@@ -22,6 +22,9 @@ const MAX_ADD = Number(process.env.AML_MAX_ADD ?? 16);
 const AUFFUELLEN = /^(1|an|ja|true)$/i.test(process.env.AML_AUFFUELLEN ?? '');
 // Treffer aelteste zuerst (Standard). AML_ZEITORDNUNG=aus liefert sie in Rangfolge wie vor dem 14.11.2026.
 const ZEITORDNUNG = !/^(0|aus|nein|false|off)$/i.test(process.env.AML_ZEITORDNUNG ?? 'an');
+// Stueckelung beim Add (kern.mjs stuecke): 'zeit' (Standard, wie bis 14.11.2026) packt alle Nachrichten eines
+// Zeitstempels in Stuecke bis 1.500 Zeichen, ohne Rolle. 'nachricht' legt je Nachricht einen Eintrag an, Rolle davor.
+const STUECKE = (process.env.AML_STUECKE ?? 'zeit').toLowerCase();
 const ADD_ZEIT_MS = Number(process.env.AML_ADD_ZEIT_MS ?? 1_500_000);
 const STILL_MS = Number(process.env.AML_VEKTOR_STILL_MS ?? 300_000);
 const MAX_DB = Number(process.env.AML_MAX_DB ?? 16384);
@@ -29,6 +32,7 @@ const INSTANZ_ID = process.env.AML_INSTANZ_ID ?? '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a
 const MAX_VERBINDUNGEN = 256;
 const MAX_BODY = 8 * 1024 * 1024;
 if (!KEY) { console.error('AML_MEMORY_KEY fehlt'); process.exit(2); }
+if (STUECKE !== 'zeit' && STUECKE !== 'nachricht') { console.error('AML_STUECKE muss zeit oder nachricht sein'); process.exit(2); }
 if (!/^redis:\/\/(127\.0\.0\.1|localhost)[:/]/.test(REDIS_URL)) { console.error('AML_REDIS_URL muss auf 127.0.0.1 zeigen'); process.exit(2); }
 
 const brainTool = await ladeBrain();
@@ -132,7 +136,7 @@ async function schreibe(req) {
   return mitDb(db, async (redis) => {
     const doneKey = `aml:done:${sha(req.request_id).slice(0, 32)}`;
     if (await redis.exists(doneKey)) return { wiederholt: true, stuecke: 0 };
-    const liste = stuecke(req.messages);
+    const liste = stuecke(req.messages, { art: STUECKE });
     const frist = Date.now() + ADD_ZEIT_MS - 10_000;
     // Einlese-Reihenfolge je Nutzer: laufende Nummer je Stueck. Adds eines Nutzers kommen nacheinander
     // (Sitzung fuer Sitzung), also ist die Nummer die Reihenfolge im Gespraech, auch innerhalb eines Tages.
@@ -272,4 +276,4 @@ const server = http.createServer(async (req, res) => {
   }
 });
 server.requestTimeout = 0; server.headersTimeout = 0; server.timeout = 0; server.keepAliveTimeout = 120_000;
-server.listen(PORT, HOST, () => console.log(`AML-Dienst lauscht auf ${HOST}:${PORT}, Valkey ${REDIS_URL}, max_add=${MAX_ADD}, auffuellen=${AUFFUELLEN}`));
+server.listen(PORT, HOST, () => console.log(`AML-Dienst lauscht auf ${HOST}:${PORT}, Valkey ${REDIS_URL}, max_add=${MAX_ADD}, auffuellen=${AUFFUELLEN}, stuecke=${STUECKE}`));
