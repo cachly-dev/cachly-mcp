@@ -7,6 +7,17 @@
 
 ---
 
+## [0.10.253] – 2026-11-14 — *"The README says what the code does."*
+
+No change to the server. The package texts were out of date:
+
+| Where | Until 0.10.252 | Now |
+|---|---|---|
+| `llms.txt` (in the package) | plans Dev / Pro / Speed (€79), a plan that no longer exists | Free / Solo €19 / Team €49 (up to 5) / Business €199 (up to 20, SSO), as on cachly.dev/pricing |
+| README, `CACHLY_UPDATE_CHECK` | "npm is asked at most once a day" | names the host: `registry.npmjs.org`, at most once a day, 2-second limit |
+
+---
+
 ## [0.10.252] – 2026-11-13 — *"Private stays private, also after an update."*
 
 | Where | Until 0.10.251 | Now |
