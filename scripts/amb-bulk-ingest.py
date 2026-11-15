@@ -6,11 +6,23 @@ Contract (agent-memory-bench#61, GiulioDER's adapter):
           AMB_CACHLY_CORPUS_MANIFEST   optional explicit manifest path (else root/manifest.json)
           AMB_CACHLY_NAMESPACE         bookkeeping name for the report
           AMB_CACHLY_EXPECTED_SESSIONS optional integer; mismatch is reported, not fatal
-          CACHLY_JWT                   credential (handed over privately)
+          CACHLY_API_KEY | CACHLY_JWT  credential (handed over privately); either one,
+                                       the adapter passes whichever the operator set. The
+                                       MCP server resolves JWT first, then API key, and
+                                       sends it as "Authorization: Bearer <value>".
+          AMB_CACHLY_MCP_COMMAND       optional JSON argv replacing the pinned npx server
+                                       (test seam; the contract test uses a stub server)
           CACHLY_BRAIN_INSTANCE_ID     the dedicated instance to load
           CACHLY_API_URL               optional API override
-  prints  ONE JSON report on stdout; everything else goes to stderr
+  prints  ONE JSON report on stdout; everything else goes to stderr.
+          Success: {"sessions_offered": N, "items_stored": M, "namespace": ...}
+          ("sessions" is kept as an alias of sessions_offered).
   exits   0 on success, 2 on refusal (the run must not proceed), 1 on error
+
+Changelog 1.2.0: report key sessions_offered (adapter contract; "sessions"
+kept as alias), CACHLY_API_KEY accepted next to CACHLY_JWT, namespace always
+echoed, AMB_CACHLY_MCP_COMMAND test seam, end-to-end contract test in
+sdk/mcp/src/__tests__/amb-bulk-ingest.contract.test.ts.
 
 Design decisions, learned the hard way on 2026-09-02 and mirrored from the
 vendor's own pre-registered private runs so both measurements share semantics:
@@ -42,7 +54,7 @@ import sys
 import tempfile
 import time
 
-LOADER_VERSION = "1.1.0"
+LOADER_VERSION = "1.2.0"
 PACKAGE_PIN = "@cachly-dev/mcp-server@0.10.153"
 CHUNK_CHARS = 1600
 MCP_TIMEOUT_S = 120
@@ -58,10 +70,14 @@ class McpStdio:
     """Minimal JSON-RPC-over-stdio client for one pinned MCP server process."""
 
     def __init__(self, env: dict) -> None:
-        resolved = shutil.which("npx") or "npx"
+        override = os.environ.get("AMB_CACHLY_MCP_COMMAND", "").strip()
+        if override:
+            argv = json.loads(override)
+        else:
+            argv = [shutil.which("npx") or "npx", "-y", PACKAGE_PIN]
         neutral = tempfile.mkdtemp(prefix="cachly-bulk-cwd-")
         self.proc = subprocess.Popen(
-            [resolved, "-y", PACKAGE_PIN],
+            argv,
             cwd=neutral,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -225,7 +241,10 @@ def main() -> int:
     namespace = os.environ.get("AMB_CACHLY_NAMESPACE", "")
     expected = os.environ.get("AMB_CACHLY_EXPECTED_SESSIONS")
     instance_id = os.environ.get("CACHLY_BRAIN_INSTANCE_ID", "")
-    jwt = os.environ.get("CACHLY_JWT", "")
+    # Same precedence as the MCP server's resolveApiKey: JWT first, then API key.
+    jwt = os.environ.get("CACHLY_JWT", "").strip()
+    api_key = os.environ.get("CACHLY_API_KEY", "").strip()
+    credential = jwt or api_key
 
     def report(payload: dict, code: int) -> int:
         payload.setdefault("product", "cachly")
@@ -240,8 +259,8 @@ def main() -> int:
         return report({"refused": True, "reason": f"AMB_CACHLY_CORPUS_ROOT missing or not a directory: {root!r}"}, 2)
     if not os.path.isfile(manifest_path):
         return report({"refused": True, "reason": f"manifest not found: {manifest_path}"}, 2)
-    if not instance_id or not jwt:
-        return report({"refused": True, "reason": "CACHLY_BRAIN_INSTANCE_ID and CACHLY_JWT are required"}, 2)
+    if not instance_id or not credential:
+        return report({"refused": True, "reason": "CACHLY_BRAIN_INSTANCE_ID and CACHLY_API_KEY or CACHLY_JWT are required"}, 2)
 
     manifest = json.loads(open(manifest_path, encoding="utf-8").read())
     sessions = dict(manifest.get("sessions", {}))
@@ -260,7 +279,11 @@ def main() -> int:
             return report({"refused": True, "reason": f"sha256 mismatch for {rel}"}, 2)
 
     env = dict(os.environ)
-    env["CACHLY_JWT"] = jwt
+    # Hand the server exactly the credential name(s) the operator set; never log the value.
+    if jwt:
+        env["CACHLY_JWT"] = jwt
+    if api_key:
+        env["CACHLY_API_KEY"] = api_key
     env["CACHLY_BRAIN_INSTANCE_ID"] = instance_id
     if os.environ.get("CACHLY_API_URL"):
         env["CACHLY_API_URL"] = os.environ["CACHLY_API_URL"]
@@ -343,6 +366,7 @@ def main() -> int:
                     f"read-path healing. The memory cannot see; running sessions against it would "
                     f"measure a wiring fault, not the product."
                 ),
+                "sessions_offered": len(sessions),
                 "items_stored": stored,
                 "coverage_percent": coverage,
                 "duration_seconds": duration,
@@ -350,7 +374,8 @@ def main() -> int:
 
         return report({
             "refused": False,
-            "sessions": len(sessions),
+            "sessions_offered": len(sessions),
+            "sessions": len(sessions),  # alias, pre-1.2.0 key
             "items_stored": stored,
             "baseline_lessons": baseline,
             "coverage_percent": coverage,
