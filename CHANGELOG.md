@@ -7,6 +7,20 @@
 
 ---
 
+## [0.10.254] – 2026-11-16 — *"Sign in once, and say so."*
+
+No change to the server. Since 2026-11-06 a new Brain needs a sign-in (GitHub, Google or e-mail);
+the anonymous test Brain is switched off. The package texts still promised the opposite:
+
+| Where | Until 0.10.253 | Now |
+|---|---|---|
+| README (Quick start, editor config) | "creates a test Brain … No sign-up" | the first tool call opens the browser once to sign in; new accounts get 14 days of the Solo plan, then Free |
+| `smithery.yaml` (description and key field) | "No sign-up needed" | same as the README |
+| Plugin field `instance_id` | "an anonymous 14-day trial brain, no sign-up" | sign-in in the browser, 14 days of the Solo plan |
+| README, top | – | "#1 on LoCoMo in the OmniMemEval comparison, 90.71 points", with a link to the results |
+
+---
+
 ## [0.10.253] – 2026-11-14 — *"The README says what the code does."*
 
 No change to the server. The package texts were out of date:

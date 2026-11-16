@@ -5,6 +5,9 @@
 > Every fix, decision and dead end becomes a lesson. Your AI finds it again when the same
 > problem comes back, in the next session, in another editor, or on a teammate's machine.
 
+**#1 on LoCoMo in the OmniMemEval comparison, 90.71 points**
+([results](https://github.com/MemTensor/OmniMemEval/blob/main/docs/user_memory/results.md#locomo)).
+
 [![npm version](https://img.shields.io/npm/v/@cachly-dev/mcp-server?color=violet&logo=npm)](https://www.npmjs.com/package/@cachly-dev/mcp-server)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-yellow)](./LICENSE)
 [![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.cachly--dev%2Fmcp--server-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=cachly)
@@ -25,8 +28,9 @@ Codex CLI · Gemini CLI · JetBrains IDEs
 /plugin install cachly-brain@cachly
 ```
 
-cachly creates a test Brain on EU servers when the session starts. It comes with 14 days
-of the Solo plan and then continues on Free with the same key. Check it with
+The first time cachly needs a key, it opens your browser once: sign in with GitHub, Google or
+e-mail, and your Brain is ready on EU servers. A new account comes with 14 days of the Solo plan
+and then continues on Free with the same key. Check it with
 `claude mcp list`: you should see `plugin:cachly-brain:cachly … ✔ Connected`.
 
 **Cursor, Windsurf, VS Code, Cline, Continue.dev, Zed, Codex CLI, Gemini CLI** — one command:
@@ -455,8 +459,9 @@ For all your projects at once, use the plugin above, or
 `claude mcp add -s user cachly -- npx -y @cachly-dev/mcp-server@latest`
 (Claude Code stores that in `~/.claude.json`).
 
-Without a key, the first tool call creates a test Brain on EU servers. No sign-up.
-Run `npx @cachly-dev/mcp-server@latest autopilot` to use your own account instead.
+Without a key, the first tool call opens your browser once to sign in (GitHub, Google or
+e-mail). Or run `npx @cachly-dev/mcp-server@latest autopilot` first: it signs you in and
+writes the config for every editor it finds.
 </details>
 
 <details>

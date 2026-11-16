@@ -1,5 +1,5 @@
 name: cachly AI Brain
-version: 0.10.253
+version: 0.10.254
 description: >
   Solve it once. From then on, your AI knows. Memory for coding agents over
   MCP: cachly stores every fix and finds it again when the problem returns.
@@ -7,7 +7,8 @@ description: >
   Gemini CLI, Cline and Zed. Its tools include causal root-cause analysis (causal_trace), failure
   prediction (brain_predict), learning from git history (brain_from_git) and a
   Team Brain, with search in 11 languages.
-  No sign-up needed: the first tool call creates a test Brain on EU servers.
+  Without a key, the first tool call opens the browser once to sign in (GitHub,
+  Google or e-mail); new accounts get 14 days of the Solo plan, then Free.
   Setup with rule files that make your AI use it: npx @cachly-dev/mcp-server@latest autopilot.
 
 startCommand:
@@ -17,8 +18,8 @@ startCommand:
     properties:
       CACHLY_JWT:
         type: string
-        title: "API Key (optional — without it, a test Brain is created on first use)"
-        description: "Leave blank for zero-config: on your first tool call the server creates a test Brain on EU servers, no sign-up. Or pre-fill with your API key from cachly.dev/setup-ai."
+        title: "API Key (optional — without it, you sign in in the browser on first use)"
+        description: "Paste your API key from cachly.dev/setup-ai. Leave blank and the first tool call opens the browser once to sign in (GitHub, Google or e-mail)."
         examples:
           - "cky_live_abc123..."
       CACHLY_BRAIN_INSTANCE_ID:
