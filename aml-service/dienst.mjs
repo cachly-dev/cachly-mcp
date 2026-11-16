@@ -3,10 +3,10 @@
 // Start (aus sdk/mcp):  AML_MEMORY_KEY=... node_modules/.bin/tsx aml-service/dienst.mjs
 // Umgebung: AML_MEMORY_KEY (Pflicht), AML_PORT (8780), AML_REDIS_URL (redis://127.0.0.1:6391), AML_MAX_ADD (16),
 //   AML_AUFFUELLEN (aus), AML_ADD_ZEIT_MS (1500000), AML_VEKTOR_STILL_MS (300000), AML_MAX_DB (16384), AML_INSTANZ_ID,
-//   AML_ZEITORDNUNG (an), AML_STUECKE (zeit)
+//   AML_ZEITORDNUNG (an), AML_STUECKE (zeit), AML_MARKE (tag)
 import http from 'node:http';
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { Redis, ladeBrain, keinApi, stuecke, vektorenAbwarten, lektionsText } from './kern.mjs';
+import { Redis, ladeBrain, keinApi, stuecke, vektorenAbwarten, lektionsText, uhrzeitMarke, mitMarke } from './kern.mjs';
 
 // Der ganze Dienst rechnet in UTC. Die Sitzungsmarke ("[session of 11 April 2023]") liest den Zeitstempel in
 // UTC; die Ergaenzung hinter "today"/"yesterday" (zeit-normalisieren.ts) las ihn in der Ortszeit des Rechners.
@@ -24,7 +24,11 @@ const AUFFUELLEN = /^(1|an|ja|true)$/i.test(process.env.AML_AUFFUELLEN ?? '');
 const ZEITORDNUNG = !/^(0|aus|nein|false|off)$/i.test(process.env.AML_ZEITORDNUNG ?? 'an');
 // Stueckelung beim Add (kern.mjs stuecke): 'zeit' (Standard, wie bis 14.11.2026) packt alle Nachrichten eines
 // Zeitstempels in Stuecke bis 1.500 Zeichen, ohne Rolle. 'nachricht' legt je Nachricht einen Eintrag an, Rolle davor.
+// 'nutzer' = 'zeit' plus jede Nutzernachricht als eigener kurzer Eintrag (Suche wirft ihn weg, wenn sein Stueck da ist).
 const STUECKE = (process.env.AML_STUECKE ?? 'zeit').toLowerCase();
+// Marke vor jedem Eintrag: 'tag' (Standard, "[session of 11 April 2023]") oder 'uhrzeit'
+// ("[2023-04-11 09:30 · #12]", Weltzeit und laufende Einlese-Nummer je Nutzer).
+const MARKE = (process.env.AML_MARKE ?? 'tag').toLowerCase();
 const ADD_ZEIT_MS = Number(process.env.AML_ADD_ZEIT_MS ?? 1_500_000);
 const STILL_MS = Number(process.env.AML_VEKTOR_STILL_MS ?? 300_000);
 const MAX_DB = Number(process.env.AML_MAX_DB ?? 16384);
@@ -32,7 +36,8 @@ const INSTANZ_ID = process.env.AML_INSTANZ_ID ?? '0a0a0a0a-0a0a-4a0a-8a0a-0a0a0a
 const MAX_VERBINDUNGEN = 256;
 const MAX_BODY = 8 * 1024 * 1024;
 if (!KEY) { console.error('AML_MEMORY_KEY fehlt'); process.exit(2); }
-if (STUECKE !== 'zeit' && STUECKE !== 'nachricht') { console.error('AML_STUECKE muss zeit oder nachricht sein'); process.exit(2); }
+if (!['zeit', 'nachricht', 'nutzer'].includes(STUECKE)) { console.error('AML_STUECKE muss zeit, nachricht oder nutzer sein'); process.exit(2); }
+if (MARKE !== 'tag' && MARKE !== 'uhrzeit') { console.error('AML_MARKE muss tag oder uhrzeit sein'); process.exit(2); }
 if (!/^redis:\/\/(127\.0\.0\.1|localhost)[:/]/.test(REDIS_URL)) { console.error('AML_REDIS_URL muss auf 127.0.0.1 zeigen'); process.exit(2); }
 
 const brainTool = await ladeBrain();
@@ -140,20 +145,29 @@ async function schreibe(req) {
     const frist = Date.now() + ADD_ZEIT_MS - 10_000;
     // Einlese-Reihenfolge je Nutzer: laufende Nummer je Stueck. Adds eines Nutzers kommen nacheinander
     // (Sitzung fuer Sitzung), also ist die Nummer die Reihenfolge im Gespraech, auch innerhalb eines Tages.
-    const basis = ZEITORDNUNG ? (await redis.incrby('aml:folge:n', liste.length)) - liste.length : 0;
+    // Nutzer-Eintraege (teilVon, AML_STUECKE=nutzer) bekommen keine eigene Nummer: sie stehen direkt hinter
+    // ihrem Stueck (Folge + 0,5) und zeigen dessen Nummer.
+    const haupt = liste.filter((s) => s.teilVon === undefined).length;
+    const NUMMERN = ZEITORDNUNG || MARKE === 'uhrzeit';
+    const basis = NUMMERN ? (await redis.incrby('aml:folge:n', haupt)) - haupt : 0;
+    // Thema aus dem Text OHNE Nummer: ein wiederholter Add (neue Basis) trifft dieselben Themen und schreibt nichts doppelt.
+    const themen = liste.map((s, i) => `aml:${sha(`${req.request_id}\n${i}\n${s.text}`).slice(0, 24)}`);
     await Promise.all(liste.map(async (s, i) => {
-      const topic = `aml:${sha(`${req.request_id}\n${i}\n${s.text}`).slice(0, 24)}`;
+      const topic = themen[i];
       const marke = `aml:chunk:${topic}`;
       if (await redis.exists(marke)) return;
+      const stelle = s.teilVon === undefined ? i : s.teilVon;
+      const text = MARKE === 'uhrzeit' ? mitMarke(s.text, uhrzeitMarke(s.zeitMs, basis + stelle + 1)) : s.text;
       let letzter;
       for (let v = 1; v <= 3; v++) {
         try {
+          if (s.teilVon !== undefined) await redis.hset('aml:teilvon', topic, themen[s.teilVon]);
           await brainTool('learn_from_attempts', {
-            instance_id: INSTANZ_ID, topic, outcome: 'success', what_worked: s.text, severity: 'minor',
+            instance_id: INSTANZ_ID, topic, outcome: 'success', what_worked: text, severity: 'minor',
             tags: ['aml'], ...(s.giltAb ? { gilt_ab: s.giltAb } : {}),
           }, async () => redis, keinApi);
           await redis.zadd('aml:index', s.zeitMs || 0, topic);
-          if (ZEITORDNUNG) await redis.zadd('aml:folge', basis + i, topic);
+          if (ZEITORDNUNG) await redis.zadd('aml:folge', basis + stelle + (s.teilVon === undefined ? 0 : 0.5), topic);
           await redis.set(marke, '1');
           return;
         } catch (e) { letzter = e; await new Promise((r) => setTimeout(r, 500 * v)); }
@@ -201,6 +215,13 @@ async function search(req) {
     const gesehen = new Set(); const themen = [];
     for (const m of ausgabe.matchAll(/(aml:[0-9a-f]{24})/g)) if (!gesehen.has(m[1])) { gesehen.add(m[1]); themen.push(m[1]); }
     let treffer = themen.slice(0, req.top_k);
+    // AML_STUECKE=nutzer: ein Nutzer-Eintrag faellt weg, wenn das Stueck mit derselben Nachricht schon da
+    // ist. Das Stueck bleibt: es traegt den Satz und das Gespraech drumherum.
+    if (STUECKE === 'nutzer' && treffer.length > 1) {
+      const quelle = await redis.hmget('aml:teilvon', ...treffer);
+      const drin = new Set(treffer);
+      treffer = treffer.filter((t, i) => !(quelle[i] && drin.has(quelle[i])));
+    }
     if (AUFFUELLEN && treffer.length < req.top_k) {
       const alle = await redis.zrange('aml:index', 0, -1); // nach Zeit geordnet
       const schon = new Set(treffer);

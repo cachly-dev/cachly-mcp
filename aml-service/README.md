@@ -29,6 +29,19 @@ All `POST` routes need `Authorization: Bearer <AML_MEMORY_KEY>`.
   statement shares a record with a long assistant reply. On BEAM 100K
   event-ordering questions (14.11.2026), 12.8 % of our context text came from
   the user, against 30.4 % for a service that stores one record per message.
+- `AML_STUECKE=nutzer` keeps the `zeit` records and also stores every user
+  message as its own short record (`[session of 11 April 2023] User: ...`).
+  A search drops such a record when the `zeit` record holding the same message
+  is already among the results, so a sentence never comes back twice. Why: in
+  7 of the 24 LongMemEval questions we lost to another service (16.11.2026),
+  the missing evidence was a short user sentence buried in a long record.
+  Unlike `nachricht`, the full records stay, so long assistant replies do not
+  take their places.
+- `AML_MARKE=uhrzeit` writes the time and a running number in front of each
+  record (`[2023-05-26 01:08 · #273] ...`, UTC) instead of the day
+  (`[session of 26 May 2023] ...`). The number counts records per user in the
+  order `add` stored them; a user record shows the number of the record that
+  holds its message. The default `tag` keeps the day only.
 - The service reads every timestamp in UTC, whatever the time zone of the host.
   The session date and the dates written after relative words ("today
   (2023-04-11)", "yesterday (2023-04-10)") come from the same UTC day. Before
@@ -75,7 +88,8 @@ node_modules/.bin/tsx aml-service/dienst.mjs
 | `AML_ADD_ZEIT_MS` | `1500000` | Time limit of one add. |
 | `AML_MAX_DB` | `16384` | Highest database number handed out. |
 | `AML_ZEITORDNUNG` | `an` | `an`: search results oldest first, response carries `"ordnung": "zeit"`. `aus`: ranking order. |
-| `AML_STUECKE` | `zeit` | `zeit`: messages with the same timestamp packed into records of up to 1,500 characters, no role. `nachricht`: one record per message, role in front. Any other value stops the service at start. |
+| `AML_STUECKE` | `zeit` | `zeit`: messages with the same timestamp packed into records of up to 1,500 characters, no role. `nachricht`: one record per message, role in front. `nutzer`: `zeit` plus every user message as its own record, dropped from a search when its `zeit` record is already there. Any other value stops the service at start. |
+| `AML_MARKE` | `tag` | `tag`: `[session of 26 May 2023]` in front of each record. `uhrzeit`: `[2023-05-26 01:08 · #273]`, UTC time and running number. Any other value stops the service at start. |
 | `CACHLY_EMBED_TIMEOUT_MS` | `30000` | Time limit of one embedding call; raise it on a slow CPU host. |
 | `CACHLY_LESER` | on | `off` (or `0`, `false`) switches the reranker off. |
 | `CACHLY_LESER_ZEITLIMIT_MS` | `2500` | Time limit of one reranker call (1 to 120000). |
@@ -96,5 +110,13 @@ service itself. It needs no network and no account.
 node --test aml-service/stuecke.test.mjs
 ```
 
-Checks both chunking modes and the start check of `AML_STUECKE`. It needs
-neither Docker nor network.
+Checks the chunking modes, the time marker and the start checks of
+`AML_STUECKE` and `AML_MARKE`. It needs neither Docker nor network.
+
+```bash
+node --test aml-service/nutzer.test.mjs
+```
+
+Runs the service with `AML_STUECKE=nutzer` and `AML_MARKE=uhrzeit` against
+Valkey and the embedding stub: no sentence twice, a user record found on its
+own, time and numbers in the marker, no duplicates on a repeated add.

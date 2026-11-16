@@ -72,33 +72,77 @@ export function teileText(text, max = CHUNK_MAX) {
  * kurze Nutzeraussage im selben Stueck wie eine lange Assistenten-Antwort. Bei BEAM 100K stammten in
  * den Reihenfolge-Fragen 12,8 % des Kontexts vom Nutzer, bei einem Dienst mit einem Eintrag je
  * Nachricht 30,4 %; bei LongMemEval fehlten 55 von 832 Nutzer-Belegen im Kontext, dort 38.
+ *
+ * art 'nutzer' (AML_STUECKE=nutzer): die Stuecke wie bei 'zeit', dazu jede Nutzernachricht noch einmal
+ * als eigener kurzer Eintrag ("[session of 11 April 2023] User: ..."). Er traegt teilVon = Index des
+ * Stuecks, in dem dieselbe Nachricht steht; die Suche wirft ihn weg, wenn dieses Stueck schon unter
+ * den Treffern ist. Anlass (16.11.2026, BEFUND-lme-gegen-maasv): In 7 von 24 verlorenen
+ * LongMemEval-Fragen fehlte ein kurzer Nutzersatz, der in einem langen Stueck untergeht. Anders als
+ * 'nachricht' bleiben die Stuecke ganz; 'nachricht' verlor bei BEAM Kontext an lange Antworten.
  */
 export function stuecke(messages, { art = 'zeit' } = {}) {
   if (art === 'nachricht') return stueckeJeNachricht(messages);
-  if (art !== 'zeit') throw new Error(`unbekannte Stueckelung: ${art}`);
+  if (art !== 'zeit' && art !== 'nutzer') throw new Error(`unbekannte Stueckelung: ${art}`);
   const nach = new Map();
-  for (const m of messages) {
+  messages.forEach((m, nr) => {
     const ts = m.timestamp ?? '';
     const text = String(m.content ?? '').trim();
-    if (!text) continue;
+    if (!text) return;
     if (!nach.has(ts)) nach.set(ts, []);
-    nach.get(ts).push(...teileText(text));
-  }
+    for (const z of teileText(text)) nach.get(ts).push({ z, nr });
+  });
   const aus = [];
+  const stueckVon = new Map(); // Nachrichtennummer -> Index des ersten Stuecks, das sie enthaelt
   for (const [ts, zeilen] of nach) {
     const datum = lesbaresDatum(ts);
     const marke = datum ? `[session of ${datum}] ` : '';
     const giltAb = datum ? new Date(ts).toISOString() : '';
     const zeitMs = datum ? new Date(ts).getTime() : 0;
     let akt = []; let len = 0;
-    const schliesse = () => { if (akt.length) aus.push({ text: `${marke}Original dialogue: ${akt.join(' ')}`, giltAb, zeitMs }); akt = []; len = 0; };
-    for (const z of zeilen) {
-      if (len + z.length > CHUNK_MAX && akt.length) schliesse();
-      akt.push(z); len += z.length + 1;
+    const schliesse = () => {
+      if (!akt.length) return;
+      for (const { nr } of akt) if (!stueckVon.has(nr)) stueckVon.set(nr, aus.length);
+      aus.push({ text: `${marke}Original dialogue: ${akt.map((x) => x.z).join(' ')}`, giltAb, zeitMs });
+      akt = []; len = 0;
+    };
+    for (const x of zeilen) {
+      if (len + x.z.length > CHUNK_MAX && akt.length) schliesse();
+      akt.push(x); len += x.z.length + 1;
     }
     schliesse();
   }
+  if (art === 'nutzer') {
+    messages.forEach((m, nr) => {
+      const text = String(m.content ?? '').trim();
+      if (m.role !== 'user' || !text || !stueckVon.has(nr)) return;
+      const ts = m.timestamp ?? '';
+      const datum = lesbaresDatum(ts);
+      const marke = datum ? `[session of ${datum}] ` : '';
+      const giltAb = datum ? new Date(ts).toISOString() : '';
+      const zeitMs = datum ? new Date(ts).getTime() : 0;
+      for (const teil of teileText(text)) aus.push({ text: `${marke}User: ${teil}`, giltAb, zeitMs, teilVon: stueckVon.get(nr) });
+    });
+  }
   return aus;
+}
+
+const zwei = (n) => String(n).padStart(2, '0');
+
+/**
+ * Marke mit Uhrzeit und laufender Nummer (AML_MARKE=uhrzeit): "[2023-05-26 01:08 · #273] ".
+ * Weltzeit, wie lesbaresDatum. Ohne Zeitstempel nur die Nummer. Anlass (16.11.2026,
+ * BEFUND-lme-gegen-maasv): 5 der 11 Antwortfehler waren Zeitfragen; Maasv liefert je Eintrag
+ * Uhrzeit und Nummer, die Antworten rechnen damit.
+ */
+export function uhrzeitMarke(zeitMs, nr) {
+  if (!zeitMs) return `[#${nr}] `;
+  const d = new Date(zeitMs);
+  return `[${d.getUTCFullYear()}-${zwei(d.getUTCMonth() + 1)}-${zwei(d.getUTCDate())} ${zwei(d.getUTCHours())}:${zwei(d.getUTCMinutes())} · #${nr}] `;
+}
+
+/** Ersetzt die Sitzungsmarke "[session of ...] " am Anfang durch eine andere Marke (oder setzt sie davor). */
+export function mitMarke(text, marke) {
+  return marke + String(text).replace(/^\[session of [^\]]+\] /, '');
 }
 
 const ROLLE = { user: 'User', assistant: 'Assistant' };
