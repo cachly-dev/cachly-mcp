@@ -55,11 +55,11 @@ creates your Brain on first start. The [JetBrains plugin](https://plugins.jetbra
 brings it to IntelliJ IDEA, PyCharm, GoLand, WebStorm and Rider
 ([guide](https://cachly.dev/docs/jetbrains)).
 
-**Keep your test Brain** with `npx @cachly-dev/mcp-server@latest claim`. You sign in once,
-and the Brain moves into your account with all its lessons.
+**Already have a test Brain?** Keep it with `npx @cachly-dev/mcp-server@latest claim`. You sign in
+once, and the Brain moves into your account with all its lessons.
 
 <details>
-<summary><b>Claude Code in detail:</b> the three hooks, auto-update, and the test Brain</summary>
+<summary><b>Claude Code in detail:</b> the three hooks, auto-update, and the sign-in</summary>
 
 The plugin adds three Claude Code hooks:
 
@@ -74,8 +74,8 @@ Claude Code leaves it off for marketplaces outside Anthropic's own. The MCP serv
 itself on every start; the hooks come with the plugin and update with it. If an update is
 waiting, the first `session_start` of a session says so in one line.
 
-The test Brain is created by the plugin hook at session start, or by the first tool call
-if the hook did not run. `claude mcp list` is the reliable check: `claude plugin details`
+Without a key, the first tool call opens your browser once to sign in (GitHub, Google or
+e-mail). `claude mcp list` is the reliable check: `claude plugin details`
 shows `MCP servers (0)` even while the server runs.
 
 `claim` revokes every test key and stores a new key where your editor and hooks look for
@@ -415,7 +415,7 @@ Manual snippets are in [Manual Setup](#manual-setup).
 
 | Editor / client | Auto-setup | Config file written | Global config | Notes |
 |---|---|---|---|---|
-| **Claude Code** | yes | `.mcp.json` | with the plugin | Without a key: test Brain at session start (plugin) or on the first tool call; browser sign-in only as fallback |
+| **Claude Code** | yes | `.mcp.json` | with the plugin | Without a key: the first tool call opens the browser once to sign in |
 | **Cursor** | yes, detected via `.cursor/` | `.cursor/mcp.json`, hooks in `.cursor/hooks.json` | no | Project-level; restart Cursor after setup. Lessons arrive with the first tool call of a turn |
 | **Windsurf** | yes, detected via `.windsurf/` | `.windsurf/mcp.json` | no | Project-level; restart Windsurf after setup |
 | **VS Code + Copilot** | yes, detected via `.vscode/` | `.vscode/mcp.json`, hooks in `.github/hooks/cachly-ambient.json` | no | Needs the VS Code MCP support or Copilot chat. Briefing at session start, lessons before each prompt |
@@ -433,7 +433,7 @@ Manual snippets are in [Manual Setup](#manual-setup).
 |---|---|
 | `autosetup` or `autopilot` from a terminal (TTY) | OAuth device flow: one click in the browser, the API key is saved automatically |
 | `autosetup` from a VS Code task or CI (no TTY) | Detects the non-interactive run, opens the browser with a step-by-step guide, prints the `CACHLY_JWT=... autosetup` command |
-| First tool call without any key | Test Brain: an anonymous Brain on EU servers. The key is saved to `~/.cachly/credentials.json`, and the call goes through. If that fails (offline, rate limit), the inline device flow starts with a URL and a code |
+| First tool call without any key | Inline device flow: the browser opens once with a URL and a code; sign in with GitHub, Google or e-mail. The key is saved to `~/.cachly/credentials.json` |
 | First tool call with `CACHLY_BRAIN_INSTANCE_ID` set but no key | Inline device flow. You already have a Brain, so no second account is created |
 | `CACHLY_JWT=cky_live_xxx npx ... autosetup` | Skips the sign-in step and uses the key you pass |
 

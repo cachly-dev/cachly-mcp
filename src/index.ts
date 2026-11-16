@@ -5281,10 +5281,11 @@ if (!JWT && !_cliNoAuthCommands.includes(process.argv[2] ?? '')) {
     // Launched as an MCP stdio server (or HTTP) without credentials. NEVER touch
     // stdout here — it carries the JSON-RPC protocol. Emit a single actionable
     // hint to stderr (shown in the editor's MCP log) and fall through so the
-    // server starts. Seit 0.10.175 legt der erste Werkzeugaufruf ein Test-Brain an
-    // (zugang.ts); die Browser-Anmeldung ist nur noch der Rueckfall.
+    // server starts. Der erste Werkzeugaufruf versucht den Sofort-Test
+    // (zugang.ts). Der ist seit #964 (06.11.2026) am Server aus, also oeffnet
+    // der Aufruf die Browser-Anmeldung. Dieser Satz darf nichts anderes sagen.
     process.stderr.write(
-      '\n🧠 cachly: no API key yet — the first cachly tool call creates a test Brain on EU servers, no sign-up.\n' +
+      '\n🧠 cachly: no API key yet — the first cachly tool call opens the browser once to sign in (GitHub, Google or e-mail).\n' +
       '   (Own account: npx @cachly-dev/mcp-server@latest autopilot)\n\n',
     );
   }

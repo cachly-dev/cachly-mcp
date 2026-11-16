@@ -7,6 +7,18 @@
 
 ---
 
+## [0.10.255] – 2026-11-16 — *"The start-up hint says it too."*
+
+No change to how the server works. Started without a key, the server wrote one line to the
+editor's MCP log: "the first cachly tool call creates a test Brain on EU servers, no sign-up".
+Since 2026-11-06 that first call opens the browser once to sign in (GitHub, Google or e-mail)
+instead, so the line now says exactly that.
+
+The README said the same in three more places: the Claude Code section ("the test Brain is
+created by the plugin hook at session start"), the editor table ("browser sign-in only as
+fallback") and the table of sign-in paths ("Test Brain: an anonymous Brain"). All three now
+describe the browser sign-in. `claim` still moves an existing test Brain into your account.
+
 ## [0.10.254] – 2026-11-16 — *"Sign in once, and say so."*
 
 No change to the server. Since 2026-11-06 a new Brain needs a sign-in (GitHub, Google or e-mail);
