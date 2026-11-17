@@ -20,7 +20,9 @@ COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts
 COPY --from=builder /app/dist/ ./dist/
 ENV NODE_ENV=production
-ENV PORT=3000
+# Kein ENV PORT hier: PORT schaltet den HTTP-Modus ein (src/index.ts). Ohne PORT
+# spricht das Abbild stdio, so wie Docker MCP, Smithery und Glama es starten.
+# mcp.cachly.dev setzt PORT selbst (docker-compose.yml, Dienst mcp-http).
 EXPOSE 3000
 # tsc rootDir is "." (src/ + packages/) so output lives at dist/src/index.js,
 # matching package.json bin/main/start. NOT dist/index.js.
