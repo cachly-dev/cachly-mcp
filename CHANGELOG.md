@@ -7,6 +7,26 @@
 
 ---
 
+## [0.10.256] – 2026-11-17 — *"A new Brain knows the project from the first session."*
+
+A brand-new Brain stayed empty until the MCP server started and read the project's git
+history. With the Claude Code plugin that start takes 14 to 64 seconds the first time
+(npx download), so the first task of a new user ran without any knowledge, and the
+session briefing showed nothing.
+
+Measured on 2026-11-17 with five fresh Brains: the session-start hook returned an empty
+briefing every time the Brain had no lesson yet. Now the hook starts the existing
+start import itself when its briefing comes back empty. It reads the git history in the
+background, writes only into an EMPTY Brain (a Brain that already has lessons is left
+alone, so the server never imports twice), and puts the lessons on disk right away.
+Measured: 5 seconds after the first session start, the fresh Brain held 3 lessons from
+the project; the next session's briefing showed them, and matching prompts got them
+injected. `CACHLY_STARTWISSEN=0` still turns the start import off.
+
+The session briefing also called those git lessons "Starter tips (not yet from your
+project)", although they come from exactly that project. It now says "From this project's
+git history (not reused yet)"; general starter lessons keep their old label.
+
 ## [0.10.255] – 2026-11-16 — *"The start-up hint says it too."*
 
 No change to how the server works. Started without a key, the server wrote one line to the

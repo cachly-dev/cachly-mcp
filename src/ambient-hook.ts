@@ -312,6 +312,21 @@ export async function hookAntwort(aufruf: HookAufruf): Promise<string> {
     });
     // Begrenzt warten, damit die Meldung process.exit ueberlebt — nie mehr als 500 ms.
     if (gemeldet) await Promise.race([gemeldet, new Promise((r) => setTimeout(r, 500))]);
+    // Leeres Brain beim Sitzungsstart (17.11.2026, Aktivierungsprobe in frischen
+    // Brains): Mit Schluessel, aber ohne eine Lektion blieb das Briefing leer, und
+    // die Git-Historie las nur der MCP-Server ein. Der braucht beim ersten
+    // Plugin-Start 14 bis 64 s; bis dahin lief jede Aufgabe ohne Wissen. Jetzt
+    // stoesst der Hook den Import selbst an. Der Nebenlauf schreibt nur in ein
+    // LEERES Brain (startwissen-hook.ts bereitUndLeer) und legt die Lektionen
+    // sofort auf die Platte, also blendet schon der naechste Prompt ein. Ein
+    // Brain mit Lektionen bleibt unberuehrt; die Sperre in starteNebenlauf
+    // begrenzt den Versuch auf einen je Minute und Instanz.
+    if (ereignis === 'SessionStart' && !out && !kontoHinweis && a.selbst && startwissenEingeschaltet(a.umfeld.env)) {
+      (a.nebenlauf ?? starteNebenlauf)(cfg, [a.selbst, STARTWISSEN_IMPORT, a.umfeld.projekt], {
+        zweck: STARTWISSEN_IMPORT,
+        ordner: tmpdir(),
+      });
+    }
     return kontoHinweis ? mitHinweis(out, kontoHinweis) : out;
   } catch {
     return '';

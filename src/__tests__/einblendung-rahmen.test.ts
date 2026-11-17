@@ -98,6 +98,22 @@ describe('Briefing auf neuem Brain', () => {
     expect(t).toContain('Top by proven reuse');
     expect(t).toContain('earlier sessions');
   });
+
+  // 17.11.2026: Lektionen aus dem Start-Import der Git-Historie stammen aus dem Projekt.
+  const ausGit = (t: string): EinblendLektion => ({ topic: t, what_worked: 'Commit', recall_count: 0, source: 'brain_from_git', tags: ['brain_from_git', 'feat', 'git-history'] });
+
+  it('nennt Git-Lektionen als aus dem Projekt, nicht als allgemeine Tipps', () => {
+    const t = sitzungsKontext([ausGit('feat:invoice-total-cents'), ausGit('test:test-invoice-totals')]);
+    expect(t).toContain("From this project's git history");
+    expect(t).toContain("this project's git history");
+    expect(t).not.toContain('not yet from your project');
+    expect(t).not.toContain('proven reuse');
+  });
+
+  it('erkennt Git-Lektionen auch nur am Tag git-history; eine Mischung mit Startern zaehlt als Projekt', () => {
+    const nurTag: EinblendLektion = { topic: 'fix:rundung', what_worked: 'x', recall_count: 0, tags: ['git-history'] };
+    expect(sitzungsKontext([starter('docker:layer-cache'), nurTag])).toContain("From this project's git history");
+  });
 });
 
 describe('der abhaengigkeitsfreie Hook nutzt denselben Rahmen', () => {

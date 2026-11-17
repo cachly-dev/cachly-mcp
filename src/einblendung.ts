@@ -696,10 +696,19 @@ export function sitzungsKontext(alle: EinblendLektion[]): string {
   // wenn eine der gezeigten Lektionen wirklich schon abgerufen wurde. Ein frisches Brain
   // hat nur Starter-Lektionen mit recall_count 0.
   const bewaehrt = top.some((l) => (Number(l.recall_count) || 0) > 0);
-  const kopf = bewaehrt ? 'Top by proven reuse' : 'Starter tips (not yet from your project)';
+  // 17.11.2026: Lektionen aus der Git-Historie des Projekts (Start-Import, source
+  // brain_from_git) hiessen hier "not yet from your project" — dabei stammen sie genau
+  // daher. Die KI las sie so als allgemeine Tipps.
+  const ausGit = !bewaehrt && top.some((l) => l.source === 'brain_from_git'
+    || (Array.isArray(l.tags) && l.tags.includes('git-history')));
+  const kopf = bewaehrt ? 'Top by proven reuse'
+    : ausGit ? "From this project's git history (not reused yet)"
+      : 'Starter tips (not yet from your project)';
   const hinweis = bewaehrt
     ? RAHMEN_HINWEIS
-    : RAHMEN_HINWEIS.replace('Stored notes from earlier sessions.', 'General starter notes, not yet from your project.');
+    : ausGit
+      ? RAHMEN_HINWEIS.replace('Stored notes from earlier sessions.', "Notes drawn from this project's git history.")
+      : RAHMEN_HINWEIS.replace('Stored notes from earlier sessions.', 'General starter notes, not yet from your project.');
   return `🧠 Cachly Brain — ambient recall active (${lessons.length} lessons). ` +
     `${kopf}:\n${rahmeEin(body, hinweis)}\n` +
     `(Relevant lessons for each task are auto-injected per prompt. ~${estimateTokens(body)} tokens.)`;
