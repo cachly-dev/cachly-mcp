@@ -183,18 +183,23 @@ describe('Der Server findet den Schluessel im Heimordner (echter Prozess)', () =
     mkdirSync(join(projekt, '.cursor'), { recursive: true });
     mkdirSync(join(projekt, '.vscode'), { recursive: true });
     mkdirSync(join(projekt, '.windsurf'), { recursive: true });
+    // Windsurf ist "installiert": es legt ~/.codeium/windsurf selbst an. Seit
+    // 0.10.258 schreibt join dorthin, nicht nach .windsurf/mcp.json — die Datei
+    // im Projekt liest Windsurf nicht (projektdateien.ts, globaleMcpDatei).
+    mkdirSync(join(heim, '.codeium', 'windsurf'), { recursive: true });
     writeFileSync(join(projekt, '.mcp.json'), JSON.stringify({ mcpServers: { cachly: { env: { CACHLY_BRAIN_INSTANCE_ID: 'alt' } } } }));
     // JWT kommt aus dem Heimordner (Start ohne CACHLY_JWT), damit join keine Anmeldung startet.
 
     await rufeBefehl(g.url, heim, projekt, ['join', 'TOKEN123']);
 
-    for (const datei of ['.mcp.json', '.cursor/mcp.json', '.vscode/mcp.json', '.windsurf/mcp.json']) {
-      const pfad = join(projekt, datei);
-      expect(existsSync(pfad), datei).toBe(true);
+    const windsurf = join(heim, '.codeium', 'windsurf', 'mcp_config.json');
+    for (const pfad of [join(projekt, '.mcp.json'), join(projekt, '.cursor', 'mcp.json'), join(projekt, '.vscode', 'mcp.json'), windsurf]) {
+      expect(existsSync(pfad), pfad).toBe(true);
       const text = readFileSync(pfad, 'utf8');
-      expect(text, datei).not.toContain(SCHLUESSEL);
-      expect(JSON.parse(text).mcpServers.cachly.env.CACHLY_BRAIN_INSTANCE_ID, datei).toBe(INSTANZ);
+      expect(text, pfad).not.toContain(SCHLUESSEL);
+      expect(JSON.parse(text).mcpServers.cachly.env.CACHLY_BRAIN_INSTANCE_ID, pfad).toBe(INSTANZ);
     }
+    expect(existsSync(join(projekt, '.windsurf', 'mcp.json')), 'Windsurf liest .windsurf/mcp.json nicht').toBe(false);
     // Die globale Datei im Heimordner darf ihn tragen (verlaesst den Rechner nicht).
     const global = JSON.parse(readFileSync(join(heim, '.claude', 'mcp.json'), 'utf8'));
     expect(global.mcpServers.cachly.env.CACHLY_JWT).toBe(SCHLUESSEL);

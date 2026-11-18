@@ -1009,6 +1009,7 @@ import { aussetzerLeise } from './aussetzer.js';
 import { buildClsPostCommitHook, gitHookOrdner, installClsPostCommitHook, CLS_HOOK_VERSION } from './cls-hook.js';
 import {
   CLAUDE_MD_MARKER_START, CLAUDE_MD_MARKER_END, EDITOR_FILES, ANWEISUNGS_DATEIEN, buildClaudeMdBlock, setzeAnweisungsblock, sollSchreiben, type SchreibErgebnis,
+  globaleMcpDatei, globalerEditorDa, diesesHeim, mcpZiel,
 } from './projektdateien.js';
 import { klassiereArgument, leseFlag, flagsOhneWert, pruefeInitEingaben } from './cli-argumente.js';
 // buildClaudeMdBlock liegt seit 0.10.212 in projektdateien.ts (eine Quelle fuer init, autopilot und setup_ai_memory).
@@ -2322,6 +2323,7 @@ function nutztVsCodeFormat(editor: string): boolean {
   return EDITOR_FILES[editor] === '.vscode/mcp.json';
 }
 
+
 /**
  * Reads an existing editor config file (if any), merges in the cachly entry,
  * and returns the updated JSON string — preserving all other MCP servers and
@@ -3019,8 +3021,11 @@ if (process.argv[2] === 'join') {
   const editorFiles: Array<{ label: string; path: string; global?: boolean }> = [
     { label: '.mcp.json (Claude Code project)',    path: resJ(cwd, '.mcp.json') },
     { label: '.cursor/mcp.json',                   path: resJ(cwd, '.cursor', 'mcp.json') },
-    { label: '.windsurf/mcp.json',                 path: resJ(cwd, '.windsurf', 'mcp.json') },
-    { label: '.vscode/mcp.json (Copilot/Cline)',   path: resJ(cwd, '.vscode', 'mcp.json') },
+    // Windsurf und Cline lesen eine Datei beim Nutzer (projektdateien.ts); sie
+    // wird nur geschrieben, wenn das Programm seinen Ordner schon angelegt hat.
+    { label: '~/.codeium/windsurf/mcp_config.json (Windsurf)', path: globaleMcpDatei('windsurf', diesesHeim())! },
+    { label: 'cline_mcp_settings.json (Cline)',    path: globaleMcpDatei('cline', diesesHeim())! },
+    { label: '.vscode/mcp.json (Copilot)',         path: resJ(cwd, '.vscode', 'mcp.json') },
     { label: '~/.claude/mcp.json (global)',         path: resJ(home, '.claude', 'mcp.json'), global: true },
   ];
 
@@ -3797,14 +3802,15 @@ if (process.argv[2] === 'init') {
     console.log('');
     await installEditorMcp(editor, projectDir, buildServerEnv(apiKey, instanceId), '');
   } else {
-    const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
-    const configPath = resolve(projectDir, configFile);
+    const ziel = mcpZiel(editor, projectDir);
+    const configFile = ziel.anzeige;
+    const configPath = ziel.pfad;
     await mkdir(dirname(configPath), { recursive: true });
     const { existsSync: exInit } = await import('node:fs');
     const configExisted = exInit(configPath);
     const prevConfig = configExisted ? await readFile(configPath, 'utf-8').catch(() => '') : '';
     sichereSchluessel();
-    const merged = await mergeMcpConfig(configPath, apiKey, instanceId, editor, { readFile, existsSync: exInit });
+    const merged = await mergeMcpConfig(configPath, apiKey, instanceId, ziel.format, { readFile, existsSync: exInit });
     // Idempotent: only write when the content actually changes.
     if (merged !== prevConfig) {
       await writeFile(configPath, merged, 'utf-8');
@@ -4088,8 +4094,9 @@ if (process.argv[2] === 'health') {
   const editorConfigs: Array<{ editor: string; path: string }> = [
     { editor: 'Claude Code',     path: '.mcp.json' },
     { editor: 'Cursor',          path: '.cursor/mcp.json' },
-    { editor: 'Windsurf',        path: '.windsurf/mcp.json' },
-    { editor: 'Copilot / Cline', path: '.vscode/mcp.json' },
+    { editor: 'Windsurf',        path: globaleMcpDatei('windsurf', diesesHeim())! },
+    { editor: 'Cline',           path: globaleMcpDatei('cline', diesesHeim())! },
+    { editor: 'Copilot',         path: '.vscode/mcp.json' },
     { editor: 'Zed',             path: '.zed/settings.json' },
     { editor: 'Continue.dev',    path: '.continue/config.json' },
     // cli-2 (03.11.2026): init --editor codex|gemini schreibt hierhin; health kannte die Dateien nicht.
@@ -4646,15 +4653,16 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   // Claude Code: always include (CLAUDE.md is universal)
   detected.push('claude');
   if (existsSync(resolve(cwd, '.cursor')))   detected.push('cursor');
-  if (existsSync(resolve(cwd, '.windsurf'))) detected.push('windsurf');
+  // Windsurf: Projektordner .windsurf ODER das Programm auf diesem Rechner
+  // (~/.codeium/windsurf). Geschrieben wird in beiden Faellen die globale
+  // Datei, die Windsurf liest (mcpZiel).
+  const heimInfo = diesesHeim();
+  if (existsSync(resolve(cwd, '.windsurf')) || globalerEditorDa('windsurf', heimInfo, existsSync)) detected.push('windsurf');
   if (existsSync(resolve(cwd, '.vscode')))   detected.push('copilot');
   if (existsSync(resolve(cwd, '.continue'))) detected.push('continue');
-  // Cline: VS Code extension — detect via globalStorage on the machine
-  const clineGlobalDir = process.platform === 'darwin'
-    ? resolve(home, 'Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev')
-    : resolve(home, '.vscode/extensions');
-  if (existsSync(clineGlobalDir) && !detected.includes('copilot')) detected.push('cline');
-  else if (existsSync(clineGlobalDir)) detected.push('cline'); // both copilot + cline share .vscode/mcp.json — fine
+  // Cline: sein eigener Speicherordner in VS Code. Bis 0.10.257 reichte unter
+  // Windows und Linux ~/.vscode/extensions — den hat jeder VS-Code-Nutzer.
+  if (globalerEditorDa('cline', heimInfo, existsSync)) detected.push('cline');
   // Zed editor — detect via app data dir
   const zedDir = process.platform === 'darwin'
     ? resolve(home, 'Library/Application Support/Zed')
@@ -4681,12 +4689,13 @@ if (process.argv[2] === 'autosetup' || process.argv[2] === 'setup' || _isAutopil
   // Bis 0.10.225 fand `init` die Instanz nur in ~/.claude/mcp.json (Step 4b).
   saveInstanceId(instance.id, { apiKey: token });
   for (const editor of editorsToSetup) {
-    const configFile = EDITOR_FILES[editor] ?? '.mcp.json';
-    const configPath = resolve(cwd, configFile);
+    const ziel = mcpZiel(editor, cwd);
+    const configFile = ziel.anzeige;
+    const configPath = ziel.pfad;
     try {
       await mkdir(dirname(configPath), { recursive: true });
       const wasExisting = exSetup(configPath);
-      const merged = await mergeMcpConfig(configPath, token, instance.id, editor, { readFile, existsSync: exSetup });
+      const merged = await mergeMcpConfig(configPath, token, instance.id, ziel.format, { readFile, existsSync: exSetup });
       await writeFile(configPath, merged, 'utf-8');
       console.log(`✅ ${wasExisting ? 'Updated' : 'Written'}: ${configFile}`);
       configWriteSuccesses++;

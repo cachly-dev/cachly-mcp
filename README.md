@@ -417,14 +417,13 @@ Manual snippets are in [Manual Setup](#manual-setup).
 |---|---|---|---|---|
 | **Claude Code** | yes | `.mcp.json` | with the plugin | Without a key: the first tool call opens the browser once to sign in |
 | **Cursor** | yes, detected via `.cursor/` | `.cursor/mcp.json`, hooks in `.cursor/hooks.json` | no | Project-level; restart Cursor after setup. Lessons arrive with the first tool call of a turn |
-| **Windsurf** | yes, detected via `.windsurf/` | `.windsurf/mcp.json` | no | Project-level; restart Windsurf after setup |
+| **Windsurf** | yes, detected via `~/.codeium/windsurf` or `.windsurf/` | `~/.codeium/windsurf/mcp_config.json` | yes | The only file Windsurf reads MCP servers from; restart Windsurf after setup |
 | **VS Code + Copilot** | yes, detected via `.vscode/` | `.vscode/mcp.json`, hooks in `.github/hooks/cachly-ambient.json` | no | Needs the VS Code MCP support or Copilot chat. Briefing at session start, lessons before each prompt |
 | **Codex CLI** | yes, detected via `~/.codex` | `.codex/config.toml` (`[mcp_servers.cachly]`), hooks in `.codex/hooks.json` | no | Codex loads both once you trust the folder; confirm the hook once in `/hooks` |
 | **Gemini CLI** | yes, detected via `~/.gemini` | `mcpServers.cachly` and `hooks` in `.gemini/settings.json` | no | Gemini loads both once you trust the folder. Lessons are appended to the prompt (`BeforeAgent`) |
-| **Cline** | yes, detected via VS Code | `.vscode/mcp.json` | no | Shares the config with Copilot; restart VS Code |
+| **Cline** | yes, detected via Cline's own VS Code storage | `cline_mcp_settings.json` in VS Code's `globalStorage/saoudrizwan.claude-dev/settings/` | yes | Cline does not read `.vscode/mcp.json`; restart VS Code |
 | **Continue.dev** | yes, detected via `.continue/` | `.continue/config.json` | no | Uses the `modelContextProtocolServers` key |
 | **Zed** | yes, detected via `.zed/` | `.zed/settings.json` | no | Uses the `context_servers` key |
-| **Windsurf (global)** | `autosetup --editor windsurf` | `~/.windsurf/mcp.json` | yes | Pass `--editor` to target the global config |
 | **Any other MCP client** | `autosetup --editor claude` | `.mcp.json` | no | Standard `mcpServers` stdio format |
 
 **Which sign-in path each case uses:**

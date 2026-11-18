@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readFileSync, readdirSync, rmSync, rmdirSync, wr
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import {
   ANWEISUNGS_DATEIEN, CLAUDE_MD_MARKER_END, CLAUDE_MD_MARKER_START, EDITOR_FILES, blockMuster,
+  globaleMcpDatei,
 } from './projektdateien.js';
 import { PROJEKT_HOOK_MARKE, istCachlyEintrag } from './hook-zugang.js';
 import { CLS_BLOCK_RE, gitHookOrdner } from './cls-hook.js';
@@ -555,12 +556,18 @@ function planeGlobal(o: PlanEingabe, plan: Plan): void {
       else plan.funde.push({ stufe: 'global', aktion: 'eintrag-entfernen', pfad: claudeMcp, was: 'MCP server entry "cachly" (it holds your key); other servers stay', vorher: text, nachher: r.nachher });
     }
   }
-  for (const fremd of [join(o.heim, '.cursor', 'mcp.json'), join(o.heim, '.codeium', 'windsurf', 'mcp_config.json')]) {
+  // Diese Dateien gehoeren den Programmen selbst (Cursor, Windsurf, Cline); in
+  // Windsurf und Cline schreibt cachly seit 0.10.258 dorthin (projektdateien.ts,
+  // globaleMcpDatei). Uninstall meldet den Eintrag und laesst die Datei stehen:
+  // sie traegt auch die Server anderer Anbieter.
+  const heim = { heim: o.heim, plattform: process.platform, appData: process.env.APPDATA };
+  const fremde = [join(o.heim, '.cursor', 'mcp.json'), globaleMcpDatei('windsurf', heim)!, globaleMcpDatei('cline', heim)!];
+  for (const fremd of fremde) {
     const t = liesDatei(fremd);
     if (t === null) continue;
     const r = entferneMcpEintrag(t, 'mcpServers');
     if (r.art === 'geaendert' || (r.art === 'unlesbar' && t.includes('cachly'))) {
-      plan.funde.push({ stufe: 'global', aktion: 'melden', pfad: fremd, was: 'has a "cachly" server entry. You set this file up yourself, so uninstall leaves it. Remove the entry by hand.' });
+      plan.funde.push({ stufe: 'global', aktion: 'melden', pfad: fremd, was: 'has a "cachly" server entry. The file belongs to that editor and also lists other servers, so uninstall leaves it. Remove the "cachly" entry by hand.' });
     }
   }
   const cachlyDir = join(o.heim, '.cachly');

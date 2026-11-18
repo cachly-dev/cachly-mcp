@@ -7,6 +7,23 @@
 
 ---
 
+## [0.10.258] – 2026-11-18 — *"Windsurf and Cline read the file now."*
+
+Setup wrote the cachly server for Windsurf into `.windsurf/mcp.json` and for Cline into
+`.vscode/mcp.json`, and reported "Written". Neither program reads those files. Checked
+in the installed programs on 2026-11-18: Windsurf 1.11.3 loads MCP servers only from
+`~/.codeium/windsurf/mcp_config.json`, and Cline 4.1.26 only from
+`cline_mcp_settings.json` in VS Code's `globalStorage/saoudrizwan.claude-dev/settings/`.
+So Windsurf and Cline users got a success message and no memory.
+
+Now `init --editor windsurf|cline`, `setup`/`autopilot` and `join` write to those files
+(merged, other servers stay, no key in the file — the server reads
+`~/.cachly/credentials.json`). Windsurf is detected by `~/.codeium/windsurf` or a
+project `.windsurf/` folder; Cline by its own storage folder. Until now, on Windows and
+Linux any `~/.vscode/extensions` folder counted as Cline, so every VS Code user got a
+Cline config. `health` checks the real files, and `uninstall` reports a cachly entry
+in them (the files belong to the editor and list other servers too).
+
 ## [0.10.257] – 2026-11-18 — *"A finished background task is not a question."*
 
 Claude Code files the notice of a finished background task as its own prompt

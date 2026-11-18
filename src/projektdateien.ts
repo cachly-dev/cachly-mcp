@@ -4,6 +4,9 @@
  * Schreiber (index.ts) und den Rueckbau (uninstall.ts): Marker, Pfade und
  * Erkennungsmuster stehen nur hier.
  */
+import { homedir } from 'node:os';
+import { join, resolve } from 'node:path';
+
 export const CLAUDE_MD_MARKER_START = '<!-- cachly-brain-start -->';
 export const CLAUDE_MD_MARKER_END   = '<!-- cachly-brain-end -->';
 
@@ -51,6 +54,77 @@ export const EDITOR_FILES: Record<string, string> = {
   cline:    '.vscode/mcp.json',              // Cline respects VS Code project MCP config
   zed:      '.zed/settings.json',            // Zed project-level context_servers
 };
+
+// ── Editoren, deren MCP-Liste beim Nutzer liegt, nicht im Projekt ───────────
+//
+// Gefunden am 18.11.2026, belegt am installierten Programm:
+//   - Windsurf 1.11.3 liest MCP-Server nur aus <Home>/.codeium/windsurf/
+//     mcp_config.json (workbench.desktop.main.js: codeiumDirPathSegments
+//     [".codeium","windsurf"] + mcpConfigFilePathSegments ["mcp_config.json"]).
+//   - Cline 4.1.26 liest nur <VS-Code-Nutzer>/globalStorage/
+//     saoudrizwan.claude-dev/settings/cline_mcp_settings.json; ".vscode/mcp.json"
+//     kommt in seinem Code nicht vor.
+// cachly schrieb bis 0.10.257 .windsurf/mcp.json und .vscode/mcp.json und
+// meldete "Written" — keines der beiden Programme hat den Eintrag je gesehen.
+// Dieselbe Fehlerklasse wie ~/.claude/mcp.json bis 0.10.226.
+//
+// EDITOR_FILES behaelt die alten Pfade nur, damit `uninstall` Reste aufraeumt.
+
+/** Wo der Nutzer wohnt: Heimordner, Betriebssystem, unter Windows %APPDATA%. */
+export interface Heim {
+  heim: string;
+  plattform: NodeJS.Platform;
+  appData?: string;
+}
+
+/** Editoren, deren MCP-Datei global liegt. */
+export const GLOBALE_MCP_EDITOREN: readonly string[] = ['windsurf', 'cline'];
+
+/** Der Nutzerordner von VS Code (stabile Fassung). */
+export function vsCodeNutzerOrdner(h: Heim): string {
+  if (h.plattform === 'win32') return join(h.appData ?? join(h.heim, 'AppData', 'Roaming'), 'Code', 'User');
+  if (h.plattform === 'darwin') return join(h.heim, 'Library', 'Application Support', 'Code', 'User');
+  return join(h.heim, '.config', 'Code', 'User');
+}
+
+const CLINE_ORDNER = ['globalStorage', 'saoudrizwan.claude-dev'] as const;
+
+/** Die MCP-Datei, die das Programm wirklich liest — oder null fuer Projekt-Editoren. */
+export function globaleMcpDatei(editor: string, h: Heim): string | null {
+  if (editor === 'windsurf') return join(h.heim, '.codeium', 'windsurf', 'mcp_config.json');
+  if (editor === 'cline') return join(vsCodeNutzerOrdner(h), ...CLINE_ORDNER, 'settings', 'cline_mcp_settings.json');
+  return null;
+}
+
+/** Ist das Programm auf diesem Rechner eingerichtet? (Ordner, den es selbst anlegt.) */
+export function globalerEditorDa(editor: string, h: Heim, existiert: (p: string) => boolean): boolean {
+  if (editor === 'windsurf') return existiert(join(h.heim, '.codeium', 'windsurf'));
+  if (editor === 'cline') return existiert(join(vsCodeNutzerOrdner(h), ...CLINE_ORDNER));
+  return false;
+}
+
+/** Der Heimordner dieses Prozesses. */
+export function diesesHeim(): Heim {
+  return { heim: homedir(), plattform: process.platform, appData: process.env.APPDATA };
+}
+
+/** Format-Kennung fuer mergeMcpConfig: Windsurf und Cline lesen `mcpServers` (kein VS-Code-Format). */
+export const MCPSERVERS_FORMAT = 'mcpServers';
+
+/**
+ * Wohin der MCP-Eintrag eines Editors gehoert: beim Nutzer (Windsurf, Cline)
+ * oder im Projekt. `anzeige` ist der Pfad fuer die Ausgabe (~ statt
+ * Heimordner), `format` der Editor-Name fuer mergeMcpConfig.
+ */
+export function mcpZiel(editor: string, projekt: string, h: Heim = diesesHeim()): { pfad: string; anzeige: string; format: string } {
+  const global = globaleMcpDatei(editor, h);
+  if (global) {
+    const anzeige = global.startsWith(h.heim) ? '~' + global.slice(h.heim.length) : global;
+    return { pfad: global, anzeige, format: MCPSERVERS_FORMAT };
+  }
+  const rel = EDITOR_FILES[editor] ?? '.mcp.json';
+  return { pfad: resolve(projekt, rel), anzeige: rel, format: editor };
+}
 
 export interface AnweisungsDatei {
   /** Pfad im Projekt, in Teilen. */
