@@ -16,6 +16,8 @@ import {
   ZugangAbgelehnt,
   baueKontext,
   baueZugangsAufloeser,
+  bauePruefGrenze,
+  leseAufruferIp,
   bereinigeArgumente,
   hashDesSchluessels,
   imMandant,
@@ -239,6 +241,90 @@ describe('Zugang aufloesen: die API entscheidet', () => {
   });
 });
 
+describe('Grenze fuer Schluesselpruefungen je Aufrufer-IP (Fund 2)', () => {
+  const liste = (ids: string[]) => ({ status: 200, body: { data: ids.map((id) => ({ id })) } });
+  const erfunden = (i: number) => `cky_live_ERFUNDEN${String(i).padStart(10, '0')}`;
+
+  it('der 21. unbekannte Schluessel einer IP bekommt 429 mit Retry-After, ohne API-Aufruf', async () => {
+    let aufrufe = 0;
+    const z = baueZugangsAufloeser(async () => { aufrufe++; return { status: 401, body: null }; }, { grenze: bauePruefGrenze() });
+    for (let i = 0; i < 20; i++) {
+      await expect(z.loese(erfunden(i), undefined, '203.0.113.9')).rejects.toMatchObject({ httpStatus: 401 });
+    }
+    expect(aufrufe).toBe(20);
+    const fehler = (await z.loese(erfunden(21), undefined, '203.0.113.9').catch((e: unknown) => e)) as ZugangAbgelehnt;
+    expect(fehler.httpStatus).toBe(429);
+    expect(fehler.retryAfterS).toBeGreaterThan(0);
+    expect(aufrufe).toBe(20);
+  });
+
+  it('eine andere IP ist nicht betroffen', async () => {
+    let aufrufe = 0;
+    const z = baueZugangsAufloeser(async () => { aufrufe++; return { status: 401, body: null }; }, { grenze: bauePruefGrenze() });
+    for (let i = 0; i < 25; i++) await z.loese(erfunden(i), undefined, '203.0.113.9').catch(() => undefined);
+    await expect(z.loese(erfunden(99), undefined, '203.0.113.10')).rejects.toMatchObject({ httpStatus: 401 });
+    expect(aufrufe).toBe(21);
+  });
+
+  it('bekannte, gueltige Schluessel aus dem Merker zaehlen nicht und werden nie gesperrt', async () => {
+    let aufrufe = 0;
+    const z = baueZugangsAufloeser(async (_p, k) => { aufrufe++; return k === KEY_A ? liste([INST_1]) : { status: 401, body: null }; }, { grenze: bauePruefGrenze() });
+    await expect(z.loese(KEY_A, undefined, '203.0.113.9')).resolves.toBe(INST_1);
+    for (let i = 0; i < 30; i++) await z.loese(erfunden(i), undefined, '203.0.113.9').catch(() => undefined);
+    const vorher = aufrufe;
+    await expect(z.loese(KEY_A, undefined, '203.0.113.9')).resolves.toBe(INST_1);
+    expect(aufrufe).toBe(vorher);
+  });
+
+  it('wiederholte Pruefung desselben abgelehnten Schluessels zaehlt nur einmal (Merker)', async () => {
+    let aufrufe = 0;
+    const z = baueZugangsAufloeser(async () => { aufrufe++; return { status: 401, body: null }; }, { grenze: bauePruefGrenze() });
+    for (let i = 0; i < 50; i++) await expect(z.loese(erfunden(1), undefined, '203.0.113.9')).rejects.toMatchObject({ httpStatus: 401 });
+    expect(aufrufe).toBe(1);
+  });
+
+  it('das Fenster laeuft ab, danach geht es wieder', () => {
+    let t = 1_000;
+    const g = bauePruefGrenze({ max: 2, fensterMs: 60_000, jetzt: () => t });
+    expect(g.zaehle('a').erlaubt).toBe(true);
+    expect(g.zaehle('a').erlaubt).toBe(true);
+    expect(g.zaehle('a')).toMatchObject({ erlaubt: false, retryAfterS: 60 });
+    t += 60_001;
+    expect(g.zaehle('a').erlaubt).toBe(true);
+  });
+
+  it('der Speicher der IP-Zaehler ist begrenzt (LRU)', () => {
+    const g = bauePruefGrenze({ max: 1, maxIps: 3 });
+    for (let i = 0; i < 10; i++) g.zaehle(`10.0.0.${i}`);
+    expect(g.zaehle('10.0.0.0').erlaubt).toBe(true); // verdraengt, Zaehler beginnt neu
+    expect(g.zaehle('10.0.0.9').erlaubt).toBe(false); // juengste, noch gezaehlt
+  });
+
+  it('ein 429 der API wird 429 mit Retry-After (kein 502) und nicht gemerkt', async () => {
+    let n = 0;
+    const z = baueZugangsAufloeser(async () => (++n === 1 ? { status: 429, body: null, retryAfterS: 17 } : liste([INST_1])));
+    const fehler = (await z.loese(KEY_A, undefined).catch((e: unknown) => e)) as ZugangAbgelehnt;
+    expect(fehler.httpStatus).toBe(429);
+    expect(fehler.retryAfterS).toBe(17);
+    await expect(z.loese(KEY_A, undefined)).resolves.toBe(INST_1);
+  });
+
+  it('ohne Retry-After der API gilt 60 s; mit Instanzkopf ebenso 429', async () => {
+    const z = baueZugangsAufloeser(async () => ({ status: 429, body: null }));
+    const fehler = (await z.loese(KEY_A, INST_1).catch((e: unknown) => e)) as ZugangAbgelehnt;
+    expect(fehler.httpStatus).toBe(429);
+    expect(fehler.retryAfterS).toBe(60);
+  });
+
+  it('Aufrufer-IP: X-Real-IP, sonst Verbindung; Muell und Mehrfachkoepfe werden ignoriert', () => {
+    expect(leseAufruferIp('198.51.100.7', '127.0.0.1')).toBe('198.51.100.7');
+    expect(leseAufruferIp(undefined, '::ffff:127.0.0.1')).toBe('::ffff:127.0.0.1');
+    expect(leseAufruferIp('nicht-eine-ip', '127.0.0.1')).toBe('127.0.0.1');
+    expect(leseAufruferIp(['1.1.1.1', '2.2.2.2'], '127.0.0.1')).toBe('127.0.0.1');
+    expect(leseAufruferIp(undefined, undefined)).toBe('unbekannt');
+  });
+});
+
 describe('Argumente im HTTP-Modus', () => {
   it('instance_id wird gesetzt; eine ANDERE Instanz ist ein Fehler, kein stilles Umbiegen', () => {
     expect(bereinigeArgumente({ query: 'x' }, INST_1)).toEqual({ args: { query: 'x', instance_id: INST_1 } });
@@ -276,13 +362,13 @@ function sseOderJson(text: string): { result?: { content?: Array<{ text?: string
 
 const KOPF = { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' };
 
-async function rpc(url: string, methode: string, params: unknown, extra: Record<string, string> = {}): Promise<{ status: number; text: string }> {
+async function rpc(url: string, methode: string, params: unknown, extra: Record<string, string> = {}): Promise<{ status: number; text: string; headers: Headers }> {
   const r = await fetch(url, {
     method: 'POST',
     headers: { ...KOPF, ...extra },
     body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: methode, params }),
   });
-  return { status: r.status, text: await r.text() };
+  return { status: r.status, text: await r.text(), headers: r.headers };
 }
 
 describe('AsyncLocalStorage: zwei gleichzeitige Anfragen, zwei Welten', () => {
@@ -355,6 +441,7 @@ describe('HTTP-Server (echter Prozess, Attrappen-API auf Loopback)', () => {
       const auth = String(req.headers.authorization ?? '');
       apiAnfragen.push({ pfad: req.url ?? '', auth });
       res.setHeader('Content-Type', 'application/json');
+      if (auth.includes('DRAUSSEN429')) { res.writeHead(429, { 'Retry-After': '23' }); res.end('{"error":"too many requests"}'); return; }
       if (auth !== `Bearer ${KEY_A}`) { res.writeHead(401); res.end('{"error":"unauthorized"}'); return; }
       if (req.url === '/api/v1/instances') { res.end(JSON.stringify({ data: [{ id: INST_1, status: 'running' }] })); return; }
       if (req.url === `/api/v1/instances/${INST_1}`) { res.end(JSON.stringify({ id: INST_1, status: 'running' })); return; }
@@ -473,6 +560,34 @@ describe('HTTP-Server (echter Prozess, Attrappen-API auf Loopback)', () => {
     expect(text).toContain('nicht verfuegbar');
     const r2 = await aufruf('index_project', { dir: '/' }, { Authorization: `Bearer ${KEY_A}` });
     expect(sseOderJson(r2.text).result!.content![0].text!).toContain('nicht verfuegbar');
+  });
+
+  it('API antwortet 429: der Aufrufer bekommt 429 mit Retry-After, kein 502', async () => {
+    const r = await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: 'Bearer cky_live_DRAUSSEN429DRAUSSEN429', 'X-Real-IP': '198.51.100.20' });
+    expect(r.status).toBe(429);
+    expect(r.headers.get('retry-after')).toBe('23');
+  });
+
+  it('IP-Grenze: der 21. erfundene Schluessel einer IP bekommt 429 ohne Aufruf der API; ein bekannter Schluessel laeuft weiter', async () => {
+    const ip = { 'X-Real-IP': '198.51.100.30' };
+    // KEY_A einmal pruefen lassen, damit er sicher im Merker liegt (liegt er schon dort, zaehlt es nicht).
+    expect((await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: `Bearer ${KEY_A}`, 'X-Real-IP': '198.51.100.99' })).status).toBe(200);
+    const vorher = apiAnfragen.length;
+    for (let i = 0; i < 20; i++) {
+      const r = await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: `Bearer cky_live_ERFUNDEN${String(i).padStart(10, '0')}`, ...ip });
+      expect(r.status).toBe(401);
+    }
+    expect(apiAnfragen.length - vorher).toBe(20);
+    const gesperrt = await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: 'Bearer cky_live_ERFUNDEN9999999999', ...ip });
+    expect(gesperrt.status).toBe(429);
+    expect(Number(gesperrt.headers.get('retry-after'))).toBeGreaterThan(0);
+    expect(apiAnfragen.length - vorher).toBe(20);
+    // Bekannter Schluessel aus dem Merker: weiter 200, auch von der gesperrten IP.
+    expect((await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: `Bearer ${KEY_A}`, ...ip })).status).toBe(200);
+    expect(apiAnfragen.length - vorher).toBe(20);
+    // Eine andere IP ist frei.
+    const andere = await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: 'Bearer cky_live_ERFUNDEN8888888888', 'X-Real-IP': '198.51.100.31' });
+    expect(andere.status).toBe(401);
   });
 
   it('kein Schluessel in stderr', () => {

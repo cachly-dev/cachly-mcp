@@ -18,6 +18,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
 import { KERNWERKZEUGE } from './werkzeug-auswahl.js';
 
 // ── Kontext je Anfrage ───────────────────────────────────────────────────────
@@ -205,8 +206,10 @@ export class BegrenzterSpeicher<V> {
 
 export class ZugangAbgelehnt extends Error {
   constructor(
-    readonly httpStatus: 400 | 401 | 403 | 502,
+    readonly httpStatus: 400 | 401 | 403 | 429 | 502,
     message: string,
+    /** Nur bei 429: so viele Sekunden warten (Kopf Retry-After). */
+    readonly retryAfterS?: number,
   ) {
     super(message);
     this.name = 'ZugangAbgelehnt';
@@ -219,11 +222,76 @@ export const ZUGANG_MAX = 200;
 export const ABLEHNUNG_TTL_MS = 60_000;
 export const ABLEHNUNG_MAX = 1000;
 
-type Abruf = (pfad: string, schluessel: string) => Promise<{ status: number; body: unknown }>;
+/** `retryAfterS`: Wert des Retry-After-Kopfs der API (nur bei 429 gelesen). */
+type Abruf = (pfad: string, schluessel: string) => Promise<{ status: number; body: unknown; retryAfterS?: number }>;
+
+// ── Grenze fuer Schluesselpruefungen je Aufrufer-IP ──────────────────────────
+//
+// Die API zaehlt je Absender-IP 120 Anfragen/min. Alle Pruefungen dieses Servers
+// kommen von einer Adresse. Wer mit erfundenen Schluesseln pruefen laesst, soll
+// darum an DIESEM Server scheitern, bevor die API etwas merkt.
+
+export const PRUEF_GRENZE_JE_MINUTE = 20;
+export const PRUEF_FENSTER_MS = 60_000;
+export const PRUEF_IP_MAX = 10_000;
+
+export interface PruefGrenze {
+  /** Zaehlt eine Pruefung fuer diese IP. `erlaubt: false` => kein API-Aufruf, Retry-After abwarten. */
+  zaehle(ip: string): { erlaubt: true } | { erlaubt: false; retryAfterS: number };
+}
+
+/**
+ * Festes Zeitfenster je IP, die Zaehler liegen in einem LRU (hoechstens `maxIps`
+ * Adressen, aeltester geht zuerst). Beim Verdraengen geht nur ein Zaehler verloren.
+ */
+export function bauePruefGrenze(opt?: {
+  max?: number; fensterMs?: number; maxIps?: number; jetzt?: () => number;
+}): PruefGrenze {
+  const max = opt?.max ?? PRUEF_GRENZE_JE_MINUTE;
+  const fensterMs = opt?.fensterMs ?? PRUEF_FENSTER_MS;
+  const jetzt = opt?.jetzt ?? Date.now;
+  const zaehler = new BegrenzterSpeicher<{ n: number; ende: number }>({
+    max: opt?.maxIps ?? PRUEF_IP_MAX,
+    ttlMs: fensterMs,
+    jetzt,
+  });
+  return {
+    zaehle(ip) {
+      const t = jetzt();
+      let z = zaehler.get(ip);
+      if (!z || z.ende <= t) {
+        z = { n: 0, ende: t + fensterMs };
+        zaehler.set(ip, z);
+      }
+      if (z.n >= max) return { erlaubt: false, retryAfterS: Math.max(1, Math.ceil((z.ende - t) / 1000)) };
+      z.n += 1;
+      return { erlaubt: true };
+    },
+  };
+}
+
+/**
+ * Die Adresse des Aufrufers. Der Server steht hinter Caddy (127.0.0.1:3100, nur von
+ * dort erreichbar), und Caddy SETZT X-Real-IP auf die TCP-Adresse des Aufrufers: er
+ * reicht einen mitgeschickten Kopf nicht durch (infra/Caddyfile, mcp.cachly.dev:
+ * header_up X-Real-IP {remote_host}). Fehlt der Kopf oder ist er mehrfach/ungueltig,
+ * gilt die Adresse der Verbindung.
+ */
+export function leseAufruferIp(
+  xRealIp: string | string[] | undefined,
+  gegenstelle: string | undefined,
+): string {
+  const gueltig = (v: string | undefined): string | undefined => {
+    const t = v?.trim();
+    return t && isIP(t) ? t.toLowerCase() : undefined;
+  };
+  const kopf = typeof xRealIp === 'string' ? gueltig(xRealIp) : undefined;
+  return kopf ?? gueltig(gegenstelle) ?? 'unbekannt';
+}
 
 export interface ZugangsAufloeser {
   /** Gibt die Instanz zurueck, die die API fuer diesen Schluessel freigibt, oder wirft ZugangAbgelehnt. */
-  loese(schluessel: string, instanzKopf: string | undefined): Promise<string>;
+  loese(schluessel: string, instanzKopf: string | undefined, aufruferIp?: string): Promise<string>;
   /** Nur fuer Tests und Abbau. */
   leeren(): void;
 }
@@ -233,16 +301,25 @@ export interface ZugangsAufloeser {
  * Aufrufers (nie mit einem eigenen). Ergebnisse (positiv UND negativ) liegen im
  * Speicher, geschluesselt nach Hash — nie nach dem Schluessel selbst.
  */
-export function baueZugangsAufloeser(abruf: Abruf, opt?: { jetzt?: () => number }): ZugangsAufloeser {
+export function baueZugangsAufloeser(
+  abruf: Abruf,
+  opt?: { jetzt?: () => number; grenze?: PruefGrenze },
+): ZugangsAufloeser {
   const jetzt = opt?.jetzt;
   const gut = new BegrenzterSpeicher<string>({ max: ZUGANG_MAX, ttlMs: ZUGANG_TTL_MS, jetzt });
   const schlecht = new BegrenzterSpeicher<ZugangAbgelehnt>({ max: ABLEHNUNG_MAX, ttlMs: ABLEHNUNG_TTL_MS, jetzt });
   // Parallele Anfragen mit demselben Schluessel teilen EINEN Abruf.
   const laufend = new Map<string, Promise<string>>();
 
+  const zuVieleAnfragen = (r: { retryAfterS?: number }): ZugangAbgelehnt => {
+    const s = r.retryAfterS && r.retryAfterS > 0 ? Math.min(Math.ceil(r.retryAfterS), 3600) : 60;
+    return new ZugangAbgelehnt(429, `Die cachly-API begrenzt gerade die Anfragen. Bitte in ${s} s erneut versuchen.`, s);
+  };
+
   async function ohneMerker(schluessel: string, instanzKopf: string | undefined): Promise<string> {
     if (instanzKopf) {
       const r = await abruf(`/api/v1/instances/${instanzKopf}`, schluessel);
+      if (r.status === 429) throw zuVieleAnfragen(r);
       if (r.status === 200) return instanzKopf;
       if (r.status === 401) throw new ZugangAbgelehnt(401, 'Der Schluessel wurde abgelehnt (ungueltig, abgelaufen oder widerrufen).');
       // 403 und 404 bewusst gleich: wer fremde Instanz-IDs probiert, erfaehrt nichts.
@@ -252,6 +329,7 @@ export function baueZugangsAufloeser(abruf: Abruf, opt?: { jetzt?: () => number 
       throw new ZugangAbgelehnt(502, `Die cachly-API antwortete mit ${r.status}; bitte spaeter erneut versuchen.`);
     }
     const r = await abruf('/api/v1/instances', schluessel);
+    if (r.status === 429) throw zuVieleAnfragen(r);
     if (r.status === 401) throw new ZugangAbgelehnt(401, 'Der Schluessel wurde abgelehnt (ungueltig, abgelaufen oder widerrufen).');
     if (r.status === 403) {
       throw new ZugangAbgelehnt(
@@ -279,7 +357,7 @@ export function baueZugangsAufloeser(abruf: Abruf, opt?: { jetzt?: () => number 
   }
 
   return {
-    async loese(schluessel, instanzKopf) {
+    async loese(schluessel, instanzKopf, aufruferIp) {
       const merker = `${hashDesSchluessels(schluessel)}|${instanzKopf ?? '*'}`;
       const bekannt = gut.get(merker);
       if (bekannt) return bekannt;
@@ -287,11 +365,19 @@ export function baueZugangsAufloeser(abruf: Abruf, opt?: { jetzt?: () => number 
       if (abgelehnt) throw abgelehnt;
       let p = laufend.get(merker);
       if (!p) {
+        // Ab hier geht ein Aufruf an die API: je Aufrufer-IP begrenzen. Treffer im
+        // Merker (oben) und parallele Anfragen mit demselben Schluessel zaehlen nicht.
+        if (opt?.grenze) {
+          const g = opt.grenze.zaehle(aufruferIp || 'unbekannt');
+          if (!g.erlaubt) {
+            throw new ZugangAbgelehnt(429, `Zu viele Schluesselpruefungen von dieser Adresse. Bitte in ${g.retryAfterS} s erneut versuchen.`, g.retryAfterS);
+          }
+        }
         p = ohneMerker(schluessel, instanzKopf)
           .then((id) => { gut.set(merker, id); return id; })
           .catch((e: unknown) => {
             // Nur eindeutige Antworten der API merken, nie Netzfehler (502).
-            if (e instanceof ZugangAbgelehnt && e.httpStatus !== 502) schlecht.set(merker, e);
+            if (e instanceof ZugangAbgelehnt && e.httpStatus !== 502 && e.httpStatus !== 429) schlecht.set(merker, e);
             throw e;
           })
           .finally(() => { laufend.delete(merker); });

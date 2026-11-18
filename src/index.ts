@@ -789,6 +789,7 @@ import { setEmbedJwt, computeEmbedding, hasEmbedProvider, EMBED_PROVIDER, erzwin
 import {
   istMehrmandant, setzeMehrmandant, mandantKontext, imMandant, baueKontext, poolSchluessel,
   leseBearer, leseInstanzKopf, BegrenzterSpeicher, baueZugangsAufloeser, ZugangAbgelehnt,
+  bauePruefGrenze, leseAufruferIp,
   ANLEITUNG_OHNE_KOPF, istRemoteErlaubt, nurLokalText, bereinigeArgumente,
 } from './remote-zugang.js';
 import { ZWEIT_MODELL } from './rangfolge-stellschrauben.js';
@@ -5431,13 +5432,15 @@ if (httpPort) {
       signal: AbortSignal.timeout(8000),
     });
     const body: unknown = antwort.ok ? await antwort.json().catch(() => null) : null;
-    return { status: antwort.status, body };
-  });
+    const ra = Number(antwort.headers.get('retry-after'));
+    return { status: antwort.status, body, retryAfterS: Number.isFinite(ra) && ra > 0 ? ra : undefined };
+  }, { grenze: bauePruefGrenze() });
   const { createServer } = await import('node:http');
-  const abweisen = (res: import('node:http').ServerResponse, status: number, text: string): void => {
+  const abweisen = (res: import('node:http').ServerResponse, status: number, text: string, retryAfterS?: number): void => {
     if (res.headersSent) return;
     res.writeHead(status, {
       'Content-Type': 'application/json',
+      ...(status === 429 && retryAfterS ? { 'Retry-After': String(retryAfterS) } : {}),
       ...(status === 401 ? { 'WWW-Authenticate': 'Bearer realm="cachly"' } : {}),
     });
     res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: text }, id: null }));
@@ -5472,10 +5475,14 @@ if (httpPort) {
         let kontext: ReturnType<typeof baueKontext> | undefined;
         if (bearer.art === 'ok') {
           try {
-            const instanzId = await zugang.loese(bearer.schluessel, instanzKopf.art === 'ok' ? instanzKopf.instanzId : undefined);
+            const instanzId = await zugang.loese(
+              bearer.schluessel,
+              instanzKopf.art === 'ok' ? instanzKopf.instanzId : undefined,
+              leseAufruferIp(req.headers['x-real-ip'], req.socket.remoteAddress),
+            );
             kontext = baueKontext(bearer.schluessel, instanzId);
           } catch (err) {
-            if (err instanceof ZugangAbgelehnt) return abweisen(res, err.httpStatus, err.message);
+            if (err instanceof ZugangAbgelehnt) return abweisen(res, err.httpStatus, err.message, err.retryAfterS);
             return abweisen(res, 502, 'Die cachly-API ist gerade nicht erreichbar. Bitte gleich noch einmal versuchen.');
           }
         }
