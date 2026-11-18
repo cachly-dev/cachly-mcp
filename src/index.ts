@@ -111,6 +111,21 @@ const PROVISION_TIMEOUT_MS = Number(process.env.CACHLY_PROVISION_TIMEOUT_MS ?? 9
 let _defaultInstanceId: string = echterWert(process.env.CACHLY_BRAIN_INSTANCE_ID);
 
 /**
+ * Der Schluessel, mit dem DIESE Anfrage spricht.
+ *
+ * stdio: der Schluessel des Prozesses (JWT). HTTP-Modus (Remote-MCP): nur der
+ * Schluessel aus dem Kopf der laufenden Anfrage (AsyncLocalStorage), nie der
+ * prozessweite — hinter einem Prozess stehen dort viele Menschen.
+ */
+function jwt(): string {
+  return istMehrmandant() ? (mandantKontext()?.schluessel ?? '') : JWT;
+}
+/** Die Instanz dieser Anfrage; im HTTP-Modus die, die die API fuer den Schluessel freigegeben hat. */
+function standardInstanz(): string {
+  return istMehrmandant() ? (mandantKontext()?.instanzId ?? '') : _defaultInstanceId;
+}
+
+/**
  * Schluessel und Instanz fuer die Befehle im Terminal (status, digest, health …).
  *
  * Bis 0.10.201 lasen sie nur CACHLY_JWT / CACHLY_BRAIN_INSTANCE_ID aus der
@@ -281,7 +296,7 @@ function beobachteHookKonto(): void {
  * on a non-2xx response so the activation funnel can spot free-tier breakage.
  */
 async function autoProvisionInstance(): Promise<string> {
-  if (!JWT) return '';
+  if (!JWT || istMehrmandant()) return '';
   try {
     const autoRes = await fetch(`${API_URL}/api/v1/instances/auto`, {
       method: 'POST',
@@ -316,6 +331,7 @@ async function autoProvisionInstance(): Promise<string> {
 }
 
 async function resolveDefaultInstanceId(): Promise<string> {
+  if (istMehrmandant()) return standardInstanz(); // nie raten, nie anlegen: die API hat die Instanz freigegeben
   if (_defaultInstanceId) return _defaultInstanceId;
   /*
    * Ohne Schluessel gibt es hier nichts aufzuloesen. Der Sofort-Test sass bis
@@ -769,13 +785,17 @@ function defaultUnrefTimeout(fn: () => void, ms: number): void {
   if (typeof (t as { unref?: () => void }).unref === 'function') (t as { unref: () => void }).unref();
 }
 // ── Embeddings (imported from embeddings.ts) ────────────────────────────────
-import { setEmbedJwt, computeEmbedding, hasEmbedProvider, EMBED_PROVIDER } from './embeddings.js';
+import { setEmbedJwt, computeEmbedding, hasEmbedProvider, EMBED_PROVIDER, erzwingeEmbedAnbieterRemote } from './embeddings.js';
+import {
+  istMehrmandant, setzeMehrmandant, mandantKontext, imMandant, baueKontext, poolSchluessel,
+  leseBearer, leseInstanzKopf, BegrenzterSpeicher, baueZugangsAufloeser, ZugangAbgelehnt,
+  ANLEITUNG_OHNE_KOPF, istRemoteErlaubt, nurLokalText, bereinigeArgumente,
+} from './remote-zugang.js';
 import { ZWEIT_MODELL } from './rangfolge-stellschrauben.js';
 
 // ── Search Engine (imported from search.ts) ─────────────────────────────────
 import { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp, STOPWORDS,
-         katakanaToRomaji, arabicLightStem, expandCrossLingual, CROSS_LINGUAL_MAP,
-         ZERO_RESULTS_LOG, zeroResultsTotal } from './search.js';
+         katakanaToRomaji, arabicLightStem, expandCrossLingual, CROSS_LINGUAL_MAP } from './search.js';
 
 // ── Exported for testing (re-export from search.ts) ─────────────────────────
 export { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp, STOPWORDS,
@@ -785,6 +805,26 @@ export { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp,
 
 /** Reuse Redis connections across tool calls (keyed by instance_id). */
 const pool = new Map<string, Redis>();
+
+/**
+ * Pool im HTTP-Modus: Schluessel = sha256(Schluessel) + Instanz (poolSchluessel),
+ * nie die Instanz allein. Hoechstens 200 Verbindungen (am laengsten ungenutzte
+ * zuerst), jede hoechstens 10 Minuten alt — danach wird ueber die API neu
+ * geprueft, ob der Schluessel noch gilt (so wirkt ein Widerruf).
+ */
+const REMOTE_POOL_MAX = 200;
+const REMOTE_POOL_TTL_MS = 10 * 60_000;
+const remotePool = new BegrenzterSpeicher<Redis>({
+  max: REMOTE_POOL_MAX,
+  ttlMs: REMOTE_POOL_TTL_MS,
+  // quit() wartet auf laufende Befehle; erst wenn es scheitert, wird hart getrennt.
+  beiEntfernen: (c) => { c.quit().catch(() => c.disconnect()); },
+});
+
+/** Alle offenen Verbindungen, beider Betriebsarten (fuer den geordneten Abgang). */
+function alleVerbindungen(): Redis[] {
+  return [...pool.values(), ...remotePool.werte()];
+}
 
 /**
  * Reconnect exactly ONCE, then give up.
@@ -826,18 +866,27 @@ async function getConnection(instance_id: string): Promise<Redis> {
     );
   }
 
-  const fertig = pool.get(instance_id);
+  // HTTP-Modus: der Pool-Schluessel enthaelt den Hash des Schluessels. Auch der
+  // gemeinsame Aufbau laeuft unter diesem Schluessel — sonst bekaeme ein zweiter
+  // Schluessel die Verbindung, die der erste gerade aufbaut, OHNE eigene Pruefung.
+  const kontext = istMehrmandant() ? mandantKontext() : undefined;
+  if (istMehrmandant() && !kontext) {
+    throw new McpError(ErrorCode.InvalidRequest, ANLEITUNG_OHNE_KOPF);
+  }
+  const poolKey = kontext ? poolSchluessel(kontext.schluessel, instance_id) : instance_id;
+
+  const fertig = kontext ? remotePool.get(poolKey) : pool.get(instance_id);
   if (fertig) return fertig;
 
   // Ein Aufbau je Instanz: wer waehrenddessen kommt, wartet auf denselben
   // (Messung und Begruendung: instanz-warten.ts).
-  return gemeinsamerAufbau(_verbindungImAufbau, instance_id, () => baueVerbindung(instance_id));
+  return gemeinsamerAufbau(_verbindungImAufbau, poolKey, () => baueVerbindung(instance_id, poolKey, !!kontext));
 }
 
 /** Laufende Verbindungsaufbauten je Instanz (siehe getConnection). */
 const _verbindungImAufbau = new Map<string, Promise<Redis>>();
 
-async function baueVerbindung(instance_id: string): Promise<Redis> {
+async function baueVerbindung(instance_id: string, poolKey: string = instance_id, remote = false): Promise<Redis> {
   // Fetch instance, waiting up to PROVISION_TIMEOUT_MS if it is still provisioning.
   // This covers the zero-friction path: device-flow auth → auto-provision → first tool call
   // all happen in quick succession and the instance isn't running yet.
@@ -851,7 +900,8 @@ async function baueVerbindung(instance_id: string): Promise<Redis> {
 
   if (inst.status !== 'running') {
     // Telemetry: unreachable instance so the team can proactively investigate
-    void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
+    // (nicht im HTTP-Modus: dort keine Meldungen mit dem Schluessel eines Fremden)
+    if (!remote) void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(JWT ? { Authorization: `Bearer ${JWT}` } : {}) },
       body: JSON.stringify({ event: 'instance_not_reachable', instance_id, status: inst.status, version: CURRENT_VERSION }),
@@ -926,7 +976,7 @@ async function baueVerbindung(instance_id: string): Promise<Redis> {
   // is idempotent and safe to call from these handlers. The next tool call
   // rebuilds the connection (self-healing).
   const evict = () => {
-    pool.delete(instance_id);
+    if (remote) remotePool.vergissWenn(poolKey, client); else pool.delete(instance_id);
     client.disconnect();
   };
   client.on('error', evict);
@@ -937,7 +987,7 @@ async function baueVerbindung(instance_id: string): Promise<Redis> {
   } catch (err: unknown) {
     client.disconnect();
     const msg = err instanceof Error ? err.message : String(err);
-    void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
+    if (!remote) void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(JWT ? { Authorization: `Bearer ${JWT}` } : {}) },
       body: JSON.stringify({ event: 'redis_connect_failed', instance_id, host: inst.host, port: inst.port, error: msg, version: CURRENT_VERSION }),
@@ -952,7 +1002,7 @@ async function baueVerbindung(instance_id: string): Promise<Redis> {
     );
   }
 
-  pool.set(instance_id, client);
+  if (remote) remotePool.set(poolKey, client); else pool.set(instance_id, client);
   zeitpunkt('verbindung: Valkey verbunden');
   return client;
 }
@@ -963,18 +1013,21 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, _isRetry = f
   // Self-healing pass: proactively refresh a near-expiry token into a long-lived
   // key *before* it can fail. On the first call only (the heal is internally
   // cooldown-guarded, so this is cheap on the hot path).
-  if (!_isRetry) {
+  // HTTP-Modus: kein Selbstheilen. selfHealAuth schreibt den prozessweiten Schluessel
+  // und die Dateien des Servers — das waere fuer fremde Anfragen Mandanten-Durchgriff.
+  if (!_isRetry && !istMehrmandant()) {
     const action = planAuthHeal(diagnoseAuth(JWT));
     if (action !== 'none') await selfHealAuth();
   }
-  checkJwt(JWT);
+  const schluessel = jwt();
+  checkJwt(schluessel);
   const timeoutMs = Number(process.env.CACHLY_API_TIMEOUT_MS ?? 15_000);
   const res = await fetch(`${API_URL}${path}`, {
     ...options,
     signal: AbortSignal.timeout(timeoutMs),
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${JWT}`,
+      Authorization: `Bearer ${schluessel}`,
       ...options.headers,
     },
   });
@@ -982,7 +1035,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, _isRetry = f
     // A 401 means the token was rejected server-side (e.g. revoked or expired
     // between diagnosis and the call). Try to self-heal once, then retry — so a
     // recoverable credential never silently turns into "0 recalls".
-    if (res.status === 401 && !_isRetry) {
+    if (res.status === 401 && !_isRetry && !istMehrmandant()) {
       _authHealAttemptedAt = 0; // force the heal to run despite the cooldown
       const healed = await selfHealAuth();
       if (healed) return apiFetch<T>(path, options, true);
@@ -1068,6 +1121,7 @@ import {
   kostprobeUebrig,
   kostprobeVerbrauchen,
   kostprobeHinweis,
+  kostprobePfadJeInstanz,
   schrankeNachKostproben,
 } from './kostprobe.js';
 import { netBalance } from './ambient-recall.js';
@@ -1097,6 +1151,7 @@ function detectEditor(): string {
 
 function sendFunnelEvent(event: FunnelEventName, extra?: Record<string, unknown>, metrics?: DashboardMetrics): void {
   if (process.env.CACHLY_NO_TELEMETRY === '1') return;
+  if (istMehrmandant()) return; // HTTP-Modus: keine Meldungen im Namen fremder Schluessel
   void fetch(`${API_URL}/api/v1/telemetry/mcp`, {
     method: 'POST',
     headers: meldeKopf(JWT),
@@ -1118,7 +1173,7 @@ function reportAmbientLedgerEvent(
 }
 
 async function sendAnonymousTelemetry(toolName: string): Promise<void> {
-  if (_telemetryPingSent) return;
+  if (_telemetryPingSent || istMehrmandant()) return;
   if (process.env.CACHLY_NO_TELEMETRY === '1') return;
   _telemetryPingSent = true;
   try {
@@ -1204,11 +1259,14 @@ async function featureGate(
 
   const pitch = PREMIUM_PITCH[name] ?? 'A Premium intelligence feature.';
 
-  if (kostprobeUebrig(name)) {
+  // HTTP-Modus: der Zaehler ist je Instanz, nicht je Server — sonst verbraucht ein
+  // Mandant die Kostproben aller anderen.
+  const kostPfad = istMehrmandant() ? kostprobePfadJeInstanz(instanceId) : undefined;
+  if (kostprobeUebrig(name, kostPfad)) {
     // Durchlassen und danach kurz sagen, was das war. Der Zähler wird erst
     // HIER erhöht, also nur wenn wirklich ausgeführt wird — ein abgebrochener
     // Aufruf darf keine Kostprobe kosten.
-    const verbraucht = kostprobeVerbrauchen(name);
+    const verbraucht = kostprobeVerbrauchen(name, kostPfad);
     return { kostprobe: kostprobeHinweis(name, verbraucht, UPGRADE_URL_FG) };
   }
 
@@ -1364,10 +1422,12 @@ async function gitStartFrei(instanceId: string): Promise<boolean> {
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
   // Hat der SessionStart-Hook das Konto angelegt, seit dieser Server gestartet
   // ist? Dann gibt es jetzt einen Schluessel — KEIN zweiter Sofort-Test.
-  if (!JWT && await uebernimmHookKonto(SERVER_KONTO_WARTEN_MS)) return handleTool(name, args);
+  // HTTP-Modus: ohne Schluessel der Anfrage nie ein Konto anlegen und keine Browser-Anmeldung starten.
+  if (istMehrmandant() && !jwt()) return ANLEITUNG_OHNE_KOPF;
+  if (!jwt() && await uebernimmHookKonto(SERVER_KONTO_WARTEN_MS)) return handleTool(name, args);
 
   // Guard: if no JWT, return actionable onboarding message instead of HTTP 401
-  if (!JWT) {
+  if (!jwt()) {
     void sendAnonymousTelemetry(name);
 
     // ── Zero-credential device flow ─────────────────────────────────────
@@ -2107,6 +2167,20 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
     args = (p.arguments ?? {}) as Record<string, unknown>;
   }
 
+  // ── HTTP-Modus (Remote-MCP): Zugang, Freigabe, Argumente ───────────────
+  //
+  // Kein Kopf: die Werkzeugliste blieb sichtbar (Verzeichnisse wie Glama), der
+  // Aufruf bekommt die Anleitung. Mit Kopf: nur Kernwerkzeuge ohne Dateizugriff,
+  // Pfad-Argumente raus, instance_id immer die freigegebene.
+  if (istMehrmandant()) {
+    const k = mandantKontext();
+    if (!k) return { content: [{ type: 'text', text: ANLEITUNG_OHNE_KOPF }], isError: true };
+    if (!istRemoteErlaubt(name)) return { content: [{ type: 'text', text: nurLokalText(name) }], isError: true };
+    const b = bereinigeArgumente((args ?? {}) as Record<string, unknown>, k.instanzId);
+    if ('fehler' in b) return { content: [{ type: 'text', text: b.fehler }], isError: true };
+    args = b.args;
+  }
+
   // Fehlende Pflichtfelder vor jedem Handler abfangen (ki-03, 04.11.2026): sonst
   // kam "Cannot read properties of undefined" als Protokollfehler zurueck.
   // Drei Werkzeuge pruefen selbst und akzeptieren auch deutsche Feldnamen.
@@ -2125,7 +2199,9 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
     || _defaultInstanceId
     || echterWert(process.env.CACHLY_BRAIN_INSTANCE_ID)
     || '';
-  const sitzungsSchritt = autoSitzungsSchritt(name, {
+  // HTTP-Modus: keine Sitzungsautomatik. Sie haelt EINE Sitzung je Prozess (Zaehler,
+  // Instanz) und liest den Arbeitsordner des Servers — das gaebe es fuer fremde Anfragen nicht.
+  const sitzungsSchritt = istMehrmandant() ? 'nichts' : autoSitzungsSchritt(name, {
     gestartet: _autoSessionStarted, startetGerade: _autoSessionStarting !== null, instanz: sitzungsInstanz,
   });
   if (sitzungsSchritt === 'starten') {
@@ -2136,7 +2212,7 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
   } else if (sitzungsSchritt === 'als-gestartet-merken') {
     merkeAusdruecklichenStart(sitzungsInstanz);
   }
-  if (!SITZUNGS_WERKZEUGE.has(name)) _autoSessionToolCount++;
+  if (!istMehrmandant() && !SITZUNGS_WERKZEUGE.has(name)) _autoSessionToolCount++;
 
   try {
     merkeWerkzeugAufruf();
@@ -2171,13 +2247,13 @@ server.setRequestHandler(CallToolRequestSchema, callToolHandler);
 // Graceful shutdown – close all Redis connections + auto-end brain session
 process.on('SIGTERM', async () => {
   await autoEndSession().catch(() => undefined);
-  for (const [, client] of pool) await client.quit().catch(() => undefined);
+  for (const client of alleVerbindungen()) await client.quit().catch(() => undefined);
   process.exit(0);
 });
 
 process.on('SIGINT', async () => {
   await autoEndSession().catch(() => undefined);
-  for (const [, client] of pool) await client.quit().catch(() => undefined);
+  for (const client of alleVerbindungen()) await client.quit().catch(() => undefined);
   process.exit(0);
 });
 
@@ -5331,50 +5407,109 @@ if (!process.env.PORT) {
 const httpPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;
 
 if (httpPort) {
-  // ── HTTP mode (Streamable HTTP transport) ───────────────────────────────
-  // Used for Smithery URL deployment: PORT=3000 node dist/src/index.js
+  // ── HTTP mode (Streamable HTTP transport) = Remote-MCP fuer VIELE Schluessel ──
+  //
+  // PORT=3000 node dist/src/index.js (hinter https://mcp.cachly.dev/mcp).
+  //
+  // Seit 0.10.259 oeffnet der Server das Brain DES AUFRUFERS: Kopf
+  // `Authorization: Bearer cky_...`, optional `X-Cachly-Instance: <uuid>`.
+  // Davor hielt der Prozess keinen Schluessel und zeigte nur die Werkzeugliste.
+  //
+  // Ab hier gilt in diesem Prozess nie mehr "der Schluessel des Prozesses":
+  //   - JWT und Standard-Instanz des Prozesses werden geleert, jede Stelle liest
+  //     jwt() / standardInstanz() und bekommt den Kontext der Anfrage;
+  //   - die Verbindungen liegen im remotePool (Hash + Instanz, 10 min, 200 Stueck);
+  //   - die Berechtigung prueft die API (baueZugangsAufloeser), nie dieser Server.
+  setzeMehrmandant(true);
+  JWT = '';
+  _defaultInstanceId = '';
+  setEmbedJwt('');
+  erzwingeEmbedAnbieterRemote();
+  const zugang = baueZugangsAufloeser(async (pfad, schluessel) => {
+    const antwort = await fetch(`${API_URL}${pfad}`, {
+      headers: { Authorization: `Bearer ${schluessel}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(8000),
+    });
+    const body: unknown = antwort.ok ? await antwort.json().catch(() => null) : null;
+    return { status: antwort.status, body };
+  });
   const { createServer } = await import('node:http');
+  const abweisen = (res: import('node:http').ServerResponse, status: number, text: string): void => {
+    if (res.headersSent) return;
+    res.writeHead(status, {
+      'Content-Type': 'application/json',
+      ...(status === 401 ? { 'WWW-Authenticate': 'Bearer realm="cachly"' } : {}),
+    });
+    res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: text }, id: null }));
+  };
   const httpServer = createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${httpPort}`);
     if (url.pathname === '/health') {
+      // Bewusst nur Zustand und Fassung. Frueher standen hier die letzten
+      // Suchanfragen ohne Treffer — im Mehrmandanten-Betrieb waeren das fremde Texte.
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({
-        status: 'ok',
-        version: CURRENT_VERSION,
-        zeroResults: {
-          total: zeroResultsTotal,
-          last10: ZERO_RESULTS_LOG.slice(-10).map(e => ({ query: e.query, ts: new Date(e.ts).toISOString() })),
-        },
-      }));
+      res.end(JSON.stringify({ status: 'ok', version: CURRENT_VERSION, mode: 'http-remote' }));
       return;
     }
     if (url.pathname === '/mcp' || url.pathname === '/') {
-      // JEDE Anfrage bekommt einen eigenen Server samt Transport.
-      //
-      // Vorher gab es genau einen, beim Start erzeugt. Ein MCP-Server laesst
-      // sich aber nur EINMAL initialisieren — der erste Aufruf nach dem Start
-      // ging durch, jeder weitere endete mit 500 und leerem Rumpf. Siehe die
-      // Begruendung bei makeServer().
       void (async () => {
-        const s = makeServer();
-        const t = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-        // Aufraeumen, sobald die Antwort durch ist — sonst haelt jede Anfrage
-        // ihren Server fest und der Speicher waechst mit jedem Aufruf.
-        res.on('close', () => {
-          t.close().catch(() => undefined);
-          s.close().catch(() => undefined);
-        });
-        try {
-          await s.connect(t);
-          await t.handleRequest(req, res);
-        } catch (err) {
-          // Ein Fehler ohne Text war genau das Problem, das hier behoben wird.
-          process.stderr.write(`cachly-mcp HTTP: ${(err as Error).message}\n`);
-          if (!res.headersSent) {
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: (err as Error).message }));
+        // ── 1. Kopf lesen. Ohne Kopf: Liste ja, Brain nein (Verzeichnisse wie Glama). ──
+        const bearer = leseBearer(req.headersDistinct?.authorization ?? req.headers.authorization);
+        if (bearer.art === 'abgelehnt') {
+          // Der Grund nennt die Art des Fehlers, nie den Kopf.
+          const grund = bearer.grund === 'zu-lang' ? 'Der Authorization-Kopf ist zu lang.'
+            : bearer.grund === 'mehrfach' ? 'Der Authorization-Kopf darf nur einmal vorkommen.'
+            : bearer.grund === 'kein-bearer' ? 'Nur "Authorization: Bearer cky_..." wird akzeptiert.'
+            : 'Das ist kein cachly-API-Schluessel (er beginnt mit cky_). Neuen holen: ' + cachlyUrl('/setup-ai', 'setup');
+          return abweisen(res, 401, grund);
+        }
+        const instanzKopf = leseInstanzKopf(req.headers['x-cachly-instance']);
+        if (instanzKopf.art === 'abgelehnt') {
+          return abweisen(res, 400, 'X-Cachly-Instance muss eine Instanz-ID (UUID) sein.');
+        }
+
+        // ── 2. Mit Schluessel: die API sagt, welche Instanz er oeffnen darf. ──
+        let kontext: ReturnType<typeof baueKontext> | undefined;
+        if (bearer.art === 'ok') {
+          try {
+            const instanzId = await zugang.loese(bearer.schluessel, instanzKopf.art === 'ok' ? instanzKopf.instanzId : undefined);
+            kontext = baueKontext(bearer.schluessel, instanzId);
+          } catch (err) {
+            if (err instanceof ZugangAbgelehnt) return abweisen(res, err.httpStatus, err.message);
+            return abweisen(res, 502, 'Die cachly-API ist gerade nicht erreichbar. Bitte gleich noch einmal versuchen.');
           }
         }
+
+        // ── 3. Die Anfrage laeuft IM Kontext: alles, was sie startet, erbt ihn. ──
+        const bediene = async (): Promise<void> => {
+          // JEDE Anfrage bekommt einen eigenen Server samt Transport.
+          //
+          // Vorher gab es genau einen, beim Start erzeugt. Ein MCP-Server laesst
+          // sich aber nur EINMAL initialisieren — der erste Aufruf nach dem Start
+          // ging durch, jeder weitere endete mit 500 und leerem Rumpf. Siehe die
+          // Begruendung bei makeServer().
+          const s = makeServer();
+          const t = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+          // Aufraeumen, sobald die Antwort durch ist — sonst haelt jede Anfrage
+          // ihren Server fest und der Speicher waechst mit jedem Aufruf.
+          res.on('close', () => {
+            t.close().catch(() => undefined);
+            s.close().catch(() => undefined);
+          });
+          try {
+            await s.connect(t);
+            await t.handleRequest(req, res);
+          } catch (err) {
+            // Ein Fehler ohne Text war genau das Problem, das hier behoben wird.
+            // Nur die Meldung, nie die Anfrage: in ihr steht der Schluessel.
+            process.stderr.write(`cachly-mcp HTTP: ${(err as Error).message}\n`);
+            if (!res.headersSent) {
+              res.writeHead(500, { 'Content-Type': 'application/json' });
+              res.end(JSON.stringify({ error: (err as Error).message }));
+            }
+          }
+        };
+        await (kontext ? imMandant(kontext, bediene) : bediene());
       })();
       return;
     }
@@ -5416,7 +5551,7 @@ if (httpPort) {
 `);
       void (async () => {
         await autoEndSession().catch(() => undefined);
-        for (const [, client] of pool) await client.quit().catch(() => undefined);
+        for (const client of alleVerbindungen()) await client.quit().catch(() => undefined);
         process.exit(0);
       })();
     });

@@ -22,6 +22,7 @@
  */
 
 import { zeitpunkt } from './zeitmessung.js';
+import { istMehrmandant, mandantKontext } from './remote-zugang.js';
 
 // ── Mutable config (synced with index.ts JWT on device-flow auth) ────────────
 export const embedConfig = {
@@ -49,6 +50,20 @@ export const embedConfig = {
  * Ein ausdruecklich gewaehlter Anbieter (CACHLY_EMBED_PROVIDER) bleibt, wie er
  * ist. Umgeschaltet wird nur von 'none' auf unseren eigenen EU-Dienst.
  */
+/**
+ * Der Schluessel fuer Einbettungen. Im HTTP-Modus (viele Schluessel in einem Prozess)
+ * ist es NUR der Schluessel der laufenden Anfrage — nie der prozessweite embedConfig.jwt.
+ */
+export function embedJwt(): string {
+  if (istMehrmandant()) return mandantKontext()?.schluessel ?? '';
+  return embedConfig.jwt;
+}
+
+/** HTTP-Modus: Einbettungen laufen immer ueber den EU-Dienst von cachly, mit dem Schluessel der Anfrage. */
+export function erzwingeEmbedAnbieterRemote(): void {
+  EMBED_PROVIDER = 'cachly';
+}
+
 export function setEmbedJwt(jwt: string): void {
   embedConfig.jwt = jwt;
   if (jwt && !ANBIETER_AUSDRUECKLICH && EMBED_PROVIDER === 'none') EMBED_PROVIDER = 'cachly';
@@ -187,7 +202,7 @@ async function embeddingEinmal(text: string, geduld: EmbedGeduld, modell?: strin
     case 'cachly': {
       // Server-side embedding — the Cachly API computes the embedding
       // using whatever provider is configured on the server. No client-side API key needed.
-      if (!embedConfig.jwt) throw new Error(
+      if (!embedJwt()) throw new Error(
         'CACHLY_JWT not set.\n\n' +
         'The "cachly" provider uses server-side embeddings via the Cachly API.\n' +
         'Set CACHLY_JWT, or use another provider via CACHLY_EMBED_PROVIDER:\n' +
@@ -208,12 +223,13 @@ async function embeddingEinmal(text: string, geduld: EmbedGeduld, modell?: strin
       // 200-300 429er je Welle, der Wachhund meldete die eigene Adresse als
       // Angreifer. Gesetzt wird der Header NUR, wenn CACHLY_ADMIN_KEY in der
       // Umgebung liegt — normale Sessions bleiben normal gedrosselt.
-      const adminKey = process.env.CACHLY_ADMIN_KEY ?? '';
+      // HTTP-Modus: nie ein Betreiber-Schluessel fuer fremde Anfragen.
+      const adminKey = istMehrmandant() ? '' : (process.env.CACHLY_ADMIN_KEY ?? '');
       const res = await fetch(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${embedConfig.jwt}`,
+          'Authorization': `Bearer ${embedJwt()}`,
           ...(adminKey ? { 'X-Admin-Key': adminKey } : {}),
           // Die API laesst Suchen vor Schreibenden zum Dienst (05.11.2026,
           // api/internal/handler/embed_schlange.go). Ohne diesen Kopf steht
@@ -454,7 +470,11 @@ export function computeEmbedding(text: string, opts?: { geduld?: EmbedGeduld; mo
   // Ergebnis. `geduld` gehoert in den Schluessel: ein schneller Fehlschlag
   // mit Geduld 'kurz' darf keinen Aufruf mit Geduld 'lang' mitreissen.
   // Ein Fehlschlag wird nicht gemerkt.
-  const schluessel = `${opts?.modell ?? ''}\u0000${opts?.geduld ?? 'kurz'}\u0000${text}`;
+  // Im Mehrmandanten-Modus gehoert der Schluessel-Hash dazu: sonst verriete die
+  // Antwortzeit, ob ein anderer Mandant denselben Text gerade eingebettet hat
+  // (Sicherheitsabnahme #1120, Fund 3).
+  const mandant = istMehrmandant() ? (mandantKontext()?.schluesselHash ?? '-') : '';
+  const schluessel = `${mandant}\u0000${opts?.modell ?? ''}\u0000${opts?.geduld ?? 'kurz'}\u0000${text}`;
   const jetzt = Date.now();
   const gemerkt = einbettungsMerker.get(schluessel);
   if (gemerkt && gemerkt.bis > jetzt) return gemerkt.vektor;
@@ -508,7 +528,7 @@ async function einbettungMitWiederholung(text: string, opts?: { geduld?: EmbedGe
 /** Returns true if the configured embedding provider has its required key/URL set. */
 export function hasEmbedProvider(): boolean {
   switch (EMBED_PROVIDER) {
-    case 'cachly':  return !!embedConfig.jwt;
+    case 'cachly':  return !!embedJwt();
     case 'mistral': return !!process.env.MISTRAL_API_KEY;
     case 'cohere':  return !!process.env.COHERE_API_KEY;
     case 'ollama':  return true; // OLLAMA_BASE_URL is optional (defaults to localhost)

@@ -18,7 +18,7 @@
  * leser-sicherung.ts (LESER_SICHERUNG_*).
  */
 
-import { embedConfig } from './embeddings.js';
+import { embedConfig, embedJwt } from './embeddings.js';
 import { LESER_GEWICHT, LESER_ZEITLIMIT_MS } from './rangfolge-stellschrauben.js';
 import { LeserSicherung, frageLeser, speicherImProzess } from './leser-sicherung.js';
 
@@ -39,7 +39,7 @@ function sicherungFuer(instanceId?: string): LeserSicherung {
 export function leserAktiv(instanceId?: string): boolean {
   if (LESER_GEWICHT <= 0) return false;
   if ((process.env.CACHLY_LESER ?? '').toLowerCase() in { '0': 1, 'off': 1, 'aus': 1, 'false': 1 }) return false;
-  if (!embedConfig.jwt) return false;
+  if (!embedJwt()) return false;
   // Nur nachsehen, nicht spannen: den einen Versuch nach der Pause gibt
   // leserPunkte frei (darfFragen), sonst ginge er hier verloren.
   return !sicherungFuer(instanceId).offen();
@@ -79,7 +79,7 @@ export async function leserPunkte(
   // je Sekunde verlor am 07.10.2026 706 von 3.003 Leseraufrufen an HTTP 429.
   const antwort = await frageLeser({
     url: `${embedConfig.apiUrl}/api/v1/rerank`,
-    jwt: embedConfig.jwt,
+    jwt: embedJwt(),
     frage,
     texte,
     instanceId: opts?.instanceId,

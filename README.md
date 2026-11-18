@@ -90,6 +90,54 @@ Gemini CLI also follow the server's own instructions; Cline, Continue and Zed re
 rule file. You can also add the server by hand (see [Manual Setup](#manual-setup)).
 </details>
 
+## Remote MCP (HTTP)
+
+`https://mcp.cachly.dev/mcp` opens **your own** Brain. Nothing to install. Send your API key
+(`cky_...`, create one at https://cachly.dev/setup-ai) in the `Authorization` header.
+
+**Claude Code**
+
+```bash
+claude mcp add --transport http cachly https://mcp.cachly.dev/mcp --header "Authorization: Bearer <key>"
+```
+
+**Cursor** (`~/.cursor/mcp.json`)
+
+```json
+{
+  "mcpServers": {
+    "cachly": {
+      "url": "https://mcp.cachly.dev/mcp",
+      "headers": { "Authorization": "Bearer <key>" }
+    }
+  }
+}
+```
+
+**VS Code** (`.vscode/mcp.json`; the `promptString` input keeps the key out of the file)
+
+```json
+{
+  "inputs": [{ "type": "promptString", "id": "cachly-key", "description": "cachly API key", "password": true }],
+  "servers": {
+    "cachly": {
+      "type": "http",
+      "url": "https://mcp.cachly.dev/mcp",
+      "headers": { "Authorization": "Bearer ${input:cachly-key}" }
+    }
+  }
+}
+```
+
+- Several Brains in your account, or a key bound to one Brain? Add the header
+  `X-Cachly-Instance: <instance id>` (see https://cachly.dev/instances).
+- The server never decides who may see a Brain: the cachly API checks your key on every new
+  connection (at least every 10 minutes). A revoked key stops working within 10 minutes.
+- Only the core tools run remotely. `index_project`, `brain_from_git` and `autopilot` read files on
+  your machine and run only in the local package (`npx @cachly-dev/mcp-server@latest autopilot`).
+- Without the header the server lists the tools (for directory checks) and answers tool calls with
+  these steps.
+
 ## What it looks like
 
 Monday, your AI fixes a bug and keeps what worked (output shortened):

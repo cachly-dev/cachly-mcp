@@ -60,6 +60,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve, sep } from 'node:path';
+import { istMehrmandant } from './remote-zugang.js';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 1. Versionen und Bereiche
@@ -633,6 +634,11 @@ export function arbeitsordner(): string {
  * Wirft nie: jeder Fehler heisst "unbekannt".
  */
 export function leseProjektVersionen(start: string = arbeitsordner(), o: LeseOptionen = {}): VersionsLeser {
+  // Auf mcp.cachly.dev ist der Arbeitsordner des Servers nicht das Projekt des
+  // Aufrufers. Nichts lesen, nichts ablegen: jede Version heisst "unbekannt".
+  // (Sicherheitsabnahme #1120, Fund 1: recall_best_solution nannte sonst die
+  // Paketversionen des Servers.)
+  if (istMehrmandant()) return { ordner: '', herkunft: 'gebaut', unvollstaendig: true, suche: () => null };
   const ordner = findeProjektOrdner(start, o.obergrenze);
   const jetzt = o.jetzt ?? (() => performance.now());
   const ablageDir = o.ablageOrdner === undefined ? tmpdir() : o.ablageOrdner;

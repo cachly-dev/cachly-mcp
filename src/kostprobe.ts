@@ -50,6 +50,16 @@ export function defaultKostprobePath(): string {
   return join(homedir(), '.cachly', 'kostproben.json');
 }
 
+/**
+ * HTTP-Modus (Remote-MCP): ein Zaehler JE INSTANZ statt einer je Server. Sonst
+ * verbraucht ein Mandant die Kostproben aller anderen. Die Instanz ist dort eine
+ * von der API freigegebene UUID; trotzdem nur Hex und Bindestrich im Dateinamen.
+ */
+export function kostprobePfadJeInstanz(instanzId: string): string {
+  const sicher = instanzId.replace(/[^0-9a-fA-F-]/g, '').slice(0, 36) || 'ohne';
+  return join(homedir(), '.cachly', `kostproben-${sicher}.json`);
+}
+
 type Zaehler = Record<string, number>;
 
 function lesen(path: string): Zaehler {

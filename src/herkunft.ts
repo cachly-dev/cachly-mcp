@@ -16,6 +16,7 @@
  */
 
 import { createHash } from 'node:crypto';
+import { istMehrmandant, mandantKontext } from './remote-zugang.js';
 
 export interface LektionsQuelle {
   /** Welcher Agent schrieb: CACHLY_AGENT, sonst der MCP-Client (Name/Version), sonst "unbekannt". */
@@ -30,6 +31,7 @@ let clientKennung = '';
 
 /** Vom MCP-Server nach dem Handshake gesetzt (Name und Version des Clients). */
 export function setzeClientKennung(name?: string, version?: string): void {
+  if (istMehrmandant()) return; // ein Wert fuer alle Anfragen waere der des LETZTEN Mandanten
   const n = String(name ?? '').trim();
   const v = String(version ?? '').trim();
   clientKennung = n ? (v ? `${n}/${v}` : n) : '';
@@ -52,6 +54,12 @@ function jwtSub(token: string): string {
 }
 
 export function ermittleQuelle(env: NodeJS.ProcessEnv = process.env): LektionsQuelle {
+  // HTTP-Modus: der Agent ist nicht bekannt (jede Anfrage ist ein eigener Handshake) und
+  // das Konto ist das der ANFRAGE, nie das des Prozesses.
+  if (istMehrmandant()) {
+    const k = mandantKontext();
+    return { agent: 'mcp-http', ...(k ? { principal: `key:${k.schluesselHash.slice(0, 12)}` } : {}), via: 'mcp' };
+  }
   const agent = String(env.CACHLY_AGENT ?? '').trim() || clientKennung || 'unbekannt';
   const token = String(env.CACHLY_JWT ?? '').trim();
   let principal: string | undefined;

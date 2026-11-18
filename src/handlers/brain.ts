@@ -1,5 +1,6 @@
 import { gitLesen, istCommitHash, pruefeOrdner } from '../git-ohne-shell.js';
 import { createRequire } from 'node:module';
+import { istMehrmandant } from '../remote-zugang.js';
 import type { Redis } from 'ioredis';
 import { calculateConfidence, confidenceBadge, STRUCTURED_TEMPLATES,
          CONFIDENCE_WARN_VALUE } from '../confidence.js';
@@ -1149,8 +1150,9 @@ async function handleBrainToolInner(
        */
       const herkunft = ermittleAutor({
         uebergeben: author,
-        umgebung: process.env.CACHLY_AUTHOR,
-        git: echterGitLeser(process.env.CACHLY_WORKSPACE ?? process.cwd()),
+        // HTTP-Modus: weder Umgebung noch git des SERVERS sagen etwas ueber den Aufrufer.
+        umgebung: istMehrmandant() ? undefined : process.env.CACHLY_AUTHOR,
+        git: istMehrmandant() ? (() => '') : echterGitLeser(process.env.CACHLY_WORKSPACE ?? process.cwd()),
       });
       // Mitautor nur, wenn ausdruecklich eingeschaltet — Standard ist aus.
       let coautor = '';
@@ -3418,7 +3420,12 @@ async function handleBrainToolInner(
       // Abhakliste 4.5: Lektionen, deren `gilt_fuer` nicht zu den Versionen dieses
       // Projekts passt, stehen hinter den passenden (nichts wird entfernt). Ohne
       // `gilt_fuer` unter den Treffern: kein Dateizugriff, keine Aenderung.
-      const versionsHinweise = stufeSucheNachProjektversion(hybridResults, contextFiles);
+      // HTTP-Modus: die Versionen des SERVERS (sein Arbeitsordner, Pfade aus dem Aufruf)
+      // sagen nichts ueber das Projekt des Aufrufers — und das Lesen waere ein Weg
+      // auf die Platte des Servers. Dort bleibt es bei der normalen Rangfolge.
+      const versionsHinweise = istMehrmandant()
+        ? new Map<string, string>()
+        : stufeSucheNachProjektversion(hybridResults, contextFiles);
 
       /*
        * ── Beinahe-Duplikate benennen, nicht aufloesen (01.09.2026) ─────────

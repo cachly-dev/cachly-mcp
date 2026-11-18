@@ -7,6 +7,14 @@
 
 ---
 
+## [0.10.259] – 2026-11-18 — *"mcp.cachly.dev opens your own Brain."*
+
+HTTP mode now serves many keys in one process. Send `Authorization: Bearer cky_...` (and
+`X-Cachly-Instance: <id>` if the account has several Brains); the cachly API decides what the
+key may open. Connections are pooled per key hash and instance (200 at most, 10 minutes each).
+No header: the tool list stays visible, tool calls answer with setup steps. Only core tools
+without file access run remotely. /health no longer lists search queries. stdio is unchanged.
+
 ## [0.10.258] – 2026-11-18 — *"Windsurf and Cline read the file now."*
 
 Setup wrote the cachly server for Windsurf into `.windsurf/mcp.json` and for Cline into

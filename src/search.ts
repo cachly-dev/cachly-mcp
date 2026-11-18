@@ -1,5 +1,6 @@
 import { Redis } from 'ioredis';
 import { wartetAufFrischenBestand } from './bestand-frische.js';
+import { istMehrmandant } from './remote-zugang.js';
 
 // ── Search Engine (BM25+ with enhancements, works without embedding) ──────────
 //
@@ -2345,7 +2346,11 @@ function keywordSearchMitBestand(
   const topResults = sorted.slice(0, topK);
 
   // ── Step 5: Zero-results logging + Did-You-Mean ───────────────────────────
-  if (topResults.length === 0) {
+  // HTTP-Modus (viele Schluessel in einem Prozess): weder die Suchanfrage noch der
+  // Wortschatz des Brains darf in einem prozessweiten Speicher landen. Sonst
+  // schlaegt "Meintest du ..." einem anderen Mandanten Woerter aus FREMDEN Lektionen
+  // vor, und /health zeigte fremde Suchanfragen.
+  if (topResults.length === 0 && !istMehrmandant()) {
     logZeroResult(query);
     // Rebuild index vocab for Did-You-Mean suggestions
     _indexVocab = new Set<string>();
