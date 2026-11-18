@@ -29,8 +29,8 @@ Codex CLI · Gemini CLI · JetBrains IDEs
 ```
 
 The first time cachly needs a key, it opens your browser once: sign in with GitHub, Google or
-e-mail, and your Brain is ready on EU servers. A new account comes with 14 days of the Solo plan
-and then continues on Free with the same key. Check it with
+e-mail, and your Brain is ready on EU servers. A new account starts on the Free plan and keeps
+the same key if you upgrade later. Check it with
 `claude mcp list`: you should see `plugin:cachly-brain:cachly … ✔ Connected`.
 
 **Cursor, Windsurf, VS Code, Cline, Continue.dev, Zed, Codex CLI, Gemini CLI** — one command:
