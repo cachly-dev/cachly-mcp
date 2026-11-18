@@ -30,6 +30,13 @@ describe('recallQueryFor', () => {
     expect(recallQueryFor({ hook_event_name: 'UserPromptSubmit', prompt: '   ' })).toBeNull();
     expect(recallQueryFor({ hook_event_name: 'UserPromptSubmit', prompt: 'Wo laeuft Whisper?' })).toBe('Wo laeuft Whisper?');
   });
+  it('a background-task notification is not a question — nothing to recall (18.11.2026)', () => {
+    const meldung = '<task-notification>\n<task-id>bpv418iqi</task-id>\n<status>completed</status>\n'
+      + '<summary>Background command "Score all blocks" completed (exit code 0)</summary>\n</task-notification>';
+    expect(recallQueryFor({ hook_event_name: 'UserPromptSubmit', prompt: meldung })).toBeNull();
+    expect(recallQueryFor({ hook_event_name: 'UserPromptSubmit', prompt: `${meldung}\nwhy does migrate fail?` }))
+      .toBe('why does migrate fail?');
+  });
   it('SessionStart needs no query — it briefs from the whole stock', () => {
     expect(recallQueryFor({ hook_event_name: 'SessionStart', source: 'startup' })).toBeNull();
   });

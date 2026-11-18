@@ -7,6 +7,22 @@
 
 ---
 
+## [0.10.257] – 2026-11-18 — *"A finished background task is not a question."*
+
+Claude Code files the notice of a finished background task as its own prompt
+(`<task-notification>…</task-notification>`) and runs the UserPromptSubmit hook for it. The
+hook searched the Brain with that markup and injected whatever matched words like
+"command", "completed" or "exit code". Counted in one long session on 2026-11-18: 183 of
+228 background notices got an injection, about 120 tokens each, none related to the work.
+That is noise for the model and it skewed the learning arms and the token ledger.
+
+Now both prompt hooks (the plugin / `cachly ambient-recall` and the repo hook in
+`tools/ambient-recall/`) first drop complete editor blocks: task notifications,
+local-command output and system reminders (`prompt-herkunft.ts`, one function for both). A
+prompt that is nothing but such markup injects nothing. Text typed next to it still counts.
+Slash commands (`<command-name>`, `<command-args>`) are left as they are: their arguments
+describe the task.
+
 ## [0.10.256] – 2026-11-17 — *"A new Brain knows the project from the first session."*
 
 A brand-new Brain stayed empty until the MCP server started and read the project's git

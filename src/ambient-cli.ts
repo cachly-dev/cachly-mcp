@@ -26,6 +26,7 @@ import {
   sitzungsKontext,
   hookAusgabe,
   estimateTokens,
+  frageAusPrompt,
   type EinblendConfig,
 } from './einblendung.js';
 
@@ -71,7 +72,9 @@ const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit']);
  * injected for this payload:
  *   • UserPromptSubmit → the prompt itself. No separate "trivial" filter: the
  *     core's gate needs two distinct content words in a lesson, so "danke" or
- *     "ok mach" never inject — exactly as in our own repo hook.
+ *     "ok mach" never inject — exactly as in our own repo hook. Editor markup
+ *     (a background-task notification and the like) is dropped first
+ *     (prompt-herkunft.ts); a prompt that is nothing but markup injects nothing.
  *   • PreToolUse       → the edited file's path (relative to cwd when possible),
  *     for Edit/Write-class tools only.
  *   • SessionStart / Stop → null (SessionStart briefs from the whole stock, Stop learns).
@@ -89,7 +92,7 @@ export function recallQueryFor(payload: HookPayload): string | null {
     // stock on words like "users" or "documents" — only the project part counts.
     return cwd && f.toLowerCase().startsWith(cwd.toLowerCase() + '/') ? f.slice(cwd.length + 1) : f;
   }
-  const prompt = (payload.prompt ?? '').trim();
+  const prompt = frageAusPrompt(payload.prompt ?? '');
   return prompt || null;
 }
 

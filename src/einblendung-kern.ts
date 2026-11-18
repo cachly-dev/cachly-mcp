@@ -54,6 +54,8 @@ import { istTeamweit } from './utils.js';
 export { rahmeEin, entschaerfe, RAHMEN_ETIKETT, RAHMEN_HINWEIS } from './einblendung-rahmen.js';
 // Ebenso der Schreibbeleg fuer den Stop-Hook (tools/ambient-recall/stop.mjs).
 export { stopAntwort } from './schreibbeleg.js';
+// Und die Frage hinter einer Eingabe (ohne Hintergrundmeldungen), fuer beide Prompt-Hooks.
+export { frageAusPrompt } from './prompt-herkunft.js';
 
 /**
  * Wie viele Kandidaten die Wortsuche nominiert, bevor sortiert wird.
