@@ -17,12 +17,12 @@
     "url": "https://github.com/cachly-dev/cachly-mcp",
     "source": "github"
   },
-  "version": "0.10.260",
+  "version": "0.10.261",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@cachly-dev/mcp-server",
-      "version": "0.10.260",
+      "version": "0.10.261",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"

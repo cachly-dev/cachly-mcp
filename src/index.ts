@@ -789,7 +789,7 @@ import { setEmbedJwt, computeEmbedding, hasEmbedProvider, EMBED_PROVIDER, erzwin
 import {
   istMehrmandant, setzeMehrmandant, mandantKontext, imMandant, baueKontext, poolSchluessel,
   leseBearer, leseInstanzKopf, BegrenzterSpeicher, baueZugangsAufloeser, ZugangAbgelehnt,
-  bauePruefGrenze, leseAufruferIp,
+  bauePruefGrenze, leseAufruferIp, imAufrufer, installiereApiKoepfe,
   ANLEITUNG_OHNE_KOPF, istRemoteErlaubt, nurLokalText, bereinigeArgumente,
 } from './remote-zugang.js';
 import { ZWEIT_MODELL } from './rangfolge-stellschrauben.js';
@@ -5426,6 +5426,12 @@ if (httpPort) {
   _defaultInstanceId = '';
   setEmbedJwt('');
   erzwingeEmbedAnbieterRemote();
+  // Die API soll je Aufrufer zaehlen, nicht je Container (remote-zugang.ts,
+  // api/internal/middleware/mcp_intern.go). Nur der Zustand ins Log, nie der Wert.
+  const aufruferAnApi = installiereApiKoepfe(API_URL, process.env.MCP_INTERNAL_SECRET?.trim());
+  process.stderr.write(
+    `cachly-mcp HTTP: API ${API_URL}, Aufrufer-Weitergabe ${aufruferAnApi ? 'an' : 'aus (MCP_INTERNAL_SECRET fehlt oder zu kurz)'}\n`,
+  );
   const zugang = baueZugangsAufloeser(async (pfad, schluessel) => {
     const antwort = await fetch(`${API_URL}${pfad}`, {
       headers: { Authorization: `Bearer ${schluessel}`, Accept: 'application/json' },
@@ -5455,7 +5461,10 @@ if (httpPort) {
       return;
     }
     if (url.pathname === '/mcp' || url.pathname === '/') {
-      void (async () => {
+      // Caddy setzt X-Real-IP auf die TCP-Adresse des Aufrufers. Die ganze
+      // Anfrage, auch die Schluesselpruefung, laeuft mit dieser Adresse.
+      const aufrufer = leseAufruferIp(req.headers['x-real-ip'], req.socket.remoteAddress);
+      void imAufrufer(aufrufer, async () => {
         // ── 1. Kopf lesen. Ohne Kopf: Liste ja, Brain nein (Verzeichnisse wie Glama). ──
         const bearer = leseBearer(req.headersDistinct?.authorization ?? req.headers.authorization);
         if (bearer.art === 'abgelehnt') {
@@ -5478,7 +5487,7 @@ if (httpPort) {
             const instanzId = await zugang.loese(
               bearer.schluessel,
               instanzKopf.art === 'ok' ? instanzKopf.instanzId : undefined,
-              leseAufruferIp(req.headers['x-real-ip'], req.socket.remoteAddress),
+              aufrufer,
             );
             kontext = baueKontext(bearer.schluessel, instanzId);
           } catch (err) {
@@ -5517,7 +5526,7 @@ if (httpPort) {
           }
         };
         await (kontext ? imMandant(kontext, bediene) : bediene());
-      })();
+      });
       return;
     }
     res.writeHead(404);

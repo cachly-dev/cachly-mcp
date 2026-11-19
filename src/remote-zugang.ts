@@ -289,6 +289,84 @@ export function leseAufruferIp(
   return kopf ?? gueltig(gegenstelle) ?? 'unbekannt';
 }
 
+// ── Den Aufrufer an die API weiterreichen ────────────────────────────────────
+//
+// Alle Aufrufe dieses Servers kommen bei der API von EINER Adresse an. Ihre
+// Grenzen (120/min je IP, Bremse fuer Fehlanmeldungen) zaehlten darum alle
+// Nutzer von mcp.cachly.dev zusammen. Mit zwei Koepfen zaehlt die API je
+// Aufrufer (api/internal/middleware/mcp_intern.go): ein gemeinsames Geheimnis
+// (MCP_INTERNAL_SECRET, Infisical /api) und die Adresse aus X-Real-IP.
+//
+// Beide Koepfe gehen NUR an den Ursprung von CACHLY_API_URL, nie an einen
+// anderen Host — das Geheimnis darf diesen Server nur in Richtung API verlassen.
+
+export const MCP_GEHEIMNIS_KOPF = 'X-Cachly-Mcp-Secret';
+export const MCP_AUFRUFER_KOPF = 'X-Cachly-Client-Ip';
+/** Wie MCPGeheimnisMindestlaenge in der API: kuerzer = aus. */
+export const MCP_GEHEIMNIS_MINDESTLAENGE = 32;
+
+const aufruferSpeicher = new AsyncLocalStorage<string>();
+
+/** Fuehrt `fn` fuer diesen Aufrufer aus; alles, was daraus startet, erbt die Adresse. */
+export function imAufrufer<T>(ip: string, fn: () => T): T {
+  return aufruferSpeicher.run(ip, fn);
+}
+
+/** Die Adresse des Aufrufers der laufenden Anfrage, oder undefined. */
+export function aktuellerAufrufer(): string | undefined {
+  return aufruferSpeicher.getStore();
+}
+
+function ursprung(url: string): string | undefined {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Die Zusatzkoepfe fuer einen Aufruf an `url`, oder undefined. Nur wenn `url`
+ * denselben Ursprung wie `apiUrl` hat, das Geheimnis lang genug ist und die
+ * Adresse eine echte IP ist.
+ */
+export function apiKoepfeFuer(
+  url: string,
+  apiUrl: string,
+  geheimnis: string | undefined,
+  ip: string | undefined,
+): Record<string, string> | undefined {
+  if (!geheimnis || geheimnis.length < MCP_GEHEIMNIS_MINDESTLAENGE) return undefined;
+  if (!ip || !isIP(ip)) return undefined;
+  const ziel = ursprung(url);
+  if (!ziel || ziel !== ursprung(apiUrl)) return undefined;
+  return { [MCP_GEHEIMNIS_KOPF]: geheimnis, [MCP_AUFRUFER_KOPF]: ip };
+}
+
+/**
+ * Legt einen Aufsatz um `ziel.fetch`: Aufrufe an die API bekommen die Koepfe
+ * aus apiKoepfeFuer, alle anderen laufen unveraendert. Ein Aufsatz statt
+ * Aenderungen an jeder Aufrufstelle, weil die Werkzeuge die API an rund
+ * 60 Stellen direkt mit fetch aufrufen (gezaehlt 19.11.2026: 63).
+ */
+export function installiereApiKoepfe(
+  apiUrl: string,
+  geheimnis: string | undefined,
+  ziel: { fetch: typeof fetch } = globalThis,
+): boolean {
+  if (!geheimnis || geheimnis.length < MCP_GEHEIMNIS_MINDESTLAENGE) return false;
+  const roh = ziel.fetch.bind(ziel);
+  ziel.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const extra = apiKoepfeFuer(url, apiUrl, geheimnis, aktuellerAufrufer());
+    if (!extra) return roh(input, init);
+    const koepfe = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    for (const [k, v] of Object.entries(extra)) koepfe.set(k, v);
+    return roh(input, { ...init, headers: koepfe });
+  }) as typeof fetch;
+  return true;
+}
+
 export interface ZugangsAufloeser {
   /** Gibt die Instanz zurueck, die die API fuer diesen Schluessel freigibt, oder wirft ZugangAbgelehnt. */
   loese(schluessel: string, instanzKopf: string | undefined, aufruferIp?: string): Promise<string>;
