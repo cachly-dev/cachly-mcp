@@ -23,7 +23,12 @@ const alterWert = process.env.CACHLY_RECALL_NUR_LESEN;
 
 beforeAll(() => {
   process.env.CACHLY_RECALL_NUR_LESEN = '1';
-  const b = bestandAusDokumenten(erzeugeLektionen(600));
+  // 350 statt 600 Lektionen (19.11.2026): Die eingefrorene alte Funktion ist
+  // genau das Langsame, das ersetzt wurde. Mit 600 brauchte dieser Test auf
+  // dem Runner 57 s am Stueck, und vitest meldete "Timeout calling
+  // onTaskUpdate" als unbehandelten Fehler — 3.691 Tests gruen, Veroeffent-
+  // lichung von 0.10.264 trotzdem rot. Die Fragen bleiben alle 75.
+  const b = bestandAusDokumenten(erzeugeLektionen(350));
   if (!b) throw new Error('kein Bestand');
   bestand = b;
   return () => {
@@ -44,7 +49,11 @@ describe('Wortsuche: schnell == eingefroren', () => {
   const fragen = [...PROBEFRAGEN, ...zusatz];
   it('mindestens 50 Fragen', () => { expect(fragen.length).toBeGreaterThanOrEqual(50); });
 
-  it('alle Fragen liefern dieselbe Rangliste (Top 25) und dieselbe Rangliste (alle Treffer)', () => {
+  // Nach jeder Frage gibt der Test die Ereignisschleife frei. Sonst erreicht
+  // vitest seinen Arbeitsprozess minutenlang nicht (siehe oben).
+  const kurzePause = (): Promise<void> => new Promise((r) => setImmediate(r));
+
+  it('alle Fragen liefern dieselbe Rangliste (Top 25) und dieselbe Rangliste (alle Treffer)', async () => {
     let verglichen = 0;
     for (const q of fragen) {
       for (const topK of [25, 100000]) {
@@ -52,14 +61,16 @@ describe('Wortsuche: schnell == eingefroren', () => {
         const alt = form(keywordSearchMitBestandAlt(bestand, q, topK));
         expect(neu, `Frage: ${q} (topK ${topK})`).toEqual(alt);
         verglichen++;
+        await kurzePause();
       }
     }
     expect(verglichen).toBe(fragen.length * 2);
   }, 180_000);
 
-  it('zweiter Durchlauf (Zwischenspeicher warm) bleibt gleich', () => {
+  it('zweiter Durchlauf (Zwischenspeicher warm) bleibt gleich', async () => {
     for (const q of fragen.slice(0, 20)) {
       expect(form(keywordSearchMitBestand(bestand, q, 25))).toEqual(form(keywordSearchMitBestandAlt(bestand, q, 25)));
+      await kurzePause();
     }
   }, 120_000);
 });
