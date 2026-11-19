@@ -1922,6 +1922,8 @@ async function bestandNeuBauen(
   // Der Stand vom BEGINN zaehlt: wurde unterwegs entwertet, weicht er vom
   // aktuellen ab, und der naechste Aufruf baut neu.
   gebauter.stand = stand;
+  // Den Index fuer die unscharfe Suche gleich mitbauen, nicht erst in der ersten Frage.
+  fuzzyIndexFuer(gebauter.docFreq);
 
   const fach = _wortbestand.get(redis as unknown as object) ?? new Map<string, Wortbestand>();
   if (!fach.has(bestandsSchluessel)) _wortbestandZaehler++;
@@ -2011,6 +2013,199 @@ export function bestandAusDokumenten(
     }
   }
   return { docs, avgDL, docFreq, gebaut: Date.now(), stand: _entwertungen };
+}
+
+// ── Unscharfe Kandidaten: Index je Bestand, Ergebnis je Wort gemerkt ─────────
+//
+// 19.11.2026, gemessen im Betrieb: bei 1.617 Lektionen brauchte die Wortsuche
+// 5,7 s je Frage, fast alles in `fuzzyKandidaten`. Jedes Fragewort ohne
+// Volltreffer (und jede ergaenzte Synonym-Uebersetzung) durchlief den ganzen
+// Wortschatz (rund 90.000 Woerter), in der letzten Stufe mit Levenshtein und je
+// einem neuen Array. Die Ergebnisse haengen NUR vom Wortschatz und vom
+// Fragewort ab, nicht von der Frage — also je Bestand einmal und je Wort
+// einmal. Die Auswahl ist Wort fuer Wort dieselbe wie vorher (Gleichheitstest
+// gegen die alte Fassung: wortsuche-gleichheit.test.ts).
+interface FuzzyIndex {
+  terme: string[];                       // Einfuegereihenfolge von docFreq
+  df: number[];
+  sortiert: number[];                    // Indizes, nach Zeichenfolge geordnet
+  nachLaenge: Map<number, number[]>;     // Laenge -> Indizes (nur Laenge >= 4)
+  gemerkt: Map<string, Array<[string, number]>>;
+  indexVon: Map<string, number>;
+  sauber: boolean;                       // kein Wort enthaelt einen Zeilenumbruch
+  gross: string;                         // alle Woerter, durch Zeilenumbruch getrennt
+  starts: number[];                      // Anfang jedes Wortes in `gross`
+}
+const _fuzzyIndex = new WeakMap<object, FuzzyIndex>();
+const FUZZY_GEMERKT_MAX = 20_000;
+
+function fuzzyIndexFuer(docFreq: Map<string, number>): FuzzyIndex {
+  const da = _fuzzyIndex.get(docFreq);
+  if (da) return da;
+  const terme = [...docFreq.keys()];
+  const df = terme.map((t) => docFreq.get(t) ?? 0);
+  const sortiert = terme.map((_, i) => i).sort((a, b) => (terme[a] < terme[b] ? -1 : terme[a] > terme[b] ? 1 : 0));
+  const nachLaenge = new Map<number, number[]>();
+  for (let i = 0; i < terme.length; i++) {
+    const l = terme[i].length;
+    if (l < 4) continue;
+    const fach = nachLaenge.get(l);
+    if (fach) fach.push(i); else nachLaenge.set(l, [i]);
+  }
+  const indexVon = new Map<string, number>();
+  const starts: number[] = new Array(terme.length);
+  let pos = 0;
+  for (let i = 0; i < terme.length; i++) {
+    indexVon.set(terme[i], i);
+    starts[i] = pos;
+    pos += terme[i].length + 1;
+  }
+  // Ein Wort enthaelt kein Zeilenumbruch (Zerlegung trennt daran); sicherheitshalber
+  // prueft der Aufrufer, dass auch das Fragewort keins hat, sonst Einzelpruefung.
+  const gross = terme.join('\n');
+  const sauber = !terme.some((t) => t.includes('\n'));
+  const neu: FuzzyIndex = { terme, df, sortiert, nachLaenge, gemerkt: new Map(), indexVon, gross, starts, sauber };
+  _fuzzyIndex.set(docFreq, neu);
+  return neu;
+}
+
+/** true genau dann, wenn levenshtein(a, b) <= 2 (Laengenunterschied vorab geprueft). */
+function levenshteinHoechstens2(a: string, b: string): boolean {
+  const n = a.length, m = b.length;
+  if (a === b) return true;
+  if (n - m > 2 || m - n > 2) return false;
+  // Zeilenweise Rechnung im Band, Abbruch sobald die ganze Zeile > 2 ist.
+  let prev = new Array<number>(m + 1);
+  let cur = new Array<number>(m + 1);
+  for (let j = 0; j <= m; j++) prev[j] = j;
+  for (let i = 1; i <= n; i++) {
+    cur[0] = i;
+    let zeilenMin = i;
+    const ai = a.charCodeAt(i - 1);
+    for (let j = 1; j <= m; j++) {
+      const c = prev[j - 1] + (ai === b.charCodeAt(j - 1) ? 0 : 1);
+      const l = prev[j] + 1;
+      const o = cur[j - 1] + 1;
+      const v = c < l ? (c < o ? c : o) : (l < o ? l : o);
+      cur[j] = v;
+      if (v < zeilenMin) zeilenMin = v;
+    }
+    if (zeilenMin > 2) return false;
+    const t = prev; prev = cur; cur = t;
+  }
+  return prev[m] <= 2;
+}
+
+function fuzzyKandidatenFuer(docFreq: Map<string, number>, qt: string): Array<[string, number]> {
+  const ix = fuzzyIndexFuer(docFreq);
+  const da = ix.gemerkt.get(qt);
+  if (da) return da;
+  const { terme, df, sortiert, nachLaenge, indexVon, gross, starts } = ix;
+  // Alle Woerter, die `teil` enthalten (Indizes, je Wort einmal), mit einer einzigen Suche im Grosstext.
+  const wortIndexBei = (position: number): number => {
+    let lo = 0, hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >>> 1;
+      if (starts[mid] <= position) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+  };
+  const enthalten = (teil: string, aus: Set<number>): void => {
+    let von = 0;
+    for (;;) {
+      const g = gross.indexOf(teil, von);
+      if (g < 0) return;
+      const i = wortIndexBei(g);
+      aus.add(i);
+      von = starts[i] + terme[i].length + 1;
+    }
+  };
+  const ohneUmbruch = !qt.includes('\n') && ix.sauber;
+
+  // Seltene Woerter zuerst: sie unterscheiden. Gleichstand: Reihenfolge im
+  // Wortschatz (== stabile Sortierung der frueheren Fassung).
+  const waehle = (treffer: number[], gewichtung: number): Array<[string, number]> => {
+    treffer.sort((a, b) => (df[a] - df[b]) || (a - b));
+    const aus: Array<[string, number]> = [];
+    const n = Math.min(treffer.length, FUZZY_KANDIDATEN);
+    for (let i = 0; i < n; i++) aus.push([terme[treffer[i]], gewichtung]);
+    return aus;
+  };
+
+  let aus: Array<[string, number]> = [];
+  if (qt.length >= 4) {
+    // Stufe 1: Woerter, die mit dem Fragewort beginnen (laenger als es).
+    let lo = 0, hi = sortiert.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (terme[sortiert[mid]] < qt) lo = mid + 1; else hi = mid;
+    }
+    const treffer: number[] = [];
+    for (let i = lo; i < sortiert.length; i++) {
+      const t = terme[sortiert[i]];
+      if (!t.startsWith(qt)) break;
+      if (t.length > qt.length) treffer.push(sortiert[i]);
+    }
+    aus = waehle(treffer, 0.85);
+  }
+  if (aus.length === 0 && qt.length >= 4) {
+    // Stufe 2: Woerter (Laenge >= 4), mit denen das Fragewort beginnt (kuerzer als es).
+    const treffer: number[] = [];
+    for (let l = 4; l < qt.length; l++) {
+      const i = indexVon.get(qt.slice(0, l));
+      if (i !== undefined) treffer.push(i);
+    }
+    aus = waehle(treffer, 0.75);
+  }
+  if (aus.length === 0 && qt.length > 3) {
+    // Stufe 3: Teilzeichenfolge in der einen oder anderen Richtung.
+    const treffer = new Set<number>();
+    if (ohneUmbruch) {
+      enthalten(qt, treffer);                               // Wort enthaelt das Fragewort
+      for (let l = 4; l <= qt.length; l++) {                // Fragewort enthaelt das Wort
+        for (let von = 0; von + l <= qt.length; von++) {
+          const i = indexVon.get(qt.slice(von, von + l));
+          if (i !== undefined) treffer.add(i);
+        }
+      }
+      for (const i of treffer) if (terme[i].length <= 3) treffer.delete(i);
+    } else {
+      for (let i = 0; i < terme.length; i++) {
+        const t = terme[i];
+        if (t.length > 3 && (t.includes(qt) || qt.includes(t))) treffer.add(i);
+      }
+    }
+    aus = waehle([...treffer], 0.6);
+  }
+  if (aus.length === 0 && qt.length >= 4) {
+    // Stufe 4: hoechstens zwei Tippfehler; nur Woerter mit Laenge +-2 kommen infrage.
+    // Ab neun Zeichen: bei zwei Aenderungen bleibt eines von drei Teilstuecken
+    // des Fragewortes unberuehrt, steht also woertlich im Wort. Nur diese
+    // Woerter werden gerechnet.
+    const treffer: number[] = [];
+    const L = qt.length;
+    if (L >= 9 && ohneUmbruch) {
+      const kand = new Set<number>();
+      const a1 = Math.floor(L / 3), a2 = Math.floor((2 * L) / 3);
+      enthalten(qt.slice(0, a1), kand);
+      enthalten(qt.slice(a1, a2), kand);
+      enthalten(qt.slice(a2), kand);
+      for (const i of kand) {
+        const t = terme[i];
+        if (t.length >= 4 && t.length >= L - 2 && t.length <= L + 2 && levenshteinHoechstens2(qt, t)) treffer.push(i);
+      }
+    } else {
+      for (let l = Math.max(4, L - 2); l <= L + 2; l++) {
+        const fach = nachLaenge.get(l);
+        if (!fach) continue;
+        for (const i of fach) if (levenshteinHoechstens2(qt, terme[i])) treffer.push(i);
+      }
+    }
+    aus = waehle(treffer, 0.4);
+  }
+  if (ix.gemerkt.size >= FUZZY_GEMERKT_MAX) ix.gemerkt.clear();
+  ix.gemerkt.set(qt, aus);
+  return aus;
 }
 
 async function keywordSearch(
@@ -2167,40 +2362,9 @@ function keywordSearchMitBestand(
     // Dokumenten auf verschiedene Woerter treffen.
     const fuzzySpeicher = new Map<string, Array<[string, number]>>();
     const fuzzyKandidaten = (qt: string): Array<[string, number]> => {
-      const da = fuzzySpeicher.get(qt);
-      if (da) return da;
-
-      // Alle Kandidaten je Stufe sammeln — NICHT nach den ersten acht
-      // abbrechen.
-      //
-      // Die erste Fassung tat genau das und kostete 15 von 100 Fragen: sie
-      // nahm die ersten acht Woerter in der Reihenfolge, in der sie zufaellig
-      // im Wortschatz standen, und die passten meist nicht zu dem Dokument,
-      // um das es ging. Schneller und schlechter ist kein Fortschritt.
-      const sammle = (passt: (dt: string) => boolean, gewichtung: number): Array<[string, number]> => {
-        const aus: Array<[string, number]> = [];
-        for (const dt of docFreq.keys()) if (passt(dt)) aus.push([dt, gewichtung]);
-        // Seltene Woerter zuerst: sie unterscheiden. Ein Wort, das in 300 von
-        // 499 Lektionen steht, sagt nichts darueber, welche gemeint ist.
-        aus.sort((a, b) => (docFreq.get(a[0]) ?? 0) - (docFreq.get(b[0]) ?? 0));
-        return aus.slice(0, FUZZY_KANDIDATEN);
-      };
-
-      let aus: Array<[string, number]> = [];
-      if (qt.length >= 4) {
-        aus = sammle((dt) => dt.length > qt.length && dt.startsWith(qt), 0.85);
-      }
-      if (aus.length === 0 && qt.length >= 4) {
-        aus = sammle((dt) => dt.length >= 4 && dt.length < qt.length && qt.startsWith(dt), 0.75);
-      }
-      if (aus.length === 0 && qt.length > 3) {
-        aus = sammle((dt) => dt.length > 3 && (dt.includes(qt) || qt.includes(dt)), 0.6);
-      }
-      if (aus.length === 0 && qt.length >= 4) {
-        aus = sammle((dt) => dt.length >= 4 && levenshtein(qt, dt) <= 2, 0.4);
-      }
-      fuzzySpeicher.set(qt, aus);
-      return aus;
+      let da = fuzzySpeicher.get(qt);
+      if (!da) { da = fuzzyKandidatenFuer(docFreq, qt); fuzzySpeicher.set(qt, da); }
+      return da;
     };
 
     // Die Woerter, die der Mensch WIRKLICH getippt hat — ohne Synonyme.
@@ -2361,7 +2525,7 @@ function keywordSearchMitBestand(
 }
 
 // ── Exported for testing ──────────────────────────────────────────────────────
-export { tokenize, splitMultiQuery, levenshtein, recencyBoost, extractTimestamp, STOPWORDS,
+export { tokenize, splitMultiQuery, levenshtein, levenshteinHoechstens2, recencyBoost, extractTimestamp, STOPWORDS,
          katakanaToRomaji, arabicLightStem, expandCrossLingual, CROSS_LINGUAL_MAP };
 
 // ── Exported for use in index.ts ──────────────────────────────────────────────
