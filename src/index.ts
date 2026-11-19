@@ -615,7 +615,7 @@ async function startDeviceFlow(): Promise<DeviceFlowState | null> {
     if (res.ok) {
       const data = await res.json() as {
         device_code: string; user_code: string;
-        verification_uri: string; interval: number;
+        verification_uri: string; interval: number; expires_in?: number;
       };
       // Append the user_code so the web page (cachly.dev/device?code=…) auto-submits.
       const base = data.verification_uri || cachlyUrl('/device', 'ambient-signin');
@@ -625,7 +625,10 @@ async function startDeviceFlow(): Promise<DeviceFlowState | null> {
         userCode: data.user_code,
         verifyUrl,
         pollInterval: (data.interval ?? 5) * 1000,
-        deadline: Date.now() + 10 * 60 * 1000,
+        // Die Frist kommt vom Server (seit 19.11.2026: 30 min). Fest 10 min
+        // hier hiesse: wer Konto anlegt und Mail bestaetigt, verliert den
+        // Code, waehrend der Server ihn noch annaehme.
+        deadline: Date.now() + fristMs(data.expires_in),
         polling: false,
       };
     }
@@ -642,21 +645,44 @@ async function startDeviceFlow(): Promise<DeviceFlowState | null> {
     if (!res.ok) return null;
     const data = await res.json() as {
       device_code: string; user_code: string;
-      verification_uri_complete: string; interval: number;
+      verification_uri_complete: string; interval: number; expires_in?: number;
     };
     return {
       deviceCode: data.device_code,
       userCode: data.user_code,
       verifyUrl: data.verification_uri_complete,
       pollInterval: (data.interval ?? 5) * 1000,
-      deadline: Date.now() + 10 * 60 * 1000,
+      deadline: Date.now() + fristMs(data.expires_in),
       polling: false,
     };
   } catch { return null; }
 }
 
+/** Frist eines Geraete-Codes in ms: die Angabe des Servers, sonst 10 min, hoechstens 1 h. */
+export function fristMs(expiresIn: unknown): number {
+  const s = typeof expiresIn === 'number' && Number.isFinite(expiresIn) && expiresIn > 0 ? expiresIn : 600;
+  return Math.min(s, 3600) * 1000;
+}
+
+/** Holt eine gemerkte Anmeldung eines frueheren Prozesses zurueck (siehe laufende-anmeldung.ts). */
+function uebernimmGemerkteAnmeldung(): DeviceFlowState | null {
+  const gemerkt = ladeLaufendeAnmeldung(API_URL);
+  if (!gemerkt) return null;
+  return {
+    deviceCode: gemerkt.deviceCode,
+    userCode: gemerkt.userCode,
+    verifyUrl: gemerkt.verifyUrl,
+    pollInterval: gemerkt.pollInterval,
+    deadline: gemerkt.deadline,
+    polling: false,
+  };
+}
+
 async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expired' | 'done'> {
-  if (Date.now() > flow.deadline) return 'expired';
+  if (Date.now() > flow.deadline) {
+    vergissAnmeldung(flow.deviceCode);
+    return 'expired';
+  }
   // Try the cachly API device flow first, then direct Keycloak as fallback.
   const tryProxy = async () => {
     const res = await fetch(`${API_URL}/auth/device/token`, {
@@ -700,6 +726,7 @@ async function pollDeviceFlow(flow: DeviceFlowState): Promise<'pending' | 'expir
       JWT = apiKey;
       setEmbedJwt(apiKey); // keep embeddings.ts in sync
       _deviceFlow = null;
+      vergissAnmeldung(flow.deviceCode);
       sendFunnelEvent('device_flow_completed');
       // Persist the API key to ~/.claude/mcp.json so subsequent MCP server restarts
       // keep the token. Without this, JWT is lost on restart and brain_recall_count
@@ -1092,6 +1119,7 @@ import { installCodexMcp, installGeminiMcp } from './editor-mcp-eintrag.js';
 import {
   resolveApiKey, saveApiKey, saveInstanceId, readSavedApiKey, readInstanceId, type CredentialsHomeOptions,
 } from './credentials.js';
+import { ladeLaufendeAnmeldung, merkeAnmeldung, vergissAnmeldung } from './laufende-anmeldung.js';
 import {
   KEYCLOAK_BASIS, istTestSchluessel, waehleTestSchluessel, starteKeycloakAnmeldung, warteAufKeycloakAnmeldung, uebernimm, brainImKonto,
   erfolgsText, fehlerText, ersetzeSchluessel, type UebernahmeAntwort,
@@ -1324,6 +1352,14 @@ async function starteAnmeldung(name: string): Promise<string> {
   const flow = await startDeviceFlow();
   if (flow) {
     _deviceFlow = flow;
+    merkeAnmeldung({
+      deviceCode: flow.deviceCode,
+      userCode: flow.userCode,
+      verifyUrl: flow.verifyUrl,
+      pollInterval: flow.pollInterval,
+      deadline: flow.deadline,
+      apiUrl: API_URL,
+    });
     sendFunnelEvent('device_flow_started', { tool: name });
     // Try to open the browser automatically — never block, but DO report.
     //
@@ -1434,6 +1470,18 @@ async function handleTool(name: string, args: Record<string, unknown>): Promise<
     // ── Zero-credential device flow ─────────────────────────────────────
     // 1st call: start device flow, return code + URL
     // 2nd+ calls: poll for token; once authenticated, proceed transparently
+    //
+    // Ein frueherer Prozess kann den Code schon ausgegeben haben (Editor mit
+    // einem Prozess je Aufruf). Dann gilt SEIN Code weiter, statt dass jeder
+    // Aufruf einen neuen erzeugt — siehe laufende-anmeldung.ts.
+    if (!_deviceFlow) {
+      const gemerkt = uebernimmGemerkteAnmeldung();
+      if (gemerkt) {
+        _deviceFlow = gemerkt;
+        sendFunnelEvent('device_flow_resumed', { tool: name });
+        startBackgroundDevicePoll(gemerkt);
+      }
+    }
     if (_deviceFlow) {
       const result = await pollDeviceFlowGuarded(_deviceFlow);
       if (result === 'done') {

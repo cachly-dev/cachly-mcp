@@ -4,14 +4,14 @@
     "name": "cachly",
     "url": "https://github.com/cachly-dev/cachly-mcp"
   },
-  "description": "Memory for coding agents over MCP: the fixes, decisions and lessons your team builds up, hosted in the EU.",
+  "description": "Explain it once. Every AI knows it. The rules, decisions and fixes your team explains to its AI, back in every session. Hosted in the EU.",
   "plugins": [
     {
       "name": "cachly-brain",
       "source": "./",
       "displayName": "cachly AI Brain",
-      "description": "Solve it once. From then on, your AI knows. cachly keeps what your assistant learned: the bug you fixed, why you chose Postgres, the deploy step that always breaks. When the problem returns, the matching lesson is back in the session. Every editor reads the same memory, and every lesson carries the name of whoever learned it. Hosted in the EU.",
-      "version": "0.10.261",
+      "description": "Explain it once. Every AI knows it. cachly keeps what your assistant learned: the bug you fixed, why you chose Postgres, the deploy step that always breaks. When the problem returns, the matching lesson is back in the session. Every editor reads the same lessons, and every lesson carries the name of whoever learned it. Hosted in the EU.",
+      "version": "0.10.262",
       "author": {
         "name": "cachly",
         "url": "https://cachly.dev"

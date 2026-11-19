@@ -1,8 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.cachly-dev/mcp-server",
-  "title": "cachly — memory for coding agents",
-  "description": "Memory for coding agents: stores every fix and finds it again when the problem returns. EU-hosted.",
+  "title": "cachly — Explain it once. Every AI knows it.",
+  "description": "Keeps the rules, decisions and fixes you explain to your AI, for every session and tool. EU servers.",
   "websiteUrl": "https://cachly.dev",
   "icons": [
     {
@@ -17,12 +17,12 @@
     "url": "https://github.com/cachly-dev/cachly-mcp",
     "source": "github"
   },
-  "version": "0.10.261",
+  "version": "0.10.262",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@cachly-dev/mcp-server",
-      "version": "0.10.261",
+      "version": "0.10.262",
       "runtimeHint": "npx",
       "transport": {
         "type": "stdio"
@@ -46,6 +46,21 @@
           "description": "Set to 1 to turn off usage pings.",
           "isRequired": false,
           "format": "string"
+        }
+      ]
+    }
+  ],
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.cachly.dev/mcp",
+      "headers": [
+        {
+          "name": "Authorization",
+          "description": "Bearer followed by your cachly API key (starts with cky_). Get one at https://cachly.dev/setup-ai",
+          "isRequired": true,
+          "isSecret": true,
+          "placeholder": "Bearer cky_..."
         }
       ]
     }
