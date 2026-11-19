@@ -533,7 +533,7 @@ const TOOLS = [
     name: 'learn_from_attempts',
     description:
       'Store a lesson AFTER any non-trivial task (deploy, debug, fix, decision); future sessions recall it. ' +
-      'instance_id may be omitted; the configured instance is used — never guess one. ' +
+      'instance_id may be omitted (never guess one). ' +
       'If the topic already exists, the write is an UPDATE and REQUIRES `grund` ' +
       '(one line: WHY the previous version was wrong) — without it the update is rejected. ' +
       'A conflicting outcome triggers a contradiction warning. ' +
@@ -550,7 +550,7 @@ const TOOLS = [
         // Zeichen; eine Lektion, die mit Vorgeschichte beginnt, ist dort
         // unlesbar (Beleg 16.08.2026: die gesuchte Adresse stand bei Zeichen
         // 323). Das Werkzeug selbst muss es sagen.
-        what_worked:  { type: 'string', description: 'What solved it. LEAD WITH THE DECISIVE FACT (the number, address, command) in the first 100 characters — briefings truncate there.' },
+        what_worked:  { type: 'string', description: 'What solved it. LEAD WITH THE DECISIVE FACT (number, address, command) in the first 100 characters. A measured number needs its basis ("89.6 % on 500 questions, npm run bench"); re-measure at 2x data' },
         what_failed:  { type: 'string', description: 'What did NOT work (optional but valuable)' },
         // Gemessen am 30.08.2026 (src/bench/symptom-probe.ts): traegt eine
         // Lektion das SYMPTOM in den Worten des Suchenden, halbiert sich ihr
@@ -735,7 +735,7 @@ const TOOLS = [
       'Returns the fixes, decisions and pitfalls this team already learned for the task at hand. ' +
       'Call it FIRST at the start of every coding task — before reading files or editing — with one line about the task, ' +
       'e.g. smart_recall("fix login redirect loop"). Finds lessons by meaning, not exact words. ' +
-      'instance_id may be omitted; the configured instance is used — never guess one. ' +
+      'instance_id may be omitted (never guess one). ' +
       'Falls back to remember_context keys if no semantic match is found.',
     inputSchema: {
       type: 'object',
