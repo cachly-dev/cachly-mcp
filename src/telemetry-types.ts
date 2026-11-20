@@ -19,6 +19,13 @@ export type FunnelEventName =
    * (19.10.2026: kein fremdes Konto hatte je smart_recall gerufen).
    */
   | 'mcp_verbunden'
+  /**
+   * Stop-Hook (Claude Code): Am Zugende gab es echte Arbeit ohne Lernaufruf, die
+   * KI wurde einmal um eine Lektion gebeten (lern-rueckfrage.ts).
+   */
+  | 'auto_learn_asked'
+  /** Stop-Hook: die Wortsuche in der letzten Antwort hat eine Lektion gespeichert (Rueckfall). */
+  | 'auto_learn_saved'
   // Auth lifecycle
   | 'device_flow_started'
   | 'device_flow_completed'

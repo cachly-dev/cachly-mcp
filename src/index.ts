@@ -1944,7 +1944,7 @@ This project has a Cachly AI Brain — persistent, cross-session memory of past 
 
 - At the START of every task, before reading files or editing: call smart_recall with one line about the task. If it returns lessons, apply them before researching from scratch.
 - WHEN debugging an error: call causal_trace with the exact error first — a known fix may already exist.
-- AFTER a fix, deploy, or discovery: call learn_from_attempts so the knowledge persists.
+- REQUIRED LAST STEP after a fix, decision or discovery: call learn_from_attempts once, decisive fact (number, command, cause) first. Skipping it loses the lesson for every later session.
 - BEFORE a risky op (deploy, migration, dependency bump): call brain_predict.
 
 You do not need to pass instance_id: the server uses CACHLY_BRAIN_INSTANCE_ID if it is set, and otherwise the Brain saved by \`cachly setup\` in ~/.cachly/credentials.json.

@@ -35,6 +35,7 @@ import { readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { parseHookPayload, runEinblendung, stopLernanfrage, stopObservation } from './ambient-cli.js';
 import { stopAntwort } from './schreibbeleg.js';
+import { lernRueckfrage, lernaufrufImProtokollEnde, frageIstFrisch, meldeAutoLernen } from './lern-rueckfrage.js';
 import { holeBestand, hookAusgabe, starteNebenlauf } from './einblendung.js';
 import { STARTWISSEN_IMPORT, hookImportFuerAuftrag, importiereStartwissen } from './startwissen-hook.js';
 import { belohnungMelden } from './lernen.js';
@@ -282,18 +283,34 @@ export async function hookAntwort(aufruf: HookAufruf): Promise<string> {
     const cfg = { apiUrl: a.apiUrl, jwt, instanceId };
 
     if (ereignis === 'Stop') {
-      const obs = payload ? stopObservation(payload) : null;
+      // Lern-Rueckfrage (Claude Code): Arbeit ohne Lernaufruf schickt die KI einmal
+      // zurueck. Die Wortsuche unten bleibt Rueckfall, wenn NICHT gefragt wird.
+      const stopAktiv = payload?.stop_hook_active === true;
+      const melden = (e: 'auto_learn_asked' | 'auto_learn_saved') =>
+        meldeAutoLernen(e, { apiUrl: cfg.apiUrl, jwt: cfg.jwt, instanceId: cfg.instanceId, version: pluginVersion(a.umfeld), env: a.umfeld.env, fetchFn: a.fetchFn });
+      const belohnung = belohnungMelden(cfg, payload?.session_id ?? null, zeilen, { fetchFn: a.fetchFn });
+      const frage = a.editor === 'claude' && zeilen
+        ? lernRueckfrage({ zeilen, sessionId: payload?.session_id ?? null, stopHookAktiv: stopAktiv, heim: a.umfeld.heim, env: a.umfeld.env })
+        : null;
+      if (frage) {
+        await Promise.all([belohnung, melden('auto_learn_asked')]);
+        return frage;
+      }
+      // Doppeltes Speichern vermeiden: lief im Zug schon ein Lernaufruf (oder ist
+      // dies die Antwort auf unsere Frage), sucht die Wortsuche nicht noch einmal.
+      const schonGelernt = !!zeilen && (lernaufrufImProtokollEnde(zeilen)
+        || (stopAktiv && frageIstFrisch(a.umfeld.heim, payload?.session_id ?? '')));
+      const obs = payload && !schonGelernt ? stopObservation(payload) : null;
       const lernen = obs
         ? (a.fetchFn ?? fetch)(`${cfg.apiUrl}/api/v1/instances/${cfg.instanceId}/learn`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.jwt}` },
           body: JSON.stringify(stopLernanfrage(obs)),
           signal: AbortSignal.timeout(8000),
-        }).catch(() => undefined)
+        }).then((r) => (r && r.ok ? melden('auto_learn_saved') : undefined)).catch(() => undefined)
         : undefined;
       // Lernen aus Nutzung (lernen.ts): hat der Agent eine eingeblendete
       // Lektion in diesem Zug aufgegriffen? Bewerten und melden.
-      const belohnung = belohnungMelden(cfg, payload?.session_id ?? null, zeilen, { fetchFn: a.fetchFn });
       await Promise.all([lernen, belohnung]);
       return '';
     }
