@@ -7,6 +7,22 @@
 
 ---
 
+## [0.10.267] – 2026-11-20 — *"Claude.ai and ChatGPT sign in instead of sending a key."*
+
+HTTP mode speaks MCP authorization (spec 2025-06-18). It serves Protected Resource Metadata
+(RFC 9728) at `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/mcp`,
+naming the Keycloak realm as the only authorization server. Lazy authentication: without
+`Authorization`, `initialize`, notifications, `tools/list`, `prompts/list` and `resources/list`
+work as before (directories keep reading the tool list); only `tools/call` gets `401` with
+`WWW-Authenticate: Bearer error="invalid_token", ..., resource_metadata="..."`, which makes
+Claude show its Connect card (setup steps stay in the body; before, the tool call answered 200
+with them). A Keycloak access token is accepted when its signature
+(JWKS, node:crypto, no new dependency), issuer, audience and expiry check out; the API checks
+it again. Without `X-Cachly-Instance` the server opens the newest running Brain of the account;
+no running Brain means the tools say so and link to the dashboard. `cky_` keys work as before.
+Settings: `MCP_OAUTH_RESOURCE`, `MCP_OAUTH_ISSUER`, `MCP_OAUTH_AUDIENCE`, `MCP_OAUTH_JWKS_URL`,
+`MCP_OAUTH_SCOPES` (see `src/remote-oauth.ts`).
+
 ## [0.10.259] – 2026-11-18 — *"mcp.cachly.dev opens your own Brain."*
 
 HTTP mode now serves many keys in one process. Send `Authorization: Bearer cky_...` (and

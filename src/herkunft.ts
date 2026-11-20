@@ -58,7 +58,10 @@ export function ermittleQuelle(env: NodeJS.ProcessEnv = process.env): LektionsQu
   // das Konto ist das der ANFRAGE, nie das des Prozesses.
   if (istMehrmandant()) {
     const k = mandantKontext();
-    return { agent: 'mcp-http', ...(k ? { principal: `key:${k.schluesselHash.slice(0, 12)}` } : {}), via: 'mcp' };
+    // OAuth-Anmeldung: das Token wechselt alle paar Minuten, der Inhaber (sub,
+    // vom JwtPruefer und der API geprueft) bleibt — wie im stdio-Modus mit JWT.
+    const principal = k ? (k.sub ? `sub:${k.sub.slice(0, 64)}` : `key:${k.schluesselHash.slice(0, 12)}`) : undefined;
+    return { agent: 'mcp-http', ...(principal ? { principal } : {}), via: 'mcp' };
   }
   const agent = String(env.CACHLY_AGENT ?? '').trim() || clientKennung || 'unbekannt';
   const token = String(env.CACHLY_JWT ?? '').trim();

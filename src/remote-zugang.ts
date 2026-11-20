@@ -19,17 +19,28 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash } from 'node:crypto';
 import { isIP } from 'node:net';
+import { siehtAusWieJwt, waehleStandardBrain, zerlegeJwt } from './remote-oauth.js';
 import { KERNWERKZEUGE } from './werkzeug-auswahl.js';
 
 // ── Kontext je Anfrage ───────────────────────────────────────────────────────
 
 export interface MandantKontext {
-  /** Der Schluessel dieser Anfrage. Nie loggen, nie in eine Antwort schreiben. */
+  /**
+   * Der Schluessel dieser Anfrage: ein cky_-Schluessel oder (seit 20.11.2026)
+   * ein Keycloak-Zugangstoken aus der OAuth-Anmeldung. Nie loggen, nie in eine
+   * Antwort schreiben.
+   */
   readonly schluessel: string;
   /** sha256 des Schluessels, hex. Darf in Schluesseln von Speichern stehen. */
   readonly schluesselHash: string;
-  /** Die Instanz, die die API fuer diesen Schluessel freigegeben hat. */
+  /**
+   * Die Instanz, die die API fuer diesen Schluessel freigegeben hat. Leer nur bei
+   * einer OAuth-Anmeldung ohne laufendes Brain: dann antworten die Werkzeuge mit
+   * KEIN_BRAIN_TEXT (remote-oauth.ts), statt die Verbindung abzuweisen.
+   */
   readonly instanzId: string;
+  /** Inhaber (sub) einer OAuth-Anmeldung; bei cky_-Schluesseln undefined. */
+  readonly sub?: string;
 }
 
 const speicher = new AsyncLocalStorage<MandantKontext>();
@@ -59,8 +70,8 @@ export function hashDesSchluessels(schluessel: string): string {
   return createHash('sha256').update(schluessel).digest('hex');
 }
 
-export function baueKontext(schluessel: string, instanzId: string): MandantKontext {
-  return { schluessel, schluesselHash: hashDesSchluessels(schluessel), instanzId };
+export function baueKontext(schluessel: string, instanzId: string, sub?: string): MandantKontext {
+  return { schluessel, schluesselHash: hashDesSchluessels(schluessel), instanzId, ...(sub ? { sub } : {}) };
 }
 
 /**
@@ -74,21 +85,31 @@ export function poolSchluessel(schluessel: string, instanzId: string): string {
 
 // ── Kopf lesen ───────────────────────────────────────────────────────────────
 
-/** Laenger darf der Authorization-Kopf nicht sein. Ein cky_-Schluessel hat ~50 Zeichen. */
-export const MAX_AUTH_KOPF = 256;
+/**
+ * Laenger darf der Authorization-Kopf nicht sein. Ein cky_-Schluessel hat ~50
+ * Zeichen (die Form unten laesst hoechstens 204 zu); ein Keycloak-Zugangstoken
+ * hat 1 bis 2 KB, mit vielen Rollen auch mehr. Bis 20.11.2026 lag die Grenze bei
+ * 256 Zeichen — damals gab es nur cky_-Schluessel.
+ */
+export const MAX_AUTH_KOPF = 8192;
 const SCHLUESSEL_FORM = /^cky_[A-Za-z0-9_-]{8,200}$/;
 const UUID_FORM = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type KopfErgebnis =
   | { art: 'fehlt' }
-  | { art: 'abgelehnt'; grund: 'zu-lang' | 'mehrfach' | 'kein-bearer' | 'form' }
-  | { art: 'ok'; schluessel: string };
+  | { art: 'abgelehnt'; grund: 'zu-lang' | 'mehrfach' | 'kein-bearer' | 'form' | 'aussteller' }
+  | { art: 'ok'; schluessel: string }
+  /** Ein JWT, dessen iss (UNGEPRUEFT gelesen) der erwartete Aussteller ist. Pruefen: JwtPruefer. */
+  | { art: 'jwt'; token: string };
 
 /**
- * Liest `Authorization: Bearer cky_...`. Nur Bearer, nur cky_-Schluessel, hoechstens
- * 256 Zeichen. Der Grund einer Ablehnung enthaelt nie den Kopf selbst.
+ * Liest `Authorization: Bearer <...>`. Nur Bearer, hoechstens MAX_AUTH_KOPF Zeichen.
+ * Angenommen werden cky_-Schluessel und — nur wenn `aussteller` gesetzt ist —
+ * JWTs, deren iss genau dieser Aussteller ist. Ein JWT von anderswo ist
+ * 'aussteller', ohne `aussteller` ist jedes JWT 'form' (Verhalten bis 20.11.2026).
+ * Der Grund einer Ablehnung enthaelt nie den Kopf selbst.
  */
-export function leseBearer(kopf: string | string[] | undefined): KopfErgebnis {
+export function leseBearer(kopf: string | string[] | undefined, opt?: { aussteller?: string }): KopfErgebnis {
   if (kopf === undefined) return { art: 'fehlt' };
   if (Array.isArray(kopf)) {
     // req.headersDistinct liefert immer eine Liste; Node selbst behaelt sonst nur
@@ -101,8 +122,14 @@ export function leseBearer(kopf: string | string[] | undefined): KopfErgebnis {
   if (kopf.length > MAX_AUTH_KOPF) return { art: 'abgelehnt', grund: 'zu-lang' };
   const m = /^Bearer[ \t]+(\S+)$/i.exec(kopf.trim());
   if (!m) return { art: 'abgelehnt', grund: 'kein-bearer' };
-  if (!SCHLUESSEL_FORM.test(m[1])) return { art: 'abgelehnt', grund: 'form' };
-  return { art: 'ok', schluessel: m[1] };
+  if (SCHLUESSEL_FORM.test(m[1])) return { art: 'ok', schluessel: m[1] };
+  if (opt?.aussteller && siehtAusWieJwt(m[1])) {
+    const teile = zerlegeJwt(m[1]);
+    if (!teile) return { art: 'abgelehnt', grund: 'form' };
+    if (teile.ansprueche.iss !== opt.aussteller) return { art: 'abgelehnt', grund: 'aussteller' };
+    return { art: 'jwt', token: m[1] };
+  }
+  return { art: 'abgelehnt', grund: 'form' };
 }
 
 export type InstanzKopf =
@@ -367,9 +394,21 @@ export function installiereApiKoepfe(
   return true;
 }
 
+/** Woher der Schluessel stammt. Fehlt die Angabe, ist es ein cky_-Schluessel. */
+export interface ZugangsArt {
+  /** true = Zugangstoken aus der OAuth-Anmeldung (bereits vom JwtPruefer geprueft). */
+  anmeldung?: boolean;
+  /** Ablauf des Tokens (ms seit 1970): kein Ergebnis wird laenger gemerkt. */
+  bisMs?: number;
+}
+
 export interface ZugangsAufloeser {
-  /** Gibt die Instanz zurueck, die die API fuer diesen Schluessel freigibt, oder wirft ZugangAbgelehnt. */
-  loese(schluessel: string, instanzKopf: string | undefined, aufruferIp?: string): Promise<string>;
+  /**
+   * Gibt die Instanz zurueck, die die API fuer diesen Schluessel freigibt, oder wirft
+   * ZugangAbgelehnt. Bei einer OAuth-Anmeldung ohne Instanzkopf und ohne laufendes
+   * Brain: "" (die Werkzeuge melden das, die Verbindung bleibt stehen).
+   */
+  loese(schluessel: string, instanzKopf: string | undefined, aufruferIp?: string, art?: ZugangsArt): Promise<string>;
   /** Nur fuer Tests und Abbau. */
   leeren(): void;
 }
@@ -384,6 +423,7 @@ export function baueZugangsAufloeser(
   opt?: { jetzt?: () => number; grenze?: PruefGrenze },
 ): ZugangsAufloeser {
   const jetzt = opt?.jetzt;
+  const uhr = jetzt ?? Date.now;
   const gut = new BegrenzterSpeicher<string>({ max: ZUGANG_MAX, ttlMs: ZUGANG_TTL_MS, jetzt });
   const schlecht = new BegrenzterSpeicher<ZugangAbgelehnt>({ max: ABLEHNUNG_MAX, ttlMs: ABLEHNUNG_TTL_MS, jetzt });
   // Parallele Anfragen mit demselben Schluessel teilen EINEN Abruf.
@@ -394,21 +434,35 @@ export function baueZugangsAufloeser(
     return new ZugangAbgelehnt(429, `Die cachly-API begrenzt gerade die Anfragen. Bitte in ${s} s erneut versuchen.`, s);
   };
 
-  async function ohneMerker(schluessel: string, instanzKopf: string | undefined): Promise<string> {
+  async function ohneMerker(schluessel: string, instanzKopf: string | undefined, anmeldung: boolean): Promise<string> {
+    const abgelehnt = anmeldung
+      ? 'Die cachly-API hat die Anmeldung abgelehnt (abgelaufen oder widerrufen). Bitte neu anmelden.'
+      : 'Der Schluessel wurde abgelehnt (ungueltig, abgelaufen oder widerrufen).';
     if (instanzKopf) {
       const r = await abruf(`/api/v1/instances/${instanzKopf}`, schluessel);
       if (r.status === 429) throw zuVieleAnfragen(r);
       if (r.status === 200) return instanzKopf;
-      if (r.status === 401) throw new ZugangAbgelehnt(401, 'Der Schluessel wurde abgelehnt (ungueltig, abgelaufen oder widerrufen).');
+      if (r.status === 401) throw new ZugangAbgelehnt(401, abgelehnt);
       // 403 und 404 bewusst gleich: wer fremde Instanz-IDs probiert, erfaehrt nichts.
       if (r.status === 403 || r.status === 404) {
-        throw new ZugangAbgelehnt(403, 'Dieser Schluessel gilt nicht fuer die angegebene Instanz (Kopf X-Cachly-Instance).');
+        throw new ZugangAbgelehnt(403, anmeldung
+          ? 'Dein Konto hat keinen Zugriff auf die angegebene Instanz (Kopf X-Cachly-Instance).'
+          : 'Dieser Schluessel gilt nicht fuer die angegebene Instanz (Kopf X-Cachly-Instance).');
       }
       throw new ZugangAbgelehnt(502, `Die cachly-API antwortete mit ${r.status}; bitte spaeter erneut versuchen.`);
     }
     const r = await abruf('/api/v1/instances', schluessel);
     if (r.status === 429) throw zuVieleAnfragen(r);
-    if (r.status === 401) throw new ZugangAbgelehnt(401, 'Der Schluessel wurde abgelehnt (ungueltig, abgelaufen oder widerrufen).');
+    if (r.status === 401) throw new ZugangAbgelehnt(401, abgelehnt);
+    if (anmeldung) {
+      if (r.status !== 200) {
+        throw new ZugangAbgelehnt(502, `Die cachly-API antwortete mit ${r.status}; bitte spaeter erneut versuchen.`);
+      }
+      // Claude.ai und ChatGPT koennen keinen Instanzkopf setzen: der Server waehlt
+      // nach einer festen Regel (waehleStandardBrain). Kein Brain ist kein Fehler
+      // der Verbindung, sondern eine Auskunft fuer den Werkzeugaufruf.
+      return waehleStandardBrain(r.body);
+    }
     if (r.status === 403) {
       throw new ZugangAbgelehnt(
         400,
@@ -434,11 +488,18 @@ export function baueZugangsAufloeser(
     );
   }
 
+  /** Wie lange ein Ergebnis gilt: "kein Brain" nur kurz, nie laenger als das Token. */
+  const lebensdauer = (id: string, art: ZugangsArt | undefined): number => {
+    let ms = id === '' ? ABLEHNUNG_TTL_MS : ZUGANG_TTL_MS;
+    if (art?.bisMs !== undefined) ms = Math.min(ms, art.bisMs - uhr());
+    return ms;
+  };
+
   return {
-    async loese(schluessel, instanzKopf, aufruferIp) {
+    async loese(schluessel, instanzKopf, aufruferIp, art) {
       const merker = `${hashDesSchluessels(schluessel)}|${instanzKopf ?? '*'}`;
       const bekannt = gut.get(merker);
-      if (bekannt) return bekannt;
+      if (bekannt !== undefined) return bekannt; // "" (kein Brain) ist auch ein Ergebnis
       const abgelehnt = schlecht.get(merker);
       if (abgelehnt) throw abgelehnt;
       let p = laufend.get(merker);
@@ -451,8 +512,12 @@ export function baueZugangsAufloeser(
             throw new ZugangAbgelehnt(429, `Zu viele Schluesselpruefungen von dieser Adresse. Bitte in ${g.retryAfterS} s erneut versuchen.`, g.retryAfterS);
           }
         }
-        p = ohneMerker(schluessel, instanzKopf)
-          .then((id) => { gut.set(merker, id); return id; })
+        p = ohneMerker(schluessel, instanzKopf, art?.anmeldung === true)
+          .then((id) => {
+            const ms = lebensdauer(id, art);
+            if (ms > 0) gut.set(merker, id, ms);
+            return id;
+          })
           .catch((e: unknown) => {
             // Nur eindeutige Antworten der API merken, nie Netzfehler (502).
             if (e instanceof ZugangAbgelehnt && e.httpStatus !== 502 && e.httpStatus !== 429) schlecht.set(merker, e);
@@ -473,11 +538,20 @@ export function baueZugangsAufloeser(
 
 // ── Texte ────────────────────────────────────────────────────────────────────
 
-/** Die Antwort auf einen Werkzeugaufruf ohne Schluessel. Nennt nie einen Schluessel. */
+/**
+ * Die Antwort auf einen Werkzeugaufruf ohne Schluessel. Seit 20.11.2026 steht sie im
+ * Rumpf der 401-Antwort (Claude startet die Anmeldung nur auf eine 401; initialize
+ * und tools/list laufen weiter ohne Kopf). Wer mit curl oder einem Client mit festem
+ * Kopf kommt, liest hier, was fehlt.
+ * Nennt nie einen Schluessel.
+ */
 export const ANLEITUNG_OHNE_KOPF = [
-  'Dieser Remote-MCP-Server braucht deinen cachly-Schluessel, damit er DEIN Brain oeffnet.',
-  'The remote MCP server needs your cachly API key to open YOUR Brain.',
+  'Dieser Remote-MCP-Server braucht deine Anmeldung oder deinen cachly-Schluessel, damit er DEIN Brain oeffnet.',
+  'The remote MCP server needs your sign-in or your cachly API key to open YOUR Brain.',
   '',
+  'Claude.ai / ChatGPT: Konnektor mit der URL https://mcp.cachly.dev/mcp hinzufuegen und mit dem cachly-Konto anmelden (OAuth).',
+  '',
+  'Mit festem Kopf / with a fixed header:',
   '1. Schluessel holen / get a key: https://cachly.dev/setup-ai',
   '2. Kopf setzen / set the header, zum Beispiel / for example:',
   '   claude mcp add --transport http cachly https://mcp.cachly.dev/mcp --header "Authorization: Bearer <key>"',

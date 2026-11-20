@@ -27,6 +27,7 @@ import {
   mandantKontext,
   poolSchluessel,
 } from '../remote-zugang.js';
+import { rsaAussteller, unterschreibe, zugangsAnsprueche } from './helfer/test-jwt.js';
 
 /**
  * ABNAHME Remote-MCP (HTTP-Modus): hinter /mcp steht das Brain des Aufrufers.
@@ -37,6 +38,7 @@ const KEY_A = 'cky_live_AAAAAAAAAAAAAAAAAAAAAAAA';
 const KEY_B = 'cky_live_BBBBBBBBBBBBBBBBBBBBBBBB';
 const INST_1 = '11111111-1111-4111-8111-111111111111';
 const INST_2 = '22222222-2222-4222-8222-222222222222';
+const INST_3 = '33333333-3333-4333-8333-333333333333';
 
 describe('Kopf lesen', () => {
   it('nimmt Bearer mit cky_-Schluessel', () => {
@@ -59,6 +61,11 @@ describe('Kopf lesen', () => {
   it('begrenzt die Kopfgroesse', () => {
     const lang = `Bearer cky_${'a'.repeat(MAX_AUTH_KOPF)}`;
     expect(leseBearer(lang)).toEqual({ art: 'abgelehnt', grund: 'zu-lang' });
+    // Die Grenze stieg am 20.11.2026 von 256 auf 8192 Zeichen, weil Keycloak-
+    // Zugangstokens 1 bis 2 KB lang sind. Ein ueberlanger cky_-Schluessel kommt
+    // trotzdem nicht durch: seine Form laesst hoechstens 204 Zeichen zu.
+    expect(MAX_AUTH_KOPF).toBe(8192);
+    expect(leseBearer(`Bearer cky_${'a'.repeat(400)}`)).toEqual({ art: 'abgelehnt', grund: 'form' });
   });
 
   it('doppelter Kopf wird abgelehnt', () => {
@@ -434,14 +441,41 @@ describe('HTTP-Server (echter Prozess, Attrappen-API auf Loopback)', () => {
   let kind: ChildProcess;
   let base = '';
   let stderr = '';
+  let aussteller = '';
   const apiAnfragen: Array<{ pfad: string; auth: string }> = [];
+  // Der Anmeldedienst ist eine Attrappe auf demselben Loopback-Server: er liefert
+  // die Schluesselliste, der Test haelt den privaten Schluessel (helfer/test-jwt.ts).
+  const anmeldung = rsaAussteller('kc-1');
+  const RESSOURCE = 'https://mcp.example.test/mcp';
+  const token = (sub: string, extra: Record<string, unknown> = {}) =>
+    unterschreibe(anmeldung, { ...zugangsAnsprueche(aussteller, [RESSOURCE, 'account'], sub), ...extra });
 
   beforeAll(async () => {
     api = createServer((req, res) => {
       const auth = String(req.headers.authorization ?? '');
       apiAnfragen.push({ pfad: req.url ?? '', auth });
       res.setHeader('Content-Type', 'application/json');
+      if (req.url === '/realms/test/protocol/openid-connect/certs') { res.end(JSON.stringify({ keys: [anmeldung.jwk] })); return; }
       if (auth.includes('DRAUSSEN429')) { res.writeHead(429, { 'Retry-After': '23' }); res.end('{"error":"too many requests"}'); return; }
+      // Zugangstoken: die echte API prueft die Unterschrift; die Attrappe liest nur den Inhaber.
+      const jwt = /^Bearer (ey\S+)$/.exec(auth)?.[1];
+      if (jwt) {
+        const sub = (JSON.parse(Buffer.from(jwt.split('.')[1], 'base64url').toString()) as { sub?: string }).sub;
+        if (sub === 'von-der-api-widerrufen') { res.writeHead(401); res.end('{"error":"invalid or expired token"}'); return; }
+        if (req.url === '/api/v1/instances') {
+          const data = sub === 'mit-brains'
+            ? [
+              { id: INST_2, status: 'suspended', created_at: '2026-11-19T00:00:00Z' },
+              { id: INST_1, status: 'running', created_at: '2026-11-01T00:00:00Z' },
+              { id: INST_3, status: 'running', created_at: '2026-10-01T00:00:00Z' },
+            ]
+            : [{ id: INST_2, status: 'provisioning', created_at: '2026-11-19T00:00:00Z' }];
+          res.end(JSON.stringify({ data, count: data.length }));
+          return;
+        }
+        res.writeHead(403); res.end('{"error":"forbidden"}');
+        return;
+      }
       if (auth !== `Bearer ${KEY_A}`) { res.writeHead(401); res.end('{"error":"unauthorized"}'); return; }
       if (req.url === '/api/v1/instances') { res.end(JSON.stringify({ data: [{ id: INST_1, status: 'running' }] })); return; }
       if (req.url === `/api/v1/instances/${INST_1}`) { res.end(JSON.stringify({ id: INST_1, status: 'running' })); return; }
@@ -449,6 +483,7 @@ describe('HTTP-Server (echter Prozess, Attrappen-API auf Loopback)', () => {
     });
     await new Promise<void>((r) => api.listen(0, '127.0.0.1', r));
     const apiPort = (api.address() as AddressInfo).port;
+    aussteller = `http://127.0.0.1:${apiPort}/realms/test`;
 
     const frei = createServer();
     await new Promise<void>((r) => frei.listen(0, '127.0.0.1', r));
@@ -465,6 +500,10 @@ describe('HTTP-Server (echter Prozess, Attrappen-API auf Loopback)', () => {
         // Ein Schluessel im Prozess darf im HTTP-Modus nie gelten.
         CACHLY_JWT: 'cky_live_PROZESSSCHLUESSEL_DARF_NIE_GELTEN',
         CACHLY_BRAIN_INSTANCE_ID: INST_2,
+        // OAuth gegen die Attrappe; die Schluesselliste folgt der Keycloak-Vorgabe
+        // <ISSUER>/protocol/openid-connect/certs, die Zielgruppe der Ressource.
+        MCP_OAUTH_RESOURCE: RESSOURCE,
+        MCP_OAUTH_ISSUER: aussteller,
         CACHLY_UPDATE_CHECK: 'false',
         CACHLY_NO_TELEMETRY: '1',
         HOME: process.env.TEMP ?? process.env.TMPDIR ?? '/tmp',
@@ -496,19 +535,141 @@ describe('HTTP-Server (echter Prozess, Attrappen-API auf Loopback)', () => {
     expect(JSON.stringify(h)).not.toContain('zeroResults');
   });
 
+  // Bewusst (seit #1120): Verzeichnisse wie Glama, Smithery und mcptry lesen die
+  // Werkzeugliste OHNE Kopf. Mit OAuth bleibt das so (Lazy Authentication).
   it('ohne Kopf: die Werkzeugliste bleibt sichtbar', async () => {
     const r = await rpc(`${base}/mcp`, 'tools/list', {});
     expect(r.status).toBe(200);
     expect(sseOderJson(r.text).result!.tools!.length).toBeGreaterThan(5);
   });
 
-  it('ohne Kopf: ein Werkzeugaufruf bekommt die Anleitung, keinen 500er', async () => {
+  it('ohne Kopf: initialize, Benachrichtigung, prompts/list und resources/list laufen wie bisher', async () => {
+    const init = await rpc(`${base}/mcp`, 'initialize', {
+      protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'verzeichnis', version: '0' },
+    });
+    expect(init.status).toBe(200);
+    expect(JSON.stringify(sseOderJson(init.text))).toContain('serverInfo');
+    const note = await fetch(`${base}/mcp`, {
+      method: 'POST', headers: KOPF, body: JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+    });
+    expect(note.status).toBe(202);
+    expect((await rpc(`${base}/mcp`, 'prompts/list', {})).status).toBe(200);
+    expect((await rpc(`${base}/mcp`, 'resources/list', {})).status).toBe(200);
+  });
+
+  // GEAENDERT am 20.11.2026: Die Anleitung kam frueher als Werkzeugantwort (200,
+  // isError). Claude startet die Anmeldung aber NUR auf eine HTTP-401 mit
+  // WWW-Authenticate; eine 200 mit isError gibt es nur als Text an das Modell
+  // weiter (claude.com/docs/connectors/building/lazy-authentication). Darum jetzt
+  // 401 genau auf den Werkzeugaufruf — die Anleitung steht im Rumpf, damit Clients
+  // mit vergessenem festem Kopf weiter lesen, was fehlt. Weiter gilt: kein 500er.
+  it('ohne Kopf: ein Werkzeugaufruf bekommt 401 wie in der Claude-Doku, Anleitung im Rumpf, keinen 500er', async () => {
     const r = await aufruf('smart_recall', { query: 'x' });
+    expect(r.status).toBe(401);
+    const kopf = r.headers.get('www-authenticate') ?? '';
+    expect(kopf).toMatch(/^Bearer /);
+    expect(kopf).toContain('error="invalid_token"');
+    expect(kopf).toContain('error_description="Authentication required for this tool"');
+    expect(kopf).toContain('resource_metadata="https://mcp.example.test/.well-known/oauth-protected-resource/mcp"');
+    expect(kopf).toContain('scope="openid profile email"');
+    const text = (JSON.parse(r.text) as { error: { message: string } }).error.message;
+    expect(text).toContain('claude mcp add --transport http cachly https://mcp.cachly.dev/mcp');
+    expect(text).toContain('autopilot');
+    expect(text).toContain('https://cachly.dev/setup-ai');
+    expect(text).toContain('OAuth');
+  });
+
+  it('ohne Kopf: ein Stapel mit EINEM Werkzeugaufruf bekommt 401; der Verteiler cachly_tool ebenso', async () => {
+    const stapel = await fetch(`${base}/mcp`, {
+      method: 'POST',
+      headers: KOPF,
+      body: JSON.stringify([
+        { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
+        { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'smart_recall', arguments: { query: 'x' } } },
+      ]),
+    });
+    expect(stapel.status).toBe(401);
+    const verteiler = await aufruf('cachly_tool', { tool: 'smart_recall', arguments: { query: 'x' } });
+    expect(verteiler.status).toBe(401);
+  });
+
+  it('ohne Kopf: kaputtes JSON bekommt 400 (Parse error), wie vom SDK gewohnt', async () => {
+    const r = await fetch(`${base}/mcp`, { method: 'POST', headers: KOPF, body: '{"jsonrpc":"2.0",' });
+    expect(r.status).toBe(400);
+    expect(await r.text()).toContain('-32700');
+  });
+
+  it('Metadaten (RFC 9728) unter beiden Pfaden, ohne Kopf, mit dem Anmeldedienst als einzigem Eintrag', async () => {
+    for (const pfad of ['/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource']) {
+      const r = await fetch(`${base}${pfad}`);
+      expect(r.status).toBe(200);
+      expect(r.headers.get('content-type')).toContain('application/json');
+      const m = (await r.json()) as Record<string, unknown>;
+      expect(m.resource).toBe(RESSOURCE);
+      expect(m.authorization_servers).toEqual([aussteller]);
+      expect(m.bearer_methods_supported).toEqual(['header']);
+      expect(m.scopes_supported).toEqual(['openid', 'profile', 'email']);
+      expect(m.resource_documentation).toBe('https://cachly.dev/docs/remote-mcp');
+    }
+    expect((await fetch(`${base}/.well-known/oauth-protected-resource`, { method: 'POST' })).status).toBe(405);
+  });
+
+  it('Anmeldung (OAuth): gueltiges Token oeffnet das zuletzt angelegte LAUFENDE Brain', async () => {
+    const t = token('mit-brains');
+    const liste = await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: `Bearer ${t}` });
+    expect(liste.status).toBe(200);
+    expect(sseOderJson(liste.text).result!.tools!.length).toBeGreaterThan(5);
+    // Die API wurde mit DEMSELBEN Token gefragt.
+    expect(apiAnfragen.some((a) => a.pfad === '/api/v1/instances' && a.auth === `Bearer ${t}`)).toBe(true);
+    // INST_2 ist neuer, laeuft aber nicht; INST_3 laeuft, ist aelter. Gewaehlt: INST_1.
+    for (const fremd of [INST_2, INST_3]) {
+      const r = await aufruf('smart_recall', { query: 'x', instance_id: fremd }, { Authorization: `Bearer ${t}` });
+      expect(sseOderJson(r.text).result!.content![0].text!).toContain('nicht die, die dieser Schluessel freigibt');
+    }
+  });
+
+  it('Anmeldung ohne laufendes Brain: Verbindung steht, der Werkzeugaufruf nennt das Dashboard', async () => {
+    const t = token('ohne-brain');
+    expect((await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: `Bearer ${t}` })).status).toBe(200);
+    const r = await aufruf('smart_recall', { query: 'x' }, { Authorization: `Bearer ${t}` });
     expect(r.status).toBe(200);
     const antwort = sseOderJson(r.text).result!;
-    expect(antwort.content![0].text).toContain('claude mcp add --transport http cachly https://mcp.cachly.dev/mcp');
-    expect(antwort.content![0].text).toContain('autopilot');
-    expect(antwort.content![0].text).toContain('https://cachly.dev/setup-ai');
+    expect(antwort.isError).toBe(true);
+    expect(antwort.content![0].text).toContain('kein laufendes Brain');
+    expect(antwort.content![0].text).toContain('https://cachly.dev/instances');
+  });
+
+  it('Token mit fremder Zielgruppe, abgelaufen, fremd unterschrieben oder ID-Token: 401 invalid_token, ohne API-Aufruf', async () => {
+    const fremd = rsaAussteller('kc-1'); // gleicher kid, anderer Schluessel
+    const jetzt = Math.floor(Date.now() / 1000);
+    const falsche = [
+      unterschreibe(anmeldung, zugangsAnsprueche(aussteller, 'account', 'mit-brains')),
+      unterschreibe(anmeldung, zugangsAnsprueche(aussteller, RESSOURCE, 'mit-brains', jetzt - 7200)),
+      unterschreibe(fremd, zugangsAnsprueche(aussteller, RESSOURCE, 'mit-brains')),
+      token('mit-brains', { typ: 'ID' }),
+    ];
+    const vorher = apiAnfragen.filter((a) => a.pfad.startsWith('/api/')).length;
+    for (const t of falsche) {
+      const r = await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: `Bearer ${t}`, 'X-Real-IP': '198.51.100.40' });
+      expect(r.status).toBe(401);
+      expect(r.headers.get('www-authenticate')).toContain('error="invalid_token"');
+      expect(r.headers.get('www-authenticate')).toContain('resource_metadata=');
+      expect(r.text).not.toContain(t);
+    }
+    expect(apiAnfragen.filter((a) => a.pfad.startsWith('/api/')).length).toBe(vorher);
+  });
+
+  it('Token eines anderen Ausstellers: 401, auch wenn es sonst stimmt', async () => {
+    const t = unterschreibe(anmeldung, zugangsAnsprueche('https://evil.example/realms/test', RESSOURCE, 'mit-brains'));
+    const r = await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: `Bearer ${t}` });
+    expect(r.status).toBe(401);
+    expect((JSON.parse(r.text) as { error: { message: string } }).error.message).toContain('nicht vom cachly-Anmeldedienst');
+  });
+
+  it('die API lehnt das Token ab (widerrufen): 401 invalid_token, damit der Client neu anmeldet', async () => {
+    const r = await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: `Bearer ${token('von-der-api-widerrufen')}` });
+    expect(r.status).toBe(401);
+    expect(r.headers.get('www-authenticate')).toContain('error="invalid_token"');
   });
 
   it('der Schluessel des Prozesses gilt im HTTP-Modus nicht', async () => {
@@ -590,8 +751,16 @@ describe('HTTP-Server (echter Prozess, Attrappen-API auf Loopback)', () => {
     expect(andere.status).toBe(401);
   });
 
-  it('kein Schluessel in stderr', () => {
+  it('cky_-Schluessel laufen neben OAuth unveraendert (Regression)', async () => {
+    const r = await rpc(`${base}/mcp`, 'tools/list', {}, { Authorization: `Bearer ${KEY_A}`, 'X-Real-IP': '198.51.100.50' });
+    expect(r.status).toBe(200);
+    const z = await aufruf('smart_recall', { query: 'x', instance_id: INST_2 }, { Authorization: `Bearer ${KEY_A}` });
+    expect(sseOderJson(z.text).result!.content![0].text!).toContain('nicht die, die dieser Schluessel freigibt');
+  });
+
+  it('kein Schluessel und kein Token in stderr', () => {
     expect(stderr).not.toContain(KEY_A);
     expect(stderr).not.toContain('PROZESSSCHLUESSEL');
+    expect(stderr).not.toMatch(/eyJ[A-Za-z0-9_-]{10,}/);
   });
 });

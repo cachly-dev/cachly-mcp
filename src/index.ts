@@ -819,6 +819,10 @@ import {
   bauePruefGrenze, leseAufruferIp, imAufrufer, installiereApiKoepfe,
   ANLEITUNG_OHNE_KOPF, istRemoteErlaubt, nurLokalText, bereinigeArgumente,
 } from './remote-zugang.js';
+import {
+  leseOAuthEinstellungen, schutzMetadaten, wwwAuthenticate, baueJwtPruefer, TokenAbgelehnt,
+  tokenFehlerText, KEIN_BRAIN_TEXT, brauchtAnmeldung, WERKZEUG_BRAUCHT_ANMELDUNG, MAX_RUMPF_OHNE_ANMELDUNG,
+} from './remote-oauth.js';
 import { ZWEIT_MODELL } from './rangfolge-stellschrauben.js';
 
 // ── Search Engine (imported from search.ts) ─────────────────────────────────
@@ -2218,12 +2222,14 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
 
   // ── HTTP-Modus (Remote-MCP): Zugang, Freigabe, Argumente ───────────────
   //
-  // Kein Kopf: die Werkzeugliste blieb sichtbar (Verzeichnisse wie Glama), der
-  // Aufruf bekommt die Anleitung. Mit Kopf: nur Kernwerkzeuge ohne Dateizugriff,
-  // Pfad-Argumente raus, instance_id immer die freigegebene.
+  // Ohne Kopf kommt seit 20.11.2026 kein Werkzeugaufruf mehr hierher (401 im
+  // HTTP-Teil, Lazy Authentication); die Zeile unten bleibt als Netz.
+  // OAuth-Anmeldung ohne laufendes Brain: Auskunft statt Werkzeug. Mit Kopf: nur
+  // Kernwerkzeuge ohne Dateizugriff, Pfad-Argumente raus, instance_id immer die freigegebene.
   if (istMehrmandant()) {
     const k = mandantKontext();
     if (!k) return { content: [{ type: 'text', text: ANLEITUNG_OHNE_KOPF }], isError: true };
+    if (!k.instanzId) return { content: [{ type: 'text', text: KEIN_BRAIN_TEXT }], isError: true };
     if (!istRemoteErlaubt(name)) return { content: [{ type: 'text', text: nurLokalText(name) }], isError: true };
     const b = bereinigeArgumente((args ?? {}) as Record<string, unknown>, k.instanzId);
     if ('fehler' in b) return { content: [{ type: 'text', text: b.fehler }], isError: true };
@@ -5463,6 +5469,8 @@ if (httpPort) {
   // Seit 0.10.259 oeffnet der Server das Brain DES AUFRUFERS: Kopf
   // `Authorization: Bearer cky_...`, optional `X-Cachly-Instance: <uuid>`.
   // Davor hielt der Prozess keinen Schluessel und zeigte nur die Werkzeugliste.
+  // Seit 20.11.2026 auch per OAuth: `Authorization: Bearer <Keycloak-Token>`,
+  // Metadaten unter /.well-known/oauth-protected-resource (remote-oauth.ts).
   //
   // Ab hier gilt in diesem Prozess nie mehr "der Schluessel des Prozesses":
   //   - JWT und Standard-Instanz des Prozesses werden geleert, jede Stelle liest
@@ -5489,15 +5497,41 @@ if (httpPort) {
     const ra = Number(antwort.headers.get('retry-after'));
     return { status: antwort.status, body, retryAfterS: Number.isFinite(ra) && ra > 0 ? ra : undefined };
   }, { grenze: bauePruefGrenze() });
+  // OAuth (remote-oauth.ts): Claude.ai und ChatGPT melden sich ueber Keycloak an,
+  // statt einen Kopf zu setzen. Eine kaputte URL in MCP_OAUTH_* bricht den Start ab.
+  const oauth = leseOAuthEinstellungen();
+  const jwtPruefer = baueJwtPruefer(oauth);
+  process.stderr.write(
+    `cachly-mcp HTTP: OAuth ${oauth.resource} -> ${oauth.aussteller}, ` +
+    `Unterschrift ${oauth.jwksUrl ? 'hier geprueft' : 'nur in der API geprueft (MCP_OAUTH_JWKS_URL=aus)'}\n`,
+  );
   const { createServer } = await import('node:http');
-  const abweisen = (res: import('node:http').ServerResponse, status: number, text: string, retryAfterS?: number): void => {
+  /**
+   * Jede 401 sagt error="invalid_token" und nennt die Metadaten (RFC 9728, 5.1):
+   * der Client holt ein (neues) Token. `beschreibung` wird error_description.
+   */
+  const abweisen = (
+    res: import('node:http').ServerResponse, status: number, text: string, retryAfterS?: number, beschreibung?: string,
+  ): void => {
     if (res.headersSent) return;
     res.writeHead(status, {
       'Content-Type': 'application/json',
       ...(status === 429 && retryAfterS ? { 'Retry-After': String(retryAfterS) } : {}),
-      ...(status === 401 ? { 'WWW-Authenticate': 'Bearer realm="cachly"' } : {}),
+      ...(status === 401 ? { 'WWW-Authenticate': wwwAuthenticate(oauth, 'invalid_token', beschreibung) } : {}),
     });
     res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32001, message: text }, id: null }));
+  };
+  /** Liest den Rumpf, hoechstens `max` Bytes; undefined = zu gross. */
+  const leseRumpf = async (req: import('node:http').IncomingMessage, max: number): Promise<string | undefined> => {
+    const teile: Buffer[] = [];
+    let n = 0;
+    for await (const stueck of req) {
+      const b = stueck as Buffer;
+      n += b.length;
+      if (n > max) return undefined;
+      teile.push(b);
+    }
+    return Buffer.concat(teile).toString('utf8');
   };
   const httpServer = createServer((req, res) => {
     const url = new URL(req.url ?? '/', `http://localhost:${httpPort}`);
@@ -5508,37 +5542,84 @@ if (httpPort) {
       res.end(JSON.stringify({ status: 'ok', version: CURRENT_VERSION, mode: 'http-remote' }));
       return;
     }
+    if (oauth.metadatenPfade.includes(url.pathname)) {
+      // RFC 9728: wo die Anmeldung stattfindet. Oeffentlich, ohne Kopf, ohne Zustand.
+      if (req.method === 'OPTIONS') { res.writeHead(204, { Allow: 'GET, HEAD, OPTIONS' }); res.end(); return; }
+      if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405, { Allow: 'GET, HEAD, OPTIONS' }); res.end(); return; }
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'public, max-age=300' });
+      res.end(req.method === 'HEAD' ? undefined : JSON.stringify(schutzMetadaten(oauth)));
+      return;
+    }
     if (url.pathname === '/mcp' || url.pathname === '/') {
       // Caddy setzt X-Real-IP auf die TCP-Adresse des Aufrufers. Die ganze
       // Anfrage, auch die Schluesselpruefung, laeuft mit dieser Adresse.
       const aufrufer = leseAufruferIp(req.headers['x-real-ip'], req.socket.remoteAddress);
       void imAufrufer(aufrufer, async () => {
-        // ── 1. Kopf lesen. Ohne Kopf: Liste ja, Brain nein (Verzeichnisse wie Glama). ──
-        const bearer = leseBearer(req.headersDistinct?.authorization ?? req.headers.authorization);
+        // ── 1. Kopf lesen: cky_-Schluessel oder Zugangstoken des Anmeldedienstes. ──
+        const bearer = leseBearer(req.headersDistinct?.authorization ?? req.headers.authorization, { aussteller: oauth.aussteller });
         if (bearer.art === 'abgelehnt') {
           // Der Grund nennt die Art des Fehlers, nie den Kopf.
           const grund = bearer.grund === 'zu-lang' ? 'Der Authorization-Kopf ist zu lang.'
             : bearer.grund === 'mehrfach' ? 'Der Authorization-Kopf darf nur einmal vorkommen.'
-            : bearer.grund === 'kein-bearer' ? 'Nur "Authorization: Bearer cky_..." wird akzeptiert.'
+            : bearer.grund === 'kein-bearer' ? 'Nur "Authorization: Bearer <Schluessel oder Token>" wird akzeptiert.'
+            : bearer.grund === 'aussteller' ? tokenFehlerText('aussteller')
             : 'Das ist kein cachly-API-Schluessel (er beginnt mit cky_). Neuen holen: ' + cachlyUrl('/setup-ai', 'setup');
           return abweisen(res, 401, grund);
+        }
+        // ── Ohne Kopf: Lazy Authentication (seit 20.11.2026). ──
+        // initialize, tools/list & Co. laufen wie bisher ohne Anmeldung: Glama,
+        // Smithery und mcptry lesen so die Werkzeugliste. Erst ein Werkzeugaufruf
+        // bekommt 401 mit WWW-Authenticate — Claude startet die Anmeldung NUR darauf
+        // (eine 200 mit isError zeigt keinen "Connect"-Knopf). Die Anleitung fuer
+        // Clients mit festem Kopf steht im Rumpf der 401. Dafuer liest der Server
+        // den Rumpf hier selbst und reicht ihn dem SDK fertig weiter.
+        let vorgelesen: unknown;
+        if (bearer.art === 'fehlt' && req.method === 'POST' && String(req.headers['content-type'] ?? '').includes('application/json')) {
+          const roh = await leseRumpf(req, MAX_RUMPF_OHNE_ANMELDUNG);
+          if (roh === undefined) {
+            res.writeHead(413, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32600, message: 'Request too large' }, id: null }));
+            return;
+          }
+          try {
+            vorgelesen = JSON.parse(roh);
+          } catch {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32700, message: 'Parse error: Invalid JSON' }, id: null }));
+            return;
+          }
+          if (brauchtAnmeldung(vorgelesen)) {
+            return abweisen(res, 401, ANLEITUNG_OHNE_KOPF, undefined, WERKZEUG_BRAUCHT_ANMELDUNG);
+          }
         }
         const instanzKopf = leseInstanzKopf(req.headers['x-cachly-instance']);
         if (instanzKopf.art === 'abgelehnt') {
           return abweisen(res, 400, 'X-Cachly-Instance muss eine Instanz-ID (UUID) sein.');
         }
+        const gewaehlt = instanzKopf.art === 'ok' ? instanzKopf.instanzId : undefined;
 
         // ── 2. Mit Schluessel: die API sagt, welche Instanz er oeffnen darf. ──
         let kontext: ReturnType<typeof baueKontext> | undefined;
         if (bearer.art === 'ok') {
           try {
-            const instanzId = await zugang.loese(
-              bearer.schluessel,
-              instanzKopf.art === 'ok' ? instanzKopf.instanzId : undefined,
-              aufrufer,
-            );
+            const instanzId = await zugang.loese(bearer.schluessel, gewaehlt, aufrufer);
             kontext = baueKontext(bearer.schluessel, instanzId);
           } catch (err) {
+            if (err instanceof ZugangAbgelehnt) return abweisen(res, err.httpStatus, err.message, err.retryAfterS);
+            return abweisen(res, 502, 'Die cachly-API ist gerade nicht erreichbar. Bitte gleich noch einmal versuchen.');
+          }
+        }
+        // ── 2b. Mit Zugangstoken: erst hier pruefen (Unterschrift, Zielgruppe, Ablauf),
+        //        dann fragt die API mit DEMSELBEN Token, welche Instanz es oeffnet. ──
+        if (bearer.art === 'jwt') {
+          try {
+            const a = await jwtPruefer.pruefe(bearer.token);
+            const instanzId = await zugang.loese(bearer.token, gewaehlt, aufrufer, { anmeldung: true, bisMs: a.bisMs });
+            kontext = baueKontext(bearer.token, instanzId, a.sub);
+          } catch (err) {
+            if (err instanceof TokenAbgelehnt) {
+              return err.grund === 'jwks-fehlt' ? abweisen(res, 502, err.message) : abweisen(res, 401, err.message);
+            }
             if (err instanceof ZugangAbgelehnt) return abweisen(res, err.httpStatus, err.message, err.retryAfterS);
             return abweisen(res, 502, 'Die cachly-API ist gerade nicht erreichbar. Bitte gleich noch einmal versuchen.');
           }
@@ -5562,7 +5643,8 @@ if (httpPort) {
           });
           try {
             await s.connect(t);
-            await t.handleRequest(req, res);
+            // Ohne Kopf ist der Rumpf schon gelesen (Lazy Authentication oben).
+            await t.handleRequest(req, res, vorgelesen);
           } catch (err) {
             // Ein Fehler ohne Text war genau das Problem, das hier behoben wird.
             // Nur die Meldung, nie die Anfrage: in ihr steht der Schluessel.
