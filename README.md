@@ -12,6 +12,7 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-yellow)](./LICENSE)
 [![MCP Registry](https://img.shields.io/badge/MCP_Registry-io.github.cachly--dev%2Fmcp--server-blue)](https://registry.modelcontextprotocol.io/v0/servers?search=cachly)
 [![Hosted in the EU](https://img.shields.io/badge/hosted_in-the_EU-003399)](https://cachly.dev/docs/eu-hosted-mcp-memory-server)
+[![mcptry](https://mcptry.com/badge/io.github.cachly-dev/mcp-server)](https://mcptry.com/servers/io.github.cachly-dev/mcp-server)
 
 **Works with** Claude Code · Cursor · GitHub Copilot · Windsurf · Cline · Continue.dev · Zed ·
 Codex CLI · Gemini CLI · JetBrains IDEs
