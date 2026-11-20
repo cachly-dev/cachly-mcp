@@ -1,3 +1,5 @@
+<p align="center"><a href="https://cachly.dev"><img src="https://cachly.dev/brand/cachly-dev.png" alt="cachly.dev" width="380"></a></p>
+
 # cachly — memory for coding agents (MCP server)
 
 > **Solve it once. From then on, your AI knows.**
