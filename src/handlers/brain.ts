@@ -339,6 +339,7 @@ import { fuerEigenenSpeicher, hinweise, istMarkiert, markiert, markierungsWarnun
 import { istBlossesThema } from '../blosses-thema.js';
 import { zeitpunkt } from '../zeitmessung.js';
 import { wartetAufFrischenBestand } from '../bestand-frische.js';
+import { leseZurueckgezogen, ruecknahmeHinweis, ruecknahmeWarnung } from '../zurueckgezogen.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
 // Resolve the package version at runtime from package.json so the session briefing
@@ -1943,6 +1944,9 @@ async function handleBrainToolInner(
       // Weg a (4.4): hoechstens DOPPEL_WARTE_MS auf die Pruefung im Hintergrund.
       const nachbarErgebnis = (await mitFrist(doppelPruefung)) ?? KEINE_NACHBARN;
       const doppelung = nachbarErgebnis.doppel;
+      // Hat ein Mensch eine fruehere Lektion dieses Namens zurueckgezogen, steht
+      // sein Grund hier — sonst kommt derselbe Irrtum still zurueck.
+      const lernZurueck = await leseZurueckgezogen(redis, topic);
       return [
         `${emoji} **Lesson ${action}:** \`${topic}\` (${outcome}) ${sevEmoji} ${severity} · receipt: \`${beleg}\``,
         geschwaerzt.funde.length
@@ -1950,6 +1954,7 @@ async function handleBrainToolInner(
           : '',
         verdachtsWarnung(verdacht),
         beliefConflict ?? '',
+        lernZurueck ? ruecknahmeWarnung(lernZurueck) : '',
         ``,
         `**What worked:** ${what_worked}`,
         what_failed ? `**What failed:** ${what_failed}` : '',
@@ -2446,6 +2451,16 @@ async function handleBrainToolInner(
           auditSummary,
           suggestPin,
         ].filter(l => l !== '').join('\n');
+      }
+
+      // Zurueckgezogen (22.11.2026, zurueckgezogen.ts): VOR den Teiltreffern und
+      // vor dem Verlauf als Ersatz. Der zeigte sonst die zurueckgezogenen
+      // Versuche als "Last attempts".
+      const rbsZurueck = await leseZurueckgezogen(redis, topic);
+      if (rbsZurueck) {
+        const fragender = await fragenderAusweis(redis, instance_id, rbsAuthor);
+        if (sichtbarFuer(rbsZurueck, fragender)) return ruecknahmeHinweis(topic, rbsZurueck);
+        return `📭 No lessons found for \`${topic}\`. Use \`learn_from_attempts\` after solving it.`;
       }
 
       // Partial match: scan all lesson keys for topic substring

@@ -7,6 +7,16 @@
 
 ---
 
+## [0.10.268] – 2026-11-22 — *"A person marked it wrong. Every AI hears why."*
+
+A lesson can now be withdrawn as wrong in the dashboard, with a reason. The API moves it with its
+vectors and entry phrases from `cachly:lesson:*` to `cachly:withdrawn:*`, so every recall path
+(all of them read `cachly:lesson:best:*`) stops finding it without a filter of its own.
+`recall_best_solution(topic)` on a withdrawn topic now answers who withdrew it when and why
+("Do not apply it."). Before, the exact-name path fell back to the attempt history and would
+have shown the withdrawn attempts as "Last attempts". `learn_from_attempts` under a withdrawn
+name shows the reason, so the same mistake doesn't come back unnoticed.
+
 ## [0.10.267] – 2026-11-20 — *"Claude.ai and ChatGPT sign in instead of sending a key."*
 
 HTTP mode speaks MCP authorization (spec 2025-06-18). It serves Protected Resource Metadata
