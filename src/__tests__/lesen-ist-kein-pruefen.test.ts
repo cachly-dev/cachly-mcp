@@ -89,3 +89,71 @@ describe('Lesen ist kein Pruefen', () => {
     expect(l.verified_at).toBe(l.ts);
   });
 });
+
+/*
+ * Die Texte muessen dasselbe sagen wie der Code.
+ *
+ * Bis 0.10.269 stand in der Beschreibung von `recall_best_solution` noch
+ * "Recalling a lesson resets its confidence clock to 1.0", und `brain_doctor`
+ * riet bei veralteten Lektionen: "Re-verify with recall_best_solution". Beides
+ * war seit 0.10.165 falsch. Ein Agent, der dem Rat folgt, ruft ab, glaubt die
+ * Lektion damit geprueft zu haben, und die Ampel bleibt trotzdem rot.
+ */
+import { TOOLS } from '../tools.js';
+import { handleTeamTool } from '../handlers/team.js';
+
+describe('Texte sagen dasselbe wie der Code', () => {
+  it('die Beschreibung von recall_best_solution verspricht keine Frische durch Abruf', () => {
+    const d = TOOLS.find((t) => t.name === 'recall_best_solution')!.description;
+    expect(d).not.toMatch(/recalling a lesson resets/i);
+    expect(d).not.toMatch(/marks as recently verified/i);
+    expect(d).toContain('lesson_verified');
+  });
+
+  it('brain_doctor nennt bei veralteten Lektionen lesson_verified, nicht den Abruf', async () => {
+    const redis = new MockRedis();
+    const getConn = async () => redis as unknown as Redis;
+    const noopApiFetch = async () => ({ ok: false, status: 503, json: async () => ({}) }) as unknown as Response;
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: 'i1', topic: 'deploy:alt', outcome: 'success', what_worked: 'Der Deploy laeuft ueber den Runner auf Port 8080.',
+    }, getConn, noopApiFetch);
+    const schluessel = 'cachly:lesson:best:deploy:alt';
+    const l = JSON.parse((await redis.get(schluessel))!) as Record<string, unknown>;
+    const alt = new Date(Date.now() - 40 * 86_400_000).toISOString();
+    await redis.set(schluessel, JSON.stringify({ ...l, ts: alt, verified_at: alt }));
+
+    const out = String(await handleTeamTool('brain_doctor', { instance_id: 'i1' }, getConn, noopApiFetch));
+    expect(out).toContain('STALE');
+    expect(out).toContain('`lesson_verified`');
+    expect(out).not.toMatch(/recall_best_solution`? to reset/);
+  });
+
+  it('GEGENPROBE: 7 Tage alt ist "aging", nicht STALE (gleiche Grenzen wie das Abzeichen)', async () => {
+    const redis = new MockRedis();
+    const getConn = async () => redis as unknown as Redis;
+    const noopApiFetch = async () => ({ ok: false, status: 503, json: async () => ({}) }) as unknown as Response;
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: 'i1', topic: 'deploy:mittel', outcome: 'success', what_worked: 'Der Deploy laeuft ueber den Runner auf Port 8080.',
+    }, getConn, noopApiFetch);
+    const schluessel = 'cachly:lesson:best:deploy:mittel';
+    const l = JSON.parse((await redis.get(schluessel))!) as Record<string, unknown>;
+    const mittel = new Date(Date.now() - 7 * 86_400_000).toISOString();
+    await redis.set(schluessel, JSON.stringify({ ...l, ts: mittel, verified_at: mittel }));
+
+    const out = String(await handleTeamTool('brain_doctor', { instance_id: 'i1' }, getConn, noopApiFetch));
+    expect(out).toContain('aging');
+    expect(out).not.toContain('STALE');
+  });
+
+  it('GEGENPROBE: ohne veraltete Lektion steht kein Hinweis zum Nachpruefen', async () => {
+    const redis = new MockRedis();
+    const getConn = async () => redis as unknown as Redis;
+    const noopApiFetch = async () => ({ ok: false, status: 503, json: async () => ({}) }) as unknown as Response;
+    await handleBrainTool('learn_from_attempts', {
+      instance_id: 'i1', topic: 'deploy:neu', outcome: 'success', what_worked: 'Der Deploy laeuft ueber den Runner auf Port 8080.',
+    }, getConn, noopApiFetch);
+    const out = String(await handleTeamTool('brain_doctor', { instance_id: 'i1' }, getConn, noopApiFetch));
+    expect(out).not.toContain('STALE');
+    expect(out).not.toContain('Re-run each check');
+  });
+});

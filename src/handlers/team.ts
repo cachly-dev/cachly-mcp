@@ -1021,9 +1021,14 @@ export async function handleTeamTool(
       const unusedLessons = lessons.filter(l => (l.recall_count ?? 0) === 0);
       // Critical lessons
       const criticalLessons = lessons.filter(l => l.severity === 'critical');
-      // Confidence decay analysis
-      const staleLessons  = lessons.filter(l => l.outcome === 'success' && calculateConfidence(l) < CONFIDENCE_STALE_VALUE);
-      const warnLessons   = lessons.filter(l => l.outcome === 'success' && calculateConfidence(l) >= CONFIDENCE_STALE_VALUE && calculateConfidence(l) < CONFIDENCE_WARN_VALUE);
+      // Confidence decay analysis.
+      // calculateConfidence haelt AN den Grenzwerten an: ab CONFIDENCE_WARN_DAYS genau
+      // CONFIDENCE_WARN_VALUE, ab CONFIDENCE_STALE_DAYS genau CONFIDENCE_STALE_VALUE. Darum
+      // `<=`. Bis 0.10.269 stand hier `<`: "stale" war nie erreichbar, und 10 Tage alte
+      // Lektionen liefen als "aging", 5 bis 10 Tage alte gar nicht. Das Abzeichen beim Abruf
+      // (confidence.ts, grundBadge) zeigt STALE ab 10 Tagen; hier gilt jetzt dieselbe Grenze.
+      const staleLessons  = lessons.filter(l => l.outcome === 'success' && calculateConfidence(l) <= CONFIDENCE_STALE_VALUE);
+      const warnLessons   = lessons.filter(l => l.outcome === 'success' && calculateConfidence(l) > CONFIDENCE_STALE_VALUE && calculateConfidence(l) <= CONFIDENCE_WARN_VALUE);
       const withAudit     = lessons.filter(l => (l.audit_trail ?? []).length > 1);
       // Team lessons
       type DrLessonWithAuthor = DrLesson & { author?: string };
@@ -1317,12 +1322,12 @@ export async function handleTeamTool(
       }
 
       if (staleLessons.length > 0) {
-        issues.push(`🔴 ${staleLessons.length} STALE lesson${staleLessons.length > 1 ? 's' : ''} (>${CONFIDENCE_STALE_DAYS}d, confidence <${CONFIDENCE_STALE_VALUE * 100}%): ${nenne(staleLessons)}`);
-        issues.push(`   → Re-verify with \`recall_best_solution\` to reset confidence clock`);
+        issues.push(`🔴 ${staleLessons.length} STALE lesson${staleLessons.length > 1 ? 's' : ''} (${CONFIDENCE_STALE_DAYS}d+ since written or checked, confidence ${CONFIDENCE_STALE_VALUE * 100}%): ${nenne(staleLessons)}`);
+        issues.push(`   → Re-run each check, then confirm with \`lesson_verified\` (recalling does not reset the clock)`);
       }
 
       if (warnLessons.length > 0) {
-        issues.push(`⚠️ ${warnLessons.length} lesson${warnLessons.length > 1 ? 's' : ''} aging (>${CONFIDENCE_WARN_DAYS}d): ${nenne(warnLessons)}`);
+        issues.push(`⚠️ ${warnLessons.length} lesson${warnLessons.length > 1 ? 's' : ''} aging (${CONFIDENCE_WARN_DAYS}d+): ${nenne(warnLessons)}`);
       }
 
       if (unusedRatio > 0.7 && lessons.length > 5) {

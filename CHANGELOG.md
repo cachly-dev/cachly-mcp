@@ -7,6 +7,20 @@
 
 ---
 
+## [0.10.270] – 2026-11-23 — *"Recalling is not checking. Now the texts say so too."*
+
+Since 0.10.165 a recall no longer touches `verified_at`; only `lesson_verified` does. Two texts
+still said the opposite. The `recall_best_solution` description promised that recalling "resets
+its confidence clock to 1.0", and `brain_doctor` advised re-verifying stale lessons with
+`recall_best_solution`. An agent following that advice recalled, believed the lesson was checked,
+and the badge stayed red. Both now name `lesson_verified`.
+
+While testing the hint, `brain_doctor` turned out to never report a STALE lesson at all.
+`calculateConfidence` stops exactly at 0.5 after 10 days, and the filter asked for less than 0.5.
+Lessons older than 10 days were listed as "aging", lessons 5 to 10 days old not at all. The
+doctor now uses the same limits as the recall badge: aging from 5 days, STALE from 10 days.
+Tests in `lesen-ist-kein-pruefen.test.ts`, with a control that fails on the old limit.
+
 ## [0.10.269] – 2026-11-23 — *"Archived is a label, not a removal."*
 
 The `brain_hygiene` description promised that archived lessons are excluded from `smart_recall`.
