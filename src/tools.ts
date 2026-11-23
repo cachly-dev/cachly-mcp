@@ -1503,7 +1503,8 @@ const TOOLS = [
       'and resolves contradictions where success clearly dominates failure. ' +
       'Safe to run on a schedule (weekly CI job) or on-demand before a big release. ' +
       'Lesson state lifecycle: active → provisional (confidence < threshold) → archived (stale + low-recall + old). ' +
-      'Archived lessons are excluded from smart_recall but preserved for audit. ' +
+      'Archiving is a label, not a removal: archived lessons still show up in recall. ' +
+      'To take a wrong lesson out of recall for every AI, mark it as wrong in the dashboard. ' +
       'dry_run=true (default false) shows what would change without writing anything.',
     inputSchema: {
       type: 'object',

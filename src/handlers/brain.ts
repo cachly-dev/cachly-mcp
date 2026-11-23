@@ -3077,7 +3077,8 @@ async function handleBrainToolInner(
       }
 
       // Increment recall_count on matched lessons (fire-and-forget).
-      // Exclude archived lessons — they are kept for audit but must not surface in recall.
+      // Archived lessons ARE in the results (archiving is a label, see
+      // brain_hygiene in team.ts); they are only left out of the counting.
       const lessonMatches = kwGemischt.filter(m => m.key.startsWith('cachly:lesson:best:'));
       let crossAuthorThisCall = 0;
       let successRecallsThisCall = 0;
@@ -3085,7 +3086,8 @@ async function handleBrainToolInner(
         const existing = await redis.get(m.key).catch(() => null);
         if (existing) {
           const lesson = safeJsonParse(existing, null as null | { recall_count?: number; outcome?: string; severity?: string; author?: string; ts?: string; state?: string; [k: string]: unknown });
-          // Skip archived lessons — brain_hygiene moves them here; they should not resurface.
+          // Archived lessons stay out of recall_count and the time-saved
+          // figures: a recall must not lift a lesson the sweep marked dormant.
           if (lesson?.state === 'archived') continue;
           if (lesson) {
             const recalledAt = new Date().toISOString();

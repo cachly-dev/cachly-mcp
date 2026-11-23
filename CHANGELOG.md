@@ -7,6 +7,15 @@
 
 ---
 
+## [0.10.269] – 2026-11-23 — *"Archived is a label, not a removal."*
+
+The `brain_hygiene` description promised that archived lessons are excluded from `smart_recall`.
+No read path ever filtered on `state`, so archived lessons kept showing up. The description now
+says what happens: archiving is a label, and archived lessons stay in recall. Only the recall
+counter and the time-saved figures skip them. This is a deliberate choice: a sweep that only
+looks at age and recall counts should not hide knowledge nobody judged wrong. To take a lesson
+out of recall for every AI, mark it as wrong in the dashboard (0.10.268). No behaviour change.
+
 ## [0.10.268] – 2026-11-22 — *"A person marked it wrong. Every AI hears why."*
 
 A lesson can now be withdrawn as wrong in the dashboard, with a reason. The API moves it with its

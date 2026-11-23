@@ -1362,8 +1362,12 @@ export async function handleTeamTool(
     //
     //  2. Archival: lessons that are provisional AND have recall_count < 2 AND
     //     are older than ARCHIVE_DAYS (default 30) are moved to state="archived".
-    //     Archived lessons are excluded from smart_recall results but kept for
-    //     audit_trail inspection.
+    //     Archiving is a label, not a removal: archived lessons STILL appear
+    //     in smart_recall and recall_best_solution (no read path filters on
+    //     state). Decision 23.11.2026: a sweep that only counts recalls and
+    //     age must not hide knowledge nobody judged wrong. Taking a lesson out
+    //     of recall is a human act with a reason: "mark as wrong" in the
+    //     dashboard (cachly:withdrawn:*, PR #1196).
     //
     //  3. Contradiction auto-resolution: when the same topic has both a failure
     //     and a success lesson, and the success has recall_count ≥ 3× the
