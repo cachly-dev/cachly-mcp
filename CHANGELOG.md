@@ -7,6 +7,12 @@
 
 ---
 
+## [0.10.272] – 2026-11-23 — *"No yearly price we cannot sell."*
+
+The README no longer mentions yearly billing. Checkout only offers monthly subscriptions, so the
+pricing page drops its "billed yearly" lines for Team and Business as well. No behaviour change in
+the server.
+
 ## [0.10.271] – 2026-11-23 — *"Solo is €9.90."*
 
 The Solo tier (id `dev`) costs €9.90 a month for new subscriptions, down from €19. The tier list in the

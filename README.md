@@ -228,7 +228,7 @@ decide.
 | **Business** | €199/month | up to 20, with SSO | 7 GB |
 
 Start on Free with a sign-in, without a credit card. Organisations are free; you pay per
-Brain plan. Yearly billing and the current limits are on
+Brain plan. The current limits are on
 [cachly.dev/pricing](https://cachly.dev/pricing).
 
 ## Guides
@@ -611,7 +611,7 @@ backend on every editor start.
 | Where | What you find there |
 |-------|---------------------|
 | [cachly.dev](https://cachly.dev) | Sign-up, dashboard and the product page |
-| [cachly.dev/pricing](https://cachly.dev/pricing) | Plans, yearly billing and current limits |
+| [cachly.dev/pricing](https://cachly.dev/pricing) | Plans and current limits |
 | [MCP docs](https://cachly.dev/docs/mcp) · [AI memory docs](https://cachly.dev/docs/ai-memory) | Setup, tools and concepts |
 | [Release notes](./CHANGELOG.md) | What changed in each version |
 | [github.com/cachly-dev/cachly-mcp](https://github.com/cachly-dev/cachly-mcp) | Source code of this server |
