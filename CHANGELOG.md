@@ -7,6 +7,13 @@
 
 ---
 
+## [0.10.271] – 2026-11-23 — *"Solo is €9.90."*
+
+The Solo tier (id `dev`) costs €9.90 a month for new subscriptions, down from €19. The tier list in the
+`create_instance` description now says so. Checkout already charges the new price (Stripe default price
+on the Solo product). Existing subscriptions keep the price they started with. No behaviour change in
+the server itself.
+
 ## [0.10.270] – 2026-11-23 — *"Recalling is not checking. Now the texts say so too."*
 
 Since 0.10.165 a recall no longer touches `verified_at`; only `lesson_verified` does. Two texts

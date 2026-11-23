@@ -20,7 +20,7 @@ const TOOLS = [
     description:
       'Create a new managed Valkey/Redis cache instance on cachly.dev. ' +
       'Free tier provisions in ~30 seconds. Paid tiers return a Stripe checkout URL. ' +
-      'Available tiers (id = name): free = Free (25 MB), dev = Solo (200 MB, €19/mo, one person), ' +
+      'Available tiers (id = name): free = Free (25 MB), dev = Solo (200 MB, €9.90/mo, 1 person), ' +
       'pro = Team (900 MB, €49/mo, up to 5 people, everything included), ' +
       'business = Business (7 GB, €199/mo, up to 20 people, SSO included).',
     inputSchema: {
