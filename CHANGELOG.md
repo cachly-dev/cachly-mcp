@@ -7,6 +7,13 @@
 
 ---
 
+## [0.10.274] – 2026-11-24 — *"The orange c in Claude.ai."*
+
+The remote server now sends its logo. `initialize` returns `serverInfo` with `title` ("cachly"), `websiteUrl`
+and `icons` (https://cachly.dev/favicon.svg), so Claude.ai shows the orange "c." instead of the old green bolt.
+`GET /favicon.svg` answers 200 `image/svg+xml` (cache 1 day); `GET /favicon.ico` redirects (301) to it.
+`/` and `/mcp` are unchanged. New file `src/remote-logo.ts`.
+
 ## [0.10.273] – 2026-11-24 — *"Sign in without openid."*
 
 The remote server no longer advertises the scope `openid`. Claude.ai copies `scopes_supported` into its dynamic

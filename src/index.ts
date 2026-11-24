@@ -823,6 +823,7 @@ import {
   leseOAuthEinstellungen, schutzMetadaten, wwwAuthenticate, baueJwtPruefer, TokenAbgelehnt,
   tokenFehlerText, KEIN_BRAIN_TEXT, brauchtAnmeldung, WERKZEUG_BRAUCHT_ANMELDUNG, MAX_RUMPF_OHNE_ANMELDUNG,
 } from './remote-oauth.js';
+import { serverInfo, beantworteLogo } from './remote-logo.js';
 import { ZWEIT_MODELL } from './rangfolge-stellschrauben.js';
 
 // ── Search Engine (imported from search.ts) ─────────────────────────────────
@@ -2058,7 +2059,7 @@ function registriereHandler(s: Server): void {
 
 function makeServer(): Server {
   const s = new Server(
-    { name: 'cachly-mcp', version: CURRENT_VERSION },
+    serverInfo(CURRENT_VERSION),
     { capabilities: CAPABILITIES, instructions: CACHLY_MCP_INSTRUCTIONS }
   );
   registriereHandler(s);
@@ -2085,7 +2086,7 @@ function merkeClientNachHandshake(s: Server): void {
 }
 
 const server = new Server(
-  { name: 'cachly-mcp', version: CURRENT_VERSION },
+  serverInfo(CURRENT_VERSION),
   { capabilities: CAPABILITIES, instructions: CACHLY_MCP_INSTRUCTIONS }
 );
 merkeClientNachHandshake(server);
@@ -5542,6 +5543,7 @@ if (httpPort) {
       res.end(JSON.stringify({ status: 'ok', version: CURRENT_VERSION, mode: 'http-remote' }));
       return;
     }
+    if (beantworteLogo(req, res, url.pathname)) return;
     if (oauth.metadatenPfade.includes(url.pathname)) {
       // RFC 9728: wo die Anmeldung stattfindet. Oeffentlich, ohne Kopf, ohne Zustand.
       if (req.method === 'OPTIONS') { res.writeHead(204, { Allow: 'GET, HEAD, OPTIONS' }); res.end(); return; }

@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.10.273",
+  "version": "0.10.274",
   "mcpName": "io.github.cachly-dev/mcp-server",
   "description": "Explain it once. Every AI knows it. cachly keeps the rules, decisions and fixes you explain to your AI and gives them back in every session: Claude Code, Cursor, Copilot, Windsurf, Codex, Gemini CLI. Hosted in the EU.",
   "type": "module",
