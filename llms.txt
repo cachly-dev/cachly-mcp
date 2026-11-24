@@ -1,6 +1,6 @@
 # cachly AI Brain — MCP Server
 
-> Persistent memory layer for AI coding assistants. Gives Claude Code, Cursor, GitHub Copilot, Windsurf, Cline and Zed a permanent brain that learns from every session, bug fix, git commit, and CI run — automatically.
+> Persistent memory layer for AI coding assistants. Gives Claude Code, Cursor, GitHub Copilot (VS Code), Windsurf, Cline, Zed, Continue, Codex CLI, Gemini CLI and JetBrains a permanent brain that learns from every session, bug fix, git commit, and CI run — automatically.
 
 ## What cachly is
 
@@ -22,7 +22,7 @@ Free tier: 25 MB, no credit card, German servers (GDPR).
 
 ## Supported editors
 
-Claude Code, Cursor, Windsurf, VS Code, GitHub Copilot, Cline, Zed, Continue.dev
+Claude Code, Cursor, GitHub Copilot (VS Code), Windsurf, Cline, Zed, Continue, Codex CLI, Gemini CLI, JetBrains
 
 ## How memory works
 
