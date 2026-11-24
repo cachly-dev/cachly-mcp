@@ -571,7 +571,7 @@ describe('HTTP-Server (echter Prozess, Attrappen-API auf Loopback)', () => {
     expect(kopf).toContain('error="invalid_token"');
     expect(kopf).toContain('error_description="Authentication required for this tool"');
     expect(kopf).toContain('resource_metadata="https://mcp.example.test/.well-known/oauth-protected-resource/mcp"');
-    expect(kopf).toContain('scope="profile email"');
+    expect(kopf).toContain('scope="profile email cachly-mcp"');
     const text = (JSON.parse(r.text) as { error: { message: string } }).error.message;
     expect(text).toContain('claude mcp add --transport http cachly https://mcp.cachly.dev/mcp');
     expect(text).toContain('autopilot');
@@ -608,7 +608,7 @@ describe('HTTP-Server (echter Prozess, Attrappen-API auf Loopback)', () => {
       expect(m.resource).toBe(RESSOURCE);
       expect(m.authorization_servers).toEqual([aussteller]);
       expect(m.bearer_methods_supported).toEqual(['header']);
-      expect(m.scopes_supported).toEqual(['profile', 'email']);
+      expect(m.scopes_supported).toEqual(['profile', 'email', 'cachly-mcp']);
       expect(m.resource_documentation).toBe('https://cachly.dev/docs/remote-mcp');
     }
     expect((await fetch(`${base}/.well-known/oauth-protected-resource`, { method: 'POST' })).status).toBe(405);
