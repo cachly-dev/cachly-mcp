@@ -44,7 +44,7 @@ describe('Einstellungen aus der Umgebung', () => {
     expect(e.aussteller).toBe('https://auth.cachly.dev/realms/cachly');
     expect(e.jwksUrl).toBe('https://auth.cachly.dev/realms/cachly/protocol/openid-connect/certs');
     expect(e.zielgruppen).toEqual(['https://mcp.cachly.dev/mcp']);
-    expect(e.scopes).toEqual(['openid', 'profile', 'email']);
+    expect(e.scopes).toEqual(['profile', 'email']);
     expect(e.metadatenUrl).toBe('https://mcp.cachly.dev/.well-known/oauth-protected-resource/mcp');
     expect(e.metadatenPfade).toEqual(['/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource']);
   });
@@ -68,7 +68,7 @@ describe('Einstellungen aus der Umgebung', () => {
   it('MCP_OAUTH_JWKS_URL=aus: Unterschrift nur in der API; leere Werte (Compose "${VAR:-}") = Vorgabe', () => {
     const e = leseOAuthEinstellungen({ MCP_OAUTH_JWKS_URL: 'aus', MCP_OAUTH_SCOPES: '' });
     expect(e.jwksUrl).toBeNull();
-    expect(e.scopes).toEqual(['openid', 'profile', 'email']);
+    expect(e.scopes).toEqual(['profile', 'email']);
     const leer = leseOAuthEinstellungen({ MCP_OAUTH_RESOURCE: '', MCP_OAUTH_ISSUER: ' ', MCP_OAUTH_AUDIENCE: '', MCP_OAUTH_JWKS_URL: '' });
     expect(leer).toEqual(leseOAuthEinstellungen({}));
   });
@@ -95,17 +95,23 @@ describe('Metadaten (RFC 9728) und der 401-Kopf', () => {
       resource: 'https://mcp.cachly.dev/mcp',
       authorization_servers: ['https://auth.cachly.dev/realms/cachly'],
       bearer_methods_supported: ['header'],
-      scopes_supported: ['openid', 'profile', 'email'],
+      scopes_supported: ['profile', 'email'],
       resource_name: 'cachly',
       resource_documentation: 'https://cachly.dev/docs/remote-mcp',
     });
+  });
+
+  it('Vorgabe enthaelt kein openid (Keycloak-DCR lehnt es mit 403 ab), weder in Metadaten noch im Kopf', () => {
+    expect(schutzMetadaten(e).scopes_supported).not.toContain('openid');
+    expect(wwwAuthenticate(e)).not.toMatch(/\bopenid\b/);
+    expect(wwwAuthenticate(e, 'invalid_token', WERKZEUG_BRAUCHT_ANMELDUNG)).not.toMatch(/\bopenid\b/);
   });
 
   it('ohne Token: Bearer mit resource_metadata und scope, ohne error', () => {
     const k = wwwAuthenticate(e);
     expect(k).toMatch(/^Bearer /);
     expect(k).toContain('resource_metadata="https://mcp.cachly.dev/.well-known/oauth-protected-resource/mcp"');
-    expect(k).toContain('scope="openid profile email"');
+    expect(k).toContain('scope="profile email"');
     expect(k).not.toContain('error=');
   });
 
@@ -117,7 +123,7 @@ describe('Metadaten (RFC 9728) und der 401-Kopf', () => {
     const k = wwwAuthenticate(e, 'invalid_token', WERKZEUG_BRAUCHT_ANMELDUNG);
     expect(k).toBe(
       'Bearer realm="cachly", error="invalid_token", error_description="Authentication required for this tool", ' +
-      'resource_metadata="https://mcp.cachly.dev/.well-known/oauth-protected-resource/mcp", scope="openid profile email"',
+      'resource_metadata="https://mcp.cachly.dev/.well-known/oauth-protected-resource/mcp", scope="profile email"',
     );
     // Anfuehrungszeichen und Nicht-ASCII koennen den Kopf nicht aufbrechen.
     expect(wwwAuthenticate(e, 'invalid_token', 'a"bäc')).toContain('error_description="abc"');

@@ -7,6 +7,13 @@
 
 ---
 
+## [0.10.273] – 2026-11-24 — *"Sign in without openid."*
+
+The remote server no longer advertises the scope `openid`. Claude.ai copies `scopes_supported` into its dynamic
+client registration, and Keycloak rejected every registration containing `openid` (HTTP 403, "Not permitted to use
+specified clientScope"), so the connector could not sign in. New default: `profile email`. Token checks never needed
+`openid`; the audience still comes from the realm scope `cachly-mcp`. `MCP_OAUTH_SCOPES` still overrides.
+
 ## [0.10.272] – 2026-11-23 — *"No yearly price we cannot sell."*
 
 The README no longer mentions yearly billing. Checkout only offers monthly subscriptions, so the

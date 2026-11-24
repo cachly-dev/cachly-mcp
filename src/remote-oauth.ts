@@ -39,7 +39,7 @@
 //                       <ISSUER>/protocol/openid-connect/certs (Keycloak).
 //                       "aus" = Unterschrift nur in der API pruefen.
 //   MCP_OAUTH_SCOPES    Scopes, die Clients anfragen sollen (Leerzeichen oder
-//                       Komma). Vorgabe "openid profile email".
+//                       Komma). Vorgabe "profile email" (ohne openid, siehe unten).
 
 import {
   constants as kryptoKonstanten,
@@ -53,7 +53,13 @@ import {
 
 export const OAUTH_VORGABE_RESOURCE = 'https://mcp.cachly.dev/mcp';
 export const OAUTH_VORGABE_ISSUER = 'https://auth.cachly.dev/realms/cachly';
-export const OAUTH_VORGABE_SCOPES: readonly string[] = ['openid', 'profile', 'email'];
+// Bewusst OHNE "openid": Claude.ai uebernimmt scopes_supported in die dynamische
+// Client-Registrierung (DCR) bei Keycloak. Die Keycloak-Regel "Allowed Client Scopes"
+// lehnt jede Registrierung mit "openid" ab (HTTP 403 "Not permitted to use specified
+// clientScope", belegt am 24.11.2026) - Claude.ai meldet dann "Couldn't register with
+// Cachly's sign-in service". Die Zielgruppe (aud) kommt aus dem Realm-Standard-Scope
+// cachly-mcp, die Token-Pruefung braucht kein openid. Ueberschreibbar per MCP_OAUTH_SCOPES.
+export const OAUTH_VORGABE_SCOPES: readonly string[] = ['profile', 'email'];
 export const OAUTH_DOKU = 'https://cachly.dev/docs/remote-mcp';
 export const DASHBOARD_URL = 'https://cachly.dev/instances';
 const METADATEN_PFAD = '/.well-known/oauth-protected-resource';
