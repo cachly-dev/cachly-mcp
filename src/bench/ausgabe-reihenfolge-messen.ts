@@ -257,13 +257,29 @@ async function main(): Promise<void> {
   let mehrthemig = 0;
   let mehrthemigAnders = 0;
   const abweichungen: string[] = [];
+  // Laenge der Antwort: was jede Frage den Kontext der KI kostet.
+  let ausgabeZeichen = 0;
+  let ohneBelegZeilen = 0;
+  let gezeigteTreffer = 0;
+  let richtigeGezeigt = 0;
+  let richtigeOhneBeleg = 0;
   const start = Date.now();
 
   for (const [n, q] of fragen.entries()) {
     if (n > 0 && n % 250 === 0) console.log(`  … ${n} Fragen in ${((Date.now() - start) / 1000).toFixed(0)} s`);
     await redis.ltrim(journal, 1, 0); // leeren: gelesen wird nur die Zeile DIESES Abrufs
     const out = String(await handleBrainTool('smart_recall', { instance_id: 'bench', query: q.query }, getConn, noopApiFetch));
+    ausgabeZeichen += out.length;
+    ohneBelegZeilen += (out.match(/⚠️ no evidence/g) ?? []).length;
     const gezeigt = [...out.matchAll(LABEL)].map((m) => m[1].trim());
+    gezeigteTreffer += gezeigt.length;
+    // Traegt eine RICHTIGE Lektion die Marke "no evidence" auf ihrer Titelzeile?
+    for (const z of out.split('\n')) {
+      const m = /^\*\*💡 (.+?)\*\*/.exec(z);
+      if (!m || !q.relevant.includes(m[1].trim())) continue;
+      richtigeGezeigt++;
+      if (z.includes('⚠️ no evidence')) richtigeOhneBeleg++;
+    }
     const zeile = (await redis.lrange(journal, 0, 0))[0];
     const hausOben = zeile ? (JSON.parse(zeile) as { themen: string[] }).themen : [];
 
@@ -308,6 +324,12 @@ async function main(): Promise<void> {
   console.log(`  Oberste drei identisch: ${gleichOben3} von ${einthemig} Einthemen-Fragen`);
   console.log(`  Mehrthemen-Fragen (nach Teilfrage gruppiert): ${mehrthemig}, davon oben anders als die Hausordnung: ${mehrthemigAnders}`);
   console.log(`  Zurueckhaltung (keine Liste): ${schweigen}`);
+  console.log(`  Laenge je Antwort: ${Math.round(ausgabeZeichen / Math.max(fragen.length, 1))} Zeichen`
+    + ` · gezeigte Treffer ${gezeigteTreffer} · davon ohne Beleg ${ohneBelegZeilen}`);
+  // 25.11.2026: 459 von 2.169 richtigen Lektionen trugen "no evidence". Treffer
+  // ohne Beleg zu kuerzen haette jeder fuenften richtigen Lektion den Auszug
+  // genommen — darum verworfen. Die Zahl bleibt hier sichtbar.
+  console.log(`  Richtige Lektion gezeigt: ${richtigeGezeigt} · davon ohne Beleg markiert: ${richtigeOhneBeleg}`);
   console.log(`  Einbettungen aus der Datei: ${frageTreffer} · nicht eingefroren: ${frageFehlt} · fremde Adressen: ${fremdeAdressen}`);
   console.log(`  Verworfene Lektions-Schreibzugriffe: ${redis.verworfen} · Pfad-Tueren entstanden: ${redis.anzahlHashes('cachly:lesson:pfad:')}`);
   console.log(`  Laufzeit ${sek.toFixed(0)} s (${((sek * 1000) / fragen.length).toFixed(0)} ms je Frage)`);
