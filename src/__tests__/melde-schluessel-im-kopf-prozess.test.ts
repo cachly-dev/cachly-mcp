@@ -93,7 +93,11 @@ describe('Melde-Weg: Schluessel nur im Kopf', () => {
     ].join('\n') + '\n');
 
     const melde = () => g.anfragen.filter((a) => a.pfad === '/api/v1/telemetry/mcp');
-    const bis = Date.now() + 40_000;
+    // Warten, bis der Server die erste Meldung schickt. tsx uebersetzt dafuer
+    // index.ts samt allen Werkzeugen kalt. Am 24.11.2026 (Lauf 45510149489)
+    // reichten 40 s auf dem ausgelasteten Bauserver nicht, der Test fiel ohne
+    // verletzte Zusicherung. 75 s sind ein Notaus, kein Leistungsbudget.
+    const bis = Date.now() + 75_000;
     while (!melde().some((a) => a.koerper.includes('mcp_verbunden')) && Date.now() < bis) {
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -112,5 +116,5 @@ describe('Melde-Weg: Schluessel nur im Kopf', () => {
       expect(j).not.toHaveProperty('api_key');
       expect(j).not.toHaveProperty('jwt');
     }
-  }, 90_000);
+  }, 120_000);
 });
