@@ -11,7 +11,7 @@
       "source": "./",
       "displayName": "cachly AI Brain",
       "description": "Explain it once. Every AI knows it. cachly keeps what your assistant learned: the bug you fixed, why you chose Postgres, the deploy step that always breaks. When the problem returns, the matching lesson is back in the session. Every editor reads the same lessons, and every lesson carries the name of whoever learned it. Hosted in the EU.",
-      "version": "0.10.275",
+      "version": "0.10.276",
       "author": {
         "name": "cachly",
         "url": "https://cachly.dev"
@@ -21,18 +21,17 @@
       "license": "Apache-2.0",
       "category": "productivity",
       "keywords": [
-        "memory",
         "mcp",
         "brain",
         "recall",
         "context",
         "lessons",
         "knowledge-graph",
-        "agent-memory",
+        "team-knowledge",
         "claude-code",
         "coding-agent"
       ],
-      "tags": ["memory", "mcp", "context", "recall", "agent-memory"]
+      "tags": ["mcp", "context", "recall", "team-knowledge"]
     }
   ]
 }

@@ -7,6 +7,10 @@
 
 ---
 
+## [0.10.276] – 2026-11-26 — *"Not a memory product."*
+
+Package description, keywords, README head, `llms.txt` and the plugin and registry listings no longer call cachly "memory for coding agents". They say what cachly does: explain it once, every AI knows it, for individuals, teams and companies. The built-in memory of Claude and ChatGPT keeps your preferences; cachly keeps your project's rules, decisions and fixes. The memory keywords are gone from `package.json`. No behaviour change in the server.
+
 ## [0.10.274] – 2026-11-24 — *"The orange c in Claude.ai."*
 
 The remote server now sends its logo. `initialize` returns `serverInfo` with `title` ("cachly"), `websiteUrl`

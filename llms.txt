@@ -1,10 +1,10 @@
 # cachly AI Brain — MCP Server
 
-> Persistent memory layer for AI coding assistants. Gives Claude Code, Cursor, GitHub Copilot (VS Code), Windsurf, Cline, Zed, Continue, Codex CLI, Gemini CLI and JetBrains a permanent brain that learns from every session, bug fix, git commit, and CI run — automatically.
+> Explain it once. Every AI knows it. cachly keeps your project's rules, decisions and solved errors, and Claude Code, Cursor, GitHub Copilot (VS Code), Windsurf, Cline, Zed, Continue, Codex CLI, Gemini CLI and JetBrains read them. For individuals, teams and whole companies. The knowledge grows from every session, bug fix, git commit and CI run.
 
 ## What cachly is
 
-cachly is an MCP (Model Context Protocol) server that adds long-term memory to AI coding assistants. Unlike conversation-window context, cachly memory persists across sessions, projects, and team members.
+cachly is an MCP (Model Context Protocol) server that stores a project's experience: rules, decisions and fixed bugs. The built-in memory of Claude or ChatGPT keeps your preferences. cachly keeps what the project has learned, and it persists across sessions, tools, projects and team members.
 
 It works by maintaining a Causal Knowledge Graph (CKG) — a structured store of lessons, bug fixes, architecture decisions, deployment commands, and failure patterns. On every session start, the AI receives a briefing with relevant lessons. On every fix or commit, new lessons are automatically stored.
 
@@ -24,7 +24,7 @@ Free tier: 25 MB, no credit card, German servers (GDPR).
 
 Claude Code, Cursor, GitHub Copilot (VS Code), Windsurf, Cline, Zed, Continue, Codex CLI, Gemini CLI, JetBrains
 
-## How memory works
+## How it works
 
 1. Session starts → AI receives: last session summary, open failures, relevant lessons, memory crystal (compressed history)
 2. During work → AI stores: WIP state, architecture decisions, file summaries

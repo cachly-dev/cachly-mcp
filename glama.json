@@ -1,6 +1,6 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
-  "version": "0.10.275",
+  "version": "0.10.276",
   "maintainers": [
     "HeinrichNebula"
   ],
@@ -12,8 +12,6 @@
     "team-collaboration"
   ],
   "keywords": [
-    "persistent-memory",
-    "ai-memory",
     "mcp-server",
     "claude-code",
     "cursor",
@@ -28,7 +26,7 @@
     "team-brain",
     "brain-from-git",
     "failure-prediction",
-    "memory-crystals",
+    "lesson-crystals",
     "gdpr",
     "free-tier",
     "semantic-cache",

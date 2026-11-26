@@ -1,11 +1,12 @@
 <p align="center"><a href="https://cachly.dev"><img src="https://cachly.dev/brand/cachly-dev.png" alt="cachly.dev" width="380"></a></p>
 
-# cachly — memory for coding agents (MCP server)
+# cachly — explain it once, every AI knows it (MCP server)
 
-> **Solve it once. From then on, your AI knows.**
+> **Explain it once. Every AI knows it.**
 >
-> Every fix, decision and dead end becomes a lesson. Your AI finds it again when the same
-> problem comes back, in the next session, in another editor, or on a teammate's machine.
+> cachly keeps your project's rules, decisions and fixed bugs, and every AI tool reads them.
+> It works for one person, for a team and for a whole company. Claude and ChatGPT remember
+> your preferences. cachly keeps what your project has learned.
 
 **#1 on LoCoMo in the OmniMemEval comparison, 90.71 points**
 ([results](https://github.com/MemTensor/OmniMemEval/blob/main/docs/user_memory/results.md#locomo)).
@@ -246,8 +247,11 @@ Brain plan. The current limits are on
 
 ## FAQ
 
-**How is this different from a `CLAUDE.md` or a memory folder?**
-A rule file is read in full in every session, so it grows and costs tokens each time.
+**How is this different from a `CLAUDE.md` or the built-in memory of Claude, ChatGPT and Copilot?**
+The built-in memory of an AI provider stores your preferences and works inside that one
+product. cachly stores your project's experience: rules, decisions and solved errors. Teams
+and companies share it, and every AI tool reads the same lessons. A rule file is read in full
+in every session, so it grows and costs tokens each time.
 cachly keeps lessons outside the prompt and places only the matching ones next to it, ranked
 by outcome and review. The [comparisons](#guides) show where a plain file or another product
 fits better.
