@@ -2906,6 +2906,37 @@ if (process.argv[2] === 'export') {
   process.exit(0);
 }
 
+// ── CLI: cachly-mcp import-docs <ordner> --source <id> ─────────────────────────────
+// Usage: npx @cachly-dev/mcp-server@latest import-docs ./docs --source <id> [--dry-run]
+// Liest *.md und *.mdx und schickt neue und geaenderte Dateien als Firmenwissen an
+// die API (Stufe 2, B3). Die Quelle legt ein Mensch im Dashboard an; hier steht nur
+// der Lauf. --dry-run fragt nur ab und zeigt neu / geaendert / gleich / entfernt.
+// Kein MCP-Werkzeug: das Werkzeug-Schema bleibt, wie es ist.
+
+if (process.argv[2] === 'import-docs') {
+  const argv = process.argv.slice(3);
+  const ordner = argv[0] && !argv[0].startsWith('-') ? argv[0] : '';
+  const quelle = leseFlag(argv, 'source') ?? '';
+  const apiKey = cliSchluessel();
+  if (!ordner || !quelle) {
+    console.log('\nUsage: npx @cachly-dev/mcp-server@latest import-docs <folder> --source <id> [--dry-run] [--confirm-removals]');
+    console.log('       <id> is the ID of a source created in the dashboard (Team > Company knowledge > Sources).');
+    console.log('       --dry-run shows what would change and writes nothing.\n');
+    process.exit(1);
+  }
+  if (!apiKey) {
+    console.log('\n⚠️  No cachly key found (environment or ~/.cachly/credentials.json).');
+    console.log('   Run: npx @cachly-dev/mcp-server@latest autopilot\n');
+    process.exit(1);
+  }
+  const { importiereDokumente } = await import('./import-docs.js');
+  const erg = await importiereDokumente({
+    dir: ordner, source: quelle, apiUrl: API_URL, apiKey,
+    dryRun: argv.includes('--dry-run'), confirmRemovals: argv.includes('--confirm-removals'),
+  });
+  process.exit(erg.exitCode);
+}
+
 // ── CLI: cachly-mcp invite <email> ────────────────────────────────────────────────
 // Usage: npx @cachly-dev/mcp-server@latest invite teammate@example.com
 // Shares your Brain with a teammate: the API sends an invitation mail. Access
