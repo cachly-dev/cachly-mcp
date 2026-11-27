@@ -7,6 +7,10 @@
 
 ---
 
+## [0.10.278] – 2026-11-27 — *"The second session keeps its summary."*
+
+`session_end` no longer throws the summary away when the `session_start` marker is missing. The marker exists once per Brain, not once per session. When two sessions ran on the same Brain, the first `session_end` deleted it, and every later one answered "No active session found" and stored nothing. Now the summary is saved anyway, without a duration, and the answer says why the duration is missing. Test: `src/__tests__/session-end-ohne-startmarke.test.ts`.
+
 ## [0.10.276] – 2026-11-26 — *"Not a memory product."*
 
 Package description, keywords, README head, `llms.txt` and the plugin and registry listings no longer call cachly "memory for coding agents". They say what cachly does: explain it once, every AI knows it, for individuals, teams and companies. The built-in memory of Claude and ChatGPT keeps your preferences; cachly keeps your project's rules, decisions and fixes. The memory keywords are gone from `package.json`. No behaviour change in the server.

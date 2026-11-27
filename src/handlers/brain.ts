@@ -4929,13 +4929,17 @@ async function handleBrainToolInner(
       const redis = await getConnection(instance_id);
       const now = new Date();
 
-      // Calculate duration from session_start marker
+      // Dauer aus der Startmarke von session_start. Die Marke gibt es nur EINMAL
+      // je Brain (cachly:session:current), nicht je Sitzung. Laufen zwei
+      // Sitzungen auf demselben Brain (zwei Fenster, zwei Kollegen), loescht das
+      // erste session_end die Marke. Bis 0.10.277 brach jedes weitere
+      // session_end dann mit "No active session found" ab und warf die
+      // Zusammenfassung weg (Beleg 27.11.2026, Sitzung nach Verdichtung).
+      // Jetzt wird sie trotzdem gespeichert, nur ohne Dauer.
       let durationMin: number | undefined;
       const currentRaw = await redis.get('cachly:session:current');
-      if (!currentRaw) {
-        return `⚠️ No active session found.\n\nRun \`session_start\` first to begin tracking a session, then call \`session_end\` when you're done.`;
-      }
-      const current = safeJsonParse<{ started: string } | null>(currentRaw, null);
+      const ohneStartmarke = !currentRaw;
+      const current = currentRaw ? safeJsonParse<{ started: string } | null>(currentRaw, null) : null;
       if (current?.started) {
         durationMin = Math.round((now.getTime() - new Date(current.started).getTime()) / 60000);
       }
@@ -5148,6 +5152,9 @@ async function handleBrainToolInner(
 
       return [
         `✅ **Session saved**${durationStr}`,
+        ohneStartmarke
+          ? `ℹ️ No session_start marker found (another session on this Brain may have ended first). Summary saved without duration.`
+          : '',
         ``,
         `📋 **Summary:** ${summary}`,
         files_changed.length > 0 ? `📁 **Files changed:** ${files_changed.map(f => `\`${f}\``).join(', ')}` : '',
