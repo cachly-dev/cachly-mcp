@@ -19,7 +19,10 @@
 
 import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import type { VerbindungsAuskunft } from './brains-tls.js';
-import { alsMitgliedsSpeicher, apiFehler, CODE_ZUGANG_NICHT_VERFUEGBAR, zugangNichtVerfuegbarText } from './rolle.js';
+import {
+  alsMitgliedsSpeicher, apiFehler, CODE_ZUGANG_NICHT_VERFUEGBAR, merkeVollenZugang, zugangNichtVerfuegbarText,
+} from './rolle.js';
+import { raeumeAusAuskunft, type Raeume } from './raeume.js';
 
 export interface Anmeldung {
   /** Eigener Benutzer eines Mitglieds (m-<16 hex>); fehlt bei Besitzer und Admin. */
@@ -28,6 +31,8 @@ export interface Anmeldung {
   /** true bei `access: "member"`: eingeschraenkter Benutzer, Huelle um den Client. */
   mitglied: boolean;
   role?: string;
+  /** Die Raeume aus dem Feld `rooms` (Stufe 3). */
+  raeume?: Raeume;
 }
 
 /**
@@ -65,7 +70,9 @@ export async function holeVerbindungsAuskunft(
 export function anmeldungAus(auskunft: VerbindungsAuskunft | undefined): Anmeldung {
   const username = typeof auskunft?.username === 'string' && auskunft.username ? auskunft.username : undefined;
   const password = typeof auskunft?.password === 'string' && auskunft.password ? auskunft.password : undefined;
+  const raeume = raeumeAusAuskunft(auskunft?.rooms);
   return {
+    ...(raeume ? { raeume } : {}),
     ...(username ? { username } : {}),
     ...(password ? { password } : {}),
     mitglied: auskunft?.access === 'member',
@@ -90,7 +97,13 @@ export function baueSpeicherClient<R extends object>(
 ): { roh: R; nutzbar: R } {
   const roh = new Klasse({ ...basis, ...anmeldeOptionen(anmeldung) });
   const nutzbar = anmeldung.mitglied
-    ? alsMitgliedsSpeicher(roh, { role: anmeldung.role, username: anmeldung.username, instanceId })
+    ? alsMitgliedsSpeicher(roh, {
+        role: anmeldung.role, username: anmeldung.username, instanceId,
+        ...(anmeldung.raeume ? { raeume: anmeldung.raeume } : {}),
+      })
     : roh;
+  if (!anmeldung.mitglied && anmeldung.raeume) {
+    merkeVollenZugang(roh, { instanceId, username: anmeldung.username, raeume: anmeldung.raeume });
+  }
   return { roh, nutzbar };
 }

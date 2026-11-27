@@ -35,6 +35,8 @@ export interface VerbindungsAuskunft {
   access?: string;
   /** Stufe 2: die wirksame Rolle des Mitglieds, wenn access "member" ist. */
   role?: string;
+  /** Stufe 3: die Raeume dieser Verbindung (Vertrag V2); fehlt bei aelterer API. */
+  rooms?: unknown;
 }
 
 export interface VerbindungsWeg {

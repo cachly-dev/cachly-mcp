@@ -467,6 +467,9 @@ export async function handleTeamTool(
         what_worked: string; what_failed?: string; severity?: string;
         file_paths?: string[]; commands?: string[]; tags?: string[];
       };
+      const tlSicht = (args as { visibility?: unknown }).visibility === 'private' ? 'private' : undefined;
+      const tlGruppe = String((args as { group?: unknown }).group ?? '').trim().toLowerCase();
+      const tlTeamweit = tlSicht !== 'private' && !tlGruppe;
       if (!author || !topic || !outcome || !what_worked) {
         return '❌ Required: author, topic, outcome, what_worked';
       }
@@ -487,12 +490,20 @@ export async function handleTeamTool(
 
       // Stufe 2: Ein Mitglied schreibt Lektionen nur ueber die API (POST /learn).
       // Sie prueft Rolle und Freigabepflicht und setzt den Autor aus dem Konto.
-      if (istMitglied(redisTL)) {
+      const tlUeberApi = istMitglied(redisTL) || (!tlTeamweit && (await holeRolle(iid))?.rooms === true);
+      if (tlUeberApi) {
+        if (!tlTeamweit && (await holeRolle(iid))?.rooms !== true) {
+          return [
+            '⚠️ Nicht gespeichert: Die API dieses Brains kennt noch keine privaten Raeume und Gruppen-Raeume.',
+            'Ohne `visibility`/`group` erneut speichern, wenn die Lektion das ganze Team sehen soll.',
+          ].join('\n');
+        }
         return lerneUeberApi(apiFetch, iid, {
           topic, outcome, what_worked, what_failed: what_failed ?? '', severity: severity ?? 'minor',
           file_paths: file_paths ?? [], commands: commands ?? [],
           tags: [...(tags ?? []), 'team', ...(verdacht.length ? [VERDACHT_TAG] : [])],
           author,
+          ...(!tlTeamweit ? { visibility: tlSicht ?? 'team', ...(tlGruppe ? { group: tlGruppe } : {}) } : {}),
         }, rolleFuer(redisTL));
       }
 
@@ -2471,8 +2482,11 @@ export async function handleTeamTool(
 
       const redis = await getConnection(instance_id);
 
-      // Stufe 2: Kennt die API Rollen, darf nur ein admin Gruppen pflegen.
       const apiRolle = await holeRolle(instance_id);
+      if (apiRolle?.rooms === true) {
+        return `Gruppen pflegt ein Admin auf der Rollen-Seite: ${ROLLEN_SEITE}`;
+      }
+      // Stufe 2: Kennt die API Rollen, darf nur ein admin Gruppen pflegen.
       if (apiRolle && apiRolle.role !== 'admin') {
         return `❌ **Permission denied** — only the brain owner or an organisation admin can manage group scopes (your role: ${rolleMitHerkunft(apiRolle)}).`;
       }

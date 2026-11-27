@@ -7,6 +7,15 @@
 
 ---
 
+## [0.10.283] – 2026-11-27 — *"Private and group lessons have rooms."*
+
+Rooms (Stage 3, part 3). Private and group lessons now live in rooms of their own in the store (`cachly:zone:...`). A member reads only the rooms of their own account and their groups; the owner reads all of them.
+
+- `learn_from_attempts` and `team_learn` with `visibility: "private"` or `group` save through `POST /instances/:id/learn` for everyone, owner included. If the API does not know rooms yet, nothing is saved and the answer says so.
+- `recall_best_solution` falls back to your rooms when the team key is missing. `smart_recall` adds up to 3 hits from your rooms. `session_start` and `session_start_summary` show one line with the number of lessons in your own rooms.
+- `team_grant_scope` points to the roles page when the API manages groups.
+- Team lessons of the owner are written directly, as before.
+
 ## [0.10.282] – 2026-11-27 — *"The yellow c. is back"*
 
 The yellow "c." is back as the connector logo (amber tile, dark c., no lightning bolt). Behaviour is unchanged.

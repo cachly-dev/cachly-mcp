@@ -92,6 +92,7 @@ import { gemerkterTarif, holeKantenVorrat, SPEICHER_SCAN_SCHRITT, type KantenRed
 import { getRole, eigeneRolle, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal, fragenderAusweis, sichtbarFuer, NIEMAND } from './team.js';
 // Stufe 2 (PR 2): Mitglieder schreiben Wissen nur ueber die API (rolle.ts).
+import { leseRaumLektion, ladeRaumLektionen, raumTreffer, raeumeVon, type RaumLektion } from '../raeume.js';
 import { holeRolle, istMitglied, rolleFuer, lerneUeberApi, meldeAbrufe, darfDirektSchreiben } from '../rolle.js';
 import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
          splitMultiQuery, levenshtein, indexVocab as _indexVocab, bestandHolen } from '../search.js';
@@ -824,6 +825,41 @@ function recallQuotaKey(now: Date = new Date()): string {
   return `cachly:quota:recalls:${now.toISOString().slice(0, 7)}`;
 }
 
+const RAUM_ZWISCHENSPEICHER_MS = 20_000;
+const raumZwischenspeicher = new WeakMap<object, { am: number; lektionen: RaumLektion[] }>();
+
+/** Die Raum-Lektionen dieser Verbindung, 20 s im Speicher (sonst ein Befehl je Raum und Abruf). */
+async function raumLektionen(redis: Redis): Promise<RaumLektion[]> {
+  if (!raeumeVon(redis)) return [];
+  const da = raumZwischenspeicher.get(redis);
+  if (da && Date.now() - da.am < RAUM_ZWISCHENSPEICHER_MS) return da.lektionen;
+  const lektionen = await ladeRaumLektionen(redis).catch(() => [] as RaumLektion[]);
+  raumZwischenspeicher.set(redis, { am: Date.now(), lektionen });
+  return lektionen;
+}
+
+async function raumTrefferZeilen(redis: Redis, frage: string): Promise<string[]> {
+  const treffer = raumTreffer(await raumLektionen(redis), frage, 3);
+  if (treffer.length === 0) return [];
+  return [
+    '',
+    '🔐 **From your rooms** (private and group lessons):',
+    ...treffer.map((t) => {
+      const text = String(t.lektion.what_worked ?? t.lektion.what_failed ?? '');
+      const wo = t.art === 'p' ? 'private' : 'group' + (t.gruppe ? ' ' + t.gruppe : '');
+      return '- `' + t.thema + '` (' + wo + ') — ' + text.slice(0, 400) + (text.length > 400 ? ' …' : '');
+    }),
+  ];
+}
+
+async function raumZeile(redis: Redis): Promise<string[]> {
+  const r = raeumeVon(redis);
+  if (!r) return [];
+  const eigene = new Set([...(r.privat ? [r.privat] : []), ...r.gruppen.map((g) => g.praefix)]);
+  const n = (await raumLektionen(redis)).filter((l) => eigene.has(l.praefix)).length;
+  return n > 0 ? ['🔐 ' + n + ' lesson' + (n === 1 ? '' : 's') + ' in your own rooms (private and groups).', ''] : [];
+}
+
 async function bumpRecallQuota(redis: Redis): Promise<void> {
   try {
     const key = recallQuotaKey();
@@ -1236,28 +1272,31 @@ async function handleBrainToolInner(
       // Lektion wirklich das ganze Team erreicht (Befund Sitzung cachly-e4).
       const teamweit = visibility !== 'private' && !group;
 
-      // ── Stufe 2: Mitglieder lernen ueber die API (Bauplan A5) ─────────────
+      // ── Stufe 2/3: Lernen ueber die API (Bauplan A5, Raeume) ──────────────
       // Ein Mitglied darf Wissen am Speicher nicht schreiben (ACL-Muster). Die
       // Lektion geht als EIN Aufruf an POST /instances/:id/learn; die API prueft
-      // Rolle und Freigabepflicht und setzt den Autor aus dem Konto. Vektoren,
-      // Graph und Nachtrag schreibt dieser Weg nicht.
-      // Private und Gruppen-Lektionen kennt /learn nicht: sie wuerden dort
-      // teamweit. Deshalb hier ein klarer Satz statt eines stillen Oeffnens.
-      if (istMitglied(redis)) {
-        if (!teamweit) {
+      // Rolle und Freigabepflicht und setzt den Autor aus dem Konto. Private und
+      // Gruppen-Lektionen gehen fuer ALLE (auch den Besitzer) ueber die API, wenn
+      // sie Raeume kennt: nur sie darf nach cachly:zone: schreiben.
+      const ueberApi = istMitglied(redis) || (!teamweit && (await holeRolle(instance_id))?.rooms === true);
+      if (ueberApi) {
+        if (!teamweit && (await holeRolle(instance_id))?.rooms !== true) {
           return [
-            `⚠️ Nicht gespeichert: Als Team-Mitglied speichert cachly Lektionen nur teamweit (ueber die API).`,
-            `Diese Lektion ist ${visibility === 'private' ? 'privat' : `fuer die Gruppe \`${group}\``} gedacht und wuerde dort fuer alle sichtbar.`,
-            `Fuer eine private Notiz: \`remember_context\`. Oder ohne \`visibility\`/\`group\` erneut speichern.`,
+            `⚠️ Nicht gespeichert: Diese Lektion ist ${visibility === 'private' ? 'privat' : `fuer die Gruppe \`${group}\``} gedacht.`,
+            `Die API dieses Brains kennt noch keine privaten Raeume und Gruppen-Raeume; die Lektion wuerde fuer alle sichtbar.`,
+            `Ohne \`visibility\`/\`group\` erneut speichern, wenn sie das ganze Team sehen soll.`,
           ].join('\n');
         }
-        return lerneUeberApi(apiFetch, instance_id, {
+        const gespeichert = await lerneUeberApi(apiFetch, instance_id, {
           topic, outcome, what_worked, what_failed, context: ctx, severity,
           file_paths: Array.isArray(file_paths) ? file_paths : [],
           commands: Array.isArray(commands) ? commands : [],
           tags: Array.isArray(tags) ? tags : [],
           ...(autorFeld ? { author: autorFeld } : {}),
+          ...(!teamweit ? { visibility, ...(group ? { group } : {}) } : {}),
         }, rolleFuer(redis));
+        raumZwischenspeicher.delete(redis);
+        return gespeichert;
       }
 
       // ── Lessons-Review workflow (P1-1) ─────────────────────────────────────
@@ -2271,7 +2310,12 @@ async function handleBrainToolInner(
        */
       // Stufe 2: Ein Mitglied darf die Spur (cachly:letzter-recall) nicht
       // schreiben; ohne eigene Spur wuerde es die Suche eines anderen zaehlen.
-      if (!istMitglied(redis)) {
+      // Raum-Lektionen (Stufe 3): erst der Team-Schluessel, dann die eigenen Raeume.
+      // Fuer eine Raum-Lektion entsteht kein Eintrag in einem Schluessel ausserhalb der Raeume.
+      let best = await redis.get(`cachly:lesson:best:${topic}`);
+      const raumFund = best ? null : await leseRaumLektion(redis, topic).catch(() => null);
+      if (raumFund) best = raumFund.roh;
+      if (!istMitglied(redis) && !raumFund) {
         try {
           const rohLetzter = await redis.get(`cachly:letzter-recall:${instance_id}`);
           const letzter = rohLetzter ? safeJsonParse(rohLetzter, null as null | LetzterRecall) : null;
@@ -2285,8 +2329,6 @@ async function handleBrainToolInner(
         } catch { /* Die Spur darf keinen Abruf kaputtmachen. */ }
       }
 
-      // Try exact best-solution key first
-      const best = await redis.get(`cachly:lesson:best:${topic}`);
       if (best) {
         const lesson = safeJsonParse(best, null as null | {
           topic: string; outcome: string; what_worked: string; what_failed?: string;
@@ -2328,7 +2370,7 @@ async function handleBrainToolInner(
          * Karte nennt es "Verweigerung = Abwesenheit".
          */
         const rbsGruppe = (lesson as { group?: string }).group;
-        if (rbsGruppe) {
+        if (rbsGruppe && !raumFund) {
           const rbsScopes = rbsAuthor
             ? await getScopes(redis, instance_id, rbsAuthor).catch(() => new Set<string>())
             : new Set<string>();
@@ -2383,22 +2425,22 @@ async function handleBrainToolInner(
         };
         // Stufe 2: Ein Mitglied schreibt die Lektion nicht um; der Zaehler geht
         // an POST /lessons/recalled, ohne dass die Antwort darauf wartet.
-        if (istMitglied(redis)) meldeAbrufe(apiFetch, instance_id, [topic]);
-        else await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
+        if (!raumFund && istMitglied(redis)) meldeAbrufe(apiFetch, instance_id, [topic]);
+        else if (!raumFund) await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
 
         // A targeted lookup is a recall too, and costs the same one quota unit
         // as a broad smart_recall — the user asked the brain a question either way.
         void bumpRecallQuota(redis);
         // Ein gezielter Griff ist auch eine Suche und gehoert in dieselbe
         // Statistik — sonst zeigt das Dashboard weniger, als stattgefunden hat.
-        void merkeSuchlauf(redis, String(topic ?? ''), Date.now() - rbsStart);
+        if (!raumFund) void merkeSuchlauf(redis, String(topic ?? ''), Date.now() - rbsStart);
 
         // Track estimated time saved (30m minor · 60m major · 240m critical).
         // Nur der ERSTE Abruf zaehlt, und der Startvorrat gar nicht — die
         // Begruendung fuer beides steht in wertbeitrag.ts. `lesson` ist hier
         // noch der Stand VOR dieser Erhoehung, das ist Absicht.
         const savedMins = zaehltAlsErsparnis(lesson) ? ersparteMinuten(lesson) : 0;
-        if (savedMins > 0) {
+        if (savedMins > 0 && !raumFund) {
           redis.incrbyfloat(`cachly:stats:time_saved_mins:${instance_id}`, savedMins).catch(() => {});
         }
 
@@ -3734,6 +3776,7 @@ async function handleBrainToolInner(
       if (abstention.schweigen) {
         void vermerkeAusgang(redis, instance_id, 'schweigen');
         lines.push(abstentionSatz(abstention));
+        lines.push(...await raumTrefferZeilen(redis, query));
         return lines.join('\n');
       }
 
@@ -4022,6 +4065,8 @@ async function handleBrainToolInner(
         }
       }
 
+      lines.push(...await raumTrefferZeilen(redis, query));
+
       // ── Arm E (009): das Nacherzaehlen abstellen ──────────────────────
       //
       // Nur im Kompakt-Modus und nur mit eigenem Schalter, der AUS ist.
@@ -4166,6 +4211,7 @@ async function handleBrainToolInner(
       const providerLabel = provider ? ` · ${provider}` : '';
       const lines: string[] = [`🧠 **Session Briefing**${providerLabel}`, ''];
       if (streakMessage) lines.push(streakMessage, '');
+      lines.push(...await raumZeile(redis));
 
       // Hier stand bis 03.11.2026 "⏱️ Brain saved you ~Xh total". Die Zahl
       // war eine Schaetzung (30–240 min je Lektion), keine Zaehlung, und
@@ -4979,6 +5025,7 @@ async function handleBrainToolInner(
         summaryLines.push(`💡 All ${shown} lesson${shown !== 1 ? 's' : ''} shown · \`session_start\` for full briefing`);
       }
 
+      summaryLines.push(...await raumZeile(redis));
       return summaryLines.join('\n');
     }
 

@@ -27,6 +27,7 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { mitgliedDarfSchreiben } from './schluessel-klassen.js';
+import type { Raeume } from './raeume.js';
 
 // ── Rolle ─────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,8 @@ export interface RollenAuskunft {
   protection: string;
   knowledge?: { brain: number; org: number };
   min_mcp?: string;
+  /** true, wenn die API private und Gruppen-Lektionen ueber POST /learn annimmt (Stufe 3). */
+  rooms?: boolean;
 }
 
 /** Ein GET/POST gegen die API mit dem Schluessel der laufenden Anfrage (apiFetch in index.ts). */
@@ -92,6 +95,7 @@ export function alsRollenAuskunft(roh: unknown): RollenAuskunft | null {
     protection: typeof r.protection === 'string' ? r.protection : '',
     ...(r.knowledge && typeof r.knowledge === 'object' ? { knowledge: r.knowledge } : {}),
     ...(typeof r.min_mcp === 'string' ? { min_mcp: r.min_mcp } : {}),
+    ...(r.rooms === true ? { rooms: true } : {}),
   };
 }
 
@@ -212,6 +216,8 @@ export interface Speicherzugang {
   role?: string;
   username?: string;
   instanceId?: string;
+  /** Die Raeume dieser Verbindung (Feld `rooms` aus /connection). */
+  raeume?: Raeume;
 }
 
 const zugaenge = new WeakMap<object, Speicherzugang>();
@@ -417,9 +423,11 @@ export interface LernAnfrage {
   file_paths?: string[];
   source?: string;
   author?: string;
+  visibility?: string;
+  group?: string;
 }
 
-interface LernAntwort { ok?: boolean; topic?: string; proposed?: boolean; geschwaerzt?: unknown; tuersteher?: unknown }
+interface LernAntwort { ok?: boolean; topic?: string; proposed?: boolean; room?: string; geschwaerzt?: unknown; tuersteher?: unknown }
 
 function rolleAusFehler(e: unknown, ersatz: string): string {
   const f = apiFehler(e);
@@ -452,6 +460,15 @@ export async function lerneUeberApi(
     });
   } catch (e) {
     const f = apiFehler(e);
+    if (f.status === 403 && f.code === 'group_forbidden') {
+      return [
+        `🔒 Du bist nicht Mitglied der Gruppe \`${anfrage.group ?? ''}\`. Nichts wurde gespeichert.`,
+        `Gruppen setzt der Besitzer oder ein Admin unter ${ROLLEN_SEITE}.`,
+      ].join('\n');
+    }
+    if (f.status === 409 && f.code === 'topic_exists_team') {
+      return `⚠️ Nicht gespeichert: Das Thema \`${anfrage.topic}\` gibt es schon als Team-Lektion. Bitte einen anderen Namen waehlen.`;
+    }
     if (f.status === 403) {
       const r = rolleAusFehler(e, rolle);
       return [
@@ -471,8 +488,9 @@ export async function lerneUeberApi(
       `Until approved it will NOT surface in \`smart_recall\` / \`team_recall\`.`,
     ].join('\n');
   }
+  const raum = antwort?.room === 'private' ? ' in your private room' : antwort?.room === 'group' ? ` in the room of group \`${anfrage.group ?? ''}\`` : '';
   return [
-    `✅ Lesson stored: \`${thema}\` (${anfrage.outcome}) — saved through the cachly API as a team member (role: ${rolle}).`,
+    `✅ Lesson stored: \`${thema}\` (${anfrage.outcome})${raum} — saved through the cachly API as a team member (role: ${rolle}).`,
     `💡 ${String(anfrage.what_worked ?? '').slice(0, 120)}`,
   ].join('\n');
 }
