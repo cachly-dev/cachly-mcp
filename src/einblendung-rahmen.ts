@@ -37,7 +37,7 @@ export const RAHMEN_HINWEIS =
 // Etiketten, die ein Modell als Grenze oder Rolle lesen koennte. Der Rahmen
 // selbst steht vorn, damit ein gefaelschtes `</cachly-memory>` nie durchkommt.
 const GEFAEHRLICHE_ETIKETTEN =
-  /<\s*\/?\s*(cachly-memory|system-reminder|system|assistant|user|human|instructions?|tool_result|function_results|antml:[a-z_]+)\b[^>]*>/gi;
+  /<\s*\/?\s*(cachly-memory|cachly-company-rules|system-reminder|system|assistant|user|human|instructions?|tool_result|function_results|antml:[a-z_]+)\b[^>]*>/gi;
 
 // Nullbreite-Zeichen, Schreibrichtungs-Steuerung und das BOM: unsichtbar fuer
 // den Menschen im Terminal, sichtbar fuer das Modell.

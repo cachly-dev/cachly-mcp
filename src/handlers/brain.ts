@@ -340,6 +340,7 @@ import { istBlossesThema } from '../blosses-thema.js';
 import { zeitpunkt } from '../zeitmessung.js';
 import { wartetAufFrischenBestand } from '../bestand-frische.js';
 import { leseZurueckgezogen, ruecknahmeHinweis, ruecknahmeWarnung } from '../zurueckgezogen.js';
+import { holeRegeln, regelBlock, regelHinweisEinmal, passendeRegeln, regelStandImSpeicher, markiereVertraut } from '../firmenregeln.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
 // Resolve the package version at runtime from package.json so the session briefing
@@ -994,6 +995,11 @@ export async function handleBrainTool(
   getConnection: GetConnection,
   apiFetch: ApiFetch,
 ): Promise<string | null> {
+  // Weg E (Firmenregeln): session_start beginnt mit dem Block, in JEDER Sitzung. Der
+  // Abruf laeuft neben dem Briefing her und wirft nie (firmenregeln.ts).
+  const regelnAbruf = name === 'session_start' && args.instance_id
+    ? holeRegeln(String(args.instance_id), (pfad, optionen) => apiFetch(pfad, optionen))
+    : null;
   const ergebnis = await handleBrainToolInner(name, args, getConnection, apiFetch);
   // Karte eutmy0ly93ch: jeder Recall zaehlt — im Prozess, nie in Redis.
   const feld = RECALL_WERKZEUGE_FUER_KOSTEN[name];
@@ -1001,6 +1007,22 @@ export async function handleBrainTool(
     try {
       merkeRecall(String(args.instance_id ?? ''), String(args[feld] ?? ''), ergebnis.length);
     } catch { /* Zaehlen darf nie einen Abruf brechen */ }
+  }
+  if (typeof ergebnis !== 'string') return ergebnis;
+  const instanz = String(args.instance_id ?? '');
+  if (regelnAbruf) {
+    const stand = await regelnAbruf;
+    const block = regelBlock(stand);
+    if (!block) return ergebnis;
+    // Der Block kam in dieser Sitzung schon an: die erste Werkzeugantwort (Weg A) liefert ihn nicht noch einmal.
+    regelHinweisEinmal(instanz, stand, { cwd: String(args.workspace_path || process.cwd()), prozessStart: Date.now() });
+    return `${markiereVertraut(block)}\n\n${ergebnis}`;
+  }
+  // Weg S: bis zu 3 passende Regeln NACH den Treffern. Kein Netz, nur der Stand im Speicher;
+  // die Rangfolge der Treffer bleibt, wie sie ist.
+  if (name === 'smart_recall' && instanz) {
+    const passend = passendeRegeln(String(args.query ?? ''), regelStandImSpeicher(instanz));
+    if (passend) return `${ergebnis}\n\n${markiereVertraut(passend)}`;
   }
   return ergebnis;
 }
@@ -2342,11 +2364,6 @@ async function handleBrainToolInner(
           ? `💭 _Remember when you solved this ${Math.round(ageFromStoreDays / 30)} months ago? Still works._`
           : '';
 
-        // "Never Google This Again" — suggest pinning after 3rd recall
-        const suggestPin = updatedLesson.recall_count === 3 && !(lesson as { pinned?: boolean }).pinned
-          ? `📌 **This lesson came up in 3 answers so far.** If you need it often, pin it: add \`pinned: true\` via \`learn_from_attempts\` to always surface it first.`
-          : '';
-
         // ── Trust signal ────────────────────────────────────────────────────
         // Nur, was gezaehlt eine Bestaetigung ist: mehrere Autoren. Bis
         // 03.11.2026 stand hier ab recall_count 5 "Proven" und ab 10
@@ -2449,7 +2466,6 @@ async function handleBrainToolInner(
           (lesson.commands ?? []).length > 0 ? `**Commands:** ${(lesson.commands ?? []).map((c: string) => `\`${c}\``).join(', ')}` : '',
           (lesson.tags ?? []).length > 0 ? `**Tags:** ${(lesson.tags ?? []).map((t: string) => `#${t}`).join(' ')}` : '',
           auditSummary,
-          suggestPin,
         ].filter(l => l !== '').join('\n');
       }
 
@@ -4342,11 +4358,11 @@ async function handleBrainToolInner(
       // Treffer ohne ein getroffenes Wort: Im Probelauf einer ersten Sitzung
       // stand "Initial commit: demo app skeleton" nach EINER Sitzung als
       // Gesetz da. Jetzt zaehlt nur, was eine Handlung belegt (Wirkungsspur):
-      // angeheftet, als hilfreich gemeldet, oder mindestens
+      // als hilfreich gemeldet, oder mindestens
       // BESTAETIGT_GEOEFFNET-mal nach einer Suche geoeffnet. Die Rangfolge der
       // Suche bleibt davon unberuehrt.
       {
-        type LessonPin = typeof lessons[0] & { pinned?: boolean };
+        type LessonPin = typeof lessons[0];
         const BESTAETIGT_GEOEFFNET = 2;
         const spurRoh = await redis.lrange(`cachly:wirkung:${instance_id}`, 0, -1).catch(() => [] as string[]);
         const belege = belegeJeThema(
@@ -4363,7 +4379,7 @@ async function handleBrainToolInner(
           .filter(l => {
             if (l.outcome !== 'success') return false;
             const b = belegVon(l.topic);
-            return l.pinned === true || b.geholfen >= 1 || b.geoeffnet >= BESTAETIGT_GEOEFFNET;
+            return b.geholfen >= 1 || b.geoeffnet >= BESTAETIGT_GEOEFFNET;
           })
           .filter(l => !gezeigt.has(l.topic))
           .sort((a, b) => {
@@ -4374,13 +4390,12 @@ async function handleBrainToolInner(
           })
           .slice(0, 5);
         if (laws.length > 0) {
-          lines.push(`📌 **Confirmed lessons** (pinned, reported helpful, or opened after a search — being shown does not count):`);
+          lines.push(`📌 **Confirmed lessons** (reported helpful, or opened after a search — being shown does not count):`);
           for (const l of laws) {
             gezeigt.add(l.topic);
             const sev = l.severity === 'critical' ? '🔴' : l.severity === 'major' ? '🟡' : '';
             const b = belegVon(l.topic);
             const why = [
-              l.pinned === true ? 'pinned' : '',
               b.geholfen > 0 ? `reported helpful ${b.geholfen}×` : '',
               b.geoeffnet > 0 ? `opened ${b.geoeffnet}× after a search` : '',
             ].filter(Boolean).join(' · ');

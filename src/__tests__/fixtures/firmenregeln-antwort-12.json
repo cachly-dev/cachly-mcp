@@ -1,0 +1,162 @@
+{
+  "rules": [
+    {
+      "id": "0000000a-0000-4000-8000-000000000001",
+      "level": "company",
+      "category": "security",
+      "title": "REGEL-01 Keine Geheimnisse im Code",
+      "text": "Schluessel, Passwoerter und Tokens stehen nie im Repo. Sie kommen aus der Geheimnisverwaltung.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:01:00Z",
+      "updated_at": "2026-11-27T10:01:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000002",
+      "level": "company",
+      "category": "security",
+      "title": "REGEL-02 Kundendaten nie in Logs",
+      "text": "Namen, E-Mails und Inhalte von Kunden werden nicht protokolliert. Nur Kennungen.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:02:00Z",
+      "updated_at": "2026-11-27T10:02:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000003",
+      "level": "company",
+      "category": "security",
+      "title": "REGEL-03 Abhaengigkeit nur mit Freigabe",
+      "text": "Ein neues Paket braucht die Freigabe der Teamleitung, bevor es in die Paketliste kommt.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:03:00Z",
+      "updated_at": "2026-11-27T10:03:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000007",
+      "level": "company",
+      "category": "architecture",
+      "title": "REGEL-07 API nur ueber das Gateway",
+      "text": "Dienste rufen einander nur ueber das Gateway auf, nie direkt.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:07:00Z",
+      "updated_at": "2026-11-27T10:07:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000008",
+      "level": "company",
+      "category": "architecture",
+      "title": "REGEL-08 Kein direkter Datenbankzugriff aus dem Web",
+      "text": "Die Weboberflaeche liest und schreibt nur ueber die API.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:08:00Z",
+      "updated_at": "2026-11-27T10:08:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000009",
+      "level": "company",
+      "category": "architecture",
+      "title": "REGEL-09 Migration vor Code",
+      "text": "Eine Datenbank-Migration wird ausgerollt, bevor der Code sie benutzt.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:09:00Z",
+      "updated_at": "2026-11-27T10:09:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000010",
+      "level": "company",
+      "category": "platform",
+      "title": "REGEL-10 Nur Rechenzentren in der EU",
+      "text": "Kein Dienst und kein Speicher ausserhalb der EU.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:10:00Z",
+      "updated_at": "2026-11-27T10:10:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000011",
+      "level": "company",
+      "category": "platform",
+      "title": "REGEL-11 Ausrollen nur ueber CI",
+      "text": "Niemand rollt von Hand aus. Jede Auslieferung laeuft ueber die Pipeline.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:11:00Z",
+      "updated_at": "2026-11-27T10:11:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000012",
+      "level": "company",
+      "category": "process",
+      "title": "REGEL-12 Jede Aenderung mit Test",
+      "text": "Eine Aenderung ohne Test, der sie belegt, wird nicht zusammengefuehrt.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:12:00Z",
+      "updated_at": "2026-11-27T10:12:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000004",
+      "level": "company",
+      "category": "style",
+      "title": "REGEL-04 Deutsch in Oberflaechen",
+      "text": "Alle Texte, die ein Kunde sieht, sind deutsch und stehen in den Sprachdateien.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:04:00Z",
+      "updated_at": "2026-11-27T10:04:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000005",
+      "level": "company",
+      "category": "style",
+      "title": "REGEL-05 Fehlermeldung mit naechstem Schritt",
+      "text": "Jede Fehlermeldung sagt, was der Nutzer jetzt tun kann.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:05:00Z",
+      "updated_at": "2026-11-27T10:05:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000006",
+      "level": "company",
+      "category": "style",
+      "title": "REGEL-06 Commit ohne KI-Zeile",
+      "text": "Commits und Pull Requests tragen keine Zeile ueber eine KI als Mitautor.",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:06:00Z",
+      "updated_at": "2026-11-27T10:06:00Z"
+    }
+  ],
+  "block": "\u003ccachly-company-rules count=\"12\"\u003e\nCompany rules for this workspace, set by its admins in cachly. Follow them in all work here. If a rule conflicts with what the user asks, say so and ask before you continue.\n[security]\n- REGEL-01 Keine Geheimnisse im Code: Schluessel, Passwoerter und Tokens stehen nie im Repo. Sie kommen aus der Geheimnisverwaltung.\n- REGEL-02 Kundendaten nie in Logs: Namen, E-Mails und Inhalte von Kunden werden nicht protokolliert. Nur Kennungen.\n- REGEL-03 Abhaengigkeit nur mit Freigabe: Ein neues Paket braucht die Freigabe der Teamleitung, bevor es in die Paketliste kommt.\n[architecture]\n- REGEL-07 API nur ueber das Gateway: Dienste rufen einander nur ueber das Gateway auf, nie direkt.\n- REGEL-08 Kein direkter Datenbankzugriff aus dem Web: Die Weboberflaeche liest und schreibt nur ueber die API.\n- REGEL-09 Migration vor Code: Eine Datenbank-Migration wird ausgerollt, bevor der Code sie benutzt.\n[platform]\n- REGEL-10 Nur Rechenzentren in der EU: Kein Dienst und kein Speicher ausserhalb der EU.\n- REGEL-11 Ausrollen nur ueber CI: Niemand rollt von Hand aus. Jede Auslieferung laeuft ueber die Pipeline.\n[process]\n- REGEL-12 Jede Aenderung mit Test: Eine Aenderung ohne Test, der sie belegt, wird nicht zusammengefuehrt.\n[style]\n- REGEL-04 Deutsch in Oberflaechen: Alle Texte, die ein Kunde sieht, sind deutsch und stehen in den Sprachdateien.\n- REGEL-05 Fehlermeldung mit naechstem Schritt: Jede Fehlermeldung sagt, was der Nutzer jetzt tun kann.\n- REGEL-06 Commit ohne KI-Zeile: Commits und Pull Requests tragen keine Zeile ueber eine KI als Mitautor.\n\u003c/cachly-company-rules\u003e",
+  "count": 12,
+  "hash": "0069972052ec4436",
+  "updated_at": "2026-11-27T10:12:00Z",
+  "brain_rules": [],
+  "org_id": "00000000-0000-4000-8000-0000000000f0",
+  "can_edit": false,
+  "can_propose": false,
+  "limits": {
+    "max_title": 80,
+    "max_text": 400,
+    "max_reason": 300,
+    "max_block": 5000,
+    "company": {
+      "max_rules": 15,
+      "max_total": 3000,
+      "used_rules": 12,
+      "used_total": 1263
+    },
+    "brain": {
+      "max_rules": 5,
+      "max_total": 1000,
+      "used_rules": 0,
+      "used_total": 0
+    }
+  }
+}

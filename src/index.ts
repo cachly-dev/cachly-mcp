@@ -1082,6 +1082,7 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, _isRetry = f
 }
 
 import { handleBrainTool } from './handlers/brain.js';
+import { holeRegeln, regelAbrufMitFetch, regelAnweisungsZeile, regelHinweisEinmal, regelStandImSpeicher, REGEL_FRISCH_MS, type RegelAbruf } from './firmenregeln.js';
 import { handleContextTool } from './handlers/context.js';
 import { handleInstanceTool } from './handlers/instances.js';
 import { handleCacheTool } from './handlers/cache.js';
@@ -1956,6 +1957,43 @@ You do not need to pass instance_id: the server uses CACHLY_BRAIN_INSTANCE_ID if
 session_start gives a briefing at the start of a session; it does not replace smart_recall for a concrete task.`;
 
 /**
+ * Weg I (Firmenregeln): `instructions` bekommt EINE Zusatzzeile am Ende, und nur, wenn
+ * Regeln auf der Platte liegen. Der erste Satz bleibt zeichengleich (er ist gemessen).
+ * Im HTTP-Betrieb gibt es keine Platte je Konto: dort nie.
+ */
+export function mcpAnweisungen(instanzId: string = _defaultInstanceId): string {
+  if (istMehrmandant()) return CACHLY_MCP_INSTRUCTIONS;
+  const zeile = regelAnweisungsZeile(instanzId);
+  return zeile ? `${CACHLY_MCP_INSTRUCTIONS}\n\n${zeile}` : CACHLY_MCP_INSTRUCTIONS;
+}
+
+/** Abruf der Regeln ueber den Server-eigenen apiFetch (Schluessel, Selbstheilung, Zeitlimit). */
+const regelAbruf: RegelAbruf = (pfad, optionen) => apiFetch<unknown>(pfad, optionen);
+const PROZESS_START = Date.now();
+
+/**
+ * Weg A (Firmenregeln): der Block an der ersten Werkzeugantwort dieses Prozesses, einmal je
+ * Hash. Hat der Hook oder session_start ihn schon geliefert, kommt '' zurueck. Im
+ * HTTP-Betrieb gibt es kein "einmal je Prozess": ein Prozess bedient viele Konten.
+ * Wartet hoechstens REGEL_ABRUF_MS, wenn noch nichts im Speicher liegt; ist der Stand
+ * aelter als REGEL_FRISCH_MS, fragt es im Hintergrund neu und nutzt den alten.
+ */
+async function regelnFuerAntwort(instanzId: string): Promise<string> {
+  if (istMehrmandant() || !instanzId) return '';
+  try {
+    let stand = regelStandImSpeicher(instanzId);
+    if (!stand) {
+      stand = await holeRegeln(instanzId, regelAbruf);
+    } else if (Date.now() - (stand.geholtAm ?? 0) >= REGEL_FRISCH_MS) {
+      void holeRegeln(instanzId, regelAbruf);
+    }
+    return regelHinweisEinmal(instanzId, stand, { cwd: process.cwd(), prozessStart: PROZESS_START });
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Baut einen frischen MCP-Server mit allen Handlern.
  *
  * ─── WARUM DAS EINE FABRIK IST UND KEINE KONSTANTE ──────────────────────────
@@ -2060,7 +2098,7 @@ function registriereHandler(s: Server): void {
 function makeServer(): Server {
   const s = new Server(
     serverInfo(CURRENT_VERSION),
-    { capabilities: CAPABILITIES, instructions: CACHLY_MCP_INSTRUCTIONS }
+    { capabilities: CAPABILITIES, instructions: mcpAnweisungen() }
   );
   registriereHandler(s);
   merkeClientNachHandshake(s);
@@ -2081,13 +2119,15 @@ function merkeClientNachHandshake(s: Server): void {
       _verbundenGemeldet = true;
       sendFunnelEvent('mcp_verbunden', { client: String(client?.name ?? 'unbekannt').slice(0, 60), client_version: String(client?.version ?? '').slice(0, 30) });
     }
+    // Firmenregeln vorladen: die erste Werkzeugantwort wartet dann im Normalfall 0 s.
+    if (!istMehrmandant() && _defaultInstanceId) void holeRegeln(_defaultInstanceId, regelAbruf);
     vorher?.();
   };
 }
 
 const server = new Server(
   serverInfo(CURRENT_VERSION),
-  { capabilities: CAPABILITIES, instructions: CACHLY_MCP_INSTRUCTIONS }
+  { capabilities: CAPABILITIES, instructions: mcpAnweisungen() }
 );
 merkeClientNachHandshake(server);
 
@@ -2273,6 +2313,9 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
   try {
     merkeWerkzeugAufruf();
     zeitpunkt(`werkzeug ${name}: Anfang`);
+    // Weg A: vor dem Werkzeug, damit auch ein erster smart_recall den Stand im Speicher findet.
+    // session_start liefert den Block selbst (Weg E) und merkt es sich dort.
+    const regelText = name === 'session_start' ? '' : await regelnFuerAntwort(sitzungsInstanz);
     const text = await handleTool(name, (args ?? {}) as Record<string, unknown>);
     zeitpunkt(`werkzeug ${name}: Antwort fertig`);
     if (sitzungsSchritt === 'als-gestartet-merken') starteAutoIndex(sitzungsInstanz);
@@ -2284,7 +2327,7 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
     return {
       content: [{
         type: 'text',
-        text: rahmeAntwort(name, text) + holeStartwissenHinweis() + holeNeueFassungHinweis(name),
+        text: rahmeAntwort(name, text) + holeStartwissenHinweis() + holeNeueFassungHinweis(name) + (regelText ? `\n\n${regelText}` : ''),
       }],
     };
   } catch (err) {
@@ -2999,6 +3042,14 @@ if (process.argv[2] === 'refer') {
 // --brain: connects a Brain you can already reach (for example after accepting
 // the invitation on the web). Checks GET /instances/:id first.
 
+// Muss vor `join` stehen: `join` richtet die Hooks ein wie `setup` und `init` (Temporal Dead Zone).
+const EDITOR_HOOK_ZEILEN = {
+  cursor: { datei: '.cursor/hooks.json', name: 'Cursor', wie: 'session briefing, per-prompt recall after the first tool call' },
+  copilot: { datei: COPILOT_HOOKS_DATEI, name: 'VS Code / Copilot', wie: 'session briefing, per-prompt recall' },
+  codex: { datei: CODEX_HOOKS_DATEI, name: 'Codex', wie: 'session briefing, per-prompt recall; trust it once in /hooks' },
+  gemini: { datei: GEMINI_SETTINGS_DATEI, name: 'Gemini CLI', wie: 'session briefing, per-prompt recall' },
+} as const;
+
 if (process.argv[2] === 'join') {
   const { writeFile: wfJ, readFile: rfJ, mkdir: mkJ } = await import('node:fs/promises');
   const { existsSync: exJ } = await import('node:fs');
@@ -3200,6 +3251,28 @@ if (process.argv[2] === 'join') {
       }
     }
   }
+
+  // ── Hooks wie bei `setup` (Firmenregeln, 27.11.2026) ─────────────────────────
+  // Bis dahin schrieb `join` nur die MCP-Eintraege. Ohne Hook kam das Briefing nie am
+  // ersten Tag an, und die Firmenregeln nur ueber die erste Werkzeugantwort. Dieselben
+  // Funktionen wie in `setup`: installAmbientHooks (Claude Code) und installEditorHooks.
+  try {
+    const a = await installAmbientHooks(cwd, instance_id);
+    if (a.settings === 'skipped') {
+      console.log(`⚠️  .claude/settings.json ${a.grund ?? 'is not valid JSON'} — left untouched, Ambient Recall hooks not wired`);
+    } else {
+      console.log(`  ✅ .claude/settings.json (Ambient Recall hooks wired${a.settings === 'unchanged' ? ' already' : ''})`);
+    }
+  } catch { /* Hooks sind ein Zusatz: scheitern sie, bleibt join gueltig */ }
+  if (exJ(resJ(cwd, '.cursor'))) await installEditorHooks('cursor', cwd, instance_id, ' ');
+  if (exJ(resJ(cwd, '.vscode'))) await installEditorHooks('copilot', cwd, instance_id, ' ');
+
+  // ── Firmenregeln: einmal holen und die Zahl zeigen ───────────────────────────
+  // Das Mitglied sieht schon im Terminal, dass etwas ankommt.
+  try {
+    const regeln = await holeRegeln(instance_id, regelAbrufMitFetch(API_URL, joinJwt));
+    if (regeln.count > 0) console.log(`  📏 ${regeln.count} company rule${regeln.count === 1 ? '' : 's'} active`);
+  } catch { /* holeRegeln wirft nie */ }
 
   console.log('');
   if (written === 0) {
@@ -3788,12 +3861,6 @@ if ((!process.argv[2] && process.stdout.isTTY) || _argumentArt === 'hilfe' || _a
 // Usage: npx @cachly-dev/mcp-server init --instance-id <id> --api-key <key> [--editor claude|cursor|windsurf|copilot|continue|codex|gemini] [--project-dir /path]
 
 /** What each editor's hook install prints (init/setup/autopilot). */
-const EDITOR_HOOK_ZEILEN = {
-  cursor: { datei: '.cursor/hooks.json', name: 'Cursor', wie: 'session briefing, per-prompt recall after the first tool call' },
-  copilot: { datei: COPILOT_HOOKS_DATEI, name: 'VS Code / Copilot', wie: 'session briefing, per-prompt recall' },
-  codex: { datei: CODEX_HOOKS_DATEI, name: 'Codex', wie: 'session briefing, per-prompt recall; trust it once in /hooks' },
-  gemini: { datei: GEMINI_SETTINGS_DATEI, name: 'Gemini CLI', wie: 'session briefing, per-prompt recall' },
-} as const;
 
 /** One summary line for an editor hook install (init/setup/autopilot). Silent when it failed. */
 function reportEditorHooks(editor: keyof typeof EDITOR_HOOK_ZEILEN, r: EditorInstallResult | null, pad: string): void {

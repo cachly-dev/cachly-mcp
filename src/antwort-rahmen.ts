@@ -16,6 +16,7 @@
  */
 
 import { rahmeEin } from './einblendung-rahmen.js';
+import { zerlegeNachVertrauen } from './firmenregeln.js';
 
 /** Werkzeuge, deren Antwort Text aus dem Brain wiedergibt. */
 export const GERAHMTE_WERKZEUGE: ReadonlySet<string> = new Set([
@@ -54,6 +55,16 @@ export const GERAHMTE_WERKZEUGE: ReadonlySet<string> = new Set([
 /** Rahmt die Antwort eines Lese-Werkzeugs; alle anderen Antworten bleiben unveraendert. */
 export function rahmeAntwort(werkzeug: string, text: string): string {
   if (!GERAHMTE_WERKZEUGE.has(werkzeug)) return text;
+  // Der Regelblock der API (firmenregeln.ts) steht AUSSERHALB des Lektionsrahmens:
+  // er ist eine Anweisung des Admins, keine gespeicherte Notiz. Nur Stuecke mit der
+  // prozesseigenen Marke gelten so; alles andere wird wie bisher gerahmt.
+  const teile = zerlegeNachVertrauen(text);
+  if (teile.some((t) => t.vertraut)) {
+    return teile
+      .map((t) => (t.vertraut ? t.text : rahmeEin(t.text)))
+      .filter(Boolean)
+      .join('\n\n');
+  }
   const gerahmt = rahmeEin(text);
   return gerahmt || text;
 }

@@ -1184,12 +1184,11 @@ describe('Confirmed lessons (session_start)', () => {
     expect(out).not.toContain('Confirmed lessons');
   });
 
-  it('surfaces an explicitly pinned lesson even with low recall', async () => {
+  it('a lesson flagged pinned:true is no longer a confirmed lesson (rules are set in the dashboard, 27.11.2026)', async () => {
     await seedLesson(redis, 'team:convention', { recall_count: 0, pinned: true, what_worked: 'always snake_case handlers' });
     const out = (await handleBrainTool('session_start', { instance_id: 'i1' }, getConn, noopApiFetch))!;
-    expect(out).toContain('Confirmed lessons');
-    expect(out).toContain('team:convention');
-    expect(out).toContain('pinned');
+    expect(out).not.toContain('Confirmed lessons');
+    expect(out).not.toContain('pinned');
   });
 
   it('does not confirm failure lessons', async () => {

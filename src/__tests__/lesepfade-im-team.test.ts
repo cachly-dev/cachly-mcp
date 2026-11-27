@@ -25,6 +25,10 @@ import { handleTeamTool } from '../handlers/team.js';
 import { handleFedbrainTool } from '../handlers/fedbrain.js';
 import { Einblendbestand } from '../einblendung-kern.js';
 import { sitzungsKontext } from '../einblendung.js';
+import { holeRegeln, setzeRegelZustandZurueck } from '../firmenregeln.js';
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 const INSTANZ = 'i1';
 const VERBOTEN = /PRIVAT-MARKE|GRUPPE-MARKE|geheim:/;
@@ -181,6 +185,43 @@ describe('Einblendungs-Hook: nur Teamweites kommt von selbst in den Prompt', () 
 
   it('sitzungsKontext nennt nur Teamweites', () => {
     const aus = sitzungsKontext(BESTAND);
+    expect(aus).toMatch(/team:alpha/);
+    expect(aus).not.toMatch(VERBOTEN);
+  });
+});
+
+// Firmenregeln (27.11.2026): der neue Lesepfad zeigt Regeln der API, keine Lektionen.
+// Zwei Wachter: MIT Regeln zeigen session_start und sitzungsKontext weiter keine verbotene Marke,
+// und der Regelblock steht zusaetzlich da (Positivkontrolle).
+describe('Lesepfad Firmenregeln: Regeln dazu, verbotene Marken weiter nicht', () => {
+  const REGELN = {
+    rules: [{ id: 'r1', category: 'security', title: 'REGEL-X Keine Geheimnisse', text: 'Nie im Repo.' }],
+    block: '<cachly-company-rules count="1">\nCompany rules.\n[security]\n- REGEL-X Keine Geheimnisse: Nie im Repo.\n</cachly-company-rules>',
+    count: 1, hash: 'abc', updated_at: null,
+  };
+
+  beforeEach(() => {
+    process.env.CACHLY_REGELN_ORDNER = mkdtempSync(join(tmpdir(), 'regeln-lp-'));
+    setzeRegelZustandZurueck();
+  });
+
+  it('session_start MIT Regeln: Regelblock und teamweite Lektion da, private und Gruppen-Lektion nicht', async () => {
+    const redis = new MockRedis();
+    await befuelle(redis);
+    const api = (async (pfad: string) => {
+      if (/\/rules$/.test(pfad)) return REGELN;
+      return { ok: false, status: 503, json: async () => ({}) };
+    }) as never;
+    const aus = String(await handleBrainTool('session_start', { instance_id: INSTANZ, focus: 'alpha deploy' }, (async () => redis) as never, api));
+    expect(aus).toContain('REGEL-X Keine Geheimnisse');
+    expect(aus).toMatch(/team:alpha-offen/);
+    expect(aus).not.toMatch(VERBOTEN);
+  });
+
+  it('sitzungsKontext MIT Regeln: Regelblock zuerst, teamweite Lektion da, nichts Verbotenes', async () => {
+    const stand = await holeRegeln(INSTANZ, async () => REGELN);
+    const aus = sitzungsKontext(BESTAND, stand);
+    expect(aus.startsWith('<cachly-company-rules')).toBe(true);
     expect(aus).toMatch(/team:alpha/);
     expect(aus).not.toMatch(VERBOTEN);
   });

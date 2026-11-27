@@ -1,0 +1,311 @@
+{
+  "rules": [
+    {
+      "id": "0000000a-0000-4000-8000-000000000001",
+      "level": "company",
+      "category": "security",
+      "title": "FIRMA-01 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:01:00Z",
+      "updated_at": "2026-11-27T10:01:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000006",
+      "level": "company",
+      "category": "security",
+      "title": "FIRMA-06 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:06:00Z",
+      "updated_at": "2026-11-27T10:06:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000011",
+      "level": "company",
+      "category": "security",
+      "title": "FIRMA-11 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:11:00Z",
+      "updated_at": "2026-11-27T10:11:00Z"
+    },
+    {
+      "id": "0000000b-0000-4000-8000-000000000001",
+      "level": "brain",
+      "category": "security",
+      "title": "TEAM-01 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Bernd Besitzer",
+      "updated_by_name": "Bernd Besitzer",
+      "created_at": "2026-11-27T11:41:00Z",
+      "updated_at": "2026-11-27T11:41:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000002",
+      "level": "company",
+      "category": "architecture",
+      "title": "FIRMA-02 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:02:00Z",
+      "updated_at": "2026-11-27T10:02:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000007",
+      "level": "company",
+      "category": "architecture",
+      "title": "FIRMA-07 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:07:00Z",
+      "updated_at": "2026-11-27T10:07:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000012",
+      "level": "company",
+      "category": "architecture",
+      "title": "FIRMA-12 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:12:00Z",
+      "updated_at": "2026-11-27T10:12:00Z"
+    },
+    {
+      "id": "0000000b-0000-4000-8000-000000000002",
+      "level": "brain",
+      "category": "architecture",
+      "title": "TEAM-02 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Bernd Besitzer",
+      "updated_by_name": "Bernd Besitzer",
+      "created_at": "2026-11-27T11:42:00Z",
+      "updated_at": "2026-11-27T11:42:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000003",
+      "level": "company",
+      "category": "platform",
+      "title": "FIRMA-03 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:03:00Z",
+      "updated_at": "2026-11-27T10:03:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000008",
+      "level": "company",
+      "category": "platform",
+      "title": "FIRMA-08 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:08:00Z",
+      "updated_at": "2026-11-27T10:08:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000013",
+      "level": "company",
+      "category": "platform",
+      "title": "FIRMA-13 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:13:00Z",
+      "updated_at": "2026-11-27T10:13:00Z"
+    },
+    {
+      "id": "0000000b-0000-4000-8000-000000000003",
+      "level": "brain",
+      "category": "platform",
+      "title": "TEAM-03 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Bernd Besitzer",
+      "updated_by_name": "Bernd Besitzer",
+      "created_at": "2026-11-27T11:43:00Z",
+      "updated_at": "2026-11-27T11:43:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000004",
+      "level": "company",
+      "category": "process",
+      "title": "FIRMA-04 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:04:00Z",
+      "updated_at": "2026-11-27T10:04:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000009",
+      "level": "company",
+      "category": "process",
+      "title": "FIRMA-09 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:09:00Z",
+      "updated_at": "2026-11-27T10:09:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000014",
+      "level": "company",
+      "category": "process",
+      "title": "FIRMA-14 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:14:00Z",
+      "updated_at": "2026-11-27T10:14:00Z"
+    },
+    {
+      "id": "0000000b-0000-4000-8000-000000000004",
+      "level": "brain",
+      "category": "process",
+      "title": "TEAM-04 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Bernd Besitzer",
+      "updated_by_name": "Bernd Besitzer",
+      "created_at": "2026-11-27T11:44:00Z",
+      "updated_at": "2026-11-27T11:44:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000005",
+      "level": "company",
+      "category": "style",
+      "title": "FIRMA-05 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:05:00Z",
+      "updated_at": "2026-11-27T10:05:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000010",
+      "level": "company",
+      "category": "style",
+      "title": "FIRMA-10 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:10:00Z",
+      "updated_at": "2026-11-27T10:10:00Z"
+    },
+    {
+      "id": "0000000a-0000-4000-8000-000000000015",
+      "level": "company",
+      "category": "style",
+      "title": "FIRMA-15 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Anna Admin",
+      "updated_by_name": "Anna Admin",
+      "created_at": "2026-11-27T10:15:00Z",
+      "updated_at": "2026-11-27T10:15:00Z"
+    },
+    {
+      "id": "0000000b-0000-4000-8000-000000000005",
+      "level": "brain",
+      "category": "style",
+      "title": "TEAM-05 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Bernd Besitzer",
+      "updated_by_name": "Bernd Besitzer",
+      "created_at": "2026-11-27T11:45:00Z",
+      "updated_at": "2026-11-27T11:45:00Z"
+    }
+  ],
+  "block": "\u003ccachly-company-rules count=\"20\"\u003e\nCompany rules for this workspace, set by its admins in cachly. Follow them in all work here. If a rule conflicts with what the user asks, say so and ask before you continue.\n[security]\n- FIRMA-01 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- FIRMA-06 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- FIRMA-11 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- TEAM-01 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (team rule): Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n[architecture]\n- FIRMA-02 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- FIRMA-07 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- FIRMA-12 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- TEAM-02 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (team rule): Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n[platform]\n- FIRMA-03 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- FIRMA-08 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- FIRMA-13 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- TEAM-03 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (team rule): Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n[process]\n- FIRMA-04 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- FIRMA-09 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- FIRMA-14 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- TEAM-04 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (team rule): Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n[style]\n- FIRMA-05 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- FIRMA-10 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- FIRMA-15 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx: Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n- TEAM-05 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx (team rule): Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\n\u003c/cachly-company-rules\u003e",
+  "count": 20,
+  "hash": "8bea384a64e3e48d",
+  "updated_at": "2026-11-27T11:45:00Z",
+  "brain_rules": [
+    {
+      "id": "0000000b-0000-4000-8000-000000000001",
+      "level": "brain",
+      "category": "security",
+      "title": "TEAM-01 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Bernd Besitzer",
+      "updated_by_name": "Bernd Besitzer",
+      "created_at": "2026-11-27T11:41:00Z",
+      "updated_at": "2026-11-27T11:41:00Z",
+      "status": "active"
+    },
+    {
+      "id": "0000000b-0000-4000-8000-000000000002",
+      "level": "brain",
+      "category": "architecture",
+      "title": "TEAM-02 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Bernd Besitzer",
+      "updated_by_name": "Bernd Besitzer",
+      "created_at": "2026-11-27T11:42:00Z",
+      "updated_at": "2026-11-27T11:42:00Z",
+      "status": "active"
+    },
+    {
+      "id": "0000000b-0000-4000-8000-000000000003",
+      "level": "brain",
+      "category": "platform",
+      "title": "TEAM-03 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Bernd Besitzer",
+      "updated_by_name": "Bernd Besitzer",
+      "created_at": "2026-11-27T11:43:00Z",
+      "updated_at": "2026-11-27T11:43:00Z",
+      "status": "active"
+    },
+    {
+      "id": "0000000b-0000-4000-8000-000000000004",
+      "level": "brain",
+      "category": "process",
+      "title": "TEAM-04 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Bernd Besitzer",
+      "updated_by_name": "Bernd Besitzer",
+      "created_at": "2026-11-27T11:44:00Z",
+      "updated_at": "2026-11-27T11:44:00Z",
+      "status": "active"
+    },
+    {
+      "id": "0000000b-0000-4000-8000-000000000005",
+      "level": "brain",
+      "category": "style",
+      "title": "TEAM-05 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "text": "Text xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "created_by_name": "Bernd Besitzer",
+      "updated_by_name": "Bernd Besitzer",
+      "created_at": "2026-11-27T11:45:00Z",
+      "updated_at": "2026-11-27T11:45:00Z",
+      "status": "active"
+    }
+  ],
+  "org_id": "00000000-0000-4000-8000-0000000000f0",
+  "can_edit": false,
+  "can_propose": false,
+  "limits": {
+    "max_title": 80,
+    "max_text": 400,
+    "max_reason": 300,
+    "max_block": 5000,
+    "company": {
+      "max_rules": 15,
+      "max_total": 3000,
+      "used_rules": 15,
+      "used_total": 3000
+    },
+    "brain": {
+      "max_rules": 5,
+      "max_total": 1000,
+      "used_rules": 5,
+      "used_total": 1000
+    }
+  }
+}

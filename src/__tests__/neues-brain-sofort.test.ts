@@ -93,8 +93,9 @@ describe('session_start: neues Brain, das noch startet', () => {
     // index.ts startet an diesem Satz den Import aus Git SYNCHRON — er waere
     // nicht wahr und hielte die Antwort an, bis die Instanz laeuft.
     expect(text).not.toContain('Welcome! Your AI Brain is live.');
-    // Eine einzige API-Abfrage: der Stand der Instanz.
-    expect(api.mock.calls.map((c) => String(c[0]))).toEqual(['/api/v1/instances/neu-s1']);
+    // Eine einzige Abfrage zum Stand der Instanz. Der Abruf der Firmenregeln (/rules, 27.11.2026) ist eine
+    // andere Frage und zaehlt hier nicht.
+    expect(api.mock.calls.map((c) => String(c[0])).filter((p) => !p.endsWith('/rules'))).toEqual(['/api/v1/instances/neu-s1']);
     expect(startetLautLetztemBlick('neu-s1')).toBe(true);
 
     const redis = new MockRedis();

@@ -29,6 +29,7 @@ import {
   frageAusPrompt,
   type EinblendConfig,
 } from './einblendung.js';
+import { holeRegeln, merkeRegelLieferung, regelAbrufMitFetch, regelBlock } from './firmenregeln.js';
 
 /** The subset of the Claude Code hook payload we care about. */
 export interface HookPayload {
@@ -225,8 +226,14 @@ export async function runEinblendung(raw: string, deps: EinblendDeps): Promise<s
     let kontext = '';
     if (event === 'SessionStart') {
       // Fetch fresh — this warms the stock for every prompt of the session.
-      const { lessons } = await holeBestand(deps.cfg, { force: true, fetchFn: deps.fetchFn });
-      kontext = sitzungsKontext(lessons);
+      // Die Firmenregeln kommen parallel zum Bestand (hoechstens 1,5 s) und stehen zuerst.
+      const [{ lessons }, regeln] = await Promise.all([
+        holeBestand(deps.cfg, { force: true, fetchFn: deps.fetchFn }),
+        holeRegeln(deps.cfg.instanceId, regelAbrufMitFetch(deps.cfg.apiUrl, deps.cfg.jwt, deps.fetchFn)),
+      ]);
+      kontext = sitzungsKontext(lessons, regeln);
+      // Marke: die erste Werkzeugantwort des Servers laesst den Block dann weg.
+      if (regelBlock(regeln) && kontext) merkeRegelLieferung(deps.cfg.instanceId, regeln.hash, payload.cwd ?? process.cwd());
     } else {
       const query = recallQueryFor(payload);
       if (query === null) return '';

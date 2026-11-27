@@ -49,6 +49,7 @@ import { rahmeEin, RAHMEN_HINWEIS } from './einblendung-rahmen.js';
 import { istMarkiert } from './verdacht-marke.js';
 import { istTeamweit } from './utils.js';
 import { istBlossesThema } from './blosses-thema.js';
+import { regelBlock, type RegelStand } from './firmenregeln.js';
 import { leserText as leserTextZuschnitt } from './seltenheitsbestand.js';
 import { mischeMitLeser } from './leser.js';
 import { LeserSicherung, dateiSpeicher, frageLeser, type LeserAntwort } from './leser-sicherung.js';
@@ -676,7 +677,16 @@ export const SITZUNG_TOP_N = 5;
  * (blosse Kategorie-Themen wie "deploy:" oder "auto:*", deren what_worked ein
  * Code-Klumpen ist). Leer, wenn der Bestand leer ist.
  */
-export function sitzungsKontext(alle: EinblendLektion[]): string {
+export function sitzungsKontext(alle: EinblendLektion[], regeln?: RegelStand | null): string {
+  // Firmenregeln (firmenregeln.ts) stehen zuerst und ausserhalb des Lektionsrahmens.
+  // Ohne zweites Argument ist die Ausgabe zeichengleich mit der von vorher.
+  const block = regelBlock(regeln ?? null);
+  const lektionen = sitzungsLektionen(alle);
+  if (!block) return lektionen;
+  return lektionen ?`${block}\n\n${lektionen}` : block;
+}
+
+function sitzungsLektionen(alle: EinblendLektion[]): string {
   // Eine beim Speichern als verdaechtig markierte Lektion kommt nicht von selbst in den
   // Kontext (verdacht-marke.ts). Dieselbe Regel wie in Einblendbestand, hier fuers Briefing:
   // auch nur Teamweites (12.11.2026), der Hook weiss nicht, wer fragt.

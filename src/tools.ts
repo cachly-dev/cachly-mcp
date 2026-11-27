@@ -759,9 +759,10 @@ const TOOLS = [
     description:
       'Single-call session briefing for the START of a session: last summary, recent lessons, health. It does not replace smart_recall for a concrete task. ' +
       'Returns: last session summary, recent lessons sorted by recency, relevant lessons for your focus area, ' +
-      'brain health stats (counts of open failures and stale lessons), team telepathy (what teammates learned this week), ' +
-      'predictive pre-warnings (if your focus area has known failure patterns), and memory crystals (compressed wisdom from old sessions). ' +
-      'Also saves a session start marker so session_end can compute duration.',
+      'brain health stats (open failures, stale lessons), team telepathy (what teammates learned this week), ' +
+      'predictive pre-warnings (if your focus has known failure patterns), and memory crystals (compressed old sessions). ' +
+      'Also saves a start marker for session_end. ' +
+      'Starts with the company rules of this workspace, if any.',
     inputSchema: {
       type: 'object',
       properties: {

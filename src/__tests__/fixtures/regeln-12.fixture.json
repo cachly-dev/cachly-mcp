@@ -1,0 +1,30 @@
+{
+  "_hinweis": "Eingefrorene Eingabe fuer die Abnahme Stufe 1. Alle Regeln sind erfunden. PR 1 kopiert diese Datei nach api/internal/firmenregeln/testdata/regeln-12.fixture.json und erzeugt daraus antwort-12.golden.json.",
+  "rules": [
+    { "category": "security", "title": "REGEL-01 Keine Geheimnisse im Code", "text": "Schluessel, Passwoerter und Tokens stehen nie im Repo. Sie kommen aus der Geheimnisverwaltung." },
+    { "category": "security", "title": "REGEL-02 Kundendaten nie in Logs", "text": "Namen, E-Mails und Inhalte von Kunden werden nicht protokolliert. Nur Kennungen." },
+    { "category": "security", "title": "REGEL-03 Abhaengigkeit nur mit Freigabe", "text": "Ein neues Paket braucht die Freigabe der Teamleitung, bevor es in die Paketliste kommt." },
+    { "category": "style", "title": "REGEL-04 Deutsch in Oberflaechen", "text": "Alle Texte, die ein Kunde sieht, sind deutsch und stehen in den Sprachdateien." },
+    { "category": "style", "title": "REGEL-05 Fehlermeldung mit naechstem Schritt", "text": "Jede Fehlermeldung sagt, was der Nutzer jetzt tun kann." },
+    { "category": "style", "title": "REGEL-06 Commit ohne KI-Zeile", "text": "Commits und Pull Requests tragen keine Zeile ueber eine KI als Mitautor." },
+    { "category": "architecture", "title": "REGEL-07 API nur ueber das Gateway", "text": "Dienste rufen einander nur ueber das Gateway auf, nie direkt." },
+    { "category": "architecture", "title": "REGEL-08 Kein direkter Datenbankzugriff aus dem Web", "text": "Die Weboberflaeche liest und schreibt nur ueber die API." },
+    { "category": "architecture", "title": "REGEL-09 Migration vor Code", "text": "Eine Datenbank-Migration wird ausgerollt, bevor der Code sie benutzt." },
+    { "category": "platform", "title": "REGEL-10 Nur Rechenzentren in der EU", "text": "Kein Dienst und kein Speicher ausserhalb der EU." },
+    { "category": "platform", "title": "REGEL-11 Ausrollen nur ueber CI", "text": "Niemand rollt von Hand aus. Jede Auslieferung laeuft ueber die Pipeline." },
+    { "category": "process", "title": "REGEL-12 Jede Aenderung mit Test", "text": "Eine Aenderung ohne Test, der sie belegt, wird nicht zusammengefuehrt." }
+  ],
+  "abfragen_mit_treffer": [
+    { "query": "passwoerter und tokens im repo ablegen", "erwartet": "REGEL-01" },
+    { "query": "kunden e-mails in logs protokollieren", "erwartet": "REGEL-02" },
+    { "query": "neues paket in die paketliste aufnehmen", "erwartet": "REGEL-03" },
+    { "query": "datenbank migration ausrollen bevor code", "erwartet": "REGEL-09" },
+    { "query": "auslieferung von hand ueber pipeline", "erwartet": "REGEL-11" },
+    { "query": "fehlermeldung fuer den nutzer schreiben", "erwartet": "REGEL-05" }
+  ],
+  "abfragen_ohne_treffer": [
+    "tabelle sortieren nach datum",
+    "farbe des knopfes aendern",
+    "bild verkleinern beim hochladen"
+  ]
+}
