@@ -1,5 +1,5 @@
 /**
- * Das cachly-Logo (helles "c." mit gruenem Punkt) fuer den Remote-MCP-Server.
+ * Das cachly-Logo (orangenes "c.") fuer den Remote-MCP-Server.
  * Claude.ai zeigt beim Connector das Bild aus serverInfo.icons bzw. aus
  * <Host>/favicon.ico. Der SVG-Inhalt ist identisch mit https://cachly.dev/favicon.svg.
  */
@@ -7,9 +7,9 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 
 export const LOGO_SVG =
 `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" fill="none">
-  <rect width="32" height="32" rx="8" fill="#dcf5e8"/>
-  <path d="M18.8 11.19A6.8 6.8 0 1 0 18.8 20.81" stroke="#061521" stroke-width="4.8" stroke-linecap="round"/>
-  <circle cx="24" cy="23.6" r="2.4" fill="#14b86e"/>
+  <rect width="32" height="32" rx="8" fill="#F59E0B"/>
+  <path d="M20.6 10.4A7.6 7.6 0 1 0 20.6 21.6" stroke="#292524" stroke-width="5.2" stroke-linecap="round"/>
+  <circle cx="25.4" cy="23.4" r="2.7" fill="#292524"/>
 </svg>
 `;
 

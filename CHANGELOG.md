@@ -7,6 +7,10 @@
 
 ---
 
+## [0.10.282] – 2026-11-27 — *"The yellow c. is back"*
+
+The yellow "c." is back as the connector logo (amber tile, dark c., no lightning bolt). Behaviour is unchanged.
+
 ## [0.10.281] – 2026-11-27 — *"Your role comes from your account."*
 
 Team roles (Stage 2, part 2). The server no longer reads a member's role from the Brain store, where anyone with the password could make themselves admin. It asks the cachly API (`GET /instances/:id/role`) and keeps the answer for 60 seconds. With an older API (404) everything works as before.
