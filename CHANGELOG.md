@@ -7,6 +7,10 @@
 
 ---
 
+## [0.10.279] – 2026-11-27 — *"The light c. in Claude.ai."*
+
+The remote server's `GET /favicon.svg` now returns the new logo: a dark "c." with a green dot on a light background, the same file as https://cachly.dev/favicon.svg. The orange version is gone. No behaviour change in the server.
+
 ## [0.10.278] – 2026-11-27 — *"The second session keeps its summary."*
 
 `session_end` no longer throws the summary away when the `session_start` marker is missing. The marker exists once per Brain, not once per session. When two sessions ran on the same Brain, the first `session_end` deleted it, and every later one answered "No active session found" and stored nothing. Now the summary is saved anyway, without a duration, and the answer says why the duration is missing. Test: `src/__tests__/session-end-ohne-startmarke.test.ts`.

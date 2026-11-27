@@ -19,7 +19,7 @@ describe('Connector-Logo', () => {
     expect(i).toMatchObject({ name: 'cachly-mcp', version: '1.2.3', title: 'cachly', websiteUrl: 'https://cachly.dev' });
     expect(i.icons[0]).toMatchObject({ src: 'https://cachly.dev/favicon.svg', mimeType: 'image/svg+xml' });
   });
-  it('GET /favicon.svg: 200, image/svg+xml, orange', async () => {
+  it('GET /favicon.svg: 200, image/svg+xml, helles c.', async () => {
     await mitServer(async (b) => {
       const r = await fetch(b + '/favicon.svg');
       expect(r.status).toBe(200);
@@ -27,7 +27,8 @@ describe('Connector-Logo', () => {
       expect(r.headers.get('cache-control')).toContain('max-age=86400');
       const t = await r.text();
       expect(t).toBe(LOGO_SVG);
-      expect(t).toContain('#F59E0B');
+      expect(t).toContain('#dcf5e8');
+      expect(t).not.toContain('#F59E0B');
     });
   });
   it('GET /favicon.ico: 301 auf /favicon.svg', async () => {
