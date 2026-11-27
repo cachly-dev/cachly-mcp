@@ -94,8 +94,8 @@ describe('session_start: neues Brain, das noch startet', () => {
     // nicht wahr und hielte die Antwort an, bis die Instanz laeuft.
     expect(text).not.toContain('Welcome! Your AI Brain is live.');
     // Eine einzige Abfrage zum Stand der Instanz. Der Abruf der Firmenregeln (/rules, 27.11.2026) ist eine
-    // andere Frage und zaehlt hier nicht.
-    expect(api.mock.calls.map((c) => String(c[0])).filter((p) => !p.endsWith('/rules'))).toEqual(['/api/v1/instances/neu-s1']);
+    // andere Frage und zaehlt hier nicht; ebenso wenig die Wissenssuche (/knowledge/search, Stufe 2).
+    expect(api.mock.calls.map((c) => String(c[0])).filter((p) => !p.endsWith('/rules') && !p.endsWith('/knowledge/search'))).toEqual(['/api/v1/instances/neu-s1']);
     expect(startetLautLetztemBlick('neu-s1')).toBe(true);
 
     const redis = new MockRedis();

@@ -30,6 +30,7 @@ import {
   type EinblendConfig,
 } from './einblendung.js';
 import { holeRegeln, merkeRegelLieferung, regelAbrufMitFetch, regelBlock } from './firmenregeln.js';
+import { wissensAbrufMitFetch, wissensPlatz, wissensSucheMitApi } from './wissenssuche.js';
 
 /** The subset of the Claude Code hook payload we care about. */
 export interface HookPayload {
@@ -237,6 +238,11 @@ export async function runEinblendung(raw: string, deps: EinblendDeps): Promise<s
     } else {
       const query = recallQueryFor(payload);
       if (query === null) return '';
+      // Firmenwissen (wissenssuche.ts): eigener Platz, parallel zu den Lektionen, hoechstens 1,5 s.
+      // Nicht vor jeder Dateiaenderung (PreToolUse): dort zaehlt jede Sekunde. Wirft nie.
+      const wissen = event === 'PreToolUse'
+        ? Promise.resolve(null)
+        : wissensPlatz(query, wissensSucheMitApi(deps.cfg.instanceId, wissensAbrufMitFetch(deps.cfg.apiUrl, deps.cfg.jwt, deps.fetchFn), 'prompt'));
       const r = await promptEinblendung(query, deps.cfg, {
         nebenlauf: deps.nebenlauf,
         abrufMs: PROMPT_ABRUF_MS,
@@ -249,7 +255,9 @@ export async function runEinblendung(raw: string, deps: EinblendDeps): Promise<s
         editor: deps.editor,
         fetchFn: deps.fetchFn,
       });
-      kontext = r.kontext;
+      // Reihenfolge: Firmenregeln (nur im Sitzungsbeginn), dann Wissen, dann Lektionen.
+      const platz = await wissen;
+      kontext = platz?.text ? [platz.text, r.kontext].filter(Boolean).join('\n\n') : r.kontext;
     }
     if (!kontext) return '';
     try {

@@ -83,6 +83,9 @@ function apiMit(status: string) {
   });
 }
 
+/** Die Aufrufe ohne die Wissenssuche (Stufe 2, PR 4): sie ist ein eigener, paralleler Weg mit eigener Ruhe. */
+const ohneWissen = (api: { mock: { calls: unknown[][] } }) => api.mock.calls.filter((c) => !String(c[0]).endsWith('/knowledge/search'));
+
 const warte = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 beforeEach(() => {
@@ -106,7 +109,7 @@ describe('smart_recall: leeres Brain', () => {
     expect(text).not.toContain('brand new');
     expect(einbetten).not.toHaveBeenCalled();
     expect(leserPunkteSpy).not.toHaveBeenCalled();
-    expect(api).not.toHaveBeenCalled();
+    expect(ohneWissen(api)).toHaveLength(0);
     expect(muster.some((m) => m.startsWith('cachly:ckg:node:'))).toBe(false);
     expect(schonGemeldet(OHNE_VEKTOREN)).toBe(false);
 
@@ -131,7 +134,7 @@ describe('smart_recall: leeres Brain', () => {
 
     expect(text).toContain('This Brain is brand new and still empty');
     expect(text).toContain('last 30 commits');
-    expect(api).toHaveBeenCalledTimes(1);
+    expect(ohneWissen(api)).toHaveLength(1);
     expect(einbetten).not.toHaveBeenCalled();
     expect(leserPunkteSpy).not.toHaveBeenCalled();
 
@@ -154,7 +157,7 @@ describe('smart_recall: leeres Brain', () => {
 
     api.mockClear();
     await handleBrainTool('smart_recall', { instance_id: 'neu-2', query: FRAGE }, verbindung, api as never);
-    expect(api).not.toHaveBeenCalled();
+    expect(ohneWissen(api)).toHaveLength(0);
   });
 
   it('ist der Git-Import ausgegangen (kein Repo), faellt der Satz dazu weg', async () => {

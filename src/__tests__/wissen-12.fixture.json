@@ -1,0 +1,31 @@
+{
+  "_hinweis": "Eingefroren 27.11.2026. Dieselben 12 Lektionen und 24 Fragen wie messung-wissen-je-prompt.test.ts (Stufe 1, Zweite Messung). Neu: 12 Fehlfragen ohne passende Lektion. Nicht aendern — sonst ist die Vorher-Zahl 1/12 nicht mehr vergleichbar.",
+  "lektionen": [
+    { "topic": "wissen:staging-db-zugang", "text": "Die Staging-Datenbank erreichst du nur ueber den Bastion-Host bastion.intern:2222. Zugang beantragst du im Ticket-Portal.", "nah": "wie komme ich an die staging datenbank ran", "fern": "ich brauche lesezugriff auf die daten der testumgebung" },
+    { "topic": "wissen:urlaub-personio", "text": "Urlaub beantragst du in Personio. Die Teamleitung gibt frei, mindestens zwei Wochen vorher.", "nah": "wo beantrage ich urlaub", "fern": "ich will naechsten monat eine woche frei nehmen" },
+    { "topic": "wissen:release-zug-dienstag", "text": "Releases gehen jeden Dienstag um 10 Uhr raus. Merge-Schluss ist Montag 18 Uhr.", "nah": "wann ist das naechste release", "fern": "bis wann muss mein code drin sein damit er diese woche live geht" },
+    { "topic": "wissen:feature-flags-unleash", "text": "Feature-Flags laufen ueber Unleash (flags.intern). Ein neues Flag legst du mit dem Terraform-Modul flags/ an.", "nah": "wie lege ich ein feature flag an", "fern": "ich will die neue funktion erst fuer 10 prozent der nutzer einschalten" },
+    { "topic": "wissen:logs-grafana-loki", "text": "Logs liegen in Grafana Loki, Abfrage {app=\"checkout\"}. Aufbewahrung 14 Tage.", "nah": "wo finde ich die logs vom checkout", "fern": "warum ist die bestellung von gestern fehlgeschlagen, wo sehe ich das" },
+    { "topic": "wissen:testdaten-anonymisiert", "text": "Fuer lokale Tests den anonymisierten Abzug nutzen: make db-anon. Niemals einen Prod-Dump.", "nah": "wie bekomme ich anonymisierte testdaten lokal", "fern": "ich brauche realistische daten zum entwickeln" },
+    { "topic": "wissen:api-version-header", "text": "Die oeffentliche API wird ueber den Header X-Api-Version versioniert. Eine alte Version wird 12 Monate unterstuetzt.", "nah": "wie versionieren wir die api", "fern": "ich will ein feld in der antwort umbenennen ohne kunden zu brechen" },
+    { "topic": "wissen:oncall-pagerduty", "text": "Bereitschaft laeuft ueber PagerDuty, Plan backend. Uebergabe Montag 9 Uhr im Kanal #oncall.", "nah": "wer hat heute bereitschaft in pagerduty", "fern": "nachts ist der server down, wen rufe ich an" },
+    { "topic": "wissen:design-tokens-figma", "text": "Farben und Abstaende nur aus den Design-Tokens im Paket @firma/tokens. Quelle ist die Figma-Bibliothek.", "nah": "welche design tokens fuer farben gibt es", "fern": "der button soll im gleichen gruen wie die marke sein" },
+    { "topic": "wissen:secrets-vault", "text": "Geheimnisse liegen in Vault unter secret/apps/<name>. Lokal laedst du sie mit vault-env.", "nah": "wo liegen die secrets in vault", "fern": "ich brauche das passwort fuer den zahlungsanbieter" },
+    { "topic": "wissen:ci-runner-arm", "text": "Die CI-Runner sind ARM64. Docker-Images baust du multi-arch mit buildx.", "nah": "docker build in der ci arm64 runner buildx", "fern": "das image laeuft lokal aber nicht in der pipeline: exec format error" },
+    { "topic": "wissen:kosten-tags-aws", "text": "Jede AWS-Ressource braucht die Tags team und kostenstelle. Sonst loescht der Aufraeum-Job sie nach 24 Stunden.", "nah": "welche tags brauchen aws ressourcen", "fern": "meine ec2 instanz ist ueber nacht verschwunden" }
+  ],
+  "fehlfragen": [
+    "schreib mir eine funktion die die fibonacci folge berechnet",
+    "benenne die variable x in dieser datei in zaehler um",
+    "erklaere mir den unterschied zwischen let und const",
+    "fasse den text oben in drei saetzen zusammen",
+    "sortiere diese liste alphabetisch und entferne doppelte eintraege",
+    "wandle das json in eine typescript schnittstelle um",
+    "schreib einen regulaeren ausdruck fuer deutsche postleitzahlen",
+    "warum ist der himmel blau",
+    "mach aus der schleife eine map funktion",
+    "formatiere das datum als tag punkt monat punkt jahr",
+    "uebersetze diesen kommentar ins englische",
+    "wie viele zeilen hat diese datei"
+  ]
+}

@@ -341,6 +341,7 @@ import { zeitpunkt } from '../zeitmessung.js';
 import { wartetAufFrischenBestand } from '../bestand-frische.js';
 import { leseZurueckgezogen, ruecknahmeHinweis, ruecknahmeWarnung } from '../zurueckgezogen.js';
 import { holeRegeln, regelBlock, regelHinweisEinmal, passendeRegeln, regelStandImSpeicher, markiereVertraut } from '../firmenregeln.js';
+import { wissensAbschnitt, wissensSucheMitApi, WISSEN_MIN_WOERTER, WISSEN_PLATZ_MAX, type WissensTreffer } from '../wissenssuche.js';
 
 // ── Changelog (shown once per version in session_start) ──────────────────────
 // Resolve the package version at runtime from package.json so the session briefing
@@ -1000,6 +1001,9 @@ export async function handleBrainTool(
   const regelnAbruf = name === 'session_start' && args.instance_id
     ? holeRegeln(String(args.instance_id), (pfad, optionen) => apiFetch(pfad, optionen))
     : null;
+  // Firmenwissen (wissenssuche.ts): session_start mit focus und smart_recall bekommen einen
+  // eigenen Abschnitt. Die Suche laeuft neben dem Werkzeug her, hoechstens 1,5 s, wirft nie.
+  const wissenAbruf = wissenFuerWerkzeug(name, args, apiFetch);
   const ergebnis = await handleBrainToolInner(name, args, getConnection, apiFetch);
   // Karte eutmy0ly93ch: jeder Recall zaehlt — im Prozess, nie in Redis.
   const feld = RECALL_WERKZEUGE_FUER_KOSTEN[name];
@@ -1010,21 +1014,43 @@ export async function handleBrainTool(
   }
   if (typeof ergebnis !== 'string') return ergebnis;
   const instanz = String(args.instance_id ?? '');
+  const wissen = await wissenAbruf;
   if (regelnAbruf) {
     const stand = await regelnAbruf;
     const block = regelBlock(stand);
-    if (!block) return ergebnis;
+    // Reihenfolge: Firmenregeln, Wissen, Briefing. Der Wissensabschnitt bleibt unvertraut (er wird mitgerahmt).
+    const mitWissen = wissen ? `${wissen}\n\n${ergebnis}` : ergebnis;
+    if (!block) return mitWissen;
     // Der Block kam in dieser Sitzung schon an: die erste Werkzeugantwort (Weg A) liefert ihn nicht noch einmal.
     regelHinweisEinmal(instanz, stand, { cwd: String(args.workspace_path || process.cwd()), prozessStart: Date.now() });
-    return `${markiereVertraut(block)}\n\n${ergebnis}`;
+    return `${markiereVertraut(block)}\n\n${mitWissen}`;
   }
   // Weg S: bis zu 3 passende Regeln NACH den Treffern. Kein Netz, nur der Stand im Speicher;
   // die Rangfolge der Treffer bleibt, wie sie ist.
   if (name === 'smart_recall' && instanz) {
     const passend = passendeRegeln(String(args.query ?? ''), regelStandImSpeicher(instanz));
-    if (passend) return `${ergebnis}\n\n${markiereVertraut(passend)}`;
+    const mitWissen = wissen ? `${ergebnis}\n\n${wissen}` : ergebnis;
+    if (passend) return `${mitWissen}\n\n${markiereVertraut(passend)}`;
+    return mitWissen;
   }
   return ergebnis;
+}
+
+/** Der Wissensabschnitt fuer session_start (mit focus) und smart_recall, sonst ''. Wirft nie. */
+async function wissenFuerWerkzeug(name: string, args: Record<string, unknown>, apiFetch: ApiFetch): Promise<string> {
+  try {
+    const instanz = String(args.instance_id ?? '');
+    const sitzung = name === 'session_start';
+    if (!instanz || (!sitzung && name !== 'smart_recall')) return '';
+    const frage = String(sitzung ? (args.focus ?? '') : (args.query ?? '')).trim();
+    if ((frage.match(/[\p{L}\p{N}]+/gu) ?? []).length < WISSEN_MIN_WOERTER) return '';
+    const suche = wissensSucheMitApi(instanz, (pfad, optionen) => apiFetch<unknown>(pfad, optionen), sitzung ? 'focus' : 'recall');
+    if (!suche) return '';
+    const treffer: WissensTreffer[] = await suche(frage, WISSEN_PLATZ_MAX);
+    return wissensAbschnitt(sitzung ? 'Company knowledge for this focus' : 'Company knowledge', treffer);
+  } catch {
+    return '';
+  }
 }
 
 async function handleBrainToolInner(
