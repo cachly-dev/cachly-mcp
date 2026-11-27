@@ -89,8 +89,10 @@ export function recallNurLesen(): boolean {
 }
 import type { CKGEdge, PersonNode, ServiceNode } from '../ckg.js';
 import { gemerkterTarif, holeKantenVorrat, SPEICHER_SCAN_SCHRITT, type KantenRedis } from '../kanten-vorrat.js';
-import { getRole, ROLE_BADGE, getScopes, lessonVisibleToScope,
+import { getRole, eigeneRolle, ROLE_BADGE, getScopes, lessonVisibleToScope,
          reviewModeEnabled, storeLessonProposal, fragenderAusweis, sichtbarFuer, NIEMAND } from './team.js';
+// Stufe 2 (PR 2): Mitglieder schreiben Wissen nur ueber die API (rolle.ts).
+import { holeRolle, istMitglied, rolleFuer, lerneUeberApi, meldeAbrufe, darfDirektSchreiben } from '../rolle.js';
 import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
          splitMultiQuery, levenshtein, indexVocab as _indexVocab, bestandHolen } from '../search.js';
 import { startetNochLeer, leeresBrainAntwort, startLageMitCommits, sofortAntwortNeuesBrain,
@@ -1234,6 +1236,30 @@ async function handleBrainToolInner(
       // Lektion wirklich das ganze Team erreicht (Befund Sitzung cachly-e4).
       const teamweit = visibility !== 'private' && !group;
 
+      // ── Stufe 2: Mitglieder lernen ueber die API (Bauplan A5) ─────────────
+      // Ein Mitglied darf Wissen am Speicher nicht schreiben (ACL-Muster). Die
+      // Lektion geht als EIN Aufruf an POST /instances/:id/learn; die API prueft
+      // Rolle und Freigabepflicht und setzt den Autor aus dem Konto. Vektoren,
+      // Graph und Nachtrag schreibt dieser Weg nicht.
+      // Private und Gruppen-Lektionen kennt /learn nicht: sie wuerden dort
+      // teamweit. Deshalb hier ein klarer Satz statt eines stillen Oeffnens.
+      if (istMitglied(redis)) {
+        if (!teamweit) {
+          return [
+            `⚠️ Nicht gespeichert: Als Team-Mitglied speichert cachly Lektionen nur teamweit (ueber die API).`,
+            `Diese Lektion ist ${visibility === 'private' ? 'privat' : `fuer die Gruppe \`${group}\``} gedacht und wuerde dort fuer alle sichtbar.`,
+            `Fuer eine private Notiz: \`remember_context\`. Oder ohne \`visibility\`/\`group\` erneut speichern.`,
+          ].join('\n');
+        }
+        return lerneUeberApi(apiFetch, instance_id, {
+          topic, outcome, what_worked, what_failed, context: ctx, severity,
+          file_paths: Array.isArray(file_paths) ? file_paths : [],
+          commands: Array.isArray(commands) ? commands : [],
+          tags: Array.isArray(tags) ? tags : [],
+          ...(autorFeld ? { author: autorFeld } : {}),
+        }, rolleFuer(redis));
+      }
+
       // ── Lessons-Review workflow (P1-1) ─────────────────────────────────────
       // When the org enabled pending-mode on this (shared) brain, team-visible
       // lessons become proposals awaiting owner/admin approval instead of
@@ -2243,17 +2269,21 @@ async function handleBrainToolInner(
        * Best-effort: schlaegt es fehl, bekommt der Mensch trotzdem seine
        * Lektion. Eine Messung darf das Produkt nie aufhalten.
        */
-      try {
-        const rohLetzter = await redis.get(`cachly:letzter-recall:${instance_id}`);
-        const letzter = rohLetzter ? safeJsonParse(rohLetzter, null as null | LetzterRecall) : null;
-        const abgeleitet = leiteAb(letzter, topic, new Date().toISOString());
-        if (abgeleitet) {
-          await redis.rpush(`cachly:wirkung:${instance_id}`, JSON.stringify(abgeleitet));
-          // Einmal je Suche: sonst zaehlt jedes weitere Oeffnen dieselbe
-          // Suche noch einmal, und aus einer Frage werden fuenf Belege.
-          await redis.del(`cachly:letzter-recall:${instance_id}`);
-        }
-      } catch { /* Die Spur darf keinen Abruf kaputtmachen. */ }
+      // Stufe 2: Ein Mitglied darf die Spur (cachly:letzter-recall) nicht
+      // schreiben; ohne eigene Spur wuerde es die Suche eines anderen zaehlen.
+      if (!istMitglied(redis)) {
+        try {
+          const rohLetzter = await redis.get(`cachly:letzter-recall:${instance_id}`);
+          const letzter = rohLetzter ? safeJsonParse(rohLetzter, null as null | LetzterRecall) : null;
+          const abgeleitet = leiteAb(letzter, topic, new Date().toISOString());
+          if (abgeleitet) {
+            await redis.rpush(`cachly:wirkung:${instance_id}`, JSON.stringify(abgeleitet));
+            // Einmal je Suche: sonst zaehlt jedes weitere Oeffnen dieselbe
+            // Suche noch einmal, und aus einer Frage werden fuenf Belege.
+            await redis.del(`cachly:letzter-recall:${instance_id}`);
+          }
+        } catch { /* Die Spur darf keinen Abruf kaputtmachen. */ }
+      }
 
       // Try exact best-solution key first
       const best = await redis.get(`cachly:lesson:best:${topic}`);
@@ -2302,7 +2332,8 @@ async function handleBrainToolInner(
           const rbsScopes = rbsAuthor
             ? await getScopes(redis, instance_id, rbsAuthor).catch(() => new Set<string>())
             : new Set<string>();
-          const rbsAdmin = rbsAuthor ? (await getRole(redis, instance_id, rbsAuthor).catch(() => null)) === 'admin' : false;
+          // Stufe 2: Admin laut API (Konto), sonst wie bisher laut Hash und nur mit author.
+          const rbsAdmin = (await eigeneRolle(redis, instance_id, rbsAuthor ?? '').catch(() => null)) === 'admin';
           if (!lessonVisibleToScope(rbsGruppe, rbsScopes, rbsAdmin)) {
             return `📭 No lessons found for \`${topic}\`. Use \`learn_from_attempts\` after solving it.`;
           }
@@ -2350,7 +2381,10 @@ async function handleBrainToolInner(
           recall_count: (lesson.recall_count ?? 0) + 1,
           last_recalled_at: recalledAt,
         };
-        await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
+        // Stufe 2: Ein Mitglied schreibt die Lektion nicht um; der Zaehler geht
+        // an POST /lessons/recalled, ohne dass die Antwort darauf wartet.
+        if (istMitglied(redis)) meldeAbrufe(apiFetch, instance_id, [topic]);
+        else await redis.set(`cachly:lesson:best:${topic}`, JSON.stringify(updatedLesson));
 
         // A targeted lookup is a recall too, and costs the same one quota unit
         // as a broad smart_recall — the user asked the brain a question either way.
@@ -2441,9 +2475,7 @@ async function handleBrainToolInner(
           const nfScopes = rbsAuthor
             ? await getScopes(redis, instance_id, rbsAuthor).catch(() => new Set<string>())
             : new Set<string>();
-          const nfAdmin = rbsAuthor
-            ? (await getRole(redis, instance_id, rbsAuthor).catch(() => null)) === 'admin'
-            : false;
+          const nfAdmin = (await eigeneRolle(redis, instance_id, rbsAuthor ?? '').catch(() => null)) === 'admin';
           nachfolgerFremdeGruppe = !lessonVisibleToScope(nachfolgerLd.group, nfScopes, nfAdmin);
         }
         const ersetztBanner = ersetztDurch
@@ -2639,9 +2671,10 @@ async function handleBrainToolInner(
       let requesterIsAdmin = false;
       if (requester) {
         requesterScopes = await getScopes(redis, instance_id, requester).catch(() => new Set<string>());
-        const reqRole = await getRole(redis, instance_id, requester).catch(() => null);
-        requesterIsAdmin = reqRole === 'admin';
       }
+      // Stufe 2: Admin laut API (Konto hinter dem Schluessel), sonst wie bisher
+      // laut Hash und nur mit author (eigeneRolle).
+      requesterIsAdmin = (await eigeneRolle(redis, instance_id, requester).catch(() => null)) === 'admin';
 
       // ── Ein Brain ohne einen einzigen Eintrag (leeres-brain.ts) ──────────
       //
@@ -3069,8 +3102,10 @@ async function handleBrainToolInner(
           .map((m) => m.key.slice('cachly:lesson:best:'.length));
         if (geliefert.length > 0) {
           const zeile: Lieferung = { ts: new Date().toISOString(), themen: geliefert };
-          void (async () => {
-            const k = lieferJournalSchluessel(instance_id);
+          // Stufe 2: Das Journal (cachly:liefer) sperrt das Muster fuer
+          // Mitglieder; sie lassen die Messzeile aus (schluessel-klassen.ts).
+          const k = lieferJournalSchluessel(instance_id);
+          if (darfDirektSchreiben(redis, k)) void (async () => {
             await redis.lpush(k, JSON.stringify(zeile));
             await redis.ltrim(k, 0, JOURNAL_DECKEL - 1);
           })().catch(() => { /* Messzeile stoppt nie die Antwort */ });
@@ -3109,7 +3144,8 @@ async function handleBrainToolInner(
       //
       // Nicht abgewartet: wer sucht, soll nicht warten, bis das Gedaechtnis
       // nachgefuehrt ist.
-      if (hasEmbedProvider() && !recallNurLesen()) {
+      // Stufe 2: Spuren liegen unter cachly:lesson:* (Wissen); kein Mitglied legt sie.
+      if (hasEmbedProvider() && !recallNurLesen() && !istMitglied(redis)) {
         const gefundeneThemen = kwGemischt
           .filter((m) => m.key.startsWith('cachly:lesson:best:'))
           .slice(0, 3)
@@ -3124,6 +3160,10 @@ async function handleBrainToolInner(
       const lessonMatches = kwGemischt.filter(m => m.key.startsWith('cachly:lesson:best:'));
       let crossAuthorThisCall = 0;
       let successRecallsThisCall = 0;
+      // Stufe 2: Ein Mitglied schreibt keine Lektion um. Die Themen gehen
+      // gesammelt an POST /lessons/recalled, nach der Schleife, nicht wartend.
+      const mitglied = istMitglied(redis);
+      const abgerufen: string[] = [];
       for (const m of lessonMatches.slice(0, 5)) {
         const existing = await redis.get(m.key).catch(() => null);
         if (existing) {
@@ -3137,7 +3177,8 @@ async function handleBrainToolInner(
             // Begruendung und Zahlen stehen an der gleichen Stelle in
             // recall_best_solution.
             const updated = { ...lesson, recall_count: (lesson.recall_count ?? 0) + 1, last_recalled_at: recalledAt };
-            if (!recallNurLesen()) redis.set(m.key, JSON.stringify(updated)).catch(() => {});
+            if (mitglied) abgerufen.push(m.key.slice('cachly:lesson:best:'.length));
+            else if (!recallNurLesen()) redis.set(m.key, JSON.stringify(updated)).catch(() => {});
             // Nur der ERSTE Abruf zaehlt — siehe wertbeitrag.ts. Diese
             // Schleife lief ueber bis zu FUENF Lektionen je Aufruf und schrieb
             // jeder die volle Recherchezeit gut, bei jedem Aufruf erneut.
@@ -3160,10 +3201,13 @@ async function handleBrainToolInner(
               redis.sadd(`cachly:stats:reuse_pairs:${instance_id}`, `${requester}<-${lesson.author}`).catch(() => {});
               // W5: wire person↔person CKG collaborates edges from knowledge-reuse events.
               // This feeds brain_collab_pairs and enriches brain_who_knows with reuse-based edges.
-              const reqPersonId = `person:${ckgSlug(requester)}`;
-              const authPersonId = `person:${ckgSlug(lesson.author!)}`;
-              ckgUpdateEdge(redis, reqPersonId, 'collaborates', authPersonId, true).catch(() => {});
-              ckgUpdateEdge(redis, authPersonId, 'collaborates', reqPersonId, true).catch(() => {});
+              // Stufe 2: der Graph ist Wissen; Mitglieder schreiben keine Kanten.
+              if (!mitglied) {
+                const reqPersonId = `person:${ckgSlug(requester)}`;
+                const authPersonId = `person:${ckgSlug(lesson.author!)}`;
+                ckgUpdateEdge(redis, reqPersonId, 'collaborates', authPersonId, true).catch(() => {});
+                ckgUpdateEdge(redis, authPersonId, 'collaborates', reqPersonId, true).catch(() => {});
+              }
             }
 
             if (lesson.outcome === 'success') successRecallsThisCall++;
@@ -3177,6 +3221,8 @@ async function handleBrainToolInner(
           }
         }
       }
+
+      if (mitglied && abgerufen.length > 0 && !recallNurLesen()) meldeAbrufe(apiFetch, instance_id, abgerufen);
 
       // Metric 1 (time-to-first-recall): stamp the first time recall returned a
       // successful lesson. SET NX so only the first successful recall wins.
@@ -3964,7 +4010,8 @@ async function handleBrainToolInner(
          * Eine Messung darf das Produkt nie umwerfen. Wenn sie es doch tut,
          * hatte der Schutz die falsche Form.
          */
-        if (angebotene.length > 0) {
+        // Stufe 2: cachly:letzter-recall sperrt das Muster fuer Mitglieder.
+        if (angebotene.length > 0 && !istMitglied(redis)) {
           try {
             await redis.setex(
               `cachly:letzter-recall:${instance_id}`,
@@ -4232,7 +4279,12 @@ async function handleBrainToolInner(
       // team's brain" section. Only fires once per user.
       if (author && !isFirstSession) {
         try {
-          const briefingKey = `cachly:team:first_briefing:${author}`;
+          // Stufe 2: Ein Mitglied darf cachly:team:* nicht schreiben. Sein
+          // Merker liegt im Betrieb (cachly:session:*), sonst kaeme der
+          // Willkommensteil nie: das Setzen scheiterte vor der Ausgabe.
+          const briefingKey = istMitglied(redis)
+            ? `cachly:session:first_briefing:${author}`
+            : `cachly:team:first_briefing:${author}`;
           const alreadyBriefed = await redis.get(briefingKey);
           if (!alreadyBriefed) {
             type LessonAny = typeof lessons[0] & { author?: string };
@@ -5541,13 +5593,15 @@ async function handleBrainToolInner(
         ``,
       ];
 
+      const apiKenntRollen = !!(await holeRolle(instance_id));
       for (const [i, p] of ranked.entries()) {
         const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}.`;
         const conf = (p.avgConfidence * 100).toFixed(0);
         const daysSince = Math.floor((Date.now() - new Date(p.lastActive).getTime()) / 86400000);
         const recency = daysSince < 1 ? 'today' : daysSince < 7 ? `${daysSince}d ago` : daysSince < 30 ? `${Math.floor(daysSince / 7)}w ago` : `${Math.floor(daysSince / 30)}mo ago`;
         // Show role badge if assigned (non-blocking — role lookup is best-effort)
-        const roleVal = await getRole(redis, instance_id, p.handle).catch(() => null);
+        // Stufe 2: Kennt die API Rollen, ist der Hash ungeprueft: kein Abzeichen daraus.
+        const roleVal = apiKenntRollen ? null : await getRole(redis, instance_id, p.handle).catch(() => null);
         const roleBadge = roleVal ? ` ${ROLE_BADGE[roleVal]}` : '';
         lines.push(
           `${medal} **${p.handle}**${roleBadge} — ${p.lessonCount} lesson${p.lessonCount !== 1 ? 's' : ''} · ${conf}% confidence · last active ${recency}`,
@@ -6877,6 +6931,9 @@ async function heileZweitVektoren(redis: Redis, max: number): Promise<number> {
 async function heileVektorNachtrag(redis: Redis, ausnahmeTopic: string | undefined, max: number): Promise<void> {
   try {
     if (!hasEmbedProvider()) return;
+    // Stufe 2: Vektoren sind Wissen (cachly:lesson:vec*). Ein Mitglied darf sie
+    // nicht schreiben; der Nachtrag laeuft nur mit vollem Zugang (Bauplan A5).
+    if (istMitglied(redis)) return;
     // srandmember statt spop (0.10.151): spop NAHM den Vermerk aus dem Set,
     // und starb der Prozess zwischen Entnahme und Vektor-Schreiben, war er
     // WEG — unvermerkt heisst unheilbar. Gemessen 02.09.2026: 29 von 290

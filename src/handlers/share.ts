@@ -6,6 +6,7 @@ import { VEKTOR_NACHTRAG } from '../bedeutung.js';
 import { schwaerze } from '../geheimnis-filter.js';
 import { fuerEigenenSpeicher, fuerWeitergabe, hinweise, istMarkiert, markiert, weitergabeHinweis, zaehlHinweise } from '../schreibtor.js';
 import { teamweitLesbar } from './team.js';
+import { istMitglied } from '../rolle.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -482,12 +483,17 @@ export async function handleShareTool(
 
       // Remove from local log
       const redis = await getConnection(instance_id);
-      try {
-        const raw = await redis.lrange('cachly:brain:shares', 0, -1);
-        const kept = raw.filter(r => { try { return JSON.parse(r).share_id !== share_id; } catch { return true; } });
-        await redis.del('cachly:brain:shares');
-        for (const entry of kept) await redis.rpush('cachly:brain:shares', entry);
-      } catch { /* non-critical */ }
+      // Stufe 2: Das Protokoll der Freigaben (cachly:brain:*) fuehrt der
+      // Besitzer; ein Mitglied darf es nicht schreiben. Zurueckgezogen hat die
+      // API die Freigabe schon (oben), das ist die Wirkung.
+      if (!istMitglied(redis)) {
+        try {
+          const raw = await redis.lrange('cachly:brain:shares', 0, -1);
+          const kept = raw.filter(r => { try { return JSON.parse(r).share_id !== share_id; } catch { return true; } });
+          await redis.del('cachly:brain:shares');
+          for (const entry of kept) await redis.rpush('cachly:brain:shares', entry);
+        } catch { /* non-critical */ }
+      }
 
       return [
         `🗑️ **brain_unshare** — share revoked`,

@@ -17,6 +17,8 @@ import { aussetzerEinzelheit, aussetzerErklaerung, leseVermerke } from '../ausse
 import { schwaerzeFelder } from '../geheimnis-filter.js';
 import { VERDACHT_TAG, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
 import { fuerEigenenSpeicher, fuerWeitergabe, fuerZusammenfassung, hinweise, markiert, markierungsWarnung, weitergabeHinweis } from '../schreibtor.js';
+// Stufe 2 (PR 2): Rolle aus der API statt aus dem Hash; Mitglieder schreiben ueber die API.
+import { holeRolle, istMitglied, rolleFuer, lerneUeberApi, bestaetigeUeberApi, ROLLEN_SEITE, type RollenAuskunft } from '../rolle.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -52,9 +54,46 @@ const ROLE_CAPABILITIES: Record<TeamRole, string> = {
 
 export const ROLES_KEY = (instanceId: string) => `cachly:team:roles:${instanceId}`;
 
+/**
+ * Die Rolle, die im Hash fuer einen Namen eingetragen ist. Seit Stufe 2 ist
+ * das KEINE geltende Rolle mehr, sobald die API Rollen kennt (rolle.ts): der
+ * Hash war von jedem mit dem Passwort faelschbar. Fuer die eigene Rolle gilt
+ * eigeneRolle(); getRole bleibt fuer alte APIs und fuer Listen.
+ */
 export async function getRole(redis: import('ioredis').Redis, instanceId: string, handle: string): Promise<TeamRole | null> {
   const raw = await redis.hget(ROLES_KEY(instanceId), handle.toLowerCase()).catch(() => null);
   return (raw as TeamRole | null);
+}
+
+/**
+ * Die geltende Rolle dessen, der gerade fragt (Stufe 2, Bauplan A5).
+ *
+ * Kennt die API Rollen (GET /instances/:id/role), gilt NUR ihre Antwort: die
+ * Rolle des Kontos hinter dem Schluessel, egal welcher Name als `handle`
+ * mitkommt. Ein gefaelschter Eintrag im Hash aendert nichts. Antwortet die
+ * API mit 404 (alte API), gilt wie bisher der Hash fuer `handle`.
+ */
+export async function eigeneRolle(
+  redis: import('ioredis').Redis,
+  instanceId: string,
+  handle: string,
+): Promise<TeamRole | null> {
+  const api = await holeRolle(instanceId);
+  if (api) return api.role;
+  return handle ? getRole(redis, instanceId, handle) : null;
+}
+
+const HERKUNFT_TEXT: Record<string, string> = {
+  owner: 'owner of this brain',
+  org_admin: 'organisation admin',
+  assigned: 'assigned by an admin',
+  default: 'default for members',
+};
+
+/** "contributor (default for members)" — fuer Saetze an die KI. */
+function rolleMitHerkunft(a: RollenAuskunft): string {
+  const h = HERKUNFT_TEXT[a.source] ?? a.source;
+  return h ? `${a.role} (${h})` : a.role;
 }
 
 /** True when `actorRole` is at least as powerful as `requiredRole`. */
@@ -74,8 +113,13 @@ export function roleToReviewLevel(role: TeamRole | null): 'senior' | 'peer' {
 // behaves exactly as before — so existing single-user and small-team flows are
 // untouched. Once an admin exists, write/review tools enforce role minimums.
 
-/** True once at least one admin exists — i.e. governance has been turned on. */
+/**
+ * True once governance is on. Seit Stufe 2: immer, sobald die API Rollen kennt
+ * (die Rolle steht dann in Postgres). Bei einer alten API wie bisher: sobald
+ * im Hash ein Admin steht.
+ */
 export async function rbacActive(redis: import('ioredis').Redis, instanceId: string): Promise<boolean> {
+  if (await holeRolle(instanceId)) return true;
   const allRoles = await redis.hgetall(ROLES_KEY(instanceId)).catch(() => ({} as Record<string, string>));
   return Object.values(allRoles).includes('admin');
 }
@@ -93,6 +137,17 @@ export async function requireRole(
   required: TeamRole,
   action: string,
 ): Promise<string | null> {
+  // Stufe 2: Kennt die API Rollen, entscheidet nur sie (rolle.ts), nie der Hash.
+  const api = await holeRolle(instanceId);
+  if (api) {
+    if (hasPermission(api.role, required)) return null;
+    return [
+      `🔒 **Permission denied** — to ${action} you need at least \`${required}\` ${ROLE_BADGE[required]} (your role: ${ROLE_BADGE[api.role]} ${rolleMitHerkunft(api)}).`,
+      ``,
+      `Roles are set by the brain owner or an organisation admin in the dashboard: ${ROLLEN_SEITE}`,
+      `_Run \`team_whoami\` to check your role._`,
+    ].join('\n');
+  }
   if (!(await rbacActive(redis, instanceId))) return null; // open team — allow
   const role = handle ? await getRole(redis, instanceId, handle) : null;
   if (hasPermission(role, required)) return null;
@@ -217,10 +272,16 @@ export async function fragenderAusweis(
   instanceId: string,
   author: string | undefined | null,
 ): Promise<Fragender> {
+  // Stufe 2: Ob der Fragende Admin ist, sagt die API ueber das Konto hinter
+  // dem Schluessel, nicht der freie Name `author`. Die Gruppen haengen weiter
+  // am Namen (cachly:team:group:*).
+  const api = await holeRolle(instanceId);
   const wer = (author ?? '').trim();
-  if (!wer) return NIEMAND;
+  if (!wer) return api?.role === 'admin' ? { scopes: new Set<string>(), isAdmin: true } : NIEMAND;
   const scopes = await getScopes(redis, instanceId, wer).catch(() => new Set<string>());
-  const isAdmin = (await getRole(redis, instanceId, wer).catch(() => null)) === 'admin';
+  const isAdmin = api
+    ? api.role === 'admin'
+    : (await getRole(redis, instanceId, wer).catch(() => null)) === 'admin';
   return { scopes, isAdmin };
 }
 
@@ -424,6 +485,17 @@ export async function handleTeamTool(
       const learnDenied = await requireRole(redisTL, iid, author, 'contributor', 'store team lessons');
       if (learnDenied) return learnDenied;
 
+      // Stufe 2: Ein Mitglied schreibt Lektionen nur ueber die API (POST /learn).
+      // Sie prueft Rolle und Freigabepflicht und setzt den Autor aus dem Konto.
+      if (istMitglied(redisTL)) {
+        return lerneUeberApi(apiFetch, iid, {
+          topic, outcome, what_worked, what_failed: what_failed ?? '', severity: severity ?? 'minor',
+          file_paths: file_paths ?? [], commands: commands ?? [],
+          tags: [...(tags ?? []), 'team', ...(verdacht.length ? [VERDACHT_TAG] : [])],
+          author,
+        }, rolleFuer(redisTL));
+      }
+
       // Store with author attribution via the same learn_from_attempts Redis structure
       const lesson = {
         topic, outcome, what_worked,
@@ -478,11 +550,19 @@ export async function handleTeamTool(
       // unaffected. A denied confirm returns guidance, never throws.
       const confirmDenied = await requireRole(redis, instance_id, reviewer, 'reviewer', 'confirm team lessons');
       if (confirmDenied) return confirmDenied;
+      // Stufe 2: Ein Mitglied bestaetigt ueber die API (POST /lessons/confirm).
+      // Der Pruefer ist dort das Konto, kein frei gewaehlter Name.
+      if (istMitglied(redis)) {
+        return bestaetigeUeberApi(apiFetch, instance_id, {
+          topic, ...(level ? { tier: level } : {}), ...(note ? { note: note.slice(0, 280) } : {}),
+        }, rolleFuer(redis));
+      }
       // Role-aware review level: if the reviewer has an assigned role, that determines
       // weight (admin/reviewer → senior, contributor → peer). The caller can still
       // pass `level` explicitly to override (e.g. a guest reviewer without a role).
       // This prevents self-promotion — you can't claim senior by just passing level="senior".
-      const assignedRole = await getRole(redis, instance_id, reviewer);
+      // Stufe 2: die Rolle aus der API, wenn sie Rollen kennt (eigeneRolle).
+      const assignedRole = await eigeneRolle(redis, instance_id, reviewer);
       const autoLevel = roleToReviewLevel(assignedRole);
       // If the caller explicitly asked for 'peer' on a senior-role reviewer,
       // honour that (downgrade is allowed; upgrade is not — unless they have the role).
@@ -1222,14 +1302,20 @@ export async function handleTeamTool(
       try {
         const info = await redis.info('memory');
         let richtlinie: string | null = null;
-        try {
-          const cfg = await redis.config('GET', 'maxmemory-policy') as unknown as string[];
-          richtlinie = Array.isArray(cfg) && cfg.length > 1 ? String(cfg[1]) : null;
-        } catch {
-          // CONFIG GET ist auf manchen verwalteten Speichern gesperrt. Dann
-          // bleibt richtlinie null — und beurteileSpeicher sagt "nicht
-          // gemessen" statt "in Ordnung".
-          richtlinie = null;
+        // Stufe 2: Ein Mitglied darf CONFIG nicht (ACL -@admin). Es liest die
+        // Richtlinie aus INFO memory (Feld maxmemory_policy), statt abgewiesen zu werden.
+        if (istMitglied(redis)) {
+          richtlinie = /^maxmemory_policy:(\S+)/m.exec(String(info))?.[1] ?? null;
+        } else {
+          try {
+            const cfg = await redis.config('GET', 'maxmemory-policy') as unknown as string[];
+            richtlinie = Array.isArray(cfg) && cfg.length > 1 ? String(cfg[1]) : null;
+          } catch {
+            // CONFIG GET ist auf manchen verwalteten Speichern gesperrt. Dann
+            // bleibt richtlinie null — und beurteileSpeicher sagt "nicht
+            // gemessen" statt "in Ordnung".
+            richtlinie = null;
+          }
         }
         const lage = {
           benutzt: zahlAusInfo(info, 'used_memory'),
@@ -2141,6 +2227,20 @@ export async function handleTeamTool(
         ? role : null;
       if (!cleanRole) return `❌ Unknown role \`${role}\`. Valid: admin · reviewer · contributor · viewer`;
 
+      // Stufe 2: Rollen stehen in der Datenbank der API und werden im Dashboard
+      // gesetzt, nur mit Anmeldung. Dieses Werkzeug schreibt nichts mehr.
+      const apiRolle = await holeRolle(instance_id);
+      if (apiRolle) {
+        return [
+          `ℹ️ **Roles are no longer set here.** Nothing was changed.`,
+          ``,
+          `The brain owner or an organisation admin sets roles in the dashboard: ${ROLLEN_SEITE}`,
+          `There, \`${handle}\` can be made \`${cleanRole}\` (the roles admin and owner come from the account and are not assigned).`,
+          ``,
+          `Your role: ${ROLE_BADGE[apiRolle.role]} ${rolleMitHerkunft(apiRolle)}. Run \`team_whoami\` to see what it allows.`,
+        ].join('\n');
+      }
+
       const redis = await getConnection(instance_id);
 
       // Bootstrap: if there are no admins yet, the first assignment is free.
@@ -2188,6 +2288,26 @@ export async function handleTeamTool(
     case 'team_whoami': {
       const { instance_id, handle } = args as { instance_id: string; handle: string };
       if (!instance_id || !handle) return '❌ Required: instance_id, handle';
+
+      // Stufe 2: Rolle und Herkunft aus der API (Konto hinter dem Schluessel).
+      const apiRolle = await holeRolle(instance_id);
+      if (apiRolle) {
+        const k = apiRolle.can;
+        const ja = (b: boolean) => (b ? 'yes' : 'no');
+        const zeilen = [
+          `## ${ROLE_BADGE[apiRolle.role]} ${handle} — \`${apiRolle.role}\``,
+          ``,
+          `**Where the role comes from:** ${HERKUNFT_TEXT[apiRolle.source] ?? (apiRolle.source || 'unknown')} (cachly API, not the brain store)`,
+          `**You can:** ${ROLE_CAPABILITIES[apiRolle.role]}`,
+          `**Allowed:** store lessons ${ja(k.learn)} · confirm ${ja(k.confirm)} · withdraw ${ja(k.withdraw)} · manage roles ${ja(k.manage)}`,
+        ];
+        if (apiRolle.review_mode) {
+          zeilen.push(`**Review required:** lessons from contributors become proposals until an admin approves them.`);
+        }
+        zeilen.push(``, `Roles are set by the brain owner or an organisation admin: ${ROLLEN_SEITE}`);
+        return zeilen.join('\n');
+      }
+
       const redis = await getConnection(instance_id);
       const role = await getRole(redis, instance_id, handle);
 
@@ -2218,6 +2338,37 @@ export async function handleTeamTool(
     case 'team_roster': {
       const { instance_id } = args as { instance_id: string };
       if (!instance_id) return '❌ Required: instance_id';
+
+      // Stufe 2: Die geltenden Rollen nennt die API (GET /instances/:id/members).
+      // Eintraege im Hash sind seither ungeprueft und werden nicht gezeigt.
+      if (await holeRolle(instance_id)) {
+        type Mitglied = { display_name?: string; role?: string; source?: string };
+        let liste: Mitglied[] | null = null;
+        try {
+          const a = await apiFetch<{ members?: Mitglied[] }>(`/api/v1/instances/${encodeURIComponent(instance_id)}/members`);
+          liste = Array.isArray(a?.members) ? a.members : null;
+        } catch { liste = null; }
+        if (!liste) {
+          return `## 👥 Team Roster\n\nThe member list could not be loaded right now. Roles are managed in the dashboard: ${ROLLEN_SEITE}`;
+        }
+        const sortiert = [...liste].sort((a, b) =>
+          ((ROLE_RANK[b.role as TeamRole] ?? 0) - (ROLE_RANK[a.role as TeamRole] ?? 0))
+          || String(a.display_name ?? '').localeCompare(String(b.display_name ?? '')));
+        const zeilen = [
+          `## 👥 Team Roster (${sortiert.length} member${sortiert.length !== 1 ? 's' : ''})`,
+          ``,
+          `| Role | Member | Source |`,
+          `|---|---|---|`,
+          ...sortiert.map((m) => {
+            const r = (m.role ?? '') as TeamRole;
+            return `| ${ROLE_BADGE[r] ?? '?'} ${m.role ?? '?'} | **${m.display_name || '(no name)'}** | ${HERKUNFT_TEXT[m.source ?? ''] ?? (m.source || '')} |`;
+          }),
+          ``,
+          `_Roles come from the cachly API. The owner or an organisation admin changes them at ${ROLLEN_SEITE}._`,
+        ];
+        return zeilen.join('\n');
+      }
+
       const redis = await getConnection(instance_id);
 
       const allRoles = await redis.hgetall(ROLES_KEY(instance_id)).catch(() => ({} as Record<string, string>));
@@ -2320,8 +2471,14 @@ export async function handleTeamTool(
 
       const redis = await getConnection(instance_id);
 
+      // Stufe 2: Kennt die API Rollen, darf nur ein admin Gruppen pflegen.
+      const apiRolle = await holeRolle(instance_id);
+      if (apiRolle && apiRolle.role !== 'admin') {
+        return `❌ **Permission denied** — only the brain owner or an organisation admin can manage group scopes (your role: ${rolleMitHerkunft(apiRolle)}).`;
+      }
+
       // Admin gate (skipped during bootstrap, i.e. when no admin exists yet).
-      const allRoles = await redis.hgetall(ROLES_KEY(instance_id)).catch(() => ({} as Record<string, string>));
+      const allRoles = apiRolle ? {} as Record<string, string> : await redis.hgetall(ROLES_KEY(instance_id)).catch(() => ({} as Record<string, string>));
       const hasAdmin = Object.values(allRoles).includes('admin');
       if (hasAdmin) {
         const actorRole = assigned_by ? await getRole(redis, instance_id, assigned_by) : null;

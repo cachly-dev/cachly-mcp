@@ -966,32 +966,25 @@ async function baueVerbindung(instance_id: string, poolKey: string = instance_id
   }
 
   // Fetch connection details (includes password) from the dedicated endpoint.
-  let password: string | undefined;
-  let auskunft: VerbindungsAuskunft | undefined;
-  try {
-    const conn = await apiFetch<VerbindungsAuskunft>(
-      `/api/v1/instances/${instance_id}/connection`
-    );
-    password = conn.password ?? undefined;
-    auskunft = conn;
-    zeitpunkt('verbindung: Zugangsdaten da');
-  } catch (connErr) {
-    // If the connection endpoint fails and the instance has a password, we cannot connect.
-    // Surface the error so the user knows why Redis auth will fail rather than getting a cryptic NOAUTH.
-    const msg = connErr instanceof Error ? connErr.message : String(connErr);
-    if (msg.includes('401') || msg.includes('403') || msg.includes('Unauthorized')) {
-      throw new McpError(ErrorCode.InvalidRequest,
-        `API key rejected — run \`cachly setup\` to refresh your credentials.`);
-    }
-    // Other failures (timeout, 500): proceed without password, Redis will surface NOAUTH if needed
-  }
+  // Stufe 2 (speicher-zugang.ts): 409 member_access_unavailable wird ein klarer
+  // Satz, ohne Verbindungsversuch; ein Mitglied meldet sich mit eigenem Benutzer an.
+  const auskunft = await holeVerbindungsAuskunft(
+    () => apiFetch<VerbindungsAuskunft>(`/api/v1/instances/${instance_id}/connection`),
+    inst.name,
+  );
+  if (auskunft) zeitpunkt('verbindung: Zugangsdaten da');
+  const anmeldung = anmeldungAus(auskunft);
+  // Die Rolle schon jetzt holen (GET /role, 60 s gemerkt), damit der erste
+  // Abruf nicht auf sie wartet. Wirft nie.
+  void holeRolle(instance_id);
 
   // TLS, sobald die API einen TLS-Port nennt (Brains-TLS, brains-tls.ts).
   const weg = verbindungsWeg({ host: inst.host, port: inst.port, tls_enabled: inst.tls_enabled }, auskunft);
-  const client = new Redis({
+  // Die Verbindung eines Mitglieds laeuft durch die Huelle, die NOPERM in einen
+  // Satz uebersetzt (rolle.ts). Besitzer und Admins: unveraendert.
+  const { roh: client, nutzbar } = baueSpeicherClient(Redis as unknown as new (o: Record<string, unknown>) => Redis, {
     host: weg.host,
     port: weg.port,
-    password: password || undefined,
     commandTimeout: 8000,
     ...(weg.tls ? { tls: weg.tls } : {}),
     lazyConnect: true,
@@ -1002,14 +995,14 @@ async function baueVerbindung(instance_id: string, poolKey: string = instance_id
     maxRetriesPerRequest: 1,
     // Detect half-open sockets while idle instead of at the next command.
     keepAlive: 15000,
-  });
+  }, anmeldung, instance_id);
 
   // Drop the client from the pool AND close its socket on error/end, so a
   // mid-session Redis drop doesn't leak sockets across reconnects. disconnect()
   // is idempotent and safe to call from these handlers. The next tool call
   // rebuilds the connection (self-healing).
   const evict = () => {
-    if (remote) remotePool.vergissWenn(poolKey, client); else pool.delete(instance_id);
+    if (remote) remotePool.vergissWenn(poolKey, nutzbar); else pool.delete(instance_id);
     client.disconnect();
   };
   client.on('error', evict);
@@ -1035,9 +1028,9 @@ async function baueVerbindung(instance_id: string, poolKey: string = instance_id
     );
   }
 
-  if (remote) remotePool.set(poolKey, client); else pool.set(instance_id, client);
-  zeitpunkt('verbindung: Valkey verbunden');
-  return client;
+  if (remote) remotePool.set(poolKey, nutzbar); else pool.set(instance_id, nutzbar);
+  zeitpunkt(anmeldung.mitglied ? 'verbindung: Valkey verbunden (Mitglied)' : 'verbindung: Valkey verbunden');
+  return nutzbar;
 }
 
 // ── API helper ────────────────────────────────────────────────────────────────
@@ -1075,7 +1068,9 @@ async function apiFetch<T>(path: string, options: RequestInit = {}, _isRetry = f
     }
     const body = await res.json().catch(() => ({ error: res.statusText }));
     const detail = (body as { error?: string }).error ?? res.statusText;
-    handleApiError(res.status, detail);
+    // Stufe 2: Status und Code der Antwort (z. B. 409 member_access_unavailable,
+    // 403 role_viewer) reisen am Fehler mit (rolle.ts, apiFehler).
+    try { handleApiError(res.status, detail); } catch (e) { throw markiereApiFehler(e, res.status, body); }
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
@@ -1168,6 +1163,13 @@ import type { Instance } from './handlers/brain.js';
 // ── Tools (imported from tools.ts) ─────────────────────────────────────────
 import { TOOLS } from './tools.js';
 import { verbindungsWeg, type VerbindungsAuskunft } from './brains-tls.js';
+// Stufe 2 (PR 2): Rolle aus der API, Mitglieds-Zugang, Satz statt NOPERM.
+import {
+  richteRolleEin, holeRolle, istMitglied, imWerkzeugLauf, mitAbweisungsHinweis,
+  SchreibVerweigert, markiereApiFehler,
+} from './rolle.js';
+import { holeVerbindungsAuskunft, anmeldungAus, baueSpeicherClient } from './speicher-zugang.js';
+import { installiereClientKopf, clientKopfWert } from './client-kopf.js';
 
 
 // ── Handlers ──────────────────────────────────────────────────────────────────
@@ -2188,6 +2190,9 @@ function starteAutoIndex(instanceId: string): void {
   if (process.env.CACHLY_AUTO_INDEX !== 'false') {
     void (async () => {
       const redis = await getConnection(instanceId);
+      // Stufe 2: Der Index ist Wissen (cachly:idx, cachly:index). Ein Mitglied
+      // darf ihn nicht schreiben; das Indizieren bleibt dem Besitzer.
+      if (istMitglied(redis)) return;
       const lastIndexed = await redis.get(`cachly:index:last_indexed:${instanceId}`);
       const staleMs = 24 * 60 * 60 * 1000;
       const isStale = !lastIndexed || (Date.now() - parseInt(lastIndexed, 10)) > staleMs;
@@ -2316,7 +2321,10 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
     // Weg A: vor dem Werkzeug, damit auch ein erster smart_recall den Stand im Speicher findet.
     // session_start liefert den Block selbst (Weg E) und merkt es sich dort.
     const regelText = name === 'session_start' ? '' : await regelnFuerAntwort(sitzungsInstanz);
-    const text = await handleTool(name, (args ?? {}) as Record<string, unknown>);
+    // Stufe 2: Hat der Speicher als Mitglied etwas abgewiesen (NOPERM), steht der
+    // Satz an der Antwort, auch wenn das Werkzeug den Fehler selbst verschluckt (rolle.ts).
+    const lauf = await imWerkzeugLauf(() => handleTool(name, (args ?? {}) as Record<string, unknown>));
+    const text = mitAbweisungsHinweis(lauf.ergebnis, lauf.abgewiesen, lauf.rolle);
     zeitpunkt(`werkzeug ${name}: Antwort fertig`);
     if (sitzungsSchritt === 'als-gestartet-merken') starteAutoIndex(sitzungsInstanz);
     // Hat der Hintergrund-Import aus der Git-Geschichte gerade Lektionen
@@ -2333,6 +2341,10 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
   } catch (err) {
     if (err instanceof UnknownToolError) {
       return { content: [{ type: 'text', text: err.message }], isError: true };
+    }
+    // Stufe 2: ein abgewiesener Schreibbefehl eines Mitglieds ist eine Antwort, kein Absturz.
+    if (err instanceof SchreibVerweigert) {
+      return { content: [{ type: 'text', text: `🔒 ${err.message}` }], isError: true };
     }
     if (err instanceof McpError) throw err;
     const msg = (err as Error).message ?? String(err);
@@ -4290,6 +4302,8 @@ if (process.argv[2] === 'health') {
               const pingWeg = verbindungsWeg({ host: inst.host, port: inst.port, tls_enabled: inst.tls_enabled }, pingAuskunft);
               const pingClient = new Redis({
                 host: pingWeg.host, port: pingWeg.port,
+                // Stufe 2: ein Mitglied meldet sich mit eigenem Benutzer an.
+                ...(pingAuskunft?.username ? { username: pingAuskunft.username } : {}),
                 password: pingPassword,
                 ...(pingWeg.tls ? { tls: pingWeg.tls } : {}),
                 lazyConnect: true, connectTimeout: 5000, retryStrategy: () => null,
@@ -5560,6 +5574,21 @@ if (!process.env.PORT) {
 
 const httpPort = process.env.PORT ? parseInt(process.env.PORT, 10) : undefined;
 
+/**
+ * Stufe 2 (PR 2), einmal je Serverprozess, in beiden Betriebsarten:
+ *   - die Rolle kommt aus GET /instances/:id/role (rolle.ts), im HTTP-Modus je
+ *     Schluessel getrennt gemerkt;
+ *   - jeder Aufruf an die API traegt X-Cachly-Client: mcp/<version>
+ *     (client-kopf.ts), damit die API alte Fassungen zaehlen kann.
+ */
+function richteStufe2Ein(): void {
+  richteRolleEin({
+    abruf: apiFetch,
+    bereich: () => (istMehrmandant() ? (mandantKontext()?.schluesselHash ?? '-') : ''),
+  });
+  installiereClientKopf(() => API_URL, clientKopfWert(CURRENT_VERSION));
+}
+
 if (httpPort) {
   // ── HTTP mode (Streamable HTTP transport) = Remote-MCP fuer VIELE Schluessel ──
   //
@@ -5581,6 +5610,7 @@ if (httpPort) {
   _defaultInstanceId = '';
   setEmbedJwt('');
   erzwingeEmbedAnbieterRemote();
+  richteStufe2Ein();
   // Die API soll je Aufrufer zaehlen, nicht je Container (remote-zugang.ts,
   // api/internal/middleware/mcp_intern.go). Nur der Zustand ins Log, nie der Wert.
   const aufruferAnApi = installiereApiKoepfe(API_URL, process.env.MCP_INTERNAL_SECRET?.trim());
@@ -5767,6 +5797,7 @@ if (httpPort) {
   });
 } else {
   // ── stdio mode (default for local editor use) ───────────────────────────
+  richteStufe2Ein();
   const transport = new StdioServerTransport();
   zeitpunkt('start: Module geladen, stdio verbinden');
   await server.connect(transport);

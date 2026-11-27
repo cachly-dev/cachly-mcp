@@ -185,6 +185,13 @@ export class MockRedis {
     return weg;
   }
 
+  // Stufe 2 (27.11.2026): getRole liest das alte Rollen-Feld mit hget; die
+  // Probe "alte API" braucht es (rolle.test.ts, Fall 7).
+  async hget(key: string, field: string): Promise<string | null> {
+    const w = this.hashes.get(key)?.get(field);
+    return w === undefined ? null : String(w);
+  }
+
   async hgetall(key: string): Promise<Record<string, string>> {
     const h = this.hashes.get(key);
     if (!h) return {};

@@ -7,6 +7,16 @@
 
 ---
 
+## [0.10.281] – 2026-11-27 — *"Your role comes from your account."*
+
+Team roles (Stage 2, part 2). The server no longer reads a member's role from the Brain store, where anyone with the password could make themselves admin. It asks the cachly API (`GET /instances/:id/role`) and keeps the answer for 60 seconds. With an older API (404) everything works as before.
+
+- A team member now signs in to the store with an own user (`username` from `/connection`). That user may read everything but may not write team data or knowledge. `learn_from_attempts` and `team_learn` save through `POST /instances/:id/learn`, `team_confirm` through `/lessons/confirm`, recall counters go to `/lessons/recalled` in the background. A refused write never reaches the AI as raw `NOPERM`: the answer says "Das darf nur der Besitzer oder ein Admin. Deine Rolle: …".
+- When the API cannot give a member access (`409 member_access_unavailable`), the server says so in one sentence and does not try to connect without a password.
+- `team_assign_role` no longer writes anything; roles are set at https://cachly.dev/team. `team_whoami` shows role and source from the API, `team_roster` the member list from the API.
+- Every request to the API carries `X-Cachly-Client: mcp/<version>`.
+- Owners and organisation admins write and recall exactly as before. Two differences: roles are set in the dashboard, not with `team_assign_role`, and as admin (from the API) they also see group-scoped lessons in recall, as admins always did. Single users without a team: no change.
+
 ## [0.10.279] – 2026-11-27 — *"The light c. in Claude.ai."*
 
 The remote server's `GET /favicon.svg` now returns the new logo: a dark "c." with a green dot on a light background, the same file as https://cachly.dev/favicon.svg. The orange version is gone. No behaviour change in the server.

@@ -29,6 +29,12 @@ export interface VerbindungsAuskunft {
   tls_enabled?: boolean;
   tls_port?: number;
   tls_ca?: string;
+  /** Stufe 2: eigener Benutzer eines Mitglieds (m-<16 hex>); fehlt bei Besitzer und Admin. */
+  username?: string;
+  /** Stufe 2: "member" = eingeschraenkter Zugang (rolle.ts); fehlt = volles Passwort. */
+  access?: string;
+  /** Stufe 2: die wirksame Rolle des Mitglieds, wenn access "member" ist. */
+  role?: string;
 }
 
 export interface VerbindungsWeg {

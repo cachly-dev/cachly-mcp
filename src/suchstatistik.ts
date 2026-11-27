@@ -18,6 +18,8 @@
  * pruefen koennen statt einer Kopie davon.
  */
 
+import { darfDirektSchreiben } from './rolle.js';
+
 /** Ein Rohr (Pipeline), so viel davon wie diese Datei braucht. */
 export interface StatistikRohr {
   incr(key: string): unknown;
@@ -56,6 +58,9 @@ export async function merkeSuchlauf(
   dauerMs: number,
 ): Promise<void> {
   try {
+    // Stufe 2: cachly:meta ist fuer Mitglieder gesperrt (schluessel-klassen.ts).
+    // Ihre Suchen zaehlt diese Statistik nicht, statt am Speicher zu scheitern.
+    if (!darfDirektSchreiben(redis, SUCHSTATISTIK_SCHLUESSEL.gesamt)) return;
     const tag = new Date().toISOString().slice(0, 10);
     const tagesSchluessel = SUCHSTATISTIK_SCHLUESSEL.jeTag(tag);
     const rohr = redis.pipeline();
