@@ -35,6 +35,7 @@
  * die Fehlertext-Eingänge daneben bestehen bleiben — sie wirken ohne Nutzung.
  */
 
+import { createHash } from 'node:crypto';
 import type { Redis } from 'ioredis';
 import { packe } from './bedeutung.js';
 import { EINGANG_PRAEFIX } from './eingaenge.js';
@@ -81,6 +82,23 @@ export function spurSchluessel(frage: string): string {
     .slice(0, MAX_LAENGE);
 }
 
+/**
+ * Feldname im Hash: kein Wortlaut, sondern `h:<32 Hex>:<Laenge>`.
+ * Die Laenge (Code-Punkte der normalisierten Frage) steht dabei, damit
+ * `behalte` bei Gleichstand weiter die kuerzere Frage waehlen kann.
+ */
+export function spurFeld(frage: string): string {
+  const k = spurSchluessel(frage);
+  const hex = createHash('sha256').update(k, 'utf8').digest('hex').slice(0, 32);
+  return `h:${hex}:${[...k].length}`;
+}
+
+/** Laenge der Frage hinter einem Feld; Bestand im Wortlaut: die Laenge des Feldnamens. */
+export function feldLaenge(feld: string): number {
+  const m = /^h:[0-9a-f]{32}:([0-9]{1,3})$/.exec(feld);
+  return m ? Number(m[1]) : feld.length;
+}
+
 /** Taugt diese Frage überhaupt als Pfad? */
 export function taugtAlsSpur(frage: string): boolean {
   const k = spurSchluessel(frage);
@@ -102,7 +120,7 @@ export function behalte(
 ): Array<{ frage: string; anzahl: number }> {
   return pfade
     .slice()
-    .sort((a, b) => b.anzahl - a.anzahl || a.frage.length - b.frage.length)
+    .sort((a, b) => b.anzahl - a.anzahl || feldLaenge(a.frage) - feldLaenge(b.frage))
     .slice(0, kappe);
 }
 
@@ -123,7 +141,7 @@ export async function spurLegen(
   einbetten: (text: string) => Promise<number[] | null>,
 ): Promise<number> {
   if (!taugtAlsSpur(frage) || themen.length === 0) return 0;
-  const schluessel = spurSchluessel(frage);
+  const schluessel = spurFeld(frage);
   let befoerdert = 0;
 
   for (const topic of themen) {

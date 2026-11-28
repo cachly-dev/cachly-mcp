@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  spurSchluessel, taugtAlsSpur, behalte, spurLegen,
+  spurSchluessel, spurFeld, taugtAlsSpur, behalte, spurLegen,
   SPUR_PRAEFIX, PFAD_PRAEFIX, PFAD_SCHWELLE, PFAD_KAPPE,
 } from './spuren.js';
 
@@ -95,6 +95,20 @@ describe('behalte — welcher Pfad weicht', () => {
   });
 });
 
+describe('spurFeld — Feldname ohne Wortlaut', () => {
+  it('spurFeld: Pruefwerte wie die Go-Seite', () => {
+    expect(spurFeld('Docker startet nicht!')).toBe('h:eacc194bea4a8856ec4ea16ff033309f:20');
+    expect(spurFeld('Warum hängt der Deploy?')).toBe('h:7ccc17c29b81b796ab7aa7b9fb4791da:22');
+  });
+
+  it('behalte: bei Gleichstand gewinnt die kuerzere Frage, auch mit Hash-Feldern', () => {
+    const kurz = 'h:' + 'a'.repeat(32) + ':20';
+    const lang = 'h:' + 'b'.repeat(32) + ':40';
+    const aus = behalte([{ frage: lang, anzahl: 3 }, { frage: kurz, anzahl: 3 }], 1);
+    expect(aus[0].frage).toBe(kurz);
+  });
+});
+
 describe('spurLegen — aus Wiederholung wird ein Pfad', () => {
   it('beim ERSTEN Mal entsteht noch kein Pfad', async () => {
     const r = new MiniRedis();
@@ -108,7 +122,7 @@ describe('spurLegen — aus Wiederholung wird ein Pfad', () => {
     await spurLegen(r as never, 'warum haengt der deploy', ['ci:platte'], einbetten);
     const n = await spurLegen(r as never, 'Warum haengt der Deploy?', ['ci:platte'], einbetten);
     expect(n, 'die zweite Begehung hat keinen Pfad ergeben').toBe(1);
-    expect(pfade(r, 'ci:platte')).toEqual(['warum haengt der deploy']);
+    expect(pfade(r, 'ci:platte')).toEqual([spurFeld('warum haengt der deploy')]);
   });
 
   it('zaehlt weiter, ohne noch einmal einzubetten', async () => {
@@ -119,7 +133,7 @@ describe('spurLegen — aus Wiederholung wird ein Pfad', () => {
       await spurLegen(r as never, 'warum haengt der deploy', ['ci:platte'], zaehlend);
     }
     expect(aufrufe, 'wurde mehr als einmal eingebettet').toBe(1);
-    expect(r.hashes.get(`${SPUR_PRAEFIX}ci:platte`)?.['warum haengt der deploy']).toBe('5');
+    expect(r.hashes.get(`${SPUR_PRAEFIX}ci:platte`)?.[spurFeld('warum haengt der deploy')]).toBe('5');
   });
 
   it('legt die Spur an ALLEN gefundenen Lektionen an', async () => {
@@ -147,7 +161,7 @@ describe('spurLegen — aus Wiederholung wird ein Pfad', () => {
     const uebrig = pfade(r, 'ci:platte');
     expect(uebrig.length).toBeLessThanOrEqual(PFAD_KAPPE);
     expect(uebrig, 'der oft begangene Pfad wurde weggeworfen')
-      .toContain('frage nummer 0 zum selben thema');
+      .toContain(spurFeld('frage nummer 0 zum selben thema'));
   });
 
   it('zeichnet gar nichts auf, wenn die Frage nicht taugt', async () => {
@@ -163,5 +177,20 @@ describe('spurLegen — aus Wiederholung wird ein Pfad', () => {
     const n = await spurLegen(r as never, 'warum haengt der deploy', ['ci:platte'], async () => null);
     expect(n).toBe(0);
     expect(pfade(r, 'ci:platte')).toHaveLength(0);
+  });
+});
+
+describe('spurLegen — kein Wortlaut im Feldnamen', () => {
+  it('spurLegen schreibt keinen Wortlaut als Feldname', async () => {
+    const r = new MiniRedis();
+    await spurLegen(r as never, 'warum haengt der deploy', ['ci:platte'], einbetten);
+    await spurLegen(r as never, 'warum haengt der deploy', ['ci:platte'], einbetten);
+    for (const k of [`${SPUR_PRAEFIX}ci:platte`, `${PFAD_PRAEFIX}ci:platte`]) {
+      const felder = Object.keys(r.hashes.get(k) ?? {});
+      expect(felder.length).toBe(1);
+      expect(felder[0]).toMatch(/^h:[0-9a-f]{32}:[0-9]+$/);
+      expect(felder.some((f) => f.includes(' '))).toBe(false);
+    }
+    expect(r.hashes.get(`${SPUR_PRAEFIX}ci:platte`)?.[spurFeld('warum haengt der deploy')]).toBe('2');
   });
 });

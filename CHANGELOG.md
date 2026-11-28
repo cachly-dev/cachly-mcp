@@ -7,6 +7,10 @@
 
 ---
 
+## [0.10.288] – 2026-11-28 — *"Search paths no longer carry your question word for word."*
+
+The hashes behind learned search paths (`cachly:lesson:spur:*`, `cachly:lesson:pfad:*`) now use a field name of the form `h:<32 hex>:<length>` instead of the question text, so a team member reading those keys cannot see what the owner asked. The length stays in the name so the tie-break (shorter question wins) is unchanged. The API converts existing fields on the next room migration and in the hourly reconcile, adding counters together. Search results, vectors, counters and thresholds are unchanged; no change to the tool schema.
+
 ## [0.10.287] – 2026-11-28 — *"Members keep their notes and sessions in their own account area."*
 
 When the API reports `rooms.account`, a member or org admin now reads and writes notes, session, handoff, checkpoint, impact trail, search log and agent activity under that account area instead of the shared keys. Owners, "protection off" and own-storage connections see no change: every key and command stays word for word. With an account area there is no semantic index entry for notes, the Team roadmap line says every member can edit, `brain_conflicts` shows only your own activity and `brain_metrics` counts reuse for your account. No change to the tool schema.
