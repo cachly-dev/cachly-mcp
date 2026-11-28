@@ -79,6 +79,19 @@ export class MockRedis {
     return 'OK';
   }
 
+  /** Redis-Semantik fuer count > 0: die ersten `count` gleichen Werte von vorn entfernen. */
+  async lrem(key: string, count: number, value: string): Promise<number> {
+    const list = this.lists.get(key) ?? [];
+    const grenze = count > 0 ? count : Infinity;
+    let entfernt = 0;
+    const rest = list.filter((v) => {
+      if (v === value && entfernt < grenze) { entfernt++; return false; }
+      return true;
+    });
+    this.lists.set(key, rest);
+    return entfernt;
+  }
+
   async sadd(key: string, ...members: string[]): Promise<number> {
     const s = this.sets.get(key) ?? new Set<string>();
     let added = 0;
@@ -216,8 +229,13 @@ export class MockRedis {
   async expire(_key: string, _ttl: number): Promise<number> { return 1; }
 
   async del(...keys: string[]): Promise<number> {
+    // Wie Redis: DEL entfernt den Schluessel, gleich welcher Art. Bis 28.11.2026
+    // nur Zeichenketten — ein DEL auf eine Liste liess sie im Test stehen.
     let count = 0;
-    for (const k of keys) { if (this.store.delete(k)) count++; }
+    for (const k of keys) {
+      const weg = [this.store, this.lists, this.sets, this.hashes].map((m) => m.delete(k));
+      if (weg.some(Boolean)) count++;
+    }
     return count;
   }
 

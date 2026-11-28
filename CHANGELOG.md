@@ -7,6 +7,16 @@
 
 ---
 
+## [0.10.286] – 2026-11-28 — *"Two windows on one Brain keep their own session."*
+
+Until 0.10.285 the session start marker existed once per Brain. With two windows on the same Brain, the second `session_start` overwrote the start time of the first. The first `session_end` then reported the duration from the second window's start, and it took the whole decision log, including the lessons of the other window.
+
+- Each session (one MCP server process) now writes its own start marker. `session_end` computes the duration from it, learns commits since that start, and removes only its own marker.
+- Decision log entries carry the session they belong to. `session_end` takes only its own entries and leaves the other window's entries in place.
+- Markers and entries written by older versions count as before, for the session that ends first.
+- Over HTTP (Claude.ai connector) all requests of one server process share one session, as before: that transport has no session id.
+- Tool schema unchanged.
+
 ## [0.10.285] – 2026-11-28 — *"Say only what is true about a removed trial Brain."*
 
 0.10.284 always told trial users that their Brain "stayed empty and unused for 14 days" and that "nothing was lost". That is only true if cachly's cleanup job removed it.

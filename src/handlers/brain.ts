@@ -10,6 +10,7 @@ import { ckgSlug, extractProblemConcept, ckgUpsertNode, ckgUpdateEdge,
          ckgUpsertPersonNode, ckgUpsertFileNode, ckgRecordCollaboration,
          ckgUpsertServiceNode } from '../ckg.js';
 import { safeJsonParse, scanKeys , leseOderNull, darfHeraus } from '../utils.js';
+import { sitzungsKennung, startmarkenSchluessel, gehoertDieserSitzung } from '../sitzungs-kennung.js';
 import { ersparteMinuten, istStarterLektion, zaehltAlsErsparnis } from '../wertbeitrag.js';
 import { lessonPreviewLines, trimTo, type PreviewLesson } from '../lesson-preview.js';
 import { normalisiereZeit, zaehleZeitangaben } from '../zeit-normalisieren.js';
@@ -960,13 +961,44 @@ async function zaehleSerie(redis: Redis): Promise<{ tage: number; rekord: number
   return serie;
 }
 
-/** Den Sitzungsbeginn vermerken — session_end rechnet daraus die Dauer (session_start, Schritt 7). */
+/**
+ * Den Sitzungsbeginn vermerken — session_end rechnet daraus die Dauer (session_start, Schritt 7).
+ *
+ * Zwei Marken: die eigene je Sitzung (sitzungs-kennung.ts), aus der session_end
+ * rechnet, und die gemeinsame je Brain fuer Fassungen vor 0.10.286, die nur
+ * diese lesen. Die gemeinsame traegt die Kennung, damit ein neues session_end
+ * eine fremde nicht fuer die eigene haelt.
+ */
 async function merkeSitzungsbeginn(redis: Redis, focus: string, provider: string): Promise<void> {
-  await redis.set('cachly:session:current', JSON.stringify({
-    started: new Date().toISOString(),
-    focus,
-    provider,
-  }), 'EX', 86400); // auto-expire after 24h if session_end never called
+  const started = new Date().toISOString();
+  const sid = sitzungsKennung();
+  // auto-expire after 24h if session_end never called
+  await redis.set(startmarkenSchluessel(sid), JSON.stringify({ started }), 'EX', 86400);
+  await redis.set('cachly:session:current', JSON.stringify({ started, focus, provider, sid }), 'EX', 86400);
+}
+
+/**
+ * Die Startzeit DIESER Sitzung fuer session_end, und welche Marken danach weg
+ * duerfen. Erst die eigene Marke; die gemeinsame nur, wenn sie dieser Sitzung
+ * gehoert oder von einer aelteren Fassung ohne Kennung stammt. Eine fremde
+ * gemeinsame Marke bleibt liegen: sie gehoert der Nachbarsitzung.
+ */
+async function leseEigenenSitzungsbeginn(redis: Redis): Promise<{
+  started?: string;
+  loeschen: string[];
+}> {
+  const sid = sitzungsKennung();
+  const eigeneSchluessel = startmarkenSchluessel(sid);
+  const [eigeneRoh, gemeinsamRoh] = await Promise.all([
+    redis.get(eigeneSchluessel),
+    redis.get('cachly:session:current'),
+  ]);
+  const eigene = eigeneRoh ? safeJsonParse<{ started?: string } | null>(eigeneRoh, null) : null;
+  const gemeinsam = gemeinsamRoh ? safeJsonParse<{ started?: string; sid?: unknown } | null>(gemeinsamRoh, null) : null;
+  const gemeinsamIstMeine = !!gemeinsam && gehoertDieserSitzung(gemeinsam.sid, sid);
+  const loeschen = [eigeneSchluessel, ...(gemeinsamIstMeine ? ['cachly:session:current'] : [])];
+  const started = eigene?.started || (gemeinsamIstMeine ? gemeinsam?.started : undefined) || undefined;
+  return { ...(started ? { started } : {}), loeschen };
 }
 
 /** Laufende Abfragen der Abruf-Grenze je Instanz — ein zweiter Aufruf teilt die erste. */
@@ -1842,7 +1874,8 @@ async function handleBrainToolInner(
       // Track in decision log for session replay
       try {
         const dlKey = 'cachly:session:decision-log';
-        const dlEntry = JSON.stringify({ ts, topic, outcome, what_worked: what_worked.slice(0, 120) });
+        // sid: das session_end einer Nachbarsitzung laesst diese Zeile liegen (sitzungs-kennung.ts).
+        const dlEntry = JSON.stringify({ ts, topic, outcome, what_worked: what_worked.slice(0, 120), sid: sitzungsKennung() });
         await redis.rpush(dlKey, dlEntry);
         await redis.ltrim(dlKey, -50, -1);
       } catch { /* non-critical */ }
@@ -5054,31 +5087,37 @@ async function handleBrainToolInner(
       const redis = await getConnection(instance_id);
       const now = new Date();
 
-      // Dauer aus der Startmarke von session_start. Die Marke gibt es nur EINMAL
-      // je Brain (cachly:session:current), nicht je Sitzung. Laufen zwei
-      // Sitzungen auf demselben Brain (zwei Fenster, zwei Kollegen), loescht das
-      // erste session_end die Marke. Bis 0.10.277 brach jedes weitere
-      // session_end dann mit "No active session found" ab und warf die
-      // Zusammenfassung weg (Beleg 27.11.2026, Sitzung nach Verdichtung).
-      // Jetzt wird sie trotzdem gespeichert, nur ohne Dauer.
+      // Dauer aus der Startmarke DIESER Sitzung (sitzungs-kennung.ts). Bis
+      // 0.10.285 gab es die Marke nur einmal je Brain: zwei Fenster auf
+      // demselben Brain, und das erste session_end rechnete ab dem Start des
+      // zweiten. Bis 0.10.277 brach das zweite session_end danach mit "No
+      // active session found" ab und warf die Zusammenfassung weg (Beleg
+      // 27.11.2026). Ohne eigene Marke wird weiter gespeichert, nur ohne Dauer.
       let durationMin: number | undefined;
-      const currentRaw = await redis.get('cachly:session:current');
-      const ohneStartmarke = !currentRaw;
-      const current = currentRaw ? safeJsonParse<{ started: string } | null>(currentRaw, null) : null;
-      if (current?.started) {
-        durationMin = Math.round((now.getTime() - new Date(current.started).getTime()) / 60000);
+      const beginn = await leseEigenenSitzungsbeginn(redis);
+      const sitzungsStart = beginn.started;
+      const ohneStartmarke = !sitzungsStart;
+      if (sitzungsStart) {
+        const ms = now.getTime() - new Date(sitzungsStart).getTime();
+        if (Number.isFinite(ms)) durationMin = Math.round(ms / 60000);
       }
 
       // ── Session Replay: capture decision log ─────────────────────────────
+      // Nur die Zeilen DIESER Sitzung, einzeln entfernt (LREM). Zeilen der
+      // Nachbarsitzung bleiben fuer deren session_end liegen. Zeilen ohne
+      // Kennung (Fassung vor 0.10.286) und unlesbare nimmt wie bisher, wer
+      // zuerst endet.
       type DecisionEntry = { ts: string; topic: string; outcome: string; what_worked: string };
-      let decisionLog: DecisionEntry[] = [];
+      const decisionLog: DecisionEntry[] = [];
       try {
-        const dlEntries = await redis.lrange('cachly:session:decision-log', 0, -1);
-        decisionLog = dlEntries.flatMap(e => {
-          const entry = safeJsonParse<DecisionEntry | null>(e, null);
-          return entry ? [entry] : [];
-        });
-        await redis.del('cachly:session:decision-log');
+        const dlKey = 'cachly:session:decision-log';
+        const dlEntries = await redis.lrange(dlKey, 0, -1);
+        for (const roh of dlEntries) {
+          const entry = safeJsonParse<(DecisionEntry & { sid?: unknown }) | null>(roh, null);
+          if (entry && !gehoertDieserSitzung(entry.sid)) continue;
+          await redis.lrem(dlKey, 1, roh);
+          if (entry) decisionLog.push({ ts: entry.ts, topic: entry.topic, outcome: entry.outcome, what_worked: entry.what_worked });
+        }
       } catch { /* non-critical */ }
 
       // Karte eutmy0ly93ch: was hat das Gedaechtnis diese Sitzung gekostet?
@@ -5104,8 +5143,8 @@ async function handleBrainToolInner(
       await redis.ltrim('cachly:session:history', 0, 49);
       await redis.expire('cachly:session:history', 90 * 86400);
 
-      // Clean up current session marker
-      await redis.del('cachly:session:current');
+      // Die eigene Marke weg; die gemeinsame nur, wenn sie dieser Sitzung gehoert.
+      await redis.del(...beginn.loeschen);
 
       // ── AUTO-LEARN from session summary (no manual call needed) ─────────────
       // Parse the summary for actionable lessons and store them automatically.
@@ -5169,10 +5208,8 @@ async function handleBrainToolInner(
       let ambientMarkiert = 0;
       if (endeOrdner) {
         try {
-          // Get the session start time (stored by session_start)
-          const sessionStartTs = currentRaw
-            ? (() => { try { return (JSON.parse(currentRaw) as { started?: string }).started ?? ''; } catch { return ''; } })()
-            : '';
+          // Get the session start time (stored by session_start, this session only)
+          const sessionStartTs = sitzungsStart ?? '';
           const sinceArg = `--since=${sessionStartTs || '1 hour ago'}`;
           // '|||ENDE' terminates one commit's record. A commit body can contain
           // blank lines and newlines of its own, so splitting the raw output on
@@ -5278,7 +5315,7 @@ async function handleBrainToolInner(
       return [
         `✅ **Session saved**${durationStr}`,
         ohneStartmarke
-          ? `ℹ️ No session_start marker found (another session on this Brain may have ended first). Summary saved without duration.`
+          ? `ℹ️ No session_start marker found for this session (session_start was not called, or the server restarted). Summary saved without duration.`
           : '',
         ``,
         `📋 **Summary:** ${summary}`,
