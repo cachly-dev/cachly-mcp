@@ -7,6 +7,16 @@
 
 ---
 
+## [0.10.284] – 2026-11-28 — *"A removed trial Brain gets an answer, not a bare 404."*
+
+Since 28 Nov 2026 the API removes trial Brains that stayed empty and unused for 14 days. The key keeps working, so a returning user used to get `cachly API error 404: not found` on every tool.
+
+- The server now checks the configured Brain once per process. On a 404 with a trial key (`cky_trial_...`) it calls `POST /instances/auto` once, uses the new empty Brain for this process, and adds one short notice to the next answer.
+- The new id is written to `~/.cachly/credentials.json` only if that file held the old id. If the id came from `CACHLY_BRAIN_INSTANCE_ID`, nothing is overwritten; the notice says what to change.
+- With a registered key nothing is created. The answer names the missing Brain and points to https://cachly.dev/instances and `npx @cachly-dev/mcp-server@latest setup`.
+- If `/instances/auto` fails (sign-in, plan limit, network), the answer says the next step. No second attempt in the same process.
+- No change to the tool schema.
+
 ## [0.10.283] – 2026-11-27 — *"Private and group lessons have rooms."*
 
 Rooms (Stage 3, part 3). Private and group lessons now live in rooms of their own in the store (`cachly:zone:...`). A member reads only the rooms of their own account and their groups; the owner reads all of them.

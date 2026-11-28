@@ -59,6 +59,9 @@ async function starteGegenstelle(sofortTestStatus: number): Promise<{ url: strin
       if (pfad === '/auth/device/token') return json(200, { error: 'authorization_pending' });
       if (pfad === '/api/v1/telemetry/mcp') return json(200, { ok: true });
       if (pfad === '/health') return json(200, { status: 'ok', db: 'ok' });
+      // Die echte API kennt die Instanz (GET /instances/<id> = 200). Seit brain-weg.ts fragt der Server
+      // sie einmal ab; ein 404 hiesse "Brain entfernt".
+      if (req.method === 'GET' && /^\/api\/v1\/instances\/[0-9a-f-]{36}$/.test(pfad)) return json(200, { id: pfad.split('/').pop(), name: 'Test', status: 'failed' });
       return json(404, { error: 'not found' });
     });
   });

@@ -366,8 +366,15 @@ async function resolveDefaultInstanceId(): Promise<string> {
         // stuck. This self-heals the silent failure mode where device-flow
         // provisioning failed once and every later tool call then ran with an
         // empty instance_id (no recalls, never counted as an active instance).
+        const alteKennung = readInstanceId(); // vor dem Ueberschreiben unten merken
         const provisioned = await autoProvisionInstance();
         if (provisioned) {
+          // Ein Sofort-Test-Konto ohne Instanz, in der Datei aber noch die alte
+          // Kennung: das Brain wurde nach 14 Tagen leer und unbenutzt entfernt
+          // (brain-weg.ts). Es gibt jetzt ein neues; der Mensch erfaehrt es einmal.
+          if (istSofortTestSchluessel(JWT) && alteKennung && alteKennung !== provisioned) {
+            _nachholHinweis = hinweisErsetzt(alteKennung, { id: provisioned, neu: true }, 'datei');
+          }
           _defaultInstanceId = provisioned;
           _defaultInstanceLastAttempt = 0;
           // Das Konto hatte keine Instanz: diese ist neu und leer (leeres-brain.ts).
@@ -1120,6 +1127,10 @@ import { installCodexMcp, installGeminiMcp } from './editor-mcp-eintrag.js';
 import {
   resolveApiKey, saveApiKey, saveInstanceId, readSavedApiKey, readInstanceId, type CredentialsHomeOptions,
 } from './credentials.js';
+import {
+  istSofortTestSchluessel, ersetzeInstanceId, istBekanntWeg, merkeWeg, nimmHinweisEinmal, legeEinmalAn, ist404,
+  hinweisErsetzt, meldungRegistriert, meldungAnlegenFehlt, type Herkunft,
+} from './brain-weg.js';
 import { ladeLaufendeAnmeldung, merkeAnmeldung, vergissAnmeldung } from './laufende-anmeldung.js';
 import {
   KEYCLOAK_BASIS, istTestSchluessel, waehleTestSchluessel, starteKeycloakAnmeldung, warteAufKeycloakAnmeldung, uebernimm, brainImKonto,
@@ -1129,7 +1140,7 @@ import type { SofortTest } from './sofort-test.js';
 import {
   WARTE_TAKT_MS, auftragLiegt, nimmAuftrag, sichereKonto, sperreLiegt, startwissenEingeschaltet, type HookImport,
 } from './konto-anlegen.js';
-import { sichereZugang, echterWert } from './zugang.js';
+import { sichereZugang, echterWert, istInstanzKennung } from './zugang.js';
 import { zeitpunkt } from './zeitmessung.js';
 import { autoSitzungsSchritt, SITZUNGS_WERKZEUGE } from './auto-sitzung.js';
 import { warteAufLaufendeInstanz, gemeinsamerAufbau } from './instanz-warten.js';
@@ -1464,7 +1475,80 @@ async function gitStartFrei(instanceId: string): Promise<boolean> {
   }
 }
 
+/**
+ * Das konfigurierte Brain gibt es nicht mehr (404): siehe brain-weg.ts.
+ *
+ * Geprueft wird EINMAL je Prozess und Kennung, und nur fuer die konfigurierte
+ * Instanz (Umgebung, credentials.json oder Hook-Konto) ohne HTTP-Modus. Jede
+ * andere Antwort als 404 (401, 5xx, kein Netz) bleibt wie bisher dem
+ * Werkzeug selbst ueberlassen.
+ */
+const _brainDa = new Set<string>();
+/** Hinweis aus resolveDefaultInstanceId (Konto ohne Instanz, alte Kennung in der Datei); geht einmal an ein Ergebnis. */
+let _nachholHinweis = '';
+let _wartenderHinweis = '';
+
+async function pruefeBrainDa(args: Record<string, unknown>): Promise<{ args: Record<string, unknown>; hinweis: string }> {
+  const gleich = { args, hinweis: '' };
+  if (istMehrmandant() || !JWT) return gleich;
+  const id = _defaultInstanceId;
+  if (!id || !istInstanzKennung(id)) return gleich;
+  const gefragt = typeof args.instance_id === 'string' && args.instance_id ? args.instance_id : id;
+  if (gefragt !== id || _brainDa.has(id)) return gleich;
+
+  // Schon festgestellt, dass es weg ist: keine zweite Anfrage, dieselbe Antwort.
+  if (!istBekanntWeg(id)) {
+    try {
+      await apiFetch<unknown>(`/api/v1/instances/${id}`);
+      _brainDa.add(id);
+      return gleich;
+    } catch (e) {
+      if (!ist404(e)) return gleich; // 401, 5xx, Netz: altes Verhalten
+    }
+    merkeWeg(id);
+  }
+  if (!istSofortTestSchluessel(JWT)) throw new McpError(ErrorCode.InvalidRequest, meldungRegistriert(id));
+  const erg = await legeEinmalAn(() => apiFetch<unknown>('/api/v1/instances/auto', { method: 'POST', body: '{}' }));
+  if (!erg.ok) throw new McpError(ErrorCode.InvalidRequest, meldungAnlegenFehlt(id, erg));
+  const herkunft: Herkunft = echterWert(process.env.CACHLY_BRAIN_INSTANCE_ID) === id ? 'umgebung'
+    : readInstanceId() === id ? 'datei' : 'prozess';
+  // Nur dort ablegen, wo die alte Kennung stand — und nur dort.
+  if (herkunft === 'datei') ersetzeInstanceId(id, erg.id, { apiKey: JWT });
+  _defaultInstanceId = erg.id;
+  _defaultInstanceLastAttempt = 0;
+  _brainDa.add(erg.id);
+  if (erg.neu) {
+    merkeNeuesBrain(erg.id, startwissenMoeglich(), startvorratMoeglich());
+    setImmediate(() => starteStartwissenImHintergrund(erg.id));
+  }
+  return {
+    args: { ...args, instance_id: erg.id },
+    hinweis: nimmHinweisEinmal() ? hinweisErsetzt(id, erg, herkunft) : '',
+  };
+}
+
 async function handleTool(name: string, args: Record<string, unknown>): Promise<string> {
+  const geprueft = await pruefeBrainDa(args);
+  // Der Hinweis wartet auf die naechste ANTWORT AN DEN MENSCHEN (callToolHandler):
+  // handleTool laeuft auch fuer die Hintergrund-Aufrufe (Sitzungsstart, Index),
+  // deren Ergebnis niemand liest.
+  if (geprueft.hinweis) _wartenderHinweis = geprueft.hinweis;
+  try {
+    return await handleToolKern(name, geprueft.args);
+  } finally {
+    // resolveDefaultInstanceId (im Kern) kann den Hinweis erst jetzt hinterlassen haben.
+    if (_nachholHinweis && nimmHinweisEinmal()) _wartenderHinweis = _nachholHinweis;
+  }
+}
+
+/** Der wartende Hinweis zum ersetzten Brain, einmal; danach leer. */
+function holeBrainWegHinweis(): string {
+  const h = _wartenderHinweis;
+  _wartenderHinweis = '';
+  return h;
+}
+
+async function handleToolKern(name: string, args: Record<string, unknown>): Promise<string> {
   // Hat der SessionStart-Hook das Konto angelegt, seit dieser Server gestartet
   // ist? Dann gibt es jetzt einen Schluessel — KEIN zweiter Sofort-Test.
   // HTTP-Modus: ohne Schluessel der Anfrage nie ein Konto anlegen und keine Browser-Anmeldung starten.
@@ -2335,7 +2419,7 @@ const callToolHandler = async (request: { params: { name: string; arguments?: un
     return {
       content: [{
         type: 'text',
-        text: rahmeAntwort(name, text) + holeStartwissenHinweis() + holeNeueFassungHinweis(name) + (regelText ? `\n\n${regelText}` : ''),
+        text: rahmeAntwort(name, text) + holeStartwissenHinweis() + holeNeueFassungHinweis(name) + holeBrainWegHinweis() + (regelText ? `\n\n${regelText}` : ''),
       }],
     };
   } catch (err) {

@@ -1,6 +1,6 @@
 {
   "name": "@cachly-dev/mcp-server",
-  "version": "0.10.283",
+  "version": "0.10.284",
   "mcpName": "io.github.cachly-dev/mcp-server",
   "description": "Explain it once. Every AI knows it. cachly keeps your project's rules, decisions and fixes for every AI tool, for you, your team and your company.",
   "type": "module",
