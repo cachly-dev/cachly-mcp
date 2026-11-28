@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   istSofortTestSchluessel, leseAutoAntwort, legeEinmalAn, nimmHinweisEinmal, hinweisErsetzt,
-  meldungRegistriert, meldungAnlegenFehlt, ist404, istBekanntWeg, merkeWeg, ersetzeInstanceId, _brainWegZuruecksetzen,
+  meldungRegistriert, meldungAnlegenFehlt, grundAusFehler, grundWeg, GRUND_LEER_ABGERAEUMT, ist404, istBekanntWeg, merkeWeg, ersetzeInstanceId, _brainWegZuruecksetzen,
 } from './brain-weg.js';
 import { markiereApiFehler } from './rolle.js';
 
@@ -83,11 +83,38 @@ describe('404 erkennen', () => {
 
 describe('Texte', () => {
   it('Sofort-Test, neu angelegt: ehrlich, kurz, ohne Umgebungsvariable', () => {
-    const t = hinweisErsetzt('old-id', { id: 'new-id', name: 'brain-7', neu: true }, 'datei');
+    const t = hinweisErsetzt('old-id', { id: 'new-id', name: 'brain-7', neu: true }, 'datei', GRUND_LEER_ABGERAEUMT);
     expect(t).toContain('Your trial Brain was removed because it stayed empty and unused for 14 days.');
     expect(t).toContain('cachly created a new, empty Brain for you ("brain-7" (new-id)).');
     expect(t).toContain('Nothing was lost: the old one had no saved lessons.');
     expect(t).not.toContain('CACHLY_BRAIN_INSTANCE_ID');
+  });
+  it('ohne Grund der API: neutral, ohne 14 Tage und ohne "nichts verloren"', () => {
+    const t = hinweisErsetzt('old-id', { id: 'new-id', name: 'brain-7', neu: true }, 'datei');
+    expect(t).toContain('Your trial Brain old-id no longer exists. cachly created a new, empty Brain for you ("brain-7" (new-id)).');
+    expect(t).not.toContain('14 days');
+    expect(t).not.toContain('Nothing was lost');
+    const anders = hinweisErsetzt('old-id', { id: 'new-id', neu: true }, 'datei', 'etwas_anderes');
+    expect(anders).not.toContain('14 days');
+    expect(anders).not.toContain('Nothing was lost');
+  });
+  it('Konto hatte schon ein Brain, ohne Grund: ohne 14 Tage', () => {
+    const t = hinweisErsetzt('old-id', { id: 'v1', neu: false }, 'datei');
+    expect(t).not.toContain('14 days');
+    expect(hinweisErsetzt('old-id', { id: 'v1', neu: false }, 'datei', GRUND_LEER_ABGERAEUMT)).toContain('removed after 14 days empty and unused');
+  });
+  it('Anlegen scheitert: 14 Tage nur mit Grund', () => {
+    expect(meldungAnlegenFehlt('o', { status: 500, detail: '' })).not.toContain('14 days');
+    expect(meldungAnlegenFehlt('o', { status: 500, detail: '' }, GRUND_LEER_ABGERAEUMT)).toContain('removed after 14 days empty and unused');
+  });
+  it('grund aus der 404-Antwort wird am Fehler mitgenommen und gemerkt', () => {
+    const e = markiereApiFehler(new Error('x'), 404, { error: 'not found', grund: GRUND_LEER_ABGERAEUMT });
+    expect(grundAusFehler(e)).toBe(GRUND_LEER_ABGERAEUMT);
+    expect(grundAusFehler(markiereApiFehler(new Error('x'), 404, { error: 'not found' }))).toBeUndefined();
+    merkeWeg('a', grundAusFehler(e));
+    merkeWeg('b');
+    expect(grundWeg('a')).toBe(GRUND_LEER_ABGERAEUMT);
+    expect(grundWeg('b')).toBeUndefined();
   });
   it('aus der Umgebung: sagt, was zu aendern ist', () => {
     const t = hinweisErsetzt('old-id', { id: 'new-id', neu: true }, 'umgebung');

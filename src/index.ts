@@ -373,7 +373,8 @@ async function resolveDefaultInstanceId(): Promise<string> {
           // Kennung: das Brain wurde nach 14 Tagen leer und unbenutzt entfernt
           // (brain-weg.ts). Es gibt jetzt ein neues; der Mensch erfaehrt es einmal.
           if (istSofortTestSchluessel(JWT) && alteKennung && alteKennung !== provisioned) {
-            _nachholHinweis = hinweisErsetzt(alteKennung, { id: provisioned, neu: true }, 'datei');
+            const grund = await holeLoeschGrund(alteKennung);
+            _nachholHinweis = hinweisErsetzt(alteKennung, { id: provisioned, neu: true }, 'datei', grund);
           }
           _defaultInstanceId = provisioned;
           _defaultInstanceLastAttempt = 0;
@@ -1129,7 +1130,7 @@ import {
 } from './credentials.js';
 import {
   istSofortTestSchluessel, ersetzeInstanceId, istBekanntWeg, merkeWeg, nimmHinweisEinmal, legeEinmalAn, ist404,
-  hinweisErsetzt, meldungRegistriert, meldungAnlegenFehlt, type Herkunft,
+  hinweisErsetzt, meldungRegistriert, meldungAnlegenFehlt, grundAusFehler, grundWeg, type Herkunft,
 } from './brain-weg.js';
 import { ladeLaufendeAnmeldung, merkeAnmeldung, vergissAnmeldung } from './laufende-anmeldung.js';
 import {
@@ -1486,6 +1487,21 @@ async function gitStartFrei(instanceId: string): Promise<boolean> {
 const _brainDa = new Set<string>();
 /** Hinweis aus resolveDefaultInstanceId (Konto ohne Instanz, alte Kennung in der Datei); geht einmal an ein Ergebnis. */
 let _nachholHinweis = '';
+
+/** Fragt die API, warum die alte Kennung weg ist (404-Feld `grund`). Wirft nie; ohne Antwort undefined. */
+async function holeLoeschGrund(id: string): Promise<string | undefined> {
+  try {
+    const res = await fetch(`${API_URL}/api/v1/instances/${id}`, {
+      headers: { Authorization: `Bearer ${JWT}`, Accept: 'application/json' },
+      signal: AbortSignal.timeout(3000),
+    });
+    if (res.status !== 404) return undefined;
+    const body = await res.json().catch(() => ({})) as { grund?: unknown };
+    return typeof body.grund === 'string' ? body.grund : undefined;
+  } catch {
+    return undefined;
+  }
+}
 let _wartenderHinweis = '';
 
 async function pruefeBrainDa(args: Record<string, unknown>): Promise<{ args: Record<string, unknown>; hinweis: string }> {
@@ -1504,12 +1520,13 @@ async function pruefeBrainDa(args: Record<string, unknown>): Promise<{ args: Rec
       return gleich;
     } catch (e) {
       if (!ist404(e)) return gleich; // 401, 5xx, Netz: altes Verhalten
+      merkeWeg(id, grundAusFehler(e));
     }
-    merkeWeg(id);
   }
+  const grund = grundWeg(id);
   if (!istSofortTestSchluessel(JWT)) throw new McpError(ErrorCode.InvalidRequest, meldungRegistriert(id));
   const erg = await legeEinmalAn(() => apiFetch<unknown>('/api/v1/instances/auto', { method: 'POST', body: '{}' }));
-  if (!erg.ok) throw new McpError(ErrorCode.InvalidRequest, meldungAnlegenFehlt(id, erg));
+  if (!erg.ok) throw new McpError(ErrorCode.InvalidRequest, meldungAnlegenFehlt(id, erg, grund));
   const herkunft: Herkunft = echterWert(process.env.CACHLY_BRAIN_INSTANCE_ID) === id ? 'umgebung'
     : readInstanceId() === id ? 'datei' : 'prozess';
   // Nur dort ablegen, wo die alte Kennung stand — und nur dort.
@@ -1523,7 +1540,7 @@ async function pruefeBrainDa(args: Record<string, unknown>): Promise<{ args: Rec
   }
   return {
     args: { ...args, instance_id: erg.id },
-    hinweis: nimmHinweisEinmal() ? hinweisErsetzt(id, erg, herkunft) : '',
+    hinweis: nimmHinweisEinmal() ? hinweisErsetzt(id, erg, herkunft, grund) : '',
   };
 }
 

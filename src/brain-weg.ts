@@ -35,6 +35,14 @@ export function istSofortTestSchluessel(schluessel: string): boolean {
   return schluessel.startsWith(SOFORT_TEST_PRAEFIX);
 }
 
+/**
+ * Loeschgrund, den die API in der 404-Antwort nennt (Feld `grund`), wenn der
+ * Abraeumer das Brain dieses Kontos entfernt hat. Nur dann stimmt der Satz
+ * "14 Tage leer und unbenutzt, nichts verloren". Ohne das Feld bleibt die
+ * Meldung neutral.
+ */
+export const GRUND_LEER_ABGERAEUMT = 'leer_abgeraeumt';
+
 /** Der Befehl, der die Einrichtung noch einmal fuehrt. */
 export const SETUP_BEFEHL = 'npx @cachly-dev/mcp-server@latest setup';
 
@@ -77,7 +85,7 @@ export function ersetzeInstanceId(alt: string, neu: string, opts: CredentialsHom
 
 let versuch: Promise<AutoErgebnis> | null = null;
 let hinweisGezeigt = false;
-const bekanntWeg = new Set<string>();
+const bekanntWeg = new Map<string, string | undefined>();
 
 /** Nur fuer Tests. */
 export function _brainWegZuruecksetzen(): void {
@@ -91,8 +99,14 @@ export function istBekanntWeg(id: string): boolean {
   return bekanntWeg.has(id);
 }
 
-export function merkeWeg(id: string): void {
-  bekanntWeg.add(id);
+/** Merkt die Kennung als verschwunden, samt Loeschgrund der 404-Antwort (falls genannt). */
+export function merkeWeg(id: string, grund?: string): void {
+  bekanntWeg.set(id, grund);
+}
+
+/** Der gemerkte Loeschgrund zu einer verschwundenen Kennung, sonst undefined. */
+export function grundWeg(id: string): string | undefined {
+  return bekanntWeg.get(id);
 }
 
 /** true genau einmal je Prozess: der Hinweis geht nur an EIN Werkzeug-Ergebnis. */
@@ -131,18 +145,24 @@ function benannt(b: NeuesBrain): string {
 }
 
 /** Der Hinweis hinter dem Werkzeug-Ergebnis, wenn ein Sofort-Test-Brain ersetzt wurde. */
-export function hinweisErsetzt(alt: string, neu: NeuesBrain, herkunft: Herkunft): string {
+export function hinweisErsetzt(alt: string, neu: NeuesBrain, herkunft: Herkunft, grund?: string): string {
+  const leer = grund === GRUND_LEER_ABGERAEUMT;
   const kopf = neu.neu
-    ? 'Your trial Brain was removed because it stayed empty and unused for 14 days. '
-      + `cachly created a new, empty Brain for you (${benannt(neu)}). `
-      + 'Nothing was lost: the old one had no saved lessons.'
-    : `Your trial Brain ${alt} no longer exists (removed after 14 days empty and unused). `
+    ? (leer
+      ? 'Your trial Brain was removed because it stayed empty and unused for 14 days. '
+        + `cachly created a new, empty Brain for you (${benannt(neu)}). `
+        + 'Nothing was lost: the old one had no saved lessons.'
+      : `Your trial Brain ${alt} no longer exists. cachly created a new, empty Brain for you (${benannt(neu)}).`)
+    : `Your trial Brain ${alt} no longer exists${leer ? ' (removed after 14 days empty and unused)' : ''}. `
       + `Your account already has another Brain, ${benannt(neu)}, and cachly uses that one now.`;
   const fuss = herkunft === 'umgebung'
     ? ` Your setup pins the old id in CACHLY_BRAIN_INSTANCE_ID and cachly did not change it: set it to ${neu.id}, `
       + 'or this notice comes back at the next start.'
     : '';
-  return `\n\n---\ncachly: ${kopf}${fuss}`;
+  return `
+
+---
+cachly: ${kopf}${fuss}`;
 }
 
 /** Registrierter Schluessel: nie automatisch anlegen. */
@@ -152,8 +172,9 @@ export function meldungRegistriert(id: string): string {
 }
 
 /** Sofort-Test-Schluessel, aber /instances/auto hat nicht geklappt. */
-export function meldungAnlegenFehlt(alt: string, f: { status: number; detail: string }): string {
-  const kopf = `The trial Brain ${alt} no longer exists (removed after 14 days empty and unused), and cachly could not create a new one`;
+export function meldungAnlegenFehlt(alt: string, f: { status: number; detail: string }, grund?: string): string {
+  const warum = grund === GRUND_LEER_ABGERAEUMT ? ' (removed after 14 days empty and unused)' : '';
+  const kopf = `The trial Brain ${alt} no longer exists${warum}, and cachly could not create a new one`;
   if (f.status === 401 || f.status === 403) {
     return `${kopf}: this key may not create Brains. Sign in once (free, no credit card): ${SETUP_BEFEHL}`;
   }
@@ -162,6 +183,11 @@ export function meldungAnlegenFehlt(alt: string, f: { status: number; detail: st
   }
   return `${kopf} (${f.status ? `API answered ${f.status}` : 'no answer from the API'}). `
     + `Try again later, or run ${SETUP_BEFEHL}.`;
+}
+
+/** Das Feld `grund` aus der 404-Antwort (siehe GRUND_LEER_ABGERAEUMT), sonst undefined. */
+export function grundAusFehler(e: unknown): string | undefined {
+  return apiFehler(e).grund;
 }
 
 /** Ist das ein 404 der API? */

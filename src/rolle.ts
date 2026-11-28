@@ -161,7 +161,7 @@ export function rolleImSpeicher(instanceId: string): RollenAuskunft | null {
 
 // ── Fehler der API ───────────────────────────────────────────────────────
 
-export interface ApiFehlerInfo { status?: number; code?: string; role?: string; reason?: string }
+export interface ApiFehlerInfo { status?: number; code?: string; role?: string; reason?: string; grund?: string }
 
 /**
  * Haengt Status, Code, Rolle und Grund einer Fehlerantwort an den Fehler, den
@@ -170,12 +170,13 @@ export interface ApiFehlerInfo { status?: number; code?: string; role?: string; 
  */
 export function markiereApiFehler<E>(fehler: E, status: number, koerper: unknown): E {
   if (fehler && typeof fehler === 'object') {
-    const k = (koerper && typeof koerper === 'object' ? koerper : {}) as { code?: unknown; role?: unknown; reason?: unknown };
+    const k = (koerper && typeof koerper === 'object' ? koerper : {}) as { code?: unknown; role?: unknown; reason?: unknown; grund?: unknown };
     Object.assign(fehler as object, {
       apiStatus: status,
       ...(typeof k.code === 'string' ? { apiCode: k.code } : {}),
       ...(typeof k.role === 'string' ? { apiRole: k.role } : {}),
       ...(typeof k.reason === 'string' ? { apiReason: k.reason } : {}),
+      ...(typeof k.grund === 'string' ? { apiGrund: k.grund } : {}),
     });
   }
   return fehler;
@@ -188,7 +189,7 @@ export function markiereApiFehler<E>(fehler: E, status: number, koerper: unknown
  */
 export function apiFehler(e: unknown): ApiFehlerInfo {
   const roh = (e && typeof e === 'object' ? e : {}) as {
-    apiStatus?: unknown; apiCode?: unknown; apiRole?: unknown; apiReason?: unknown;
+    apiStatus?: unknown; apiCode?: unknown; apiRole?: unknown; apiReason?: unknown; apiGrund?: unknown;
     status?: unknown; code?: unknown; role?: unknown; reason?: unknown; message?: unknown;
   };
   const text = (a: unknown, b: unknown) => (typeof a === 'string' ? a : typeof b === 'string' ? b : undefined);
@@ -201,6 +202,7 @@ export function apiFehler(e: unknown): ApiFehlerInfo {
   if (role !== undefined) info.role = role;
   const reason = text(roh.apiReason, roh.reason);
   if (reason !== undefined) info.reason = reason;
+  if (typeof roh.apiGrund === 'string') info.grund = roh.apiGrund;
   if (info.status === undefined) {
     const m = /\((\d{3})\)|error (\d{3})/.exec(String(roh.message ?? ''));
     if (m) info.status = Number(m[1] ?? m[2]);

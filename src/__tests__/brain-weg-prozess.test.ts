@@ -33,6 +33,8 @@ interface Anfrage { methode: string; pfad: string; auth: string }
 interface Verhalten {
   /** Antwort auf GET /api/v1/instances/<ALT>. */
   alt: number;
+  /** Feld `grund` in der 404-Antwort auf GET /instances/<ALT> (fehlt: nicht gesetzt). */
+  grund?: string;
   /** Antwort auf POST /api/v1/instances/auto. */
   auto: { status: number; body: unknown };
   /** Antwort auf GET /api/v1/instances (Liste). */
@@ -50,7 +52,7 @@ async function starteApi(v: Verhalten): Promise<{ url: string; anfragen: Anfrage
         res.writeHead(status, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(body));
       };
-      if (req.method === 'GET' && pfad === `/api/v1/instances/${ALT}`) return json(v.alt, { error: v.alt === 404 ? 'not found' : 'x' });
+      if (req.method === 'GET' && pfad === `/api/v1/instances/${ALT}`) return json(v.alt, { error: v.alt === 404 ? 'not found' : 'x', ...(v.alt === 404 && v.grund ? { grund: v.grund } : {}) });
       if (req.method === 'POST' && pfad === '/api/v1/instances/auto') return json(v.auto.status, v.auto.body);
       if (req.method === 'GET' && pfad === '/api/v1/instances') return json(200, v.liste ?? { data: [], count: 0 });
       if (pfad === '/api/v1/telemetry/mcp') return json(200, { ok: true });
@@ -140,7 +142,7 @@ describe('Brain nicht mehr da (404): echter Prozess', () => {
   }
 
   it('404 + Sofort-Test-Schluessel (ID aus der Umgebung): ein /auto, Meldung einmal, Datei unberuehrt', async () => {
-    const g = await starteApi({ alt: 404, auto: { status: 201, body: { instance_id: NEU, status: 'provisioning', created: true } } });
+    const g = await starteApi({ alt: 404, grund: 'leer_abgeraeumt', auto: { status: 201, body: { instance_id: NEU, status: 'provisioning', created: true } } });
     aufraeumen.push(() => g.server.close());
     const { heim, dateiPfad } = neuerHeim({ apiKey: TRIAL, instanceId: ALT });
     const vorher = readFileSync(dateiPfad, 'utf8');
@@ -188,6 +190,20 @@ describe('Brain nicht mehr da (404): echter Prozess', () => {
     expect(zweit).toContain('could not create a new one'); // dieselbe Auskunft, ohne neue Anfrage
   }, 120_000);
 
+  it('404 ohne Grund (anders geloescht): neutrale Meldung, kein "14 Tage", kein "nichts verloren"', async () => {
+    const g = await starteApi({ alt: 404, auto: { status: 201, body: { instance_id: NEU, status: 'provisioning', created: true } } });
+    aufraeumen.push(() => g.server.close());
+    const { heim } = neuerHeim({ apiKey: TRIAL, instanceId: ALT });
+
+    const [erst] = await rufe(g.url, heim, { schluessel: TRIAL, instanzUmgebung: ALT });
+
+    expect(autoAufrufe(g.anfragen).length).toBe(1);
+    expect(erst).toContain(`Your trial Brain ${ALT} no longer exists. cachly created a new, empty Brain for you`);
+    expect(erst).toContain(NEU);
+    expect(erst).not.toContain('14 days');
+    expect(erst).not.toContain('Nothing was lost');
+  }, 120_000);
+
   it('401 auf die Instanz: altes Verhalten, keine Anlage, keine neue Meldung', async () => {
     const g = await starteApi({ alt: 401, auto: { status: 201, body: { instance_id: NEU, created: true } } });
     aufraeumen.push(() => g.server.close());
@@ -203,6 +219,7 @@ describe('Brain nicht mehr da (404): echter Prozess', () => {
   it('Sofort-Test-Konto ohne Instanz, alte Kennung in der Datei: neues Brain, Datei zeigt darauf, Meldung einmal', async () => {
     const g = await starteApi({
       alt: 404,
+      grund: 'leer_abgeraeumt',
       liste: { data: [], count: 0 },
       auto: { status: 201, body: { instance_id: NEU, status: 'provisioning', created: true } },
     });

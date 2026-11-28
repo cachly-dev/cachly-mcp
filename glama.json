@@ -1,6 +1,6 @@
 {
   "$schema": "https://glama.ai/mcp/schemas/server.json",
-  "version": "0.10.284",
+  "version": "0.10.285",
   "maintainers": [
     "HeinrichNebula"
   ],

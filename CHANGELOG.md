@@ -7,6 +7,14 @@
 
 ---
 
+## [0.10.285] – 2026-11-28 — *"Say only what is true about a removed trial Brain."*
+
+0.10.284 always told trial users that their Brain "stayed empty and unused for 14 days" and that "nothing was lost". That is only true if cachly's cleanup job removed it.
+
+- The API now records why a Brain was deleted and adds `grund: "leer_abgeraeumt"` to the 404 answer of `GET /instances/<id>`, only for a deleted Brain of your own account.
+- The notice says "removed because it stayed empty and unused for 14 days ... Nothing was lost" only with that field. Otherwise it says: "Your trial Brain <id> no longer exists. cachly created a new, empty Brain for you."
+- Registered keys and the tool schema are unchanged.
+
 ## [0.10.284] – 2026-11-28 — *"A removed trial Brain gets an answer, not a bare 404."*
 
 Since 28 Nov 2026 the API removes trial Brains that stayed empty and unused for 14 days. The key keeps working, so a returning user used to get `cachly API error 404: not found` on every tool.
