@@ -16,6 +16,8 @@ export interface Raeume {
   privat?: string;
   gruppen: RaumRef[];
   alle?: boolean;
+  /** Konto-Bereich (Stufe 4): Notizen und Sitzung des Kontos. */
+  konto?: string;
 }
 export interface RaumLektion {
   thema: string;
@@ -62,9 +64,16 @@ export function mitgliedMuster(r: {
   gruppen: string[];
 }): string[] {
   return [
-    '%R~cachly:[^z]*',
+    '%R~cachly:[^zcslmwa]*',
+    '%R~cachly:c[^t]*',
+    '%R~cachly:l[^ei]*',
+    '%R~cachly:le[^t]*',
+    '%R~cachly:m[^e]*',
+    '%R~cachly:w[^i]*',
+    '%R~cachly:wi[^r]*',
     ...(r.privat ? [`%R~${r.privat}*`] : []),
     ...r.gruppen.map((g) => `%R~${g}*`),
+    ...(r.privat ? [`~${r.privat}k:*`] : []),
     '~[^c]*',
     '~c[^a]*',
     '~ca[^c]*',
@@ -72,17 +81,19 @@ export function mitgliedMuster(r: {
     '~cach[^l]*',
     '~cachl[^y]*',
     '~cachly[^:]*',
-    '~cachly:[^tlciwgfbmpdz]*',
-    '~cachly:ctx:*',
+    '~cachly:[^tlciwgfbmpdzsa]*',
+    '~cachly:a[^g]*',
+    '~cachly:se[^s]*',
+    '~cachly:st[^a]*',
+    '~cachly:sta[^t]*',
+    '~cachly:stats:[^sr]*',
+    '~cachly:stats:re[^u]*',
     '~cachly:cls:*',
-    '~cachly:wirkung:*',
     '~cachly:lock:*',
     '~cachly:mcp:*',
     '~cachly:mcm:*',
     '~cachly:prefs:*',
     '~cachly:dep:*',
-    '~cachly:letzter-recall:*',
-    '~cachly:liefer:*',
     '+@all',
     '-@admin',
     '-@dangerous',
@@ -99,7 +110,7 @@ function alsText(x: unknown): string | undefined {
 /** Das Feld `rooms` aus GET /connection (Vertrag V2); alles Unpassende gibt undefined. */
 export function raeumeAusAuskunft(rooms: unknown): Raeume | undefined {
   if (!rooms || typeof rooms !== 'object') return undefined;
-  const r = rooms as { private?: unknown; groups?: unknown; all?: unknown };
+  const r = rooms as { private?: unknown; groups?: unknown; all?: unknown; account?: unknown };
   const privat = alsText(r.private);
   const gruppen: RaumRef[] = [];
   if (Array.isArray(r.groups)) {
@@ -111,11 +122,14 @@ export function raeumeAusAuskunft(rooms: unknown): Raeume | undefined {
     }
   }
   const alle = r.all === true;
+  const kontoRoh = alsText(r.account);
+  const konto = privat && kontoRoh === `${privat}k:` ? kontoRoh : undefined;
   if (!privat && gruppen.length === 0 && !alle) return undefined;
   return {
     ...(privat ? { privat } : {}),
     gruppen,
     ...(alle ? { alle: true } : {}),
+    ...(konto ? { konto } : {}),
   };
 }
 

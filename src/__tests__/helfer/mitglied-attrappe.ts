@@ -56,7 +56,7 @@ function noperm(befehl: string, schluessel: string): Error {
  */
 export function aclAttrappe<T extends object>(
   basis: T,
-  opt: { mitglied: boolean; unbekannt?: 'null' | 'fehler' },
+  opt: { mitglied: boolean; unbekannt?: 'null' | 'fehler'; konto?: string },
 ): { redis: T; protokoll: Protokoll } {
   const protokoll: Protokoll = { schreiben: [], abgewiesen: [] };
   const pruefe = (befehl: string, args: unknown[]): Error | null => {
@@ -64,7 +64,7 @@ export function aclAttrappe<T extends object>(
     let fehler: Error | null = null;
     for (const k of keys) {
       protokoll.schreiben.push({ befehl, schluessel: k });
-      if (opt.mitglied && !mitgliedDarfSchreiben(k)) {
+      if (opt.mitglied && !(opt.konto && k.startsWith(opt.konto)) && !mitgliedDarfSchreiben(k)) {
         protokoll.abgewiesen.push({ befehl, schluessel: k });
         fehler ??= noperm(befehl, k);
       }

@@ -13,6 +13,7 @@ import { buildFirstContactReport, suggestRecallQueries, type FirstContactProof }
 import { commitAlsLektion, gitLogArgumente, leseCommits } from '../git-lektionen.js';
 import { alterStartpunktSchluessel, startpunktSchluessel } from '../git-startpunkt.js';
 import { VEKTOR_NACHTRAG } from '../bedeutung.js';
+import { kontoSchluessel } from '../konto-bereich.js';
 import { VERDACHT_TAG, fuerEigenenSpeicher, fuerWeitergabe, hinweise, istMarkiert, markiert, weitergabeHinweis, zaehlHinweise } from '../schreibtor.js';
 
 // Last brain_from_git category counts — set after each run so index.ts can include them in telemetry
@@ -934,7 +935,7 @@ export async function handleFedbrainTool(
       }
 
       // 2. Last session summary
-      const lastSession = await redis.get('cachly:session:last');
+      const lastSession = await redis.get(kontoSchluessel(redis, 'cachly:session:last'));
       if (lastSession) {
         type Session = { summary?: string; ts?: string; focus?: string };
         const sess = safeJsonParse<Session | null>(lastSession, null);
@@ -947,7 +948,7 @@ export async function handleFedbrainTool(
       }
 
       // 3. Session handoff
-      const handoff = await redis.get('cachly:session:handoff');
+      const handoff = await redis.get(kontoSchluessel(redis, 'cachly:session:handoff'));
       if (handoff) {
         type Handoff = { remaining_tasks?: string[]; instructions?: string; context_summary?: string; blocked_on?: string };
         const h = safeJsonParse<Handoff | null>(handoff, null);
@@ -965,7 +966,7 @@ export async function handleFedbrainTool(
       }
 
       // 4. WIP registry
-      const wipRaw = await redis.get('cachly:ctx:wip-registry');
+      const wipRaw = await redis.get(kontoSchluessel(redis, 'cachly:ctx:wip-registry'));
       if (wipRaw) {
         type Ctx = { content?: string };
         const wip = safeJsonParse<Ctx | null>(wipRaw, null);

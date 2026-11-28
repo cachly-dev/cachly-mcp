@@ -4,6 +4,7 @@ import type { Instance } from './brain.js';
 import { schwaerzeFelder } from '../geheimnis-filter.js';
 import { pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
 import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
+import { kontoBereichVon, kontoSchluessel, alterSchluessel } from '../konto-bereich.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -38,7 +39,7 @@ export async function handleContextTool(
       };
 
       const redis = await getConnection(instance_id);
-      const cacheKey = `cachly:ctx:${category}:${key}`;
+      const cacheKey = kontoSchluessel(redis, `cachly:ctx:${category}:${key}`);
       const meta = JSON.stringify({
         key,
         category,
@@ -57,14 +58,14 @@ export async function handleContextTool(
 
       // Also index semantically for smart_recall (if vector available)
       const inst = await apiFetch<Instance>(`/api/v1/instances/${instance_id}`);
-      if (inst.vector_token) {
+      if (inst.vector_token && !kontoBereichVon(redis)) {
         try {
           const embedding = await computeEmbedding(`${key}: ${content.slice(0, 500)}`);
           const vectorUrl = `https://api.cachly.dev/v1/sem/${inst.vector_token}`;
           const body: Record<string, unknown> = {
             id: `ctx:${category}:${key}`,
             prompt: key,
-            namespace: 'cachly:ctx',
+            namespace: kontoSchluessel(redis, 'cachly:ctx:').slice(0, -1),
             embedding,
           };
           if (ttl && ttl > 0) {
@@ -110,7 +111,7 @@ export async function handleContextTool(
       // Check if key is a glob pattern
       if (key.includes('*')) {
         const keys: string[] = [];
-        const stream = redis.scanStream({ match: `cachly:ctx:*:${key}`, count: 100 });
+        const stream = redis.scanStream({ match: kontoSchluessel(redis, `cachly:ctx:*:${key}`), count: 100 });
         await new Promise<void>((resolve, reject) => {
           stream.on('data', (batch: string[]) => {
             keys.push(...batch.filter((k: string) => !k.endsWith(':meta')));
@@ -125,7 +126,7 @@ export async function handleContextTool(
         const results: string[] = [`🧠 **Recalled ${keys.length} context entries matching \`${key}\`:**\n`];
         for (const k of keys.slice(0, 10)) {
           const content = await redis.get(k);
-          const shortKey = k.replace('cachly:ctx:', '');
+          const shortKey = alterSchluessel(redis, k).replace('cachly:ctx:', '');
           results.push(`### ${shortKey}\n\`\`\`\n${content?.slice(0, 500)}${(content?.length ?? 0) > 500 ? '…' : ''}\n\`\`\`\n`);
         }
         if (keys.length > 10) results.push(`_(+${keys.length - 10} more matches)_`);
@@ -135,9 +136,9 @@ export async function handleContextTool(
       // Try exact match across categories
       const categories = ['overview', 'architecture', 'file_summary', 'dependency', 'thinking', 'custom'];
       for (const cat of categories) {
-        const content = await redis.get(`cachly:ctx:${cat}:${key}`);
+        const content = await redis.get(kontoSchluessel(redis, `cachly:ctx:${cat}:${key}`));
         if (content) {
-          const ttl = await redis.ttl(`cachly:ctx:${cat}:${key}`);
+          const ttl = await redis.ttl(kontoSchluessel(redis, `cachly:ctx:${cat}:${key}`));
           return [
             `🧠 **Recalled Context: \`${key}\`**`,
             ``,
@@ -165,7 +166,7 @@ export async function handleContextTool(
       const sofort = await sofortAntwortNeuesBrain(instance_id, apiFetch, '📭 No cached context found.');
       if (sofort) return sofort;
       const redis = await getConnection(instance_id);
-      const pattern = category === 'all' ? 'cachly:ctx:*' : `cachly:ctx:${category}:*`;
+      const pattern = kontoSchluessel(redis, category === 'all' ? 'cachly:ctx:*' : `cachly:ctx:${category}:*`);
       const keys: string[] = [];
       const stream = redis.scanStream({ match: pattern, count: 100 });
       await new Promise<void>((resolve, reject) => {
@@ -185,7 +186,7 @@ export async function handleContextTool(
       for (const k of keys.slice(0, limit)) {
         const ttl = await redis.ttl(k);
         const content = await redis.get(k);
-        const parts = k.replace('cachly:ctx:', '').split(':');
+        const parts = alterSchluessel(redis, k).replace('cachly:ctx:', '').split(':');
         const cat = parts[0];
         const key = parts.slice(1).join(':');
         const preview = content?.slice(0, 80).replace(/\n/g, ' ') ?? '';
@@ -217,7 +218,7 @@ export async function handleContextTool(
         if (key.includes('*')) {
           // Glob delete
           const toDelete: string[] = [];
-          const stream = redis.scanStream({ match: `cachly:ctx:*:${key}*`, count: 100 });
+          const stream = redis.scanStream({ match: kontoSchluessel(redis, `cachly:ctx:*:${key}*`), count: 100 });
           await new Promise<void>((resolve, reject) => {
             stream.on('data', (batch: string[]) => toDelete.push(...batch));
             stream.on('end', resolve);
@@ -230,7 +231,7 @@ export async function handleContextTool(
           // Try all categories
           const categories = ['overview', 'architecture', 'file_summary', 'dependency', 'thinking', 'custom'];
           for (const cat of categories) {
-            deleted += await redis.del(`cachly:ctx:${cat}:${key}`, `cachly:ctx:${cat}:${key}:meta`);
+            deleted += await redis.del(kontoSchluessel(redis, `cachly:ctx:${cat}:${key}`), kontoSchluessel(redis, `cachly:ctx:${cat}:${key}:meta`));
           }
         }
       }

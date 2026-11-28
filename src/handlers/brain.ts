@@ -95,6 +95,7 @@ import { getRole, eigeneRolle, ROLE_BADGE, getScopes, lessonVisibleToScope,
 // Stufe 2 (PR 2): Mitglieder schreiben Wissen nur ueber die API (rolle.ts).
 import { leseRaumLektion, ladeRaumLektionen, raumTreffer, raeumeVon, type RaumLektion } from '../raeume.js';
 import { holeRolle, istMitglied, rolleFuer, lerneUeberApi, meldeAbrufe, darfDirektSchreiben } from '../rolle.js';
+import { kontoBereichVon, kontoSchluessel, alterSchluessel } from '../konto-bereich.js';
 import { keywordSearch, treffeUeberDateipfad, wortindexEntwerten, tokenize,
          splitMultiQuery, levenshtein, indexVocab as _indexVocab, bestandHolen } from '../search.js';
 import { startetNochLeer, leeresBrainAntwort, startLageMitCommits, sofortAntwortNeuesBrain,
@@ -912,7 +913,7 @@ function vermerkeLeereSuche(redis: Redis, instanceId: string, query: string, dau
   void merkeSuchlauf(redis, query, dauerMs);
   const suche: TrichterSuche = { ts: new Date().toISOString(), frage: query.slice(0, 200), geliefert: [] };
   void (async () => {
-    const k = suchProtokollSchluessel(instanceId);
+    const k = kontoSchluessel(redis, suchProtokollSchluessel(instanceId));
     await redis.lpush(k, JSON.stringify(suche));
     await redis.ltrim(k, 0, SUCH_DECKEL - 1);
   })().catch(() => { /* Messzeile stoppt nie die Antwort */ });
@@ -973,8 +974,8 @@ async function merkeSitzungsbeginn(redis: Redis, focus: string, provider: string
   const started = new Date().toISOString();
   const sid = sitzungsKennung();
   // auto-expire after 24h if session_end never called
-  await redis.set(startmarkenSchluessel(sid), JSON.stringify({ started }), 'EX', 86400);
-  await redis.set('cachly:session:current', JSON.stringify({ started, focus, provider, sid }), 'EX', 86400);
+  await redis.set(kontoSchluessel(redis, startmarkenSchluessel(sid)), JSON.stringify({ started }), 'EX', 86400);
+  await redis.set(kontoSchluessel(redis, 'cachly:session:current'), JSON.stringify({ started, focus, provider, sid }), 'EX', 86400);
 }
 
 /**
@@ -988,15 +989,16 @@ async function leseEigenenSitzungsbeginn(redis: Redis): Promise<{
   loeschen: string[];
 }> {
   const sid = sitzungsKennung();
-  const eigeneSchluessel = startmarkenSchluessel(sid);
+  const eigeneSchluessel = kontoSchluessel(redis, startmarkenSchluessel(sid));
+  const gemeinsamSchluessel = kontoSchluessel(redis, 'cachly:session:current');
   const [eigeneRoh, gemeinsamRoh] = await Promise.all([
     redis.get(eigeneSchluessel),
-    redis.get('cachly:session:current'),
+    redis.get(gemeinsamSchluessel),
   ]);
   const eigene = eigeneRoh ? safeJsonParse<{ started?: string } | null>(eigeneRoh, null) : null;
   const gemeinsam = gemeinsamRoh ? safeJsonParse<{ started?: string; sid?: unknown } | null>(gemeinsamRoh, null) : null;
   const gemeinsamIstMeine = !!gemeinsam && gehoertDieserSitzung(gemeinsam.sid, sid);
-  const loeschen = [eigeneSchluessel, ...(gemeinsamIstMeine ? ['cachly:session:current'] : [])];
+  const loeschen = [eigeneSchluessel, ...(gemeinsamIstMeine ? [gemeinsamSchluessel] : [])];
   const started = eigene?.started || (gemeinsamIstMeine ? gemeinsam?.started : undefined) || undefined;
   return { ...(started ? { started } : {}), loeschen };
 }
@@ -1623,7 +1625,7 @@ async function handleBrainToolInner(
       // die Zahl, um die es geht — brain_metrics zeigt sie.
       if (outcome === 'failure') {
         try {
-          const suchenRoh = await redis.lrange(suchProtokollSchluessel(instance_id), 0, 199);
+          const suchenRoh = await redis.lrange(kontoSchluessel(redis, suchProtokollSchluessel(instance_id)), 0, 199);
           const suchen = suchenRoh
             .map((z) => safeJsonParse<TrichterSuche>(z, { ts: '', frage: '', geliefert: [] }))
             .filter((s) => s.ts !== '');
@@ -1873,7 +1875,7 @@ async function handleBrainToolInner(
 
       // Track in decision log for session replay
       try {
-        const dlKey = 'cachly:session:decision-log';
+        const dlKey = kontoSchluessel(redis, 'cachly:session:decision-log');
         // sid: das session_end einer Nachbarsitzung laesst diese Zeile liegen (sitzungs-kennung.ts).
         const dlEntry = JSON.stringify({ ts, topic, outcome, what_worked: what_worked.slice(0, 120), sid: sitzungsKennung() });
         await redis.rpush(dlKey, dlEntry);
@@ -2019,8 +2021,9 @@ async function handleBrainToolInner(
         // Agent activity registry (Move 4): track which agents are actively
         // writing to this Brain, keyed by author, with a 1h TTL. Powers
         // brain_conflicts' "who is live" view and multi-agent arbitration.
+        const aktivSchluessel = kontoSchluessel(redis, `cachly:agents:active:${autorFeld}`);
         redis.set(
-          `cachly:agents:active:${autorFeld}`,
+          aktivSchluessel,
           JSON.stringify({ author: autorFeld, last_topic: topic, last_outcome: outcome, ts: new Date().toISOString() }),
           'EX', 60 * 60,
         ).catch(() => {});
@@ -2274,7 +2277,7 @@ async function handleBrainToolInner(
       }
 
       const eintrag = geprueft.eintrag;
-      const schluessel = `cachly:wirkung:${instance_id}`;
+      const schluessel = kontoSchluessel(redis, `cachly:wirkung:${instance_id}`);
       await redis.rpush(schluessel, JSON.stringify(eintrag));
 
       const roh = await redis.lrange(schluessel, 0, -1).catch(() => [] as string[]);
@@ -2348,16 +2351,18 @@ async function handleBrainToolInner(
       let best = await redis.get(`cachly:lesson:best:${topic}`);
       const raumFund = best ? null : await leseRaumLektion(redis, topic).catch(() => null);
       if (raumFund) best = raumFund.roh;
-      if (!istMitglied(redis) && !raumFund) {
+      const letzterSchluessel = kontoSchluessel(redis, `cachly:letzter-recall:${instance_id}`);
+      const wirkungSchluessel = kontoSchluessel(redis, `cachly:wirkung:${instance_id}`);
+      if (darfDirektSchreiben(redis, letzterSchluessel) && !raumFund) {
         try {
-          const rohLetzter = await redis.get(`cachly:letzter-recall:${instance_id}`);
+          const rohLetzter = await redis.get(letzterSchluessel);
           const letzter = rohLetzter ? safeJsonParse(rohLetzter, null as null | LetzterRecall) : null;
           const abgeleitet = leiteAb(letzter, topic, new Date().toISOString());
           if (abgeleitet) {
-            await redis.rpush(`cachly:wirkung:${instance_id}`, JSON.stringify(abgeleitet));
+            await redis.rpush(wirkungSchluessel, JSON.stringify(abgeleitet));
             // Einmal je Suche: sonst zaehlt jedes weitere Oeffnen dieselbe
             // Suche noch einmal, und aus einer Frage werden fuenf Belege.
-            await redis.del(`cachly:letzter-recall:${instance_id}`);
+            await redis.del(letzterSchluessel);
           }
         } catch { /* Die Spur darf keinen Abruf kaputtmachen. */ }
       }
@@ -2759,7 +2764,7 @@ async function handleBrainToolInner(
       // die vorher feststeht. Der Bestand ist derselbe, den die Wortsuche
       // gleich darauf aus dem Zwischenspeicher nimmt: fuer ein Brain mit
       // Inhalt kostet diese Pruefung keinen zusaetzlichen Abruf.
-      const suchMuster = ['cachly:ctx:*', 'cachly:lesson:best:*', 'cachly:idx:*'];
+      const suchMuster = [kontoSchluessel(redis, 'cachly:ctx:*'), 'cachly:lesson:best:*', 'cachly:idx:*'];
       const wortbestand = await bestandHolen(redis, suchMuster);
       zeitpunkt(`smart_recall: Wortbestand da (${wortbestand?.docs.length ?? 0} Eintraege)`);
       if (!wortbestand) {
@@ -2788,14 +2793,14 @@ async function handleBrainToolInner(
         const inst = await gemerkterTarif(instance_id, () => apiFetch<Instance | null>(`/api/v1/instances/${instance_id}`));
         const semHits: SemHit[] = [];
         const tierIsFree = !inst?.tier || inst.tier.toLowerCase() === 'free';
-        if (!tierIsFree && inst?.vector_token && hasEmbedProvider()) {
+        if (!tierIsFree && inst?.vector_token && hasEmbedProvider() && !kontoBereichVon(redis)) {
           try {
             const embedding = await computeEmbedding(query);
             const vectorUrl = `https://api.cachly.dev/v1/sem/${inst.vector_token}`;
             const searchRes = await fetch(`${vectorUrl}/search`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ embedding, namespace: 'cachly:ctx', threshold, top_k: 5 }),
+              body: JSON.stringify({ embedding, namespace: kontoSchluessel(redis, 'cachly:ctx:').slice(0, -1), threshold, top_k: 5 }),
               signal: AbortSignal.timeout(8000),
             });
             if (searchRes.ok) {
@@ -2803,7 +2808,7 @@ async function handleBrainToolInner(
               // Die Inhalte gleichzeitig holen, in der Reihenfolge der Treffer (04.11.2026).
               const treffer = results.filter(r => r.found && r.id).map((hit) => {
                 const parts = hit.id!.replace('ctx:', '').split(':');
-                return { hit, redisKey: `cachly:ctx:${parts[0]}:${parts.slice(1).join(':')}` };
+                return { hit, redisKey: kontoSchluessel(redis, `cachly:ctx:${parts[0]}:${parts.slice(1).join(':')}`) };
               });
               const inhalte = await Promise.all(treffer.map((t) => redis.get(t.redisKey).catch(() => null)));
               treffer.forEach((t, i) => {
@@ -3179,7 +3184,7 @@ async function handleBrainToolInner(
           const zeile: Lieferung = { ts: new Date().toISOString(), themen: geliefert };
           // Stufe 2: Das Journal (cachly:liefer) sperrt das Muster fuer
           // Mitglieder; sie lassen die Messzeile aus (schluessel-klassen.ts).
-          const k = lieferJournalSchluessel(instance_id);
+          const k = kontoSchluessel(redis, lieferJournalSchluessel(instance_id));
           if (darfDirektSchreiben(redis, k)) void (async () => {
             await redis.lpush(k, JSON.stringify(zeile));
             await redis.ltrim(k, 0, JOURNAL_DECKEL - 1);
@@ -3197,7 +3202,7 @@ async function handleBrainToolInner(
             geliefert,
           };
           void (async () => {
-            const k = suchProtokollSchluessel(instance_id);
+            const k = kontoSchluessel(redis, suchProtokollSchluessel(instance_id));
             await redis.lpush(k, JSON.stringify(suche));
             await redis.ltrim(k, 0, SUCH_DECKEL - 1);
           })().catch(() => { /* Messzeile stoppt nie die Antwort */ });
@@ -3273,7 +3278,7 @@ async function handleBrainToolInner(
             // ein Ereignis meint.
             if (lesson.author && requester && lesson.author !== requester) {
               crossAuthorThisCall++;
-              redis.sadd(`cachly:stats:reuse_pairs:${instance_id}`, `${requester}<-${lesson.author}`).catch(() => {});
+              redis.sadd(kontoSchluessel(redis, `cachly:stats:reuse_pairs:${instance_id}`), `${requester}<-${lesson.author}`).catch(() => {});
               // W5: wire person↔person CKG collaborates edges from knowledge-reuse events.
               // This feeds brain_collab_pairs and enriches brain_who_knows with reuse-based edges.
               // Stufe 2: der Graph ist Wissen; Mitglieder schreiben keine Kanten.
@@ -3326,9 +3331,8 @@ async function handleBrainToolInner(
       zeitpunkt('smart_recall: Treffer gezaehlt');
       // Kanten-Suche, Tarif und Sinn-Dienst sind oben gestartet und laufen
       // seitdem neben Wortsuche, Bedeutungspfad und Leser (siehe dort).
-      const { inst, semHits } = await sinnUndTarif;
+      const { semHits } = await sinnUndTarif;
       zeitpunkt('smart_recall: Tarif abgefragt');
-      const tierIsFree = !inst?.tier || inst.tier.toLowerCase() === 'free';
 
       // ── Layer 3: Hybrid merge — one unified ranked list ──────────────────────
       // BM25 quality scores (already reranked) are re-normalized to [0,1] for merging.
@@ -3899,7 +3903,7 @@ async function handleBrainToolInner(
             // bliebe jede Mehrthemen-Anfrage bei voller Zeichenlast. Eine verlangte
             // Trefferzahl gilt auch hier; die Summe deckelt tiefeMehrthemig.
             for (const r of results.slice(0, kompakt ? 2 : (verlangt ?? 4))) {
-              const label = r.key.replace('cachly:ctx:', '📝 ').replace('cachly:lesson:best:', '💡 ').replace('cachly:idx:', '📂 ');
+              const label = alterSchluessel(redis, r.key).replace('cachly:ctx:', '📝 ').replace('cachly:lesson:best:', '💡 ').replace('cachly:idx:', '📂 ');
               const scorePart = r.matchType === 'ckg'
                 ? `CKG: ${(r.ckgScore ?? 0).toFixed(2)}, 🕸️ causal graph`
                 : r.ckgScore !== undefined && r.bm25Score !== undefined
@@ -3936,7 +3940,7 @@ async function handleBrainToolInner(
           }
         } else {
           for (const r of hybridResults.slice(0, visibleCount)) {
-            const label = r.key.replace('cachly:ctx:', '📝 ').replace('cachly:lesson:best:', '💡 ').replace('cachly:idx:', '📂 ');
+            const label = alterSchluessel(redis, r.key).replace('cachly:ctx:', '📝 ').replace('cachly:lesson:best:', '💡 ').replace('cachly:idx:', '📂 ');
             let authorBadge = '';
             if (r.key.startsWith('cachly:lesson:best:')) {
               const ld = safeJsonParse<{ author?: string }>(r.content, {});
@@ -4087,10 +4091,11 @@ async function handleBrainToolInner(
          * hatte der Schutz die falsche Form.
          */
         // Stufe 2: cachly:letzter-recall sperrt das Muster fuer Mitglieder.
-        if (angebotene.length > 0 && !istMitglied(redis)) {
+        const spurSchluessel = kontoSchluessel(redis, `cachly:letzter-recall:${instance_id}`);
+        if (angebotene.length > 0 && darfDirektSchreiben(redis, spurSchluessel)) {
           try {
             await redis.setex(
-              `cachly:letzter-recall:${instance_id}`,
+              spurSchluessel,
               7200,
               JSON.stringify({ frage: query, themen: angebotene } satisfies LetzterRecall),
             );
@@ -4206,7 +4211,7 @@ async function handleBrainToolInner(
 
       // 3. Count context entries (filter :meta keys)
       let ctxCount = 0;
-      const ctxStream = redis.scanStream({ match: 'cachly:ctx:*', count: 1000 });
+      const ctxStream = redis.scanStream({ match: kontoSchluessel(redis, 'cachly:ctx:*'), count: 1000 });
       await new Promise<void>((resolve, reject) => {
         ctxStream.on('data', (batch: string[]) => {
           ctxCount += batch.filter((k: string) => !k.endsWith(':meta')).length;
@@ -4216,7 +4221,7 @@ async function handleBrainToolInner(
       });
 
       // 4. Last session
-      const lastSessionRaw = await redis.get('cachly:session:last');
+      const lastSessionRaw = await redis.get(kontoSchluessel(redis, 'cachly:session:last'));
       type LastSession = { summary: string; ts: string; files_changed?: string[]; duration_min?: number };
       const lastSession = safeJsonParse<LastSession | null>(lastSessionRaw, null);
 
@@ -4362,7 +4367,7 @@ async function handleBrainToolInner(
           // Merker liegt im Betrieb (cachly:session:*), sonst kaeme der
           // Willkommensteil nie: das Setzen scheiterte vor der Ausgabe.
           const briefingKey = istMitglied(redis)
-            ? `cachly:session:first_briefing:${author}`
+            ? kontoSchluessel(redis, `cachly:session:first_briefing:${author}`)
             : `cachly:team:first_briefing:${author}`;
           const alreadyBriefed = await redis.get(briefingKey);
           if (!alreadyBriefed) {
@@ -4402,7 +4407,7 @@ async function handleBrainToolInner(
       }
 
       // Handoff from previous window (if any)
-      const handoffRaw = await redis.get('cachly:session:handoff');
+      const handoffRaw = await redis.get(kontoSchluessel(redis, 'cachly:session:handoff'));
       if (handoffRaw) {
         try {
           const handoff = JSON.parse(handoffRaw) as {
@@ -4433,7 +4438,7 @@ async function handleBrainToolInner(
       }
 
       // ── Last checkpoint (session_ping) — shown when no session_end found ────
-      const checkpointRaw = await redis.get('cachly:session:checkpoint');
+      const checkpointRaw = await redis.get(kontoSchluessel(redis, 'cachly:session:checkpoint'));
       if (checkpointRaw) {
         try {
           const cp = JSON.parse(checkpointRaw) as {
@@ -4521,7 +4526,7 @@ async function handleBrainToolInner(
       {
         type LessonPin = typeof lessons[0];
         const BESTAETIGT_GEOEFFNET = 2;
-        const spurRoh = await redis.lrange(`cachly:wirkung:${instance_id}`, 0, -1).catch(() => [] as string[]);
+        const spurRoh = await redis.lrange(kontoSchluessel(redis, `cachly:wirkung:${instance_id}`), 0, -1).catch(() => [] as string[]);
         const belege = belegeJeThema(
           spurRoh.map((z) => safeJsonParse(z, null as null | Wirkungseintrag)).filter(Boolean) as Wirkungseintrag[],
         );
@@ -4799,7 +4804,7 @@ async function handleBrainToolInner(
             });
           const doneCount = allItems.filter(i => i.status === 'done').length;
           if (openItems.length > 0) {
-            lines.push(`🗺️ **Roadmap** (${openItems.length} open · ${doneCount} done):`);
+            lines.push(kontoBereichVon(redis) ? `🗺️ **Team roadmap** (${openItems.length} open · ${doneCount} done · every member can edit):` : `🗺️ **Roadmap** (${openItems.length} open · ${doneCount} done):`);
             for (const it of openItems.slice(0, 5)) {
               const statusIcon = it.status === 'in-progress' ? '⚡' : it.status === 'blocked' ? '🚫' : '📋';
               lines.push(`  ${statusIcon} ${PRIORITY_ICON[it.priority as string] ?? '⚪'} \`${it.id}\` **${it.title}**`);
@@ -5110,7 +5115,7 @@ async function handleBrainToolInner(
       type DecisionEntry = { ts: string; topic: string; outcome: string; what_worked: string };
       const decisionLog: DecisionEntry[] = [];
       try {
-        const dlKey = 'cachly:session:decision-log';
+        const dlKey = kontoSchluessel(redis, 'cachly:session:decision-log');
         const dlEntries = await redis.lrange(dlKey, 0, -1);
         for (const roh of dlEntries) {
           const entry = safeJsonParse<(DecisionEntry & { sid?: unknown }) | null>(roh, null);
@@ -5136,12 +5141,12 @@ async function handleBrainToolInner(
       };
 
       // Save as "last session"
-      await redis.set('cachly:session:last', JSON.stringify(sessionRecord));
+      await redis.set(kontoSchluessel(redis, 'cachly:session:last'), JSON.stringify(sessionRecord));
 
       // Append to history list (keep last 50 sessions, TTL 90 days)
-      await redis.lpush('cachly:session:history', JSON.stringify(sessionRecord));
-      await redis.ltrim('cachly:session:history', 0, 49);
-      await redis.expire('cachly:session:history', 90 * 86400);
+      await redis.lpush(kontoSchluessel(redis, 'cachly:session:history'), JSON.stringify(sessionRecord));
+      await redis.ltrim(kontoSchluessel(redis, 'cachly:session:history'), 0, 49);
+      await redis.expire(kontoSchluessel(redis, 'cachly:session:history'), 90 * 86400);
 
       // Die eigene Marke weg; die gemeinsame nur, wenn sie dieser Sitzung gehoert.
       await redis.del(...beginn.loeschen);
@@ -5364,11 +5369,11 @@ async function handleBrainToolInner(
       };
 
       // Store as the latest checkpoint — session_start reads this when no session_end found
-      await redis.set('cachly:session:checkpoint', JSON.stringify(checkpoint), 'EX', 86400 * 3); // 3-day TTL
+      await redis.set(kontoSchluessel(redis, 'cachly:session:checkpoint'), JSON.stringify(checkpoint), 'EX', 86400 * 3); // 3-day TTL
 
       // Also keep a short rolling log (last 20 checkpoints for history)
-      await redis.lpush('cachly:session:checkpoint:log', JSON.stringify(checkpoint));
-      await redis.ltrim('cachly:session:checkpoint:log', 0, 19);
+      await redis.lpush(kontoSchluessel(redis, 'cachly:session:checkpoint:log'), JSON.stringify(checkpoint));
+      await redis.ltrim(kontoSchluessel(redis, 'cachly:session:checkpoint:log'), 0, 19);
 
       const providerStr = provider ? ` [${provider}]` : '';
       const filesStr = files_touched.length > 0 ? ` · ${files_touched.length} file${files_touched.length > 1 ? 's' : ''} touched` : '';
@@ -5428,11 +5433,11 @@ async function handleBrainToolInner(
       };
 
       // Store handoff — never expires until next handoff overwrites it
-      await redis.set('cachly:session:handoff', JSON.stringify(handoff));
+      await redis.set(kontoSchluessel(redis, 'cachly:session:handoff'), JSON.stringify(handoff));
 
       // Also append to history
-      await redis.lpush('cachly:session:handoff:history', JSON.stringify(handoff));
-      await redis.ltrim('cachly:session:handoff:history', 0, 19);
+      await redis.lpush(kontoSchluessel(redis, 'cachly:session:handoff:history'), JSON.stringify(handoff));
+      await redis.ltrim(kontoSchluessel(redis, 'cachly:session:handoff:history'), 0, 19);
 
       const totalTasks = completed_tasks.length + remaining_tasks.length;
       const pct = totalTasks > 0 ? Math.round((completed_tasks.length / totalTasks) * 100) : 0;
@@ -6094,7 +6099,7 @@ async function handleBrainToolInner(
           redis.get(`cachly:stats:recalls_total:${instance_id}`).catch(() => null),
           redis.get(`cachly:stats:cross_author_recalls:${instance_id}`).catch(() => null),
           redis.get(`cachly:stats:time_saved_mins:${instance_id}`).catch(() => null),
-          redis.smembers(`cachly:stats:reuse_pairs:${instance_id}`).catch(() => [] as string[]),
+          redis.smembers(kontoSchluessel(redis, `cachly:stats:reuse_pairs:${instance_id}`)).catch(() => [] as string[]),
         ]);
 
       // ── GROW-046: welche Werkzeuge dieses Brain wirklich benutzt ────────────
@@ -6130,7 +6135,7 @@ async function handleBrainToolInner(
       // Ein Abruf ohne spaetere Ereignisse bekommt KEIN Etikett.
       const etikettenZaehler = { widersprochen: 0, korrigiert: 0, veraltet: 0, ohneEreignis: 0, lieferungen: 0 };
       try {
-        const roh = await redis.lrange(lieferJournalSchluessel(instance_id), 0, 499);
+        const roh = await redis.lrange(kontoSchluessel(redis, lieferJournalSchluessel(instance_id)), 0, 499);
         const standVon = new Map<string, LektionsStand | null>();
         for (const zeile of roh) {
           const l = safeJsonParse<Lieferung>(zeile, { ts: '', themen: [] });
@@ -6159,7 +6164,7 @@ async function handleBrainToolInner(
       let wirkungGeholfen = 0;
       let wirkungGesamt = 0;
       try {
-        const spur = await redis.lrange(`cachly:wirkung:${instance_id}`, 0, -1);
+        const spur = await redis.lrange(kontoSchluessel(redis, `cachly:wirkung:${instance_id}`), 0, -1);
         for (const zeile of spur) {
           const e = safeJsonParse<{ geholfen?: boolean }>(zeile, {});
           wirkungGesamt++;
@@ -6283,7 +6288,7 @@ async function handleBrainToolInner(
         ``,
         `### 3. Team-knowledge-reuse _(the value only a shared brain delivers)_`,
         `**${reusePct}%** of proven recalls used a teammate's lesson (${crossAuthor}/${recallsTotal}) · ${reuseTarget}`,
-        reusePairs.length > 0 ? `**${reusePairs.length}** distinct reuse relationship${reusePairs.length !== 1 ? 's' : ''} across the team` : '',
+        reusePairs.length > 0 ? `**${reusePairs.length}** distinct reuse relationship${reusePairs.length !== 1 ? 's' : ''} ${kontoBereichVon(redis) ? 'for your account' : 'across the team'}` : '',
         ``,
         `---`,
         // GEMESSEN zuerst, GESCHAETZT darunter — in dieser Reihenfolge, immer.

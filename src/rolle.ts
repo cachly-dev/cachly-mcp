@@ -247,7 +247,10 @@ export function rolleFuer(redis: unknown): string {
  * abgewiesen zu werden.
  */
 export function darfDirektSchreiben(redis: unknown, schluessel: string): boolean {
-  return !istMitglied(redis) || mitgliedDarfSchreiben(schluessel);
+  if (!istMitglied(redis)) return true;
+  const bereich = zugangVon(redis)?.raeume?.konto;
+  if (bereich && schluessel.startsWith(bereich)) return true;
+  return mitgliedDarfSchreiben(schluessel);
 }
 
 /** Fehlercode der API, wenn ein Mitglied gerade keinen eigenen Zugang bekommt (409). */

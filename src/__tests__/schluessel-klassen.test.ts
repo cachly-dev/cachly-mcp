@@ -29,6 +29,7 @@ import {
   familieVon,
   globAlsRegex,
 } from "../schluessel-klassen.js";
+import { mitgliedMuster } from "../raeume.js";
 import { IM_MONOREPO } from "./im-monorepo.js";
 
 const SRC = fileURLToPath(new URL("..", import.meta.url));
@@ -63,7 +64,8 @@ export function familienIn(quelltext: string): Set<string> {
   const gefunden = new Set<string>();
   const nimm = (text: string) => {
     // `cachly:` am Ende einer Vorlage ohne Familie ("cachly:${x}") zaehlt nicht.
-    for (const m of text.matchAll(/cachly:([A-Za-z0-9_-]+)/g))
+    // Ein Glob wie `cachly:c[^t]*` nennt nur den Anfang einer Familie und zaehlt nicht.
+    for (const m of text.matchAll(/cachly:([A-Za-z0-9_-]+)(?![A-Za-z0-9_[-])/g))
       gefunden.add(m[1]);
   };
   // Welche `}` eine Vorlage fortsetzt und welche einen Block schliesst.
@@ -165,7 +167,7 @@ describe("Schluessel-Klassen passen zum ACL-Muster", () => {
       const darf = mitgliedDarfSchreiben(`cachly:${f}:probe`);
       if (k === "B" && !darf)
         falsch.push(`cachly:${f} ist B, das Muster sperrt sie`);
-      if (k !== "B" && mitgliedDarfSchreiben(`cachly:${f}:probe`))
+      if (k !== "B" && darf)
         falsch.push(`cachly:${f} ist ${k}, das Muster erlaubt sie`);
     }
     expect(falsch).toEqual([]);
@@ -184,8 +186,6 @@ describe("Schluessel-Klassen passen zum ACL-Muster", () => {
       expect(mitgliedDarfSchreiben(k), k).toBe(false);
     }
     for (const k of [
-      "cachly:ctx:wip:datei",
-      "cachly:session:last",
       "cachly:stats:recalls_total",
       "cachly:sem:code:abc",
       "mykey",
@@ -196,11 +196,34 @@ describe("Schluessel-Klassen passen zum ACL-Muster", () => {
     }
   });
 
+  it("K ist am alten Ort gesperrt, der Konto-Bereich steht im Muster", () => {
+    for (const k of [
+      "cachly:ctx:wip:datei",
+      "cachly:session:last",
+      "cachly:wirkung:x",
+      "cachly:letzter-recall:x",
+      "cachly:liefer:x",
+      "cachly:agents:x",
+      "cachly:stats:suchprotokoll:x",
+      "cachly:stats:reuse_pairs:x",
+    ]) {
+      expect(mitgliedDarfSchreiben(k), k).toBe(false);
+    }
+    const privat = "cachly:zone:p:aaaaaaaaaaaaaaaa:";
+    const muster = mitgliedMuster({ privat, gruppen: [] });
+    expect(muster).toContain(`~${privat}k:*`);
+    expect(globAlsRegex(`${privat}k:*`).test(`${privat}k:session:last`)).toBe(
+      true,
+    );
+    expect(mitgliedDarfSchreiben("cachly:stats:recalls_total:x")).toBe(true);
+  });
+
   it("klasseVon und familieVon", () => {
     expect(familieVon("cachly:letzter-recall:i1")).toBe("letzter-recall");
     expect(klasseVon("cachly:lesson:best:x")).toBe("W");
     expect(klasseVon("cachly:team:roles:x")).toBe("S");
-    expect(klasseVon("cachly:ctx:x")).toBe("B");
+    expect(klasseVon("cachly:ctx:x")).toBe("K");
+    expect(klasseVon("cachly:stats:x")).toBe("B");
     expect(klasseVon("fremd:schluessel")).toBe("B");
     expect(klasseVon("cachly:neu:x")).toBeUndefined();
   });
@@ -214,13 +237,13 @@ describe("Schluessel-Klassen passen zum ACL-Muster", () => {
 
   const aclGo = fileURLToPath(
     new URL(
-      "../../../../api/internal/raeume/testdata/abnahme-raeume-acl.sh",
+      "../../../../api/internal/raeume/testdata/abnahme-konto-acl.sh",
       import.meta.url,
     ),
   );
   const aclDa = IM_MONOREPO && existsSync(aclGo);
   it.runIf(aclDa)(
-    "das Muster ist wortgleich mit abnahme-raeume-acl.sh (Lesen fest, Schreiben, Befehle)",
+    "das Muster ist wortgleich mit abnahme-konto-acl.sh (Lesen fest, Schreiben, Befehle)",
     () => {
       const skript = readFileSync(aclGo, "utf8").split("\r\n").join("\n");
       const feld = (name: string): string[] => {
@@ -237,10 +260,10 @@ describe("Schluessel-Klassen passen zum ACL-Muster", () => {
     },
   );
   it.runIf(!aclDa)(
-    "abnahme-raeume-acl.sh liegt nicht im Checkout (vor PR 1 oder npm-Spiegel): Vergleich spaeter",
+    "abnahme-konto-acl.sh liegt nicht im Checkout (vor PR 1 oder npm-Spiegel): Vergleich spaeter",
     () => {
       console.warn(
-        "[schluessel-klassen] api/internal/raeume/testdata/abnahme-raeume-acl.sh fehlt; der Wortvergleich laeuft, sobald das Skript im Checkout liegt.",
+        "[schluessel-klassen] api/internal/raeume/testdata/abnahme-konto-acl.sh fehlt; der Wortvergleich laeuft, sobald das Skript im Checkout liegt.",
       );
     },
   );

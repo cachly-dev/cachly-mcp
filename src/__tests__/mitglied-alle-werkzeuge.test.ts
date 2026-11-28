@@ -34,7 +34,7 @@ import {
   alsMitgliedsSpeicher, imWerkzeugLauf, mitAbweisungsHinweis, richteRolleEin, setzeRollenZustandZurueck,
   SCHREIBVERBOT_ANFANG, SchreibVerweigert, abrufMeldungenFertig,
 } from '../rolle.js';
-import { MITGLIED_MUSTER } from '../schluessel-klassen.js';
+import { mitgliedMuster, raumPrivat } from '../raeume.js';
 import { handleBrainTool } from '../handlers/brain.js';
 import { handleContextTool } from '../handlers/context.js';
 import { handleInstanceTool } from '../handlers/instances.js';
@@ -52,6 +52,9 @@ const ADRESSE = process.env.CACHLY_TEST_VALKEY_URL ?? '';
 const ECHT_DB = 9;
 const MITGLIED = 'm-0123456789abcdef';
 const MITGLIED_PW = 'mitglied-probe-geheim';
+const PRIVAT = raumPrivat('0123456789abcdef0123456789abcdef');
+const KONTO = `${PRIVAT}k:`;
+const ZUGANG = { role: 'contributor', instanceId: IID, raeume: { privat: PRIVAT, gruppen: [], konto: KONTO } };
 const FRIST_MS = 20_000;
 
 /** Werkzeuge, die vor allem lesen: sie duerfen als Mitglied NICHTS Gesperrtes versuchen. */
@@ -199,8 +202,8 @@ describe('Abnahme 2.3: alle Werkzeuge als Mitglied gegen MockRedis mit dem ACL-M
   it('kein rohes NOPERM, nichts still gescheitert, Lesewerkzeuge schreiben nichts Gesperrtes', async () => {
     const mock = new MockRedis();
     await seed(mock as unknown as Parameters<typeof seed>[0]);
-    const { redis: roh, protokoll } = aclAttrappe(mock, { mitglied: true, unbekannt: 'null' });
-    const redis = alsMitgliedsSpeicher(roh, { role: 'contributor', instanceId: IID }) as unknown as Redis;
+    const { redis: roh, protokoll } = aclAttrappe(mock, { mitglied: true, unbekannt: 'null', konto: KONTO });
+    const redis = alsMitgliedsSpeicher(roh, ZUGANG) as unknown as Redis;
     const api = apiAttrappe({ rolle: rollenAntwort('contributor') });
     richteRolleEin({ abruf: api.api });
     const { befunde, ohneHandler } = await laufAlle(async () => redis, api, ordner, protokoll);
@@ -227,7 +230,7 @@ describe.runIf(ADRESSE)('Abnahme A2-3: alle Werkzeuge als Mitglied gegen echten 
     }
     await seed(besitzer);
     await besitzer.call('ACL', 'DELUSER', MITGLIED);
-    await besitzer.call('ACL', 'SETUSER', MITGLIED, 'on', `>${MITGLIED_PW}`, ...MITGLIED_MUSTER);
+    await besitzer.call('ACL', 'SETUSER', MITGLIED, 'on', `>${MITGLIED_PW}`, ...mitgliedMuster({ privat: PRIVAT, gruppen: [] }));
     const url = new URL(ADRESSE);
     mitglied = new Redis({
       host: url.hostname, port: Number(url.port || 6379), db: ECHT_DB,
@@ -248,7 +251,7 @@ describe.runIf(ADRESSE)('Abnahme A2-3: alle Werkzeuge als Mitglied gegen echten 
   });
 
   it('kein rohes NOPERM, nichts still gescheitert, Lesewerkzeuge schreiben nichts Gesperrtes; Team-Daten unveraendert', async () => {
-    const redis = alsMitgliedsSpeicher(mitglied, { role: 'contributor', instanceId: IID });
+    const redis = alsMitgliedsSpeicher(mitglied, ZUGANG);
     const api = apiAttrappe({ rolle: rollenAntwort('contributor') });
     richteRolleEin({ abruf: api.api });
     const vorher = {

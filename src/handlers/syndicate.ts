@@ -9,6 +9,7 @@ import { namensPruefer } from './team.js';
 import type { Instance } from './brain.js';
 import { sofortAntwortNeuesBrain } from '../leeres-brain.js';
 import { fuerEigenenSpeicher, fuerWeitergabe, markiert, weitergabeHinweis, zaehlHinweise } from '../schreibtor.js';
+import { kontoBereichVon, kontoSchluessel, alterSchluessel } from '../konto-bereich.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -374,10 +375,10 @@ export async function handleSyndicateTool(
         redis,
         [
           'cachly:lesson:best:*',
-          'cachly:ctx:*',
+          kontoSchluessel(redis, 'cachly:ctx:*'),
           'cachly:idx:*',
-          'cachly:session:last',
-          'cachly:session:handoff',
+          kontoSchluessel(redis, 'cachly:session:last'),
+          kontoSchluessel(redis, 'cachly:session:handoff'),
           'cachly:roadmap:*',
           'cachly:ckg:node:*',
         ],
@@ -404,14 +405,14 @@ export async function handleSyndicateTool(
       const lines = [`🔎 **Brain Search: "${query}"** — ${allMatches.length} result${allMatches.length !== 1 ? 's' : ''} across all brain data\n`];
       for (const m of allMatches.slice(0, limit)) {
         const ns = m.key.startsWith('cachly:lesson:') ? '💡 lesson'
-          : m.key.startsWith('cachly:ctx:') ? '📝 context'
+          : alterSchluessel(redis, m.key).startsWith('cachly:ctx:') ? '📝 context'
           : m.key.startsWith('cachly:idx:') ? '📂 index'
-          : m.key.startsWith('cachly:session:') ? '🕐 session'
+          : alterSchluessel(redis, m.key).startsWith('cachly:session:') ? '🕐 session'
           : m.key.startsWith('cachly:roadmap:') ? '🗺️ roadmap'
           : m.key.startsWith('cachly:ckg:node:') ? '🕸️ ckg-node'
           : '🗄️ data';
         const preview = m.content.slice(0, 280).replace(/\n/g, ' ');
-        lines.push(`**${ns}** \`${m.key.split(':').slice(2).join(':')}\` _(BM25: ${m.score.toFixed(2)})_`);
+        lines.push(`**${ns}** \`${alterSchluessel(redis, m.key).split(':').slice(2).join(':')}\` _(BM25: ${m.score.toFixed(2)})_`);
         lines.push(`> ${preview}${m.content.length > 280 ? '…' : ''}\n`);
       }
       return lines.join('\n');
@@ -936,7 +937,7 @@ export async function handleSyndicateTool(
       // Scan active agents
       type ActiveAgent = { author: string; last_topic?: string; last_outcome?: string; ts: string };
       const agentKeys: string[] = [];
-      const aStream = redis.scanStream({ match: 'cachly:agents:active:*', count: 100 });
+      const aStream = redis.scanStream({ match: kontoSchluessel(redis, 'cachly:agents:active:*'), count: 100 });
       await new Promise<void>((resolve, reject) => {
         aStream.on('data', (batch: string[]) => agentKeys.push(...batch));
         aStream.on('end', resolve);
@@ -963,6 +964,7 @@ export async function handleSyndicateTool(
           lines.push(`  - **${a.author}** — last: \`${letztes}\` (${a.last_outcome ?? '?'}, ${ago}m ago)`);
         }
       }
+      if (kontoBereichVon(redis)) lines.push('🔒 Only your own activity is shown. What colleagues are working on stays in their account.');
       lines.push('');
 
       if (conflicts.length === 0) {

@@ -10,7 +10,10 @@
  *   S  Team-Daten (Rollen, Freigabepflicht, Gruppen, Protokoll)   nie
  *   W  Wissen (Lektionen, Vektoren, Graph, Index, Rueckzuege ...)  nie direkt,
  *                                                                  Lektionen ueber die API
- *   B  Betrieb (Kontext, Sitzung, Zaehler, Zwischenspeicher)       ja
+ *   K  Konto (Kontext, Sitzung, Wirkung, Agenten, Suchprotokoll ...) am alten
+ *                                                                  Ort nie, im eigenen
+ *                                                                  Konto-Bereich ja (Stufe 4)
+ *   B  Betrieb (Zaehler, Zwischenspeicher)                         ja
  *
  * Diese Datei haelt zwei Dinge, die zusammenpassen muessen:
  *   - die Tabelle: jede Familie, die der Quelltext benutzt, mit Klasse;
@@ -21,14 +24,16 @@
  * B-Familie ist nach dem Muster wirklich schreibbar, jede S- und W-Familie
  * nicht. Sonst stuende in der Tabelle eine zweite Wahrheit.
  *
- * Eine neue Familie mit t, l, c, i, w, g, f, b, m, p, d oder z am Anfang ist
- * fuer Mitglieder gesperrt, bis sie im Muster steht (`letzter-recall` und
- * `liefer` stehen dort einzeln und sind darum B).
+ * Eine neue Familie mit t, l, c, i, w, g, f, b, m, p, d, z, s oder a am
+ * Anfang ist fuer Mitglieder gesperrt, bis sie im Muster steht. Die sechs
+ * K-Familien (und die zwei Unterfamilien stats:suchprotokoll und
+ * stats:reuse_pairs) liegen im Konto-Bereich `<privat>k:`. Golden-Skript:
+ * api/internal/raeume/testdata/abnahme-konto-acl.sh.
  */
 
 import { mitgliedMuster } from './raeume.js';
 
-export type SchluesselKlasse = 'S' | 'W' | 'B';
+export type SchluesselKlasse = 'S' | 'W' | 'K' | 'B';
 
 /** Jede Familie `cachly:<x>:` im Quelltext, mit Klasse. Was fehlt, ist ein Fehler. */
 export const SCHLUESSEL_KLASSEN: Readonly<Record<string, SchluesselKlasse>> =
@@ -56,26 +61,26 @@ export const SCHLUESSEL_KLASSEN: Readonly<Record<string, SchluesselKlasse>> =
     // Raeume (Stufe 3): vom Muster fuer das Schreiben gesperrt, Lesen nur im eigenen Raum.
     zone: 'W',
 
+    // ── K: Konto (am alten Ort gesperrt, im Konto-Bereich schreibbar) ──────
+    ctx: 'K',
+    session: 'K',
+    wirkung: 'K',
+    'letzter-recall': 'K',
+    liefer: 'K',
+    agents: 'K',
+
     // ── B: Betrieb ─────────────────────────────────────────────────────────
-    // im Muster einzeln freigegeben (gesperrter Anfangsbuchstabe):
-    ctx: 'B',
     cls: 'B',
-    wirkung: 'B',
     lock: 'B',
     mcp: 'B',
     mcm: 'B',
     prefs: 'B',
     dep: 'B',
-    'letzter-recall': 'B',
-    liefer: 'B',
-    // frei ueber ~cachly:[^tlciwgfbmpdz]*:
-    session: 'B',
     stats: 'B',
     sem: 'B',
     roadmap: 'B',
     recall: 'B',
     streak: 'B',
-    agents: 'B',
     stream: 'B',
     vek: 'B',
     startwissen: 'B',
@@ -88,7 +93,7 @@ export const SCHLUESSEL_KLASSEN: Readonly<Record<string, SchluesselKlasse>> =
  * Der feste Teil des ACL-Musters eines Mitglieds: Lesen fest, Schreiben,
  * Befehle, ohne "on", Passwort und Raum-Regeln. WORTGLEICH mit den Feldern
  * MITGLIED_LESEN_FEST, MITGLIED_SCHREIBEN und MITGLIED_BEFEHLE in
- * api/internal/raeume/testdata/abnahme-raeume-acl.sh (gegen Valkey 8 und
+ * api/internal/raeume/testdata/abnahme-konto-acl.sh (gegen Valkey 8 und
  * Dragonfly 1.25.0 gemessen). Raum-Regeln sind reine Lese-Regeln.
  */
 export const MITGLIED_MUSTER: readonly string[] = Object.freeze(

@@ -7,6 +7,10 @@
 
 ---
 
+## [0.10.287] – 2026-11-28 — *"Members keep their notes and sessions in their own account area."*
+
+When the API reports `rooms.account`, a member or org admin now reads and writes notes, session, handoff, checkpoint, impact trail, search log and agent activity under that account area instead of the shared keys. Owners, "protection off" and own-storage connections see no change: every key and command stays word for word. With an account area there is no semantic index entry for notes, the Team roadmap line says every member can edit, `brain_conflicts` shows only your own activity and `brain_metrics` counts reuse for your account. No change to the tool schema.
+
 ## [0.10.286] – 2026-11-28 — *"Two windows on one Brain keep their own session."*
 
 Until 0.10.285 the session start marker existed once per Brain. With two windows on the same Brain, the second `session_start` overwrote the start time of the first. The first `session_end` then reported the duration from the second window's start, and it took the whole decision log, including the lessons of the other window.

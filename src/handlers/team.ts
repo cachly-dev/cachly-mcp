@@ -19,6 +19,7 @@ import { VERDACHT_TAG, pruefeFelder, verdachtsWarnung } from '../tuersteher.js';
 import { fuerEigenenSpeicher, fuerWeitergabe, fuerZusammenfassung, hinweise, markiert, markierungsWarnung, weitergabeHinweis } from '../schreibtor.js';
 // Stufe 2 (PR 2): Rolle aus der API statt aus dem Hash; Mitglieder schreiben ueber die API.
 import { holeRolle, istMitglied, rolleFuer, lerneUeberApi, bestaetigeUeberApi, ROLLEN_SEITE, type RollenAuskunft } from '../rolle.js';
+import { kontoSchluessel } from '../konto-bereich.js';
 
 type GetConnection = (instanceId: string) => Promise<Redis>;
 type ApiFetch = <T>(path: string, options?: RequestInit) => Promise<T>;
@@ -408,9 +409,9 @@ export async function handleTeamTool(
         diff_stat: git_diff_stat?.slice(0, 500),
         ...(tor.verdacht.length ? { verdacht: tor.verdacht } : {}),
       };
-      await redis.lpush('cachly:session:file_changes', JSON.stringify(changeRecord));
-      await redis.ltrim('cachly:session:file_changes', 0, 99);
-      await redis.expire('cachly:session:file_changes', 30 * 86400);
+      await redis.lpush(kontoSchluessel(redis, 'cachly:session:file_changes'), JSON.stringify(changeRecord));
+      await redis.ltrim(kontoSchluessel(redis, 'cachly:session:file_changes'), 0, 99);
+      await redis.expire(kontoSchluessel(redis, 'cachly:session:file_changes'), 30 * 86400);
 
       // Find lessons relevant to the changed files
       const lessonKeys: string[] = [];
@@ -803,7 +804,7 @@ export async function handleTeamTool(
       const effectiveLabel = crystalLabel || `${now.toISOString().slice(0, 7)} Crystal`;
 
       // Read session history
-      const sessionHistory = await redis.lrange('cachly:session:history', 0, 49);
+      const sessionHistory = await redis.lrange(kontoSchluessel(redis, 'cachly:session:history'), 0, 49);
 
       // Read all auto-learned lessons
       const allLessonKeys: string[] = [];
@@ -1068,7 +1069,7 @@ export async function handleTeamTool(
 
       // Count context
       let ctxCount = 0;
-      const ctxStream = redis.scanStream({ match: 'cachly:ctx:*', count: 200 });
+      const ctxStream = redis.scanStream({ match: kontoSchluessel(redis, 'cachly:ctx:*'), count: 200 });
       await new Promise<void>((resolve, reject) => {
         ctxStream.on('data', (batch: string[]) => {
           ctxCount += batch.filter((k: string) => !k.endsWith(':meta')).length;
@@ -1103,7 +1104,7 @@ export async function handleTeamTool(
       };
 
       // Last session
-      const lastSessionRaw = await redis.get('cachly:session:last');
+      const lastSessionRaw = await redis.get(kontoSchluessel(redis, 'cachly:session:last'));
       const lastSession = safeJsonParse<{ ts: string; summary: string } | null>(lastSessionRaw, null);
 
       // Open failures

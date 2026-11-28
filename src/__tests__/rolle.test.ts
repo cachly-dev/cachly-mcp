@@ -34,6 +34,9 @@ import { holeVerbindungsAuskunft, anmeldungAus, baueSpeicherClient, anmeldeOptio
 import { installiereClientKopf, clientKopfWert, CLIENT_KOPF, istApiAdresse } from '../client-kopf.js';
 
 const IID = 'i-rolle';
+const KONTO_PRIVAT = 'cachly:zone:p:aaaaaaaaaaaaaaaa:';
+const KONTO = `${KONTO_PRIVAT}k:`;
+const MIT_KONTO = { privat: KONTO_PRIVAT, gruppen: [], konto: KONTO };
 
 type Werkzeug = (name: string, args: Record<string, unknown>) => Promise<string>;
 
@@ -211,8 +214,8 @@ describe('Fall 5: Mitglied ruft smart_recall -> Zaehler an /lessons/recalled, ke
     const mock = new MockRedis();
     await lege(mock, 'deploy:plugh');
     await lege(mock, 'cache:plugh');
-    const { redis: roh, protokoll } = aclAttrappe(mock, { mitglied: true });
-    const redis = alsMitgliedsSpeicher(roh, { role: 'contributor', instanceId: IID });
+    const { redis: roh, protokoll } = aclAttrappe(mock, { mitglied: true, konto: KONTO });
+    const redis = alsMitgliedsSpeicher(roh, { role: 'contributor', instanceId: IID, raeume: MIT_KONTO });
     const api = apiAttrappe({ rolle: rollenAntwort('contributor') });
     richteRolleEin({ abruf: api.api });
     const { brain } = werkzeuge(redis, api.api);
@@ -415,13 +418,13 @@ describe('holeRolle', () => {
 
 describe('Huelle: NOPERM wird ein Satz, auch in Buendeln, und wird je Aufruf gezaehlt', () => {
   it('ein abgewiesener Befehl wirft SchreibVerweigert mit der Rolle', async () => {
-    const { redis: roh } = aclAttrappe(new MockRedis(), { mitglied: true });
-    const redis = alsMitgliedsSpeicher(roh, { role: 'viewer', instanceId: IID });
+    const { redis: roh } = aclAttrappe(new MockRedis(), { mitglied: true, konto: KONTO });
+    const redis = alsMitgliedsSpeicher(roh, { role: 'viewer', instanceId: IID, raeume: MIT_KONTO });
     const lauf = await imWerkzeugLauf(async () => {
       await expect(redis.set('cachly:lesson:best:x', '1')).rejects.toBeInstanceOf(SchreibVerweigert);
       await expect(redis.set('cachly:team:roles:x', '1')).rejects.toThrow(schreibverbotText('viewer'));
       await redis.set('cachly:lesson:best:y', '1').catch(() => {}); // verschluckt
-      expect(await redis.set('cachly:ctx:frei', '1')).toBe('OK');
+      expect(await redis.set(`${KONTO}ctx:frei`, '1')).toBe('OK');
       return 'fertig';
     });
     expect(lauf.abgewiesen).toBe(3);
@@ -429,10 +432,10 @@ describe('Huelle: NOPERM wird ein Satz, auch in Buendeln, und wird je Aufruf gez
   });
 
   it('pipeline: Einzelfehler werden uebersetzt, nicht roh durchgereicht', async () => {
-    const { redis: roh } = aclAttrappe(new MockRedis(), { mitglied: true });
-    const redis = alsMitgliedsSpeicher(roh, { role: 'contributor', instanceId: IID }) as unknown as { pipeline(): { set(k: string, v: string): unknown; exec(): Promise<[unknown, unknown][]> } };
+    const { redis: roh } = aclAttrappe(new MockRedis(), { mitglied: true, konto: KONTO });
+    const redis = alsMitgliedsSpeicher(roh, { role: 'contributor', instanceId: IID, raeume: MIT_KONTO }) as unknown as { pipeline(): { set(k: string, v: string): unknown; exec(): Promise<[unknown, unknown][]> } };
     const p = redis.pipeline();
-    p.set('cachly:ctx:a', '1');
+    p.set(`${KONTO}ctx:a`, '1');
     p.set('cachly:meta:brain:x', '1');
     const erg = await p.exec();
     expect(erg[0][0]).toBeNull();

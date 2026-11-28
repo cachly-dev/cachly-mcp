@@ -1,7 +1,16 @@
 /**
- * EINGEFRORENE ABNAHME Stufe 3 (Architekt, 27.11.2026). Zielort im Produkt-Repo:
+ * EINGEFRORENE ABNAHME Stufe 3, FASSUNG 4 (Architekt, 28.11.2026). Zielort im Produkt-Repo:
  *
- *   sdk/mcp/src/__tests__/abnahme-stufe3-raeume.test.ts   (diese Datei, unveraendert)
+ *   sdk/mcp/src/__tests__/abnahme-stufe3-raeume.test.ts   (diese Datei ERSETZT die Fassung vom 27.11.)
+ *
+ * Was Fassung 4 aendert (nur das, sonst nichts):
+ *   1. Der Fall "das Muster traegt genau die eigenen Raeume": das Muster von
+ *      Stufe 4 (Lesen ohne die Konto-Familien, eine Regel fuer den Konto-Bereich,
+ *      letzter-recall und liefer nicht mehr einzeln frei).
+ *   2. Die Raeume von Mia tragen `konto` (Feld `rooms.account` aus /connection):
+ *      ihre Sitzungs-Daten liegen im eigenen Konto-Bereich.
+ * NICHT GEMESSEN: Fassung 4 ist gelesen, nicht gelaufen (kein Produktcode fuer
+ * Stufe 4 vorhanden). Passt ein Fall nicht: Befund an den Orchestrator.
  *
  * Worker aendern diese Datei NICHT. Passt sie nicht zum Code, ist das ein
  * Befund fuer den Orchestrator, kein Anlass, den Test zu biegen.
@@ -63,13 +72,19 @@ describe('Stufe 3: Schluessel-Vertrag (ohne Speicher)', () => {
 
   it('das Muster traegt genau die eigenen Raeume und sperrt die Familie zone', () => {
     const m = mitgliedMuster({ privat: raumPrivat(MIA), gruppen: [raumGruppe('security')] });
-    expect(m[0]).toBe('%R~cachly:[^z]*');
+    expect(m[0]).toBe('%R~cachly:[^zcslmwa]*');
     expect(m).toContain('%R~cachly:zone:p:aaaaaaaaaaaaaaaa:*');
     expect(m).toContain(`%R~${raumGruppe('security')}*`);
-    expect(m.filter((r) => r.includes('cachly:zone:')).length).toBe(2);
-    expect(m).toContain('~cachly:[^tlciwgfbmpdz]*');
-    expect(m).toContain('~cachly:letzter-recall:*');
-    expect(m).toContain('~cachly:liefer:*');
+    expect(m.filter((r) => r.includes('cachly:zone:')).length).toBe(3);
+    expect(m).toContain('~cachly:zone:p:aaaaaaaaaaaaaaaa:k:*');
+    expect(m).toContain('~cachly:[^tlciwgfbmpdzsa]*');
+    expect(m).toContain('~cachly:a[^g]*');
+    expect(m).toContain('~cachly:stats:[^sr]*');
+    expect(m).not.toContain('~cachly:letzter-recall:*');
+    expect(m).not.toContain('~cachly:liefer:*');
+    expect(m).not.toContain('~cachly:ctx:*');
+    expect(m).not.toContain('~cachly:wirkung:*');
+    expect(m).not.toContain('%R~cachly:[^z]*');
     expect(m).not.toContain('%R~*');
     expect(m.slice(-6)).toEqual(['+@all', '-@admin', '-@dangerous', '+keys', '+info', '-client']);
   });
@@ -161,7 +176,10 @@ describe.runIf(ADRESSE)('Stufe 3 gegen echten Valkey: Mitglieder lesen nur, was 
     await legeInRaum(raumGruppe('chefs'), 'g', 'chefs:plan', 'FREMD-GRUPPE-9Z umbau im quartal', { group: 'chefs' });
 
     // Mitglied Mia: eigener Benutzer mit dem Muster, Gruppe security.
-    const eigeneRaeume = { privat: raumPrivat(MIA), gruppen: [{ name: 'security', praefix: raumGruppe('security') }] };
+    const eigeneRaeume = {
+      privat: raumPrivat(MIA), gruppen: [{ name: 'security', praefix: raumGruppe('security') }],
+      konto: `${raumPrivat(MIA)}k:`,
+    };
     await admin.call('ACL', 'DELUSER', MIA_BENUTZER).catch(() => undefined);
     await admin.call('ACL', 'SETUSER', MIA_BENUTZER, 'on', `>${MIA_PW}`,
       ...mitgliedMuster({ privat: eigeneRaeume.privat, gruppen: eigeneRaeume.gruppen.map((g) => g.praefix) }));
