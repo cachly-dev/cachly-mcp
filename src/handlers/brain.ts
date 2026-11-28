@@ -115,6 +115,7 @@ import { spurLegen } from '../spuren.js';
 import { schlageErsetzungVor } from '../ersetzung-vorschlag.js';
 // Gueltigkeit nach Version (Abhakliste 4.5): Logik und Begruendung in der Datei selbst.
 import { loeseGiltFuerAuf, stufeSucheNachProjektversion, versionsNotizen, versionsBanner } from '../gueltigkeit-version.js';
+import { aenderungsHinweis, aenderungsHinweise, type LektionMitPfaden } from '../datei-geaendert.js';
 
 // Themen, deren Volltext-Vektor beim Schreiben scheiterte — Nachtrag beim
 // naechsten Schreiben (Karte hcg8neyut0kd Teil c).
@@ -2580,6 +2581,10 @@ async function handleBrainToolInner(
           ? `⏳ **THIS FACT WAS VALID UNTIL ${String(giltBis).slice(0, 10)}** — it is history, not current information.`
           : '';
 
+        // Golem 28.11.2026: die Notiz gegen den HEUTIGEN Code halten.
+        // Geaenderte Dateien seit dem Schreiben stehen vor dem Inhalt.
+        const aenderung = await aenderungsHinweis(lesson);
+
         return [
           // Beim Speichern als verdaechtig markiert (tuersteher:verdacht): ausdruecklich abgerufen
           // wird sie gezeigt, aber mit Warnung VOR dem Inhalt (schreibtor.ts: markierungsWarnung).
@@ -2588,6 +2593,7 @@ async function handleBrainToolInner(
           abgelaufen,
           // Abhakliste 4.5: gilt die Lektion fuer die Versionen DIESES Projekts?
           versionsBanner((lesson as { gilt_fuer?: unknown }).gilt_fuer),
+          aenderung,
           giltZeile,
           entZeile,
           rememberWhen,
@@ -3828,6 +3834,15 @@ async function handleBrainToolInner(
       void vermerkeAusgang(redis, instance_id, knapp ? 'knapp' : 'beantwortet');
 
       if (hybridResults.length > 0) {
+        // Golem 28.11.2026: Dateien der gezeigten Lektionen seit dem Schreiben
+        // geaendert? EIN Git-Durchlauf fuer alle Treffer (datei-geaendert.ts).
+        // Nur Anzeige — die Rangfolge oben ist schon fertig und sieht es nie.
+        const geaenderteDateien = new Map<string, string>();
+        {
+          const kandidaten = hybridResults.slice(0, 12).filter((r) => r.key.startsWith('cachly:lesson:best:'));
+          const zeilen = await aenderungsHinweise(kandidaten.map((r) => safeJsonParse<LektionMitPfaden | null>(r.content, null)));
+          kandidaten.forEach((r, i) => { if (zeilen[i]) geaenderteDateien.set(r.key, zeilen[i]); });
+        }
         const hasCKG = hybridResults.some(r => r.ckgScore !== undefined);
         // Bedeutungssuche hat stattgefunden, wenn der Sinnpfad die Rangfolge
         // gebaut hat (sinnAngewandt) ODER die alte Kontext-Suche Treffer
@@ -3928,6 +3943,8 @@ async function handleBrainToolInner(
               {
                 const markierung = r.key.startsWith('cachly:lesson:best:') ? markierungsWarnungAusRohwert(r.content) : '';
                 if (markierung) lines.push(`  ${markierung}`);
+                const geaendert = geaenderteDateien.get(r.key);
+                if (geaendert) lines.push(`  ${geaendert}`);
               }
               for (const z of vorschau) lines.push(`  > ${z}`);
               lines.push('');
@@ -3987,6 +4004,10 @@ async function handleBrainToolInner(
               // Markierte Lektion (tuersteher:verdacht): ausdruecklicher Abruf zeigt sie, mit Warnung vor dem Auszug.
               const markierung = r.key.startsWith('cachly:lesson:best:') ? markierungsWarnungAusRohwert(r.content) : '';
               if (markierung) lines.push(markierung);
+              // Golem 28.11.2026: Dateien der Lektion seit dem Schreiben geaendert?
+              // Nur Anzeige, die Rangfolge sieht es nie (datei-geaendert.ts).
+              const geaendert = geaenderteDateien.get(r.key);
+              if (geaendert) lines.push(geaendert);
             }
             for (const z of vorschau) lines.push(`> ${z}`);
             lines.push('');

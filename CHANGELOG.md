@@ -7,6 +7,17 @@
 
 ---
 
+## [0.10.289] – 2026-11-28 — *"A lesson tells you when its files changed after it was written."*
+
+A lesson that the code has since contradicted used to come back as a normal hit. Nothing warned unless someone marked it (`ersetzt`, withdraw, `lesson_verified` with haelt=false). Example: a note says "strip leading zeros", but a later commit keeps them because the partner now tells 17 and 0017 apart.
+
+- `recall_best_solution` and `smart_recall` now ask Git whether the lesson's `file_paths` changed after the lesson was written (or last really verified). If they did, a line stands before the content: the number of commits, the latest commit with its date and subject, and uncommitted changes. It ends with "check the current code before applying it; if the code says otherwise, the code wins".
+- One `git log` and one `git status` per answer, run at the same time, for all hits together. Measured on a repository with 2,125 commits on Windows: 130 to 260 ms per answer, the same for one hit or eight. A repeat within 60 seconds takes about 1 ms.
+- Display only: the ranking is unchanged, nothing is written to the lesson.
+- Not over HTTP (Claude.ai connector): there the server's folder is not your project. Any Git error (no repository, timeout, path outside the repository) shows nothing.
+- Turn it off with `CACHLY_AENDERUNGS_HINWEIS=aus`.
+- Tool schema unchanged.
+
 ## [0.10.288] – 2026-11-28 — *"Search paths no longer carry your question word for word."*
 
 The hashes behind learned search paths (`cachly:lesson:spur:*`, `cachly:lesson:pfad:*`) now use a field name of the form `h:<32 hex>:<length>` instead of the question text, so a team member reading those keys cannot see what the owner asked. The length stays in the name so the tie-break (shorter question wins) is unchanged. The API converts existing fields on the next room migration and in the hourly reconcile, adding counters together. Search results, vectors, counters and thresholds are unchanged; no change to the tool schema.
